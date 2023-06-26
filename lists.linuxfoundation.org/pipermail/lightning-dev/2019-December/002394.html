@@ -1,0 +1,305 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Pay-to-Open and UX improvements
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pay-to-Open%20and%20UX%20improvements&In-Reply-To=%3CCACdvm3MJ-%3DHBas%3DCRzP7GYD50m2e2qDfBacYDOqzrsCBXc1hqw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002393.html">
+   <LINK REL="Next"  HREF="002395.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Pay-to-Open and UX improvements</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pay-to-Open%20and%20UX%20improvements&In-Reply-To=%3CCACdvm3MJ-%3DHBas%3DCRzP7GYD50m2e2qDfBacYDOqzrsCBXc1hqw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Pay-to-Open and UX improvements">bastien at acinq.fr
+       </A><BR>
+    <I>Wed Dec 18 10:14:38 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002393.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+        <LI>Next message: <A HREF="002395.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2394">[ date ]</a>
+              <a href="thread.html#2394">[ thread ]</a>
+              <a href="subject.html#2394">[ subject ]</a>
+              <a href="author.html#2394">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+Thanks again for all the good suggestions, this is awesome.
+David and ZmnSCPxj's proposals got me thinking (and I still need to dive
+into
+Antoine's suggestion as well), and I may have found a very interesting
+construction. It's either great or completely dumb. I hope you can help me
+figure out which of the two it's going to be.
+
+The core idea is to modify Tapscript's `OP_CHECKSIG`. Instead of reading the
+signature as a single 64-bytes stack argument, let's add a small change to
+read
+the signature as two 32-bytes stack arguments: `R` first then `s`.
+Since Taproot already makes changes to this opcode, adding this small change
+seems to be quite simple and harmless (and this is the right time to propose
+such a change as we're still in the Taproot review process).
+
+This effectively lets us leverage nonce reuse as a feature to prevent double
+spending once a signature has been shared off-chain.
+
+Let's set the scene for this usecase. We have a service provider Patrick
+that
+wants to offer layer 2 services. Patrick prepares some of his UTXOs to have
+the
+following spending condition:
+
+* A provably unspendable key-path spend
+* A script-path spend with the following script (and only that script):
+OP_SWAP OP_DUP &lt;R&gt; OP_EQUALVERIFY OP_SWAP &lt;P&gt; OP_CHECKSIG
+* Notes:
+* The script could be more fancy (maybe we want to use hash(R) instead of R
+directly) but you get the idea
+* The OP_SWAP are needed because the spending stack will be &lt;P&gt; &lt;R&gt; &lt;s&gt;
+* P is of course different for every UTXO
+
+This means that Patrick is committing to the nonce he'll be using to spend
+that
+output.
+
+Now comes our friend Alice. Patrick wants to open a channel to Alice and
+wants
+to start using this channel without waiting for on-chain confirmation.
+Alice and Patrick build the funding transaction as usual; once Alice sees
+the
+transaction in the mempool, she can verify that the inputs have the right
+format.
+Now Alice can be sure that Patrick will not double-spend the funding
+transaction's inputs: if he does, he will be signing a different message
+with
+the same nonce. That would allow Alice to extract the private key for `P`
+and
+spend the UTXO to herself. She has nothing to lose there because it's
+Patrick's
+UTXO so she has an incentive to use much higher fees than Patrick.
+
+It seems to me that this construction can be generalized for many off-chain
+protocols that don't want to wait for confirmation. I may be overly
+optimistic,
+but I think this could enable a whole lot of new use-cases and remove many
+pain points in Lightning.
+
+This is only a first draft, and there are things that can be improved. Let's
+list what comes to mind (you will probably identify other issues):
+
+* Patrick can't use RBF on transactions that spend this kind of UTXO
+because it
+would reveal his private key: that's probably ok in practice (we can add an
+output for CPFP instead like we're doing for anchor outputs [1])
+* These UTXOs are easy to recognize on-chain once spent, which may indicate
+that this is spent for an off-chain protocol
+* It would be great to have a way to allow key-path spend, but revoke this
+capability once the script has been revealed (off-chain): that would allow
+Patrick to encumber all his UTXOs with such a script and only use it when
+needed for an off-chain scenario (and use normal key-path spend otherwise)
+
+Please let me know if this is completely broken, completely dumb or worth
+sharing to the bitcoin-dev mailing list to consider including this
+`OP_CHECKSIG`
+change in the Taproot soft-fork.
+
+Cheers,
+Bastien
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/688">https://github.com/lightningnetwork/lightning-rfc/pull/688</A>
+
+Le mer. 18 d&#233;c. 2019 &#224; 05:49, Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt; a
+&#233;crit :
+&gt;<i>
+</I>&gt;<i> Hi Bastien,
+</I>&gt;<i>
+</I>&gt;<i> The use case you're describing strikes me as similar to a slashing
+</I>protocol for a LN node and a watchtower, i.e punishing
+&gt;<i> a lazy watchtower for not broadcasting a penalty tx on remote revoked
+</I>state. In both case you want &quot;if A don't do X
+&gt;<i> unlock some funds for B&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Here a rough slashing protocol I've sketched out to someone else
+</I>off-list, it may work for you use case if you replace the penalty tx
+&gt;<i> by the funding transaction as a way for the trusted channel funder to
+</I>clear his liability. Though you will need onchain interactivity
+&gt;<i> before the fact but you may be able to reuse slashing outpoint for
+</I>multiple channel funding.
+&gt;<i>
+</I>&gt;<i> Slashing Protocol
+</I>&gt;<i> ----------------------
+</I>&gt;<i>
+</I>&gt;<i> Alice and Bob lock fund in channel outpoint X. They issue commitment tx
+</I>N.  Will the accountable watchtower locks fund
+&gt;<i> in a 2-of-2 slashing outpoint Y with Bob the client.
+</I>&gt;<i>
+</I>&gt;<i> When Alice and Bob update channels to N', Bob and Will use some output
+</I>from commitment N (like upcoming anchor output)
+&gt;<i> to create an accountable tx M. M is paying to Bob after timelock+Bob sig
+</I>or is paying to transaction success_penalty P
+&gt;<i> with Will sig + Bob sig. Success_penalty P will have 2 inputs, one from M
+</I>and from J the justice tx than Bob has given
+&gt;<i> to Will. J is spending Alice's revoked commitment N.
+</I>&gt;<i>
+</I>&gt;<i> So this slashing protocol should avoid Bob making false claim, because
+</I>you need a revoked broadcast to enable the claim
+&gt;<i> and at same time we use a justice tx output as a proof than Will have
+</I>done its monitoring+punishment job. Will shouldn't
+&gt;<i> learn commitment balance if there is no channel breach and Alice and Bob
+</I>wouldn't be able to collude against Will, if
+&gt;<i> watchtower have a penalty tx on Alice non-revoked commitment tx, that's
+</I>her concern.
+&gt;<i>
+</I>&gt;<i> So topology would be:
+</I>&gt;<i>
+</I>&gt;<i>                                                        to_Bob
+</I>&gt;<i>                                                      /
+</I>&gt;<i>           X  &lt;---------- N   &lt;--------- J
+</I>&gt;<i>                                 ^                   ^
+</I>&gt;<i>                                    \                   \
+</I>&gt;<i>             Y &lt;---------------  M  &lt;---------- P - to_Will
+</I>&gt;<i>                                        \
+</I>&gt;<i>                                         to_Bob
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Main idea of the protocol is to use transactions topology of a first
+</I>contract as proofs for a subsidiary contract.
+&gt;<i>
+</I>&gt;<i> I'm quite sure it's insecure, just quick ideas, any thoughts ?
+</I>&gt;<i>
+</I>&gt;<i> (but would be really cool to have one accountable protocol to both
+</I>watchtower and pay-to-open use cases to save
+&gt;<i> engineering costs)
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> Antoine
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Le mar. 17 d&#233;c. 2019 &#224; 16:08, Ethan Heilman &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">eth3rs at gmail.com</A>&gt; a &#233;crit :
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> From where I'm sitting the fact that OP_CAT allows people to build
+</I>&gt;&gt;<i> more powerful constructions in Bitcoin without introducing additional
+</I>&gt;&gt;<i> complexity at the consensus layer is a positive not a negative. Using
+</I>&gt;&gt;<i> OP_CAT or OP_SUBSTRING to enforce ECDSA nonce reuse is a very powerful
+</I>&gt;&gt;<i> protocol tool for enforcing fairness in layer two protocols.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Tue, Dec 17, 2019 at 11:27 AM ZmnSCPxj via Lightning-dev
+</I>&gt;&gt;<i> &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Good morning t-bast,
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Further, we can enforce that RBF is signalled for every spend of the
+</I>output by:
+&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     &lt;0&gt; OP_CHECKSEQUENCEVERIFY OP_DROP &lt;R&gt; OP_SWAP OP_CAT &lt;ACINQ&gt;
+</I>OP_CHECKSIG
+&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Requiring that RBF is signalled gives a little more assurance.
+</I>&gt;&gt;<i> &gt; Suppose ACINQ becomes evil and double-spends the output.
+</I>&gt;&gt;<i> &gt; The transaction that is posted in the mempool must be marked by RBF
+</I>due to the `OP_CHECKSEQUENCEVERIFY` opcode, since `nSequence` also doubles
+as RBF opt-in.
+&gt;&gt;<i> &gt; Then anyone who notices the double-spend can RBF the double-spending
+</I>transaction to themselves rather than ACINQ.
+&gt;&gt;<i> &gt; This also further publishes ACINQ private key, until the winning
+</I>transaction has an `OP_RETURN` output that pays the entire value as fees
+and nobody can RBF it further.
+&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; This is a minor increase in the assurability of the construction, by
+</I>making any output that is double-spent directly revocable in favor of the
+miners.
+&gt;&gt;<i> &gt; Again, it requires `OP_CAT`, which is a very dangerous opcode,
+</I>allowing such powerful constructions.
+&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Regards,
+</I>&gt;&gt;<i> &gt; ZmnSCPxj
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; &gt; Thanks a lot David for the suggestion and pointers, that's a really
+</I>interesting solution.
+&gt;&gt;<i> &gt; &gt; I will dive into that in-depth, it could be very useful for many
+</I>layer-2 constructions.
+&gt;&gt;<i> &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; Thanks ZmnSCPxj as well for the quick feedback and the `OP_CAT`
+</I>construction,
+&gt;&gt;<i> &gt; &gt; a lot of cool tricks coming up once (if?) we have such tools in the
+</I>future ;)
+&gt;&gt;<i> &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; Le mar. 17 d&#233;c. 2019 &#224; 16:14, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; a
+</I>&#233;crit :
+&gt;&gt;<i> &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; &gt; Good morning David, t-bast, and all,
+</I>&gt;&gt;<i> &gt; &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; &gt; &gt; I'm not aware of any way to currently force single-show
+</I>signatures in
+&gt;&gt;<i> &gt; &gt; &gt; &gt; Bitcoin, so this is pretty theoretical. Also, single-show
+</I>signatures
+&gt;&gt;<i> &gt; &gt; &gt; &gt; add a lot of fragility to any setup and make useful features
+</I>like RBF
+&gt;&gt;<i> &gt; &gt; &gt; &gt; fee bumping unavailable.
+</I>&gt;&gt;<i> &gt; &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; &gt; With `OP_CAT`, we can enforce that a particular `R` is used, which
+</I>allows to implement single-show signatures.
+&gt;&gt;<i> &gt; &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; &gt;     # Assuming signatures are the concatenation of (R,s)
+</I>&gt;&gt;<i> &gt; &gt; &gt;     &lt;R&gt; OP_SWAP OP_CAT &lt;ACINQ&gt; OP_CHECKSIG
+</I>&gt;&gt;<i> &gt; &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; &gt; The above would then feed `s` only on the witness stack.
+</I>&gt;&gt;<i> &gt; &gt; &gt;
+</I>&gt;&gt;<i> &gt; &gt; &gt; Regards,
+</I>&gt;&gt;<i> &gt; &gt; &gt; ZmnSCPxj
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; _______________________________________________
+</I>&gt;&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191218/723025ac/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191218/723025ac/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002393.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+	<LI>Next message: <A HREF="002395.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2394">[ date ]</a>
+              <a href="thread.html#2394">[ thread ]</a>
+              <a href="subject.html#2394">[ subject ]</a>
+              <a href="author.html#2394">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

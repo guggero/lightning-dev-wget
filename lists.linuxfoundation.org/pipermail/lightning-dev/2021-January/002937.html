@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning dice
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20dice&In-Reply-To=%3C20210125113430.s2y3kvttcz7qsy75%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002933.html">
+   <LINK REL="Next"  HREF="002940.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning dice</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20dice&In-Reply-To=%3C20210125113430.s2y3kvttcz7qsy75%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Lightning dice">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Jan 25 11:34:30 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002933.html">[Lightning-dev] Battlement: A Quorum Based Design for Lightning Network Key Management
+</A></li>
+        <LI>Next message: <A HREF="002940.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2937">[ date ]</a>
+              <a href="thread.html#2937">[ thread ]</a>
+              <a href="subject.html#2937">[ subject ]</a>
+              <a href="author.html#2937">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey all,
+
+Here's a rough design for doing something like satoshi dice (ie, gambling
+on &quot;guess the number I'm thinking of&quot; but provably fair after the fact
+[0]) on lighting, at least once PTLCs exist.
+
+[0] <A HREF="https://bitcoin.stackexchange.com/questions/4609/how-can-a-wager-with-satoshidice-be-proven-to-be-fair">https://bitcoin.stackexchange.com/questions/4609/how-can-a-wager-with-satoshidice-be-proven-to-be-fair</A>
+
+The security model is that if the casino cheats, you can prove they
+cheated, but turning that proof into a way of getting your just rewards
+is out of scope. (You could use the proof to discourage other people
+from losing their money at the casino, or perhaps use it as evidence to
+get a court or the police to act in your favour)
+
+That we don't try to cryptographically guarantee the payout means we
+can send both bets over lightning, but don't need to reserve the funds
+for the bet payout for the lifetime of the bet. The idea is that's much
+friendlier to the lightning network (you're not holding up funds of the
+intermediary routing nodes) and it requires less capital to run the casino
+than other approaches.
+
+So the first thing to do is to set up a wager, between Bob the better
+and Carol the casino, say. Carol offers a standard bet to anyone, say
+1.8% chance of winning and a 50x payout, with up to 200 satoshi stake
+(so 10k satoshi max payout).
+
+We assume the bet is implemented as Bob and Carol both picking random
+numbers (b and c, respectively), and who wins being decided based on
+the relationship between those numbers.
+
+We start off with two messages:
+
+  m1: &quot;C owes B ${amount}, provided values b and c are given where
+       0 &lt;= (b+c)%500 &lt; 9 and b*G = ${Pb} and c*G = ${Pc}&quot;
+
+  m2: &quot;C has paid B ${amount} for the ${b} ${c} bet&quot;
+
+The first message, if signed by C, and accompanied by consisent values
+for b and c, serves as proof that Bob took the bet and won. The second
+message, if signed by B, serves as proof that Carol didn't cheat Bob.
+
+So the idea then is that Bob should get a signature for the first message
+as soon as he pays the lightning invoice for the bet, and Carol should
+get a signature for the latter, as soon as she's gotten the payout
+after winning.
+
+PTLCs make this possible, because when verifying a Schnorr signature,
+you want:
+
+  s*G = R + H(R,P,m)*P
+
+but if you provide (R,P,m) initially, then you can calculate the right
+hand side of the equation as the point, and then use a PTLC on that
+point to pay for its preimage &quot;s&quot;, at which point you have both s,R
+which is the signature you were hoping for.
+
+But you want to be even cleverer than this -- because as soon as Bob pays
+Carol, Bob needs to not only have the signature but also have Carol's
+&quot;c&quot;. He can't have &quot;c&quot; before he pays, because that would allow him to
+cheat (he could choose to bet only when the value of c guarantees he
+wins). We can do that by making it an adaptor signature conditional on
+c. That is, provide R,(s-c) as the adaptor signature instead of R,s.
+Bob can verify &quot;s-c&quot; is correct, by verifying:
+
+  (s-c)*G = R + H(R,P,m)*P - C
+
+So the protocol becomes:
+
+1 -- Setup)
+  Bob has a pubkey B; picks random number b, calculates Pb = b*G.
+  Sends bet, B, Pb to Carol.
+
+  Carol decides she wants to accept the bet.
+  Carol picks c, calculates Pc = c*G.
+  Carol calculates m1(amount=50*bet, C, B, Pb, Pc), and generates a
+   signature R1,s1 for it.
+  Carol sends Pc,R1,(s1-c) to Bob, and a PTLC invoice for (bet,Pc)
+
+  Bob checks the adaptor signature -- (s1-c)*G = R1 + H(C,R1,m1)*C - Pc
+
+2 -- Bet)
+  Bob pays the invoice, receiving &quot;c&quot;.
+  Bob checks if (b+c)%500 &lt; 9, and if it isn't stops, having lost the
+    bet.
+  Bob calculates m2(amount=50*bet, b, c) and produces a signature for
+    it, namely R2,s2.
+  Bob calculates S2=s2*G.
+  Bob sends b, R2 to Carol, and a PTLC invoice for (50*bet, S2)
+
+3 -- Payout)
+  Carol checks b,c complies with the bet parameters.
+  Carol checks the signature -- S2 = R2 + H(R2,B,m2)*B
+  Carol pays the invoice, receiving s2
+ 
+I think it's pretty straightforward to see how this meets the goals:
+as soon as Bob puts up the bet money, he can prove to anyone whether or
+not he won the bet; and as soon as Carol pays, she has proof that she
+paid.
+
+Note that Bob could abort the protocol with a winning bet before
+requesting the payout from Carol -- he already has enough info to prove
+he's won and claim Carol isn't paying him out at this point. 
+
+One way of dealing with this is to vet Bob's claim by sending b,R2 and a
+PTLC invoice of (50*bet,S2) to Carol with yourself as the recipient -- you
+can construct all that info from Bob's claim that Carol is cheating. If
+Carol isn't cheating, she won't be able to tell you're not Bob and
+will try paying the PTLC; at which point you know Carol's not cheating.
+This protocol does't work without better spam defenses in lightning --
+PTLC payments have to be serialised or Carol risks sending the payout
+to Bob multiple times, and if many people want to verify Carol is(n't)
+cheating, they can be delayed by just one verifier forcing Carol to wait
+for the PTLC timeout to be reached.
+
+Another way of dealing with it, at least for large payouts, is to just
+put the payout on the blockchain in a way that's claimable by Bob with
+the same signature, for some reasonable period of time.
+
+It might be useful to add a third payment: when Bob *loses* the bet,
+it may make sene for Carol to pay back a small fraction of the original
+bet for Bob to reveal their losing guess &quot;b&quot; -- that allows Carol to
+stop storing old values of c/Hb/B that won't be claimed later, and it
+lets Bob gain confidence that he can receive funds even when he loses a
+bet, rather than discovering that there's mysterious network issue
+blocking payments only when he's won big.
+
+I think this should scale pretty well: small bets are coming in over
+lightning, and the payouts are going out over lightning, so this should
+lead to fairly balanced channels (depending on how low the profits are).
+And there's no particular carrying cost, so I think this could work with
+bets that aren't resolved instantly, though I'm also pretty sure there's
+some potential traps there too.
+
+It should also generalise pretty well -- the rules are all in message
+&quot;m1&quot;, but that doesn't ever go on the blockchain, so you could invent
+an arbitrarily complicated language for m1 -- eg, you could construct 
+a lotto-like system where you guess multiple numbers and the more you
+get correct, the higher the payout.
+
+But more interestingly, I think you could also add in oracles in
+a straightforward manner, and thus do sports gambling or prediction
+markets on top of it, and maybe some sorts of derivatives more generally?
+
+I think it's got some drawbacks that prevent it from being a 100% DeFi
+killer -- you can't atomically combine bets against different casinos
+and guarantee a riskless win in the same way you can do arbitrage with
+blockchain-based DeFi (modulo MEV concerns).
+
+I believe it should be possible to do PTLCs over lightning in practice
+already via:
+
+  <A HREF="https://suredbits.com/ptlc-proof-of-concept/">https://suredbits.com/ptlc-proof-of-concept/</A>
+
+and, of course, if anyone's running lightning on signet, you should
+be able to implement schnorr/taproot-based PTLCs there as well, since
+taproot is already enabled on signet.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002933.html">[Lightning-dev] Battlement: A Quorum Based Design for Lightning Network Key Management
+</A></li>
+	<LI>Next message: <A HREF="002940.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2937">[ date ]</a>
+              <a href="thread.html#2937">[ thread ]</a>
+              <a href="subject.html#2937">[ subject ]</a>
+              <a href="author.html#2937">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

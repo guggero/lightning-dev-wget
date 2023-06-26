@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Jamming against Channel Jamming
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Jamming%20against%20Channel%20Jamming&In-Reply-To=%3CCALZpt%2BEHPJDFgYb-rE7n7s9bfVRSuRgaJH2ZPnNDrosno9zMWA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003781.html">
+   <LINK REL="Next"  HREF="003785.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Jamming against Channel Jamming</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Jamming%20against%20Channel%20Jamming&In-Reply-To=%3CCALZpt%2BEHPJDFgYb-rE7n7s9bfVRSuRgaJH2ZPnNDrosno9zMWA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Jamming against Channel Jamming">antoine.riard at gmail.com
+       </A><BR>
+    <I>Sat Dec  3 01:05:08 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003781.html">[Lightning-dev] Jamming against Channel Jamming
+</A></li>
+        <LI>Next message: <A HREF="003785.html">[Lightning-dev] Jamming against Channel Jamming
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3784">[ date ]</a>
+              <a href="thread.html#3784">[ thread ]</a>
+              <a href="subject.html#3784">[ subject ]</a>
+              <a href="author.html#3784">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Joost,
+
+If I understand correctly circuitbreaker, it adds new &quot;dynamic&quot; HTLC slot
+limits, in opposition to the &quot;static&quot; ones declared to your counterparty
+during channel opening (within the protocol-limit of 483). On top, you can
+rate-limit the HTLCs forwards based on the incoming source.
+
+Effectively, this scheme would penalize your own routing hop as HTLC
+senders routing algorithms would likely cause the hop, in the lack of a new
+gossip message advertising the limits/rates. Further, it sounds for the
+measure to be robust, a circuitbreaking policy should be applied
+recursively by your counterparty on their network topologies. Otherwise,
+you're opening I think you'll have the non-constrained links being targeted
+as entry points in the rate-limited, &quot;jamming-safe&quot; subset of the graph.
+
+The limits could be based on HTLC values, e.g the Xth slots for HTLCs of
+value &lt;1k sats, the Yth slots for HTLC of value &lt;100k sats, the remaining
+Zth slots for HTLC of value &lt;200k sats. IIRC, this jamming countermeasure
+has been implemented by Eclair [0] and discussed more in detail here [1].
+While it increases the liquidity cost for an attacker to launch jamming
+attacks against the high-value slots, it comes at the major downside of
+lowering the cost for jamming low-value slots. Betting on an increasing
+bitcoin price, all other things equals, we'll make simple payments from
+lambda users more and more vulnerable.
+
+Beyond that, I think this solution would classify in the reputation-based
+family of solutions, where reputation is local and enforced through
+rate-limiting (from my understanding), I would say there is no economic
+proportionality enforced between the rate-limiting and the cost for an
+attacker. A jamming attacker could open new channels during period of
+low-fees in the edges of the graph, and still launch attacks against
+distant hops by splitting the jamming traffic between many sources,
+therefore avoiding force-closures (e.g 230 HTLCs from channel Mallory, 253
+HTLCs from channel Malicia). Even force-closure in case of observed jamming
+isn't that evident, as the economic traffic could still be opportunistic
+locally but only a jam on a distant hop. So I think the economic
+equilibrium and risk structure of this scheme is still uncertain.
+
+However, I think the mode of queuing HTLCs is still valuable itself,
+independently of jamming, either a) to increase routed privacy of HTLC (e.g
+&quot;delay my HTLC&quot; option [2]), maybe with double opt-in of both senders/hops
+or b) as a congestion control mechanism where you have &gt;100% of honest
+incoming HTLC traffic and you would like to earn routing fees on all of
+them, in the limit of what the outgoing CLTV allow you. An advanced idea
+could be based on statistics collection, sending back-pressure messages or
+HTLC sending scheduling information to the upstream hops. Let's say in the
+future we have more periodic payments, those ones could be scheduled in
+periods of low-congestions.
+
+So I wonder if we don't have two (or even more) problems when we think
+about jamming, the first one, the HTLC forward &quot;counterparty risk&quot; (the
+real jamming) and the other one, congestion and scheduling of efficient
+HTLC traffic, with some interdependencies between them of course.
+
+On experimenting with circuitbreaker, I don't know which HTLC intercepting
+interface it does expect, we still have a rudimentary one on the LDK-side
+only supporting JIT channels use-case.
+
+Best,
+Antoine
+
+[0] <A HREF="https://github.com/ACINQ/eclair/pull/2330">https://github.com/ACINQ/eclair/pull/2330</A>
+[1] <A HREF="https://jamming-dev.github.io/book/about.html">https://jamming-dev.github.io/book/about.html</A>
+[2] <A HREF="https://github.com/lightning/bolts/issues/1008">https://github.com/lightning/bolts/issues/1008</A>
+[3] <A HREF="https://github.com/lightningdevkit/rust-lightning/pull/1835">https://github.com/lightningdevkit/rust-lightning/pull/1835</A>
+
+Le ven. 2 d&#233;c. 2022 &#224; 13:00, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> A simple but imperfect way to deal with channel jamming and spamming is to
+</I>&gt;<i> install a lightning firewall such as circuitbreaker [1]. It allows you to
+</I>&gt;<i> set limits like a maximum number of pending htlcs (fight jamming) and/or a
+</I>&gt;<i> rate limit (fight spamming). Incoming htlcs that exceed one of the limits
+</I>&gt;<i> are failed back.
+</I>&gt;<i>
+</I>&gt;<i> Unfortunately there are problems with this approach. Failures probably
+</I>&gt;<i> lead to extra retries which increases the load on the network as a whole.
+</I>&gt;<i> Senders are also taking note of the failure, penalizing you and favoring
+</I>&gt;<i> other nodes that do not apply limits. With a large part of the network
+</I>&gt;<i> applying limits, it will probably work better because misbehaving nodes
+</I>&gt;<i> have fewer opportunities to affect distant nodes. Then it also becomes less
+</I>&gt;<i> likely that limits are applied to traffic coming from well-behaving nodes,
+</I>&gt;<i> and the reputation of routing nodes isn&#8217;t degraded as much.
+</I>&gt;<i>
+</I>&gt;<i> But how to get to the point where restrictions are applied generally?
+</I>&gt;<i> Currently there isn&#8217;t too much of a reason for routing nodes to constrain
+</I>&gt;<i> their peers, and as explained above it may even be bad for business.
+</I>&gt;<i>
+</I>&gt;<i> Instead of failing, an alternative course of action for htlcs that exceed
+</I>&gt;<i> a limit is to hold and queue them. For example, if htlcs come in at a high
+</I>&gt;<i> rate, they&#8217;ll just be stacking up on the incoming side and are gradually
+</I>&gt;<i> forwarded when their time has come.
+</I>&gt;<i>
+</I>&gt;<i> An advantage of this is that a routing node&#8217;s reputation isn&#8217;t affected
+</I>&gt;<i> because there are no failures. This however may change in the future with
+</I>&gt;<i> fat errors [2]. It will then become possible for senders to identify slow
+</I>&gt;<i> nodes, and the no-penalty advantage may go away.
+</I>&gt;<i>
+</I>&gt;<i> A more important effect of holding is that the upstream nodes are punished
+</I>&gt;<i> for the bad traffic that they facilitate. They see their htlc slots
+</I>&gt;<i> occupied and funds frozen. They can&#8217;t coop close, and a force-close may be
+</I>&gt;<i> expensive depending on the number of htlcs that materialize on the
+</I>&gt;<i> commitment transaction. This could be a reason for them to take a careful
+</I>&gt;<i> look at the source of that traffic, and also start applying limits. Limits
+</I>&gt;<i> propagating recursively across the network and pushing bad senders into
+</I>&gt;<i> corners where they can&#8217;t do much harm anymore. It&#8217;s sort of paradoxical:
+</I>&gt;<i> jamming channels to stop jamming.
+</I>&gt;<i>
+</I>&gt;<i> One thing to note is that routing nodes employing the hold strategy are
+</I>&gt;<i> potentially punishing themselves too. If they are the initiator of a
+</I>&gt;<i> channel with many pending htlcs, the commit fee for them to pay can be high
+</I>&gt;<i> in the case of a force-close. They do not need to sweep the htlcs that were
+</I>&gt;<i> extended by their peer, but still. One way around this is to only use the
+</I>&gt;<i> hold strategy for channels that the routing node did not initiate, and use
+</I>&gt;<i> the fail action or no limit at all for self-initiated channels.
+</I>&gt;<i>
+</I>&gt;<i> Interested to hear opinions on the idea. I&#8217;ve also updated circuitbreaker
+</I>&gt;<i> with a queue mode for anyone willing to experiment with it [3].
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="https://github.com/lightningequipment/circuitbreaker">https://github.com/lightningequipment/circuitbreaker</A>
+</I>&gt;<i> [2]
+</I>&gt;<i> <A HREF="../2022-October/003723.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-October/003723.html</A>
+</I>&gt;<i> [3] <A HREF="https://github.com/lightningequipment/circuitbreaker/pull/14">https://github.com/lightningequipment/circuitbreaker/pull/14</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221202/5cdcb76a/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221202/5cdcb76a/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003781.html">[Lightning-dev] Jamming against Channel Jamming
+</A></li>
+	<LI>Next message: <A HREF="003785.html">[Lightning-dev] Jamming against Channel Jamming
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3784">[ date ]</a>
+              <a href="thread.html#3784">[ thread ]</a>
+              <a href="subject.html#3784">[ subject ]</a>
+              <a href="author.html#3784">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

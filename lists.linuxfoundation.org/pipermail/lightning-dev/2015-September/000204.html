@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Onion routing design.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20routing%20design.&In-Reply-To=%3C20150922012257.GA22782%40navy%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000198.html">
+   <LINK REL="Next"  HREF="000207.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Onion routing design.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20routing%20design.&In-Reply-To=%3C20150922012257.GA22782%40navy%3E"
+       TITLE="[Lightning-dev] Onion routing design.">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Sep 22 01:22:57 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000198.html">[Lightning-dev] Onion routing design.
+</A></li>
+        <LI>Next message: <A HREF="000207.html">[Lightning-dev] Onion routing design.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#204">[ date ]</a>
+              <a href="thread.html#204">[ thread ]</a>
+              <a href="subject.html#204">[ subject ]</a>
+              <a href="author.html#204">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Sep 21, 2015 at 06:35:58AM +0930, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On 19 September 2015 9:39:44 am AEST, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;<i> &gt;&gt;        // Sum of this whole thing after decryption.
+</I>&gt;<i> &gt;&gt;        required sha256_hash sum = 1;
+</I>
+&gt;<i> &gt; Just adding random bytes on to the end should
+</I>&gt;<i> &gt; work I think - they'll just be treated as extra padding and ignored.
+</I>&gt;<i> My original plan.  But it enables a probing attack where you corrupt the
+</I>&gt;<i> packet and if it succeeds anyway you know those bytes weren't used.
+</I>
+Actually, any random bytes on the end would be included (after decryption)
+when calculating the sha256_hash sum by the next node, no? Otherwise
+you'd at least need a length field to tell how much of the packet needs
+verifying.
+
+Hmm, I'm not sure it's possible to have the hash actually work at the
+same time as letting nodes add padding?
+
+You could have the hash only verify the current message and the following
+(encrypted) message. None of the hashes would ever then verify the added
+padding; but you'd still be vulnerable to probing attacks.
+
+Probing attacks only reveal the length of the chain, of course. AFAICS
+tor is vulnerable to this sort of probing attack? Weird.
+
+&gt;<i> Hmm, what if we include a pubkey, and you use that to encrypt 0 padding?
+</I>&gt;<i> The last hop gets the privkey (and boundary information), and she can
+</I>&gt;<i> verify the padding.
+</I>
+Actually, this is missing a step isn't it? Don't we have to generate
+symmetric keys for each step in an onion route, transmitting to Bob:
+
+  E_B( KB ) E_KB( forward $20 to Carol; E_C( KC ) E_KC( ... ) )
+
+In which case, I think Bob can append E_KB(00000..) as padding, which
+we can predict, and eg, the final message to Dave will look like:
+
+  E_D( KD ) E_KD( H; here's $15 )
+    E_KD( grbg grbg ... grbg )
+    D_KC( D_KB( E_KA( 0000 ) ) )
+    D_KC( E_KB( 0000 ) )
+    E_KC( 0000 )
+
+If you use OFB or CTR mode for the symmetric cypher, you can calculate
+D_KD() of all the padding and use that to work out the hash H of the
+plaintex message:
+
+  here's $15
+  grbg grbg ... grbg
+  D_KD(
+        D_KC( D_KB( E_KA( 0000 ) ) )
+        ...
+      )
+
+I don't think you can use CBC mode, because you'd need to know E_KD(grbg)
+in order to know D_KD( padding ), but you need to know grbg in order
+to know H, and you need to know E_KD(H + ...) in order to work out
+E_KD(grbg).
+
+You can't use sum for Kx because you need to know Kx before working out
+the sum...
+
+I think that means that:
+
+&gt;&gt;&gt;<i> The format of a route looks like so:
+</I>&gt;&gt;&gt;<i>        required bytes route;
+</I>
+should actually be something like:
+
+       required bytes hop_key; // encrypted with public key
+       required bytes route;   // encrypted with hop_key
+
+(possibly with an IV as well, if the block cypher mode doesn't just
+include that in the cyphertext)
+
+&gt;<i> But I've not had coffee yet, plus jetlag.  Could be missing a flaw or
+</I>&gt;<i> simplification!
+</I>
+It's crypto protocols; it's almost always safe to assume you're missing
+a flaw...
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000198.html">[Lightning-dev] Onion routing design.
+</A></li>
+	<LI>Next message: <A HREF="000207.html">[Lightning-dev] Onion routing design.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#204">[ date ]</a>
+              <a href="thread.html#204">[ thread ]</a>
+              <a href="subject.html#204">[ subject ]</a>
+              <a href="author.html#204">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

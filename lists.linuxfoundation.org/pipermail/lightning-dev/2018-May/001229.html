@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%3A%20A%20Simplified%20update%20Mechanism%20for%0A%09Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3C87o9hzh998.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001227.html">
+   <LINK REL="Next"  HREF="001230.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%3A%20A%20Simplified%20update%20Mechanism%20for%0A%09Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3C87o9hzh998.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts">decker.christian at gmail.com
+       </A><BR>
+    <I>Tue May  1 12:04:51 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001227.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+        <LI>Next message: <A HREF="001230.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1229">[ date ]</a>
+              <a href="thread.html#1229">[ thread ]</a>
+              <a href="subject.html#1229">[ subject ]</a>
+              <a href="author.html#1229">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Excellent summary ZmnSCPxj, I'll try to address the points inline (if
+there is anything to add that is):
+
+ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; writes:
+&gt;<i> Hi Christian,
+</I>&gt;<i>
+</I>&gt;<i> Let me know if I have summarized the paper accurately below:
+</I>&gt;<i>
+</I>&gt;<i> 1.  SIGHASH_NOINPUT removes all inputs of the transaction copy before
+</I>&gt;<i>     signing/verifying.
+</I>
+It sets them to a known constant, in this case we just blank
+them. Removing could entail more costly serialization depending on the
+implementation. bitcoind serializes into a hash accumulator so it'd not
+make a difference there, but others may do it differently.
+
+&gt;<i> 2.  SIGHASH_NOINPUT can be combined with SIGHASH_SINGLE.  It is
+</I>&gt;<i> dangerous to combine it with SIGHASH_NONE (as this also deletes all
+</I>&gt;<i> outputs of the transaction copy, so the signature only commits to
+</I>&gt;<i> nLockTime) and possibly pointless to combine it with
+</I>&gt;<i> SIGHASH_ANYONECANPAY (which deletes other inputs, but since there are
+</I>&gt;<i> no inputs after SIGHASH_NOINPUT, there is nothing else to delete).
+</I>&gt;<i> The BIP only mentions combining it with SIGHASH_SINGLE, in any case.
+</I>
+`SIGHASH_SINGLE` really is only singled out (no pun intended) because it
+is usefull for the fee feature that Rusty came up with. It's not our
+intention to exclude other uses, but you're right, it's hard to come up
+with a use-case for `SIGHASH_NOINPUT` in combination with
+`SIGHASH_NONE` or `SIGHASH_ANYONECANPAY` :-)
+
+In particular we don't want to exclude potential future sighash types,
+but those will have to be dealt with when they come up.
+
+&gt;<i> 3.  We have these kinds transactions: (1) funding transaction paying
+</I>&gt;<i> out to an ordinary N-of-N multisig (confirmed onchain); (2) offchain
+</I>&gt;<i> trigger transaction spending a funding transaction and paying out to
+</I>&gt;<i> the &quot;update transaction script&quot;; (3) offchain update transaction
+</I>&gt;<i> spending a trigger or update transaction and paying out to the &quot;update
+</I>&gt;<i> transaction script&quot; (the same script template as in trigger
+</I>&gt;<i> transaction); (4) offchain settlement transaction spending a trigger
+</I>&gt;<i> or update transaction and paying out to the counterparties according
+</I>&gt;<i> to the final agreed distribution of funds.  Update and settlement
+</I>&gt;<i> transactions are signed with SIGHASH_NOINPUT flags.
+</I>&gt;<i>
+</I>&gt;<i> 4.  The update transaction script has two branches: a CSV-encumbered
+</I>&gt;<i> N-of-N &quot;settlement&quot; branch, and a CLTV-encumbered N-of-N &quot;update&quot;
+</I>&gt;<i> branch.  Crucially, we use past Unix timestamps for the CLTV
+</I>&gt;<i> encumberance on the update.  The CLTV-encumberance starts with a
+</I>&gt;<i> minimum time value on the trigger transaction, and increments by 1 for
+</I>&gt;<i> every update transaction.
+</I>
+Really any monotonically increasing sequence of increments will work,
+but incrementing by 1 maximizes the number of updates we can perform,
+yes.
+
+&gt;<i> 5.  The CLTV-encumberance ensures that if a past update transaction is
+</I>&gt;<i> confirmed, we can spend it using any later update transaction, since
+</I>&gt;<i> CLTV uses `stackTop &lt;= nLockTime`.  The actual `nLockTime` we use is a
+</I>&gt;<i> past Unix timestamp so they are not actually time-encumbered, but the
+</I>&gt;<i> `OP_CLTV` still ensures that any later update transaction can be used
+</I>&gt;<i> to spend from any earlier update transaction, but not vice versa.
+</I>&gt;<i> This is actually quite clever.
+</I>
+Correct, the only reason to use `nLocktime` here is that we need the
+signature of the update transaction to commit to the state number, so we
+can't put it in the script itself.
+
+&gt;<i> 6.  The pubkeys on the settlement branch of each update transaction
+</I>&gt;<i> are different, and are derived using any hierarchical derivation
+</I>&gt;<i> method (trivially we can simply use the CLTV-encumberance value as the
+</I>&gt;<i> derivation index).  This ensures that each settlement transaction can
+</I>&gt;<i> only spend a particular update transaction.  Or in other words: There
+</I>&gt;<i> is a one-to-one correspondence between update and settlement
+</I>&gt;<i> transaction, and a settlement transaction can only confirm if the
+</I>&gt;<i> corresponding update transaction can be confirmed deeply enough
+</I>&gt;<i> without having its output re-spent.
+</I>
+Other bindings are possible, e.g., compare the `nLocktime` again, but
+binding through pubkeys minimizes the script size.
+
+&gt;<i> 7.  The pubkeys on the update branch are all the same in all update
+</I>&gt;<i> transactions.  This lets any update transaction replace any other
+</I>&gt;<i> update transaction, as long as the CLTV-encumberance (which is used
+</I>&gt;<i> for ordering rather than actual absolute locktime) is respected;
+</I>&gt;<i> together they mean that any later update transaction can replace any
+</I>&gt;<i> earlier update transaction.
+</I>&gt;<i>
+</I>&gt;<i> 8.  If an old update transaction is confirmed, the settlement
+</I>&gt;<i> transaction corresponding to it is still encumbered by CSV and cannot
+</I>&gt;<i> be confirmed immediately.  During this time, a later update
+</I>&gt;<i> transaction can spend it and be confirmed.  If that update transaction
+</I>&gt;<i> is still not the latest available, it can be further replaced with
+</I>&gt;<i> any, later transaction (since the CLTV-encumberance and the
+</I>&gt;<i> `nLockTime` increase in lockstep with each other) until the latest
+</I>&gt;<i> update transaction is confirmed.
+</I>
+Notice that the update transactions are actually paying their keep,
+i.e., they have fees attached, so we think that participants will simply
+jump to the latest state and not waste fees on things that have no
+chance of getting them closer to getting an old state enforced.
+
+&gt;<i> 9.  When the latest update transaction gets confirmed, no other update
+</I>&gt;<i> transaction can successfully spend its &quot;update&quot; branch (as their
+</I>&gt;<i> `nLockTime` is less than the CLTV-encumberance on that branch).  This
+</I>&gt;<i> lets the CSV-encumbered settlement transaction be confirmable after
+</I>&gt;<i> some blocks.
+</I>&gt;<i>
+</I>&gt;<i> 10.  Update transactions pay no fees!  Instead, for update
+</I>&gt;<i> transactions (but not settlement transactions) we additionally give
+</I>&gt;<i> SIGHASH_SINGLE: thus, no matter what transaction they end up in, the
+</I>&gt;<i> signatures for the update transaction will always be verified against
+</I>&gt;<i> only the update transaction output that pays out to the update
+</I>&gt;<i> transaction script.  We join update transactions with a spend of some
+</I>&gt;<i> onchain UTXO we control, which pays for the fees of the joined the
+</I>&gt;<i> update transactions, and may have a second output that is the
+</I>&gt;<i> remainder of the fund after paying the fees.
+</I>&gt;<i>
+</I>&gt;<i> 11.  Settlement transactions can carry contracts (in much the same way
+</I>&gt;<i> that Poon-Dryja commitment transactions); however contracts that
+</I>&gt;<i> contain absolute timelock components will be affected by the
+</I>&gt;<i> CSV-encumberance of the settlement transaction.
+</I>
+Exactly, the timeouts need to be chosen high enough in order to allow an
+orderly resolution on-chain, should one party become uncooperative.
+
+&gt;<i> ---
+</I>&gt;<i>
+</I>&gt;<i> Some pros and cons relative to Poon-Dryja (LN-penalty) channels:
+</I>&gt;<i>
+</I>&gt;<i> - Requires more transactions in the worst-case: trigger, update,
+</I>&gt;<i> settlement.  Compare to Poon-Dryja: commitment, claim.
+</I>&gt;<i> Decker-Russell-Osuntokun channels can be trigger-settlement but only
+</I>&gt;<i> in the degenerate case where the channel was never updated (indeed for
+</I>&gt;<i> implementation simplicity we might rather prefer to make an initial
+</I>&gt;<i> update transaction at the start, instead of starting with a
+</I>&gt;<i> trigger-settlement).
+</I>
+Actually the trigger can also be replaced in the cooperative case,
+meaning that the settlement in that case is just a single transaction,
+identical to LN-penalty. It is true that we've split the unilateral
+commitment from LN-penalty into two transactions, but we removed the
+need for a claim transaction, since funds directly go to the recipient
+and we have no our_unilateral/to_us or their_unilateral/to_them delay
+that needs to be sweeped (technically also not necessary, but all
+implementation do that if I'm not mistaken). Even if funds are not
+sweeped, the UTXO state is larger due to the bigger script that our
+simple outputs for the settlement.
+
+&gt;<i> - Dropping unilaterally onchain requires the party doing the drop to
+</I>&gt;<i> have some onchain funds it controls completely, since update
+</I>&gt;<i> transactions do not pay fees by themselves.  We cannot have an
+</I>&gt;<i> autopilot that puts all onchain funds on channels, we need to reserve
+</I>&gt;<i> some small amount for paying fees of unilateral closes.
+</I>
+That is true, and I think this falls into the same category as the
+reserve funds in the LN-penalty mechanism, i.e., funds that are there
+but can't be used. There may be a clever way to build a penalty on top
+of eltoo and then combine the fees and the penalties. Then again, a
+misbehaving participant risking their on-chain fees for an outdated
+update transaction may be a sufficient deterrent.
+
+&gt;<i> + The above is counterbalanced by the fact that we can easily adjust
+</I>&gt;<i> onchain fees for update transactions, unlike the case for Poon-Dryja
+</I>&gt;<i> commitment transactions which once signed cannot have fees updated.
+</I>&gt;<i>
+</I>&gt;<i> = The onchain reserve (for paying fees for unilaterally dropped
+</I>&gt;<i> channels) is roughly equivalent to the channel reserve under
+</I>&gt;<i> Poon-Dryja; such a channel reserve no longer exists under
+</I>&gt;<i> Decker-Russell-Osuntukun channels, but is replaced by the onchain
+</I>&gt;<i> fee-paying reserve.  Possibly the fee-paying reserve here might be
+</I>&gt;<i> feasibly smaller than the channel reserve under Poon-Dryja.
+</I>
+The one downside that this has is that the channel participants have
+very little control over the fees that a misbehaving node may get
+punished with. As one endpoint I can no longer impose an arbitrary
+minimum loss in case of breach.
+
+&gt;<i> - The CSV-encumberance on settlement transactions, which are the ones
+</I>&gt;<i> which carry the contracts in the channel, affects all
+</I>&gt;<i> absolute-timelocked contracts transported on the channel.  Compare to
+</I>&gt;<i> Poon-Dryja, where commitment transactions themselves are unencumbered
+</I>&gt;<i> by CSV, and we simply insert the revocation to spends of the contracts
+</I>&gt;<i> being transported (i.e. the reason why we have HTLC-success and
+</I>&gt;<i> HTLC-timeout transactions in BOLT spec).
+</I>
+True, but as I argued in another mail, this is a fixed offset, that is
+in the same range as today's CLTV deltas for some nodes. So for the
+network of today using eltoo is roughly equivalent of adding another hop
+to our path :-)
+
+&gt;<i> + Like invalidation trees, we can use N-party funds rather than just
+</I>&gt;<i> 2-party funds (channels).  We can even use M-of-N, so if there is at
+</I>&gt;<i> least some amount of trust you have with a group of entities (family,
+</I>&gt;<i> close friends, conglomeration partners, ZmnSCPxj, politicians...) it
+</I>&gt;<i> would be possible to have funds that require say only a majority of
+</I>&gt;<i> its owners to be updated.
+</I>
+The trust really comes down to a tradeoff between group size and
+liveness: the bigger the group and the more churn you have in that
+group, the less reliable the system becomes. Loss of liveness means that
+the funds in the contract become unavailable for a know period of time.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001227.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+	<LI>Next message: <A HREF="001230.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1229">[ date ]</a>
+              <a href="thread.html#1229">[ thread ]</a>
+              <a href="subject.html#1229">[ subject ]</a>
+              <a href="author.html#1229">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

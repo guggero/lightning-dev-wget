@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] daemon/p2p protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20daemon/p2p%20protocol&In-Reply-To=%3C20151016205355.GA18796%40navy%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000281.html">
+   <LINK REL="Next"  HREF="000271.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] daemon/p2p protocol</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20daemon/p2p%20protocol&In-Reply-To=%3C20151016205355.GA18796%40navy%3E"
+       TITLE="[Lightning-dev] daemon/p2p protocol">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Oct 16 20:53:55 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000281.html">[Lightning-dev] Specifications of Broadcasting Layers
+</A></li>
+        <LI>Next message: <A HREF="000271.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#265">[ date ]</a>
+              <a href="thread.html#265">[ thread ]</a>
+              <a href="subject.html#265">[ subject ]</a>
+              <a href="author.html#265">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey *,
+
+A few thoughts on the daemon/p2p protocol in slightly longer form than
+is feasible on IRC...
+
+# protobufs or capnp or flatbuffers or ...
+
+Currently lightning relies on protobuf's with union support, which
+requires a newer version of protobuf-c than is in Debian or Ubuntu.
+I've filed this as <A HREF="http://bugs.debian.org/801950">http://bugs.debian.org/801950</A> -- seems to be an
+easy fix.
+
+11:43  * rusty looks at capnproto, is tempted to see what that would
+         look like compared to protobufs.
+
+capnp's canonical implementation is in C++ rather than C; the C version
+is serialisaion-only, which seems like it loses the fancy time-travel
+RPC feature? C and Python versions of capnp don't seem to be packaged
+for Debian. Not a show-stopper afaics, but I'm not seeing the benefit?
+
+11:44 &lt;rusty&gt; But it still doesn't have fixed-length fields, which is a
+              PITA.
+
+FWIW, I think that &quot;fixed-length fields&quot; is just a schema/IDL thing? ie
+the serialised format should still have a byte or two to specify format
+and length (because it's no big deal and slightly safer/saner when
+deserialising), but if it's not the correct value from the schema/.proto
+file, you get an error when you try to de/serialise.
+
+With protobufs, I think you could do this with custom field options:
+
+<A HREF="https://developers.google.com/protocol-buffers/docs/proto?hl=en#customoptions">https://developers.google.com/protocol-buffers/docs/proto?hl=en#customoptions</A> 
+
+Something like:
+
+  import &quot;descriptor.proto&quot;;
+  extend google.protobuf.FieldOptions {
+    optional int32 fixed_size = 59797;
+  }
+
+  // Protobufs don't have fixed-length fields, so these are a hack.
+  message sha256_hash2 {
+    required bytes hash = 1 [(fixed_size)=32];
+  }
+
+seems like it works as documentation. Not obvious how to get it passed
+through to C somehow so that you could actually check it automatically.
+(Not sure what's with the brackets around fixed_size; it whines if you
+don't have them.)
+
+
+# lightning public keys...
+
+I think there are (at least) three uses for public key crypto in lightning:
+
+  1) routing keys -- used for constructing the onion. the routing public
+     key is essentially the node's identity as far as lightning is
+     concerned and must be well known and associated with channels
+     and fees for routing to be possible. *However* a single lightning
+     instance might play host to multiple routing keys.  (This would be
+     less efficient for the network, but might be a win for privacy or
+     might be dictated by deployment reasons...)
+
+  2) anchor keys -- used for spending the anchor transaction for a
+     channel and thus signing commitment transactions; only needs to be
+     known by the counterparty you're constructing a channel with; can
+     be different for every channel.
+
+  3) p2p keys -- used for establishing a shared secret when talking to a
+     node, to avoid your p2p communications being available to someone
+     else (either a passive observer or a MITM). could be different for
+     every connection, or could just have one the lightning instance.
+
+
+
+# p2p protocol...
+
+If Alice tries to connect to Bob, I think the current protocol (as of
+git commit gc7eaa4f, from daemon/cryptopkt.c) is:
+
+  Alice: &quot;Call me &lt;RichGirl57914&gt;.&quot;
+  Bob: &quot;Call me &lt;MoneyBags70623&gt;.&quot;
+
+Then, encrypted to key based on ECDH(RichGirl57914, MoneyBag70623):
+
+  Alice: &quot;RichGirl57914 is actually Alice, signed &lt;Alice&gt;&quot;
+  Bob: &quot;MoneyBags70623 is actually Bob, signed &lt;Bob&gt;&quot;
+
+This is secure against passive monitoring; and after the signatures are
+verified, it's also secure against MITM attacks.
+
+It seems like it has a couple of downsides though:
+
+ - if you're accepting incoming p2p connections, you'll reveal your node
+   id to anyone who asks
+
+ - if the node you're connecting to is MITM'ed, you'll reveal your node
+   id before realising you're MITM'ed
+
+ - you can't run multiple node ids on a single connection
+
+ - Bob has to do crypto operations for every connection, leading to
+   potential DoS attacks
+
+I think treating the relationship between a network address (IPv4/IPv6
+addr and port, tor service) and the lightning network address as sensitive
+is valuable. Revealing a network address helps reveal physical identity,
+makes denial-of-service attacks straightforward, and gives a point of
+entry for targetted hacking to steal your money.
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000281.html">[Lightning-dev] Specifications of Broadcasting Layers
+</A></li>
+	<LI>Next message: <A HREF="000271.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#265">[ date ]</a>
+              <a href="thread.html#265">[ thread ]</a>
+              <a href="subject.html#265">[ subject ]</a>
+              <a href="author.html#265">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

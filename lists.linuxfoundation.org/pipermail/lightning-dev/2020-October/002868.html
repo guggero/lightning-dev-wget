@@ -1,0 +1,289 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CCACdvm3OSSmvmcDZFRuvj%2B9i6LFBVH7ngFGZu47_CaW1CZ41jrg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002867.html">
+   <LINK REL="Next"  HREF="002869.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CCACdvm3OSSmvmcDZFRuvj%2B9i6LFBVH7ngFGZu47_CaW1CZ41jrg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself">bastien at acinq.fr
+       </A><BR>
+    <I>Fri Oct 23 13:06:45 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002867.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+        <LI>Next message: <A HREF="002869.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2868">[ date ]</a>
+              <a href="thread.html#2868">[ thread ]</a>
+              <a href="subject.html#2868">[ subject ]</a>
+              <a href="author.html#2868">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey Joost and Z,
+
+I brought up the question about the amounts because it could be that
+&gt;<i> amounts high enough to thwart attacks are too high for honest users or
+</I>&gt;<i> certain uses.
+</I>
+
+I don't think this is a concern for this proposal, unless there's an attack
+vector I missed.
+The reason I claim that is that the backwards upfront payment can be made
+somewhat big without any
+negative impact on honest nodes. If you're an honest intermediate node,
+only two cases are possible:
+
+* your downstream peer settled the HTLC quickly (before the grace period
+ends): in that case you
+refund him his upfront fee, and you have time to settle the HTLC upstream
+while still honoring
+the grace period, so it will be refunded to you as well (unless you delay
+the settlement upstream
+for whatever reason, in which case you deserve to pay the hold_fee)
+* your grace period has expired, so you can't get a refund upstream: if
+that happens, the grace
+period with your downstream node has also expired, so you're earning money
+downstream and paying
+money upstream, and you'll usually even take a small positive spread so
+everything's good
+
+The only node that can end up loosing money on the backwards upfront
+payment is the last node in
+the route. But that node should always settle the HTLC quickly (or decide
+to hodl it, but in that
+case it's normal that it pays the hold_fee).
+
+But what happens if the attacker is also on the other end of the
+&gt;<i> uncontrolled spam payment? Not holding the payment, but still collecting
+</I>&gt;<i> the forward payments?
+</I>
+
+That's what I call short-lived `controlled spam`. In that case the attacker
+pays the forward fee at
+the beginning of the route but has it refunded at the end of the route. If
+the attacker doesn't
+want to lose any money, he has to release the HTLC before the grace period
+ends (which is going to
+be short-lived - at least compared to block times). This gives an
+opportunity for legitimate payments
+to use the HTLC slots (but it's a race between the attacker and the
+legitimate users).
+
+It's not ideal, because the attacker isn't penalized...the only way I think
+we can penalize this
+kind of attack is if the forward fee decrements at each hop, but in that
+case it needs to be in the
+onion (to avoid probing) and the delta needs to be high enough to actually
+penalize the attacker.
+Time to bikeshed some numbers!
+
+C can trivially grief D here, making it look like D is delaying, by
+&gt;<i> delaying its own `commitment_signed` containing the *removal* of the HTLC.
+</I>
+
+You're right to dive into these, there may be something here.
+But I think your example doesn't work, let me know if I'm mistaken.
+D is the one who decides whether he'll be refunded or not, because D is the
+first to send the
+`commit_sig` that removes the HTLC. I think we would extend `commit_sig`
+with a tlv field that
+indicates &quot;I refunded myself for HTLC N&quot; to help C compute the same commit
+tx and verify sigs.
+
+I agree with you that the details of how we'll implement the grace period
+may have griefing attacks
+depending on how we do it, it's worth exploring further.
+
+Cheers,
+Bastien
+
+Le ven. 23 oct. 2020 &#224; 12:50, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning t-bast,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt; And in this case C earns.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Can C delay the refund to D to after the grace period even if D
+</I>&gt;<i> settled the HTLC quickly?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Yes C earns, but D has misbehaved. As a final recipient, D isn't
+</I>&gt;<i> dependent on anyone downstream.
+</I>&gt;<i> &gt; An honest D should settle the HTLC before the `grace_period` ends. If D
+</I>&gt;<i> chooses to hold the HTLC
+</I>&gt;<i> &gt; for a while, then it's fair that he pays C for this.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Okay, now let us consider the case where the supposedly-delaying party is
+</I>&gt;<i> not the final destination.
+</I>&gt;<i>
+</I>&gt;<i> So, suppose D indicates to C that it should fail the HTLC.
+</I>&gt;<i> In this case, C cannot immediately propagate the `update_fail_htlc`
+</I>&gt;<i> upstream, since the latest commitment transaction for the C&lt;-&gt;D channel
+</I>&gt;<i> still contains the HTLC.
+</I>&gt;<i>
+</I>&gt;<i> In addition, our state machine is hand-over-hand, i.e. there is a small
+</I>&gt;<i> window where there are two valid commitment transactions.
+</I>&gt;<i> What happens is we sign the next commitment transaction and *then* revoke
+</I>&gt;<i> the previous one.
+</I>&gt;<i>
+</I>&gt;<i> So I think C can only safely propagate its own upstream `update_fail_htlc`
+</I>&gt;<i> once it receives the `revoke_and_ack` from D.
+</I>&gt;<i>
+</I>&gt;<i> So the time measured for the grace period between C and D should be from C
+</I>&gt;<i> sending `update_add_htlc` to C receiving `revoke_and_ack` from D, in case
+</I>&gt;<i> the HTLC fails.
+</I>&gt;<i> This is the time period that D is allowed to consume, and if it exceeds
+</I>&gt;<i> the grace period, it is penalized.
+</I>&gt;<i>
+</I>&gt;<i> (In this situation, it is immaterial if D is the destination: C cannot
+</I>&gt;<i> know this fact.)
+</I>&gt;<i>
+</I>&gt;<i> So let us diagram this better:
+</I>&gt;<i>
+</I>&gt;<i>      C                       D
+</I>&gt;<i>      |----update_add_htlc---&gt;| ---
+</I>&gt;<i>      |---commitment_signed--&gt;|  ^
+</I>&gt;<i>      |&lt;----revoke_and_ack----|  |
+</I>&gt;<i>      |&lt;--commitment_signed---|  |
+</I>&gt;<i>      |-----revoke_and_ack---&gt;|  |
+</I>&gt;<i>      |                       | grace period
+</I>&gt;<i>      |&lt;--update_fail_htlc----|  |
+</I>&gt;<i>      |&lt;--commitment_signed---|  |
+</I>&gt;<i>      |-----revoke_and_ack---&gt;|  |
+</I>&gt;<i>      |---commitment_signed--&gt;|  v  &lt;--- grief point!
+</I>&gt;<i>      |&lt;----revoke_and_ack----| ---
+</I>&gt;<i>
+</I>&gt;<i> (somebody *else* better make sure my understanding of the state machine is
+</I>&gt;<i> correct!)
+</I>&gt;<i>
+</I>&gt;<i> C can trivially grief D here, making it look like D is delaying, by
+</I>&gt;<i> delaying its own `commitment_signed` containing the *removal* of the HTLC.
+</I>&gt;<i> D cannot send its own `revoke_and_ack` until it receives the signature for
+</I>&gt;<i> its own next commitment, as if it did so, it would lose the ability to
+</I>&gt;<i> close the channel unilaterally; it has to wait for C to send the
+</I>&gt;<i> `commitment_signed`.
+</I>&gt;<i>
+</I>&gt;<i> Thus, it seems to me that C can grief D here.
+</I>&gt;<i>
+</I>&gt;<i> The question is: does the above C-can-grief-D matter?
+</I>&gt;<i>
+</I>&gt;<i> I think D does have a defense against C griefing in the above case:
+</I>&gt;<i>
+</I>&gt;<i> * If the time between D-&gt;`update_fail_htlc`-&gt;C and the corresponding
+</I>&gt;<i> C-&gt;`commitment_signed`-&gt;D becomes too long:
+</I>&gt;<i>   * D drops the channel onchain.
+</I>&gt;<i>     * The dropped commitment tx still contains the HTLC, since it is the
+</I>&gt;<i> &quot;previous&quot; commitment that D happens to hold that has not yet had the
+</I>&gt;<i> `update_fail_htlc` committed.
+</I>&gt;<i>
+</I>&gt;<i> If D performs the above, then C is forced to wait *even longer* (it has to
+</I>&gt;<i> wait out the HTLC timelock) before it can safely propagate the
+</I>&gt;<i> `update_fail_htlc`: D could be fooling with it and actually knows the
+</I>&gt;<i> preimage and claim it onchain, so C for its own safety *must* wait out the
+</I>&gt;<i> onchain timelock.
+</I>&gt;<i>
+</I>&gt;<i> Does that make sense?
+</I>&gt;<i> Does it sensibly protect against this griefing?
+</I>&gt;<i> Is it too much of a punishment and could potentially hurt D more than it
+</I>&gt;<i> hurts C if C is a heavily-connected node that will not miss the channel
+</I>&gt;<i> while D has fewer channels and opened the C&lt;-&gt;D channel in the first place?
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i>
+</I>&gt;<i> For success case `update_fulfill_htlc`, I believe C can immediately
+</I>&gt;<i> propagate this back to its upstream since it can now.
+</I>&gt;<i> Thus, in that case, we can stop the timer at the `update_fulfill_htlc`.
+</I>&gt;<i>
+</I>&gt;<i> So at least for the *end point* of the grace period, I think the end point
+</I>&gt;<i> should be:
+</I>&gt;<i>
+</I>&gt;<i> * If the HTLC failed:
+</I>&gt;<i>   * When both participants have sent `revoke_and_ack`.
+</I>&gt;<i> * If the HTLC succeeded:
+</I>&gt;<i>   * When the downstream participant has sent `update_fulfill_htlc`.
+</I>&gt;<i>
+</I>&gt;<i> For the *start point*, it seems the C-&gt;`commitment_signed`-&gt;D containing
+</I>&gt;<i> the HTLC would work as the start point.
+</I>&gt;<i> In particular, it seems to me that C can also deliberately defer its own
+</I>&gt;<i> C-&gt;`revoke_and_ack`-&gt;D:
+</I>&gt;<i>
+</I>&gt;<i>      C                       D
+</I>&gt;<i>      |----update_add_htlc---&gt;|
+</I>&gt;<i>      |---commitment_signed--&gt;| ---
+</I>&gt;<i>      |&lt;----revoke_and_ack----|  ^
+</I>&gt;<i>      |&lt;--commitment_signed---|  |
+</I>&gt;<i>      |-----revoke_and_ack---&gt;|  |  &lt;--- grief point!
+</I>&gt;<i>      |                       | grace period
+</I>&gt;<i>      |&lt;--update_fail_htlc----|  |
+</I>&gt;<i>      |&lt;--commitment_signed---|  |
+</I>&gt;<i>      |-----revoke_and_ack---&gt;|  |
+</I>&gt;<i>      |---commitment_signed--&gt;|  v
+</I>&gt;<i>      |&lt;----revoke_and_ack----| ---
+</I>&gt;<i>
+</I>&gt;<i> (If D deliberately delays, then it is penalized, so we should consider the
+</I>&gt;<i> case where C attempts to trigger the reverse case).
+</I>&gt;<i> D cannot safely fulfill the HTLC until after the previous commitment
+</I>&gt;<i> transactions of *both* sides have been revoked (&quot;irrevocably committed&quot;
+</I>&gt;<i> state).
+</I>&gt;<i> So D can use the same defense, I think: if C is taking too long to send
+</I>&gt;<i> the `revoke_and_ack` pointed at above, it drops the channel onchain with
+</I>&gt;<i> the HTLC instantiated (which is why the *start time* has to be the
+</I>&gt;<i> C-&gt;`commitment_signed`-&gt;D that contains the new HTLC).
+</I>&gt;<i>
+</I>&gt;<i> Thus the D grace period has two smaller grace periods that D imposes on C,
+</I>&gt;<i> using the threat of channel drop to protect against the C-side griefing.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Sorry for dropping into details already but so far this is the only
+</I>&gt;<i> griefing attack I can think of right now.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201023/87e456f4/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201023/87e456f4/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002867.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+	<LI>Next message: <A HREF="002869.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2868">[ date ]</a>
+              <a href="thread.html#2868">[ thread ]</a>
+              <a href="subject.html#2868">[ subject ]</a>
+              <a href="author.html#2868">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

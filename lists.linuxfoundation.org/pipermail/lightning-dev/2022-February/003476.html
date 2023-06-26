@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Normal operation questions
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Normal%20operation%20questions&In-Reply-To=%3CCO6PR06MB7236D0EDABB2885DB9790D1F9C359%40CO6PR06MB7236.namprd06.prod.outlook.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003473.html">
+   <LINK REL="Next"  HREF="003477.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Normal operation questions</H1>
+    <B>Benjamin Weintraub</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Normal%20operation%20questions&In-Reply-To=%3CCO6PR06MB7236D0EDABB2885DB9790D1F9C359%40CO6PR06MB7236.namprd06.prod.outlook.com%3E"
+       TITLE="[Lightning-dev] Normal operation questions">weintraub.b at northeastern.edu
+       </A><BR>
+    <I>Wed Feb 16 21:01:52 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003473.html">[Lightning-dev] Normal operation questions
+</A></li>
+        <LI>Next message: <A HREF="003477.html">[Lightning-dev] Normal operation questions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3476">[ date ]</a>
+              <a href="thread.html#3476">[ thread ]</a>
+              <a href="subject.html#3476">[ subject ]</a>
+              <a href="author.html#3476">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Laolu!
+
+Thanks for the helpful reply. A couple follow up questions:
+
+1) Why would concurrent signatures generate additional messages? My understanding is that by the time the signatures are sent, the HTLCs are already locked in.
+
+2) Perhaps I didn't just understand your explanation, but I still don't get why the additional `commitment_signed` and `revoke_and_ack` messages are necessary. The initial pair of `commitment_signed` and `revoke_and_ack` messages establish a new state _conditioned_ on possessing the pre-image, right? So after the pre-image is shared, then all parties have assurance of the new state and therefore _could_ go to the chain (even if they don't want to, because they want to keep the channel open). Since the new state is already guaranteed by the previous commitments and revocations, what purpose do the additional commitments and revocations provide?
+
+
+Thanks again!
+Ben
+
+--
+Ben Weintraub
+PhD Student
+Khoury College of Computer Sciences
+Northeastern University
+<A HREF="https://ben-weintraub.com/">https://ben-weintraub.com/</A>
+
+________________________________
+From: Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt;
+Sent: Tuesday, February 15, 2022 18:13
+To: Benjamin Weintraub &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">weintraub.b at northeastern.edu</A>&gt;
+Cc: <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A> &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt;
+Subject: Re: [Lightning-dev] Normal operation questions
+
+Hi Benjamin,
+
+&gt;<i> 1) Multiple sources indicate that after Alice sends the `update_add_htlc`,
+</I>&gt;<i> she should then send the `commitment_signed`, but why is it important that
+</I>&gt;<i> she sends it first (before Bob)? As far as I understand, as long as she
+</I>&gt;<i> doesn't revoke the old state before Bob commits to the new state, there
+</I>&gt;<i> shouldn't be a problem. In that case, the order wouldn't matter---they could
+</I>&gt;<i> even send their commitments concurrently. So does the order matter?
+</I>
+You're correct that it isn't absolutely necessary that she sends a new
+signature after adding a new HTLC to the pending set of HTLCs. Alice may
+want to delay her signature if she has other HTLCs she wants to add to the
+commitment transaction, which allows her to batch/pipeline updates to the
+channel.
+
+If Alice is forwarding that HTLC, and Bob's side of the channel has been
+dormant (not making many updates), then it's her best interest to propose a
+new state immediately as she may generate some routing fees from a
+successful forward.
+
+Concurrent signatures aren't an issue, but will end up generating additional
+state transitions for both sides to have the exact same set of locked in
+HTLCs.
+
+&gt;<i> 2) After Bob sends the `update_fulfill_htlc`, both he and Alice exchange
+</I>&gt;<i> `commitment_signed` and `revoke_and_ack` messages again. Why is this
+</I>&gt;<i> necessary? After Alice receives the preimage, doesn't she have enough
+</I>&gt;<i> information to claim her funds (with the new state)?
+</I>
+If Bob is sending the pre-image, then _he_ is the one that is claiming the
+funds. Once Bob learns of the pre-image, he can go to chain if he wants to
+in order to claim the HTLC. However that'll be a lot slower and also cost
+more in chain fees than doing an update off-chain to settle the HTLC from
+the PoV of the commitment transaction of both parties.  Both sides exchange
+those messages in order to update their commitment state _off chain_.
+
+Once Alice receives the pre-image (assuming a multi-hop scenario), she can
+opt to not wait for the full exchange, and instead _pipeline_ the pre-image
+back upstream in the route. In practice, this can reduce perceived user
+latency for payments, as you can side step the 1.5 RTTs at each hop in the
+route, and simply sling the pre-image all the way back to the original
+sender.
+
+-- Laolu
+
+On Tue, Feb 15, 2022 at 7:32 AM Benjamin Weintraub &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">weintraub.b at northeastern.edu</A>&lt;mailto:<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">weintraub.b at northeastern.edu</A>&gt;&gt; wrote:
+Hi all,
+
+I have a couple questions about the Normal Operation protocol. For the following, consider a single-hop payment between Alice and Bob over a single channel.
+
+1) Multiple sources indicate that after Alice sends the `update_add_htlc`, she should then send the `commitment_signed`, but why is it important that she sends it first (before Bob)? As far as I understand, as long as she doesn't revoke the old state before Bob commits to the new state, there shouldn't be a problem. In that case, the order wouldn't matter---they could even send their commitments concurrently. So does the order matter?
+
+2) After Bob sends the `update_fulfill_htlc`, both he and Alice exchange `commitment_signed` and `revoke_and_ack` messages again. Why is this necessary? After Alice receives the preimage, doesn't she have enough information to claim her funds (with the new state)?
+
+
+Thanks!
+Ben
+
+--
+Ben Weintraub
+PhD Student
+Khoury College of Computer Sciences
+Northeastern University
+<A HREF="https://ben-weintraub.com/&lt;https://nam12.safelinks.protection.outlook.com/?url=https%3A%2F%2Fben-weintraub.com%2F&amp;data=04%7C01%7Cweintraub.b%40northeastern.edu%7Cd033116731cd4050291708d9f0d8d9bb%7Ca8eec281aaa34daeac9b9a398b9215e7%7C0%7C0%7C637805637505660537%7CUnknown%7CTWFpbGZsb3d8eyJWIjoiMC4wLjAwMDAiLCJQIjoiV2luMzIiLCJBTiI6Ik1haWwiLCJXVCI6Mn0%3D%7C2000&amp;sdata=ip73Qo2E1UUud0LxEuMVCpYJQNxYQYLB3YtW0xIrtUA%3D&amp;reserved=0">https://ben-weintraub.com/&lt;https://nam12.safelinks.protection.outlook.com/?url=https%3A%2F%2Fben-weintraub.com%2F&amp;data=04%7C01%7Cweintraub.b%40northeastern.edu%7Cd033116731cd4050291708d9f0d8d9bb%7Ca8eec281aaa34daeac9b9a398b9215e7%7C0%7C0%7C637805637505660537%7CUnknown%7CTWFpbGZsb3d8eyJWIjoiMC4wLjAwMDAiLCJQIjoiV2luMzIiLCJBTiI6Ik1haWwiLCJXVCI6Mn0%3D%7C2000&amp;sdata=ip73Qo2E1UUud0LxEuMVCpYJQNxYQYLB3YtW0xIrtUA%3D&amp;reserved=0</A>&gt;
+
+_______________________________________________
+Lightning-dev mailing list
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>&lt;mailto:<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>&gt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev&lt;https://nam12.safelinks.protection.outlook.com/?url=https%3A%2F%2Flists.linuxfoundation.org%2Fmailman%2Flistinfo%2Flightning-dev&amp;data=04%7C01%7Cweintraub.b%40northeastern.edu%7Cd033116731cd4050291708d9f0d8d9bb%7Ca8eec281aaa34daeac9b9a398b9215e7%7C0%7C0%7C637805637505660537%7CUnknown%7CTWFpbGZsb3d8eyJWIjoiMC4wLjAwMDAiLCJQIjoiV2luMzIiLCJBTiI6Ik1haWwiLCJXVCI6Mn0%3D%7C2000&amp;sdata=V1m2qqncyahnT7crpeYhCmgGcBjep%2Ft%2FIBnjzuDbRJk%3D&amp;reserved=0">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev&lt;https://nam12.safelinks.protection.outlook.com/?url=https%3A%2F%2Flists.linuxfoundation.org%2Fmailman%2Flistinfo%2Flightning-dev&amp;data=04%7C01%7Cweintraub.b%40northeastern.edu%7Cd033116731cd4050291708d9f0d8d9bb%7Ca8eec281aaa34daeac9b9a398b9215e7%7C0%7C0%7C637805637505660537%7CUnknown%7CTWFpbGZsb3d8eyJWIjoiMC4wLjAwMDAiLCJQIjoiV2luMzIiLCJBTiI6Ik1haWwiLCJXVCI6Mn0%3D%7C2000&amp;sdata=V1m2qqncyahnT7crpeYhCmgGcBjep%2Ft%2FIBnjzuDbRJk%3D&amp;reserved=0</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220216/16cb3180/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220216/16cb3180/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003473.html">[Lightning-dev] Normal operation questions
+</A></li>
+	<LI>Next message: <A HREF="003477.html">[Lightning-dev] Normal operation questions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3476">[ date ]</a>
+              <a href="thread.html#3476">[ thread ]</a>
+              <a href="subject.html#3476">[ subject ]</a>
+              <a href="author.html#3476">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

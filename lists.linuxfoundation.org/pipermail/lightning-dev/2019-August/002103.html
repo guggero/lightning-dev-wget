@@ -1,0 +1,1053 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%20by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CCAO3Pvs8uR1q-QycLuybh0HYLK6sauueJY8WrsB5jBG%2Bq1LAX5Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002095.html">
+   <LINK REL="Next"  HREF="002105.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%20by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CCAO3Pvs8uR1q-QycLuybh0HYLK6sauueJY8WrsB5jBG%2Bq1LAX5Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques">laolu32 at gmail.com
+       </A><BR>
+    <I>Thu Aug  1 02:29:46 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002095.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by	Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+        <LI>Next message: <A HREF="002105.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2103">[ date ]</a>
+              <a href="thread.html#2103">[ thread ]</a>
+              <a href="subject.html#2103">[ subject ]</a>
+              <a href="author.html#2103">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> I found out recently (mid-2019) that mainnet Lightning nodes take an
+</I>&gt;<i> inordinate amount of time to find a route between themselves and an
+</I>&gt;<i> arbitrary payee node.
+</I>&gt;<i> Typical quotes suggested that commodity hardware would take 2 seconds to
+</I>&gt;<i> find a route
+</I>
+Can you provide a reproducible benchmark or further qualify this number (2
+seconds)? Not commenting on the rest of this email as I haven't read the
+rest of it yet, but this sounds like just an issue of engineering
+optimization. AFAIK, most implementations are using unoptimized on-disk
+representations of the graph, do minimal caching, and really haven't made
+any sort of push to optimize these hot spots. There's no reason that finding
+a path in a graph of a 10s of thousands of edges should take _2 seconds_.
+
+Beyond that, to my knowledge, all implementations other and lnd implement a
+very rudimentary time based edge/node pruning in response to failures. I
+call it rudimentary, as it just waits a small period of time, then forgets
+all its past path finding history. As a result, each attempt will include
+nodes that have been known to be offline, or nonoperational channels,
+effectively doing redundant work each attempt.
+
+The latest version of our software has moved beyond this [1], and will
+factor in past path finding attempts into its central &quot;mission control&quot;,
+allowing it to learn from each attempt, and even import existing state into
+its path finding memory (essentially a confidence factor that takes into
+account the cost of a failed attempt mapped into a scalar weight we can use
+for comparison purposes). This is just an initial first step, but we've seen
+a significant improvement with just a _little_ bit more intelligence in our
+path finding heuristics. We should take care to not get distracted by more
+distant &quot;pie in the sky&quot; like ideas (since many of them are half-baked),
+lest we ignore these low hanging engineering fruits and incremental
+algorithmic updates.
+
+&gt;<i> This is concerning, of course, since we would like the public Lightning
+</I>&gt;<i> Network to grow a few more orders of magnitude.
+</I>
+I'd say exactly _how large_ the _public_ graph needs to be is an open
+question. Most of the public channels in the network today are more
+extremely underutilized with capital largely being over allocated. Based on
+our active network analysis, only a few hundred nodes are actively
+managing their channels effectively, allowing them to be effective routing
+nodes.
+
+moar channels != better
+
+As a result, clients today are able to ignore a _majority_ of the known
+graph, and still have their payments attempts be successful, as they'll
+ignore all the routing nodes that aren't actually walking the walk (proper
+channel management).
+
+-- Laolu
+
+[1]: <A HREF="https://github.com/lightningnetwork/lnd/pull/2802">https://github.com/lightningnetwork/lnd/pull/2802</A>
+
+
+On Wed, Jul 31, 2019 at 6:52 PM ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Introduction
+</I>&gt;<i> ============
+</I>&gt;<i>
+</I>&gt;<i> I found out recently (mid-2019) that mainnet Lightning nodes take an
+</I>&gt;<i> inordinate amount of time to find a route between themselves and an
+</I>&gt;<i> arbitrary payee node.
+</I>&gt;<i> Typical quotes suggested that commodity hardware would take 2 seconds to
+</I>&gt;<i> find a route, then take a few hundred milliseconds for the actual payment
+</I>&gt;<i> attempt.
+</I>&gt;<i> With the help of Rene Pickhardt I was able to confirm that indeed, much of
+</I>&gt;<i> payment latency actually arises from the pathfinding algorithm and not the
+</I>&gt;<i> actual payment-over-routes.
+</I>&gt;<i>
+</I>&gt;<i> This is concerning, of course, since we would like the public Lightning
+</I>&gt;<i> Network to grow a few more orders of magnitude.
+</I>&gt;<i> Given that the best pathfinding search algorithms will be O(n log n) on
+</I>&gt;<i> the size of the network, we need to consider how to speed up the finding of
+</I>&gt;<i> routes.
+</I>&gt;<i>
+</I>&gt;<i> `permuteroute` and Faster Next Pathfinding Attempts
+</I>&gt;<i> ===================================================
+</I>&gt;<i>
+</I>&gt;<i> As I was collaborating with Rene, JIT-Routing was activated in my core
+</I>&gt;<i> processing hardware.
+</I>&gt;<i>
+</I>&gt;<i> As I was contemplating this problem, I considered, that JIT-Routing would
+</I>&gt;<i> (ignoring fees) effectively &quot;reroute&quot; the original route around the failing
+</I>&gt;<i> channel.
+</I>&gt;<i>
+</I>&gt;<i> In particular, JIT-Routing is advantageous for these reasons:
+</I>&gt;<i>
+</I>&gt;<i> 1.  There is no need to report back the failure to the original payer.
+</I>&gt;<i> 2.  The node performing JIT-Routing has accurate information about its
+</I>&gt;<i> channel balances and which of its outgoing channels would be most effective
+</I>&gt;<i> to route through instead of that indicated by the original payer.
+</I>&gt;<i>     It also knows of non-published channels it has.
+</I>&gt;<i> 3.  Searching for a circular rebalancing route could be done much quicker
+</I>&gt;<i> since the JIT-Routing node could restrict itself to looking only in its
+</I>&gt;<i> friend-of-friend network, and simply fail if it could not find a circular
+</I>&gt;<i> rebalancing route quickly in the reduced search space.
+</I>&gt;<i>
+</I>&gt;<i> The first two advantages cannot be emulated by the original payer.
+</I>&gt;<i>
+</I>&gt;<i> However, I realized that the third advantage *could* be emulated by the
+</I>&gt;<i> original payer.
+</I>&gt;<i> This is advantageous as the payer node can implement emulating this,
+</I>&gt;<i> without having to wait for the rest of the network to actually implement
+</I>&gt;<i> JIT-Routing as well.
+</I>&gt;<i>
+</I>&gt;<i> Basically:
+</I>&gt;<i>
+</I>&gt;<i> 1.  On payment failure, the original payer is informed of which node
+</I>&gt;<i> reported the failure and which channel failed.
+</I>&gt;<i> 2.  The original payer looks for a *short* route from the reporting node
+</I>&gt;<i> to the next node (or any node after the reporting node in the original
+</I>&gt;<i> path).
+</I>&gt;<i>     The original payer restricts its search to within 3 hops, roughly
+</I>&gt;<i> equivalent to searching the friend-of-friend network, thus able to quickly
+</I>&gt;<i> get a route or a failure indication.
+</I>&gt;<i>     (we also need to get a set of known-bad channels other than the
+</I>&gt;<i> most-recently failing one, so that we do not bother to scan those channels)
+</I>&gt;<i> 3.  The original payer then replaces the failing channel with the new
+</I>&gt;<i> route found.
+</I>&gt;<i> 4.  As the new route might &quot;backtrack&quot; the original payer checks for
+</I>&gt;<i> duplicated nodes and removes the unneeded hops.
+</I>&gt;<i>
+</I>&gt;<i> The payer is now in possession of a variation of the original route, one
+</I>&gt;<i> which avoids the known-failing channel.
+</I>&gt;<i> It has a prefix that we know was recently reliable (the error got reported
+</I>&gt;<i> back to us, after all).
+</I>&gt;<i> Finally, the payer did not take much time to find this alternate route,
+</I>&gt;<i> improving payment latency.
+</I>&gt;<i>
+</I>&gt;<i> I dubbed this new algorithm `permuteroute`.
+</I>&gt;<i>
+</I>&gt;<i> In a `pay` implementation, we would do:
+</I>&gt;<i>
+</I>&gt;<i> 1.  For the *first* routing attempt, use `getroute`.
+</I>&gt;<i> 2.  Use the current route for `sendpay`.
+</I>&gt;<i> 3.  If the pay attempt fails, use `permuteroute`.
+</I>&gt;<i>     If returned route is too expensive or it fails, fall back to
+</I>&gt;<i> `getroute`.
+</I>&gt;<i> 4.  GOTO 2.
+</I>&gt;<i>
+</I>&gt;<i> The `permuteroute` is fast due to not having to scan a large number of
+</I>&gt;<i> channels.
+</I>&gt;<i> Ideally it would use Dijkstra with a restricted number of hops, but this
+</I>&gt;<i> is not strictly necessary and a simple flood-fill can work about as well.
+</I>&gt;<i>
+</I>&gt;<i> JIT-Routing is still strictly superior to `permuteroute`, as the node
+</I>&gt;<i> reporting the failure has strictly more information about local conditions.
+</I>&gt;<i> (Yes, it could return with a &quot;suggested other channel&quot;, but that requires
+</I>&gt;<i> a spec change and it would be better to focus a spec change on feeless
+</I>&gt;<i> rebalancing to support JIT-Routing instead, especially since JIT-Routing
+</I>&gt;<i> can potentially effectively create a &quot;local multipath payment&quot; by
+</I>&gt;<i> rebalancing from multiple other channels, especially if rebalancing can be
+</I>&gt;<i> made feeless.)
+</I>&gt;<i> However, JIT-Routing benefits start being noticeable only once a majority
+</I>&gt;<i> of nodes have supported it, whereas `permuteroute` gets immediate benefits
+</I>&gt;<i> to the node that upgrades to utilize it.
+</I>&gt;<i>
+</I>&gt;<i> In particular, `permuteroute` would be helpful to support JIT-Routing
+</I>&gt;<i> nodes while there are still few JIT-Routing nodes.
+</I>&gt;<i> A particular part of `permuteroute` is that it reuses the known-successful
+</I>&gt;<i> prefix of an existing route, replacing only channels from the failed
+</I>&gt;<i> portion and later.
+</I>&gt;<i> If only one JIT-Routing node existed, it would suffer somewhat since while
+</I>&gt;<i> it would increase payment success rates, it would still lose (due to
+</I>&gt;<i> rebalancing fees) if a later channel in the hop fails and the node with
+</I>&gt;<i> that channel does not itself do JIT-Routing.
+</I>&gt;<i> With `permuteroute` thie JIT-Routing node and its outgoing channel would
+</I>&gt;<i> end up being in the known-successful prefix of a `permuteroute` from the
+</I>&gt;<i> same payer, thus not wasting its &quot;investment&quot; in rebalancing in favor of
+</I>&gt;<i> its outgoing channel.
+</I>&gt;<i>
+</I>&gt;<i> An unfinished pull request for `permuteroute` on C-Lightning exists:
+</I>&gt;<i> <A HREF="https://github.com/ElementsProject/lightning/pull/2890">https://github.com/ElementsProject/lightning/pull/2890</A>
+</I>&gt;<i>
+</I>&gt;<i> Lightning Network Pathfinding Problem Statement
+</I>&gt;<i> ===============================================
+</I>&gt;<i>
+</I>&gt;<i> Let us mildly digress.
+</I>&gt;<i>
+</I>&gt;<i> Pathfinding on Lightning has these requirements:
+</I>&gt;<i>
+</I>&gt;<i> 1.  We are looking for a &quot;good enough&quot; path, not the most optimal path.
+</I>&gt;<i>     Going for the optimal path is good, but users are more interested in
+</I>&gt;<i> payment success than purely fee optimization.
+</I>&gt;<i> 2.  The map we are doing the pathfinding in is dynamically changing and we
+</I>&gt;<i> might not have access to the latest state.
+</I>&gt;<i> 3.  We need to look for paths in a large map in a very short time.
+</I>&gt;<i>
+</I>&gt;<i> Real-Time Strategy Game Pathfinding Problem Statement
+</I>&gt;<i> =====================================================
+</I>&gt;<i>
+</I>&gt;<i> Rene also mentioned that what LN generally calls &quot;routefinding&quot; is also
+</I>&gt;<i> called &quot;pathfinding&quot; elsewhere.
+</I>&gt;<i> This triggered me to consider real-time strategy games and pathfinding
+</I>&gt;<i> algorithms used in them.
+</I>&gt;<i>
+</I>&gt;<i> In particular, the above requirements we have, have analogies to the
+</I>&gt;<i> problem of real-time strategy games.
+</I>&gt;<i>
+</I>&gt;<i> 1.  Players want their units to start moving as soon as commanded; they
+</I>&gt;<i> have a myriad other things to manage and do not want to have to micromanage
+</I>&gt;<i> certain movements.
+</I>&gt;<i>     For example, moving through known-safe locations or scouting into
+</I>&gt;<i> unknown places often does not need to be optimal: they just need to be
+</I>&gt;<i> *done* in a manner that is not thoroughly stupid.
+</I>&gt;<i>     If players need a specific path to be followed, they will micromanage
+</I>&gt;<i> their units, but non-micromanaged units are expected to perform their
+</I>&gt;<i> actions in the background, and non-optimal paths for non-micromanaged units
+</I>&gt;<i> are often acceptable as long as it is not ***too*** sub-optimal.
+</I>&gt;<i> 2.  Good real-time strategy games have a dynamically-changing world: trees
+</I>&gt;<i> are cut down for wood, walls are erected by opponents, structures are
+</I>&gt;<i> placed for various optimal results, mobile units deploy into immobile
+</I>&gt;<i> modes, and so on.
+</I>&gt;<i>     Good real-time strategy games will also not let the units of a player
+</I>&gt;<i> know the ***current*** real state of the game world, as that leaks
+</I>&gt;<i> strategic information about where walls and defense structures have been
+</I>&gt;<i> built, where resources have been harvested, what chokepoints are blocked by
+</I>&gt;<i> immobilized units with increased combat effectiveness, etc.
+</I>&gt;<i>     Instead, units are given fog-of-war-covered maps, with obsolete
+</I>&gt;<i> information, and thus may find their pre-solved paths blocked, or may find
+</I>&gt;<i> that shortcuts now exist which did not exist before.
+</I>&gt;<i>     Even so, units must be able to correct their current paths once they
+</I>&gt;<i> discover this fact, without too much latency (as they might now be subject
+</I>&gt;<i> to attack by the immobile units siege-moded against them, or defense
+</I>&gt;<i> structures behind walls, etc.).
+</I>&gt;<i> 3.  As a real-time game, commands must be reacted to in a time-frame that
+</I>&gt;<i> is below typical human notice.
+</I>&gt;<i>     While real-time games need to traverse simpler, smaller, and more
+</I>&gt;<i> regular maps than LN routemaps, they also need to get results for possibly
+</I>&gt;<i> dozens of different units in a few dozen milliseconds, whereas LN
+</I>&gt;<i> pathfinding would probably be well-satisfied by getting one route after a
+</I>&gt;<i> few hundred milliseconds.
+</I>&gt;<i>
+</I>&gt;<i> Thus, I started looking for techniques and shortcuts used in real-time
+</I>&gt;<i> strategy games.
+</I>&gt;<i>
+</I>&gt;<i> A\* (A-star) is the preferred algorithm in the &quot;geographic&quot; maps usually
+</I>&gt;<i> used in real-time strategy games.
+</I>&gt;<i> In many cases we can replace it &quot;seamlessly&quot; with Dijkstra in the LN case:
+</I>&gt;<i> a constant `h(n)` function makes A\* devolve to Dijkstra, and if we admit
+</I>&gt;<i> that we have no decent heuristic &quot;distance&quot; function, we can consider
+</I>&gt;<i> ourselves as &quot;really&quot; using A\* with a constant `h(n)` (which happens to
+</I>&gt;<i> make the algorithm behave as Dijkstra).
+</I>&gt;<i>
+</I>&gt;<i> But strictly speaking, using A\* (and its &quot;degenerate&quot; form Dijkstra) is
+</I>&gt;<i> overrated: <A HREF="http://bitsquid.blogspot.com/2010/10/is-overrated.html">http://bitsquid.blogspot.com/2010/10/is-overrated.html</A>
+</I>&gt;<i>
+</I>&gt;<i> Path Splicing
+</I>&gt;<i> =============
+</I>&gt;<i>
+</I>&gt;<i> One technique I found was Path Splicing:
+</I>&gt;<i> <A HREF="http://theory.stanford.edu/~amitp/GameProgramming/MovingObstacles.html#path-splicing">http://theory.stanford.edu/~amitp/GameProgramming/MovingObstacles.html#path-splicing</A>
+</I>&gt;<i>
+</I>&gt;<i> I realized that this technique was exactly what my `permuteroute`
+</I>&gt;<i> algorithm did: instead of solving for a completely new path, it would
+</I>&gt;<i> attempt to find a short route to &quot;heal&quot; a recently-discovered blockage of
+</I>&gt;<i> the original path.
+</I>&gt;<i> The technique even recommends keeping the search space small; if the path
+</I>&gt;<i> needed to heal the original path becomes too long, it would be better to
+</I>&gt;<i> fall back to a &quot;full&quot; pathfinding.
+</I>&gt;<i>
+</I>&gt;<i> As a corollary to this, JIT-Routing is itself an implementation of a form
+</I>&gt;<i> of Path Splicing, except with the potential to form a &quot;local multipath
+</I>&gt;<i> payment&quot; when a payment is routed through the node.
+</I>&gt;<i>
+</I>&gt;<i> Emboldened, I began reading more and considering other ways to improve
+</I>&gt;<i> pathfinding latency, as pioneered by real-time strategy games.
+</I>&gt;<i>
+</I>&gt;<i> Digression: Parametrizing `pay`
+</I>&gt;<i> ===============================
+</I>&gt;<i>
+</I>&gt;<i> C-Lightning `pay` command (whose first &quot;major version&quot; was created by me,
+</I>&gt;<i> though the current implementation is vastly different from my work, but
+</I>&gt;<i> keeps most of its features and interface) is parametrized with two
+</I>&gt;<i> tweakable arguments:
+</I>&gt;<i>
+</I>&gt;<i> 1.  `maxfeepercent` - The maximum fee, in percentage of the payment value,
+</I>&gt;<i> that the user is willing to pay for payment success.
+</I>&gt;<i> 2.  `maxdelay` - The maximum number of blocks that the user is willing to
+</I>&gt;<i> wait in case of long-term failure of direct peer.
+</I>&gt;<i>
+</I>&gt;<i> This is relevant since costs in Lightning are not a single &quot;cost of
+</I>&gt;<i> travelling over this terrain&quot; as in real-time strategy games.
+</I>&gt;<i> Instead, costs in Lightning involve two things: the fee charged by the
+</I>&gt;<i> node, and the number of blocks in the difference of the incoming versus
+</I>&gt;<i> outgoing HTLCs.
+</I>&gt;<i>
+</I>&gt;<i> In particular, internally to C-Lightning, `getroute` has a `riskfactor`
+</I>&gt;<i> parameter, which is intended to balance between these two costs (fees vs
+</I>&gt;<i> blocks).
+</I>&gt;<i> This parameter is expressed as &quot;annual cost of your funds being stuck&quot;.
+</I>&gt;<i>
+</I>&gt;<i> I personally cannot understand what this &quot;annual cost of your funds being
+</I>&gt;<i> stuck&quot; means exactly in relation to my own money and risk-aversion, and
+</I>&gt;<i> have just used whatever value is the default for `getroute`.
+</I>&gt;<i> I can understand the `maxfeepercent` and `maxdelay` better, and I imagine
+</I>&gt;<i> most users would also understand these better (though I have not talked to
+</I>&gt;<i> any users at all).
+</I>&gt;<i> The documentation for the `getroute` command even contains a nice table
+</I>&gt;<i> about how the various settings for `riskfactor` affect your estimation of
+</I>&gt;<i> the cost of risk depending on how large the payment is and how many blocks
+</I>&gt;<i> the hop node charges.
+</I>&gt;<i> I still cannot understand it even so, and my own expectation is that most
+</I>&gt;<i> users will also fail to grasp this intuitively.
+</I>&gt;<i> On the other hand, `maxfeepercent` and `maxdelay` require no tables to
+</I>&gt;<i> explain.
+</I>&gt;<i>
+</I>&gt;<i> In particular, `pay` always compares the total delay and the total fee to
+</I>&gt;<i> the given `maxfeepercent` and `maxdelay`.
+</I>&gt;<i> In theory, if only one is breached but not the other, `pay` could tweak
+</I>&gt;<i> the `riskfactor` in order to change the balance.
+</I>&gt;<i>
+</I>&gt;<i> The difficulty here is that in many of the succeeding sections, we will
+</I>&gt;<i> find that we will need to use some precomputed data, for which this balance
+</I>&gt;<i> of time vs. fee needs to be selected somehow.
+</I>&gt;<i> Thus we want to use some reasonable default for this balancing parameter.
+</I>&gt;<i> If the user wants to diverge from this default balancing, they would
+</I>&gt;<i> suffer as they would need to fall back on not using the precomputed data,
+</I>&gt;<i> reducing the speed of their payments.
+</I>&gt;<i>
+</I>&gt;<i> This should be kept in mind for the succeeding sections: algorithms using
+</I>&gt;<i> precomputed data must by necessity be less flexible (it is restricted to
+</I>&gt;<i> the domain for which the data was precomputed for), and the price of
+</I>&gt;<i> flexibility will be slowness of a more general algorithm.
+</I>&gt;<i>
+</I>&gt;<i> The possibility is that we are in fact being more flexible than absolutely
+</I>&gt;<i> necessary, and some shortcuts may be acceptable as a trade-off for faster
+</I>&gt;<i> pathfinding.
+</I>&gt;<i>
+</I>&gt;<i> Map Preprocessing
+</I>&gt;<i> =================
+</I>&gt;<i>
+</I>&gt;<i> Often, real-time strategy game maps can be preprocessed.
+</I>&gt;<i>
+</I>&gt;<i> For example, wide-open areas often take A\* a lot of time exploring this
+</I>&gt;<i> space.
+</I>&gt;<i> However, in principle such wide-open areas should not be a pathfinding
+</I>&gt;<i> problem: any arbitrary path through those areas is generally fine and we
+</I>&gt;<i> should really have A\* focus on the fiddly bits between mountain passes and
+</I>&gt;<i> going through rough terrain and avoiding cul-de-sacs.
+</I>&gt;<i> This is an example where finding the &quot;optimum&quot; path can take a back seat
+</I>&gt;<i> to finding &quot;any acceptably-good&quot; path: A\* searches along every good paths
+</I>&gt;<i> through plains in case there is some special path that is really optimal,
+</I>&gt;<i> even though usually any straight-line path through the plains is going to
+</I>&gt;<i> work well enough that the player will not feel he or she has to micromanage
+</I>&gt;<i> the unit path.
+</I>&gt;<i>
+</I>&gt;<i> Map preprocessing can help by reweighing the costs in wide-open areas,
+</I>&gt;<i> making A\* go through a small number of acceptably-good paths rather than
+</I>&gt;<i> exploring all possible ways to walk a wide-open field (and eating up
+</I>&gt;<i> processing time in exploring all of them).
+</I>&gt;<i>
+</I>&gt;<i> Now, we might not have the advantage of having a &quot;geographical&quot; map that
+</I>&gt;<i> can provide some reasonable heuristic distance function `h(n)` for A\*.
+</I>&gt;<i> But we do have one advantage over real-time strategy games:
+</I>&gt;<i>
+</I>&gt;<i> * Every payment that requires us to find a path, always starts from one
+</I>&gt;<i> node: our own node.
+</I>&gt;<i>
+</I>&gt;<i> This is in stark contrast to real-time strategy games, where arbitrary
+</I>&gt;<i> units arise at various locations, and the pathfinding system must be
+</I>&gt;<i> capable of handling multiple possible start points.
+</I>&gt;<i>
+</I>&gt;<i> In particular, Dijkstra has a variant where it does *not* look for the
+</I>&gt;<i> shortest path between two nodes, but instead finds the shortest path tree
+</I>&gt;<i> from one node to all other nodes on the map.
+</I>&gt;<i> (This is arguably the &quot;true&quot; form of Dijkstra.)
+</I>&gt;<i>
+</I>&gt;<i> This &quot;true&quot; variant of Dijkstra is a good thing to use, as we know that
+</I>&gt;<i> every payment sourced by our node requires a path starting from our node.
+</I>&gt;<i>
+</I>&gt;<i> In C-Lightning in particular, every node object has a `struct`, named
+</I>&gt;<i> `dijkstra`, containing information used by the Dijkstra algorithm, size of
+</I>&gt;<i> 16 bytes, which is sufficient to derive a path from the destination to the
+</I>&gt;<i> source.
+</I>&gt;<i> We can instantiate another copy of this `struct` to every node, let us
+</I>&gt;<i> call this `dijkstra_cached`, and run the Dijkstra algorithm for all nodes
+</I>&gt;<i> to the source using this alternate copy.
+</I>&gt;<i>
+</I>&gt;<i> Then we can provide a new `getroutequick` command which simply looks up
+</I>&gt;<i> the destination node, then builds the route back to the specific source
+</I>&gt;<i> (our own node).
+</I>&gt;<i> If route-building fails because the channels have been closed, it can
+</I>&gt;<i> simply fail (and the client has to fall back to the slow O(n log n)
+</I>&gt;<i> `getroute`, which uses the existing `dijkstra` field instead of
+</I>&gt;<i> `dijkstra_cached`).
+</I>&gt;<i>
+</I>&gt;<i> A `pay` algorithm would then do:
+</I>&gt;<i>
+</I>&gt;<i> 1.  For the *first* payment attempt, use `getroutequick`.
+</I>&gt;<i>     If the returned route is too expensive or `getroutequick` fails, fall
+</I>&gt;<i> back to `getroute`.
+</I>&gt;<i> 2.  Use the current route for `sendpay`.
+</I>&gt;<i> 3.  If the pay attempt fails, use `permuteroute`.
+</I>&gt;<i>     If returned route is too expensive or it fails, fall back to
+</I>&gt;<i> `getroute`.
+</I>&gt;<i> 4.  GOTO 2.
+</I>&gt;<i>
+</I>&gt;<i> Thus, the slow `getroute` only exists in the &quot;fallback&quot; case, and we have
+</I>&gt;<i> effectively optimized payment to arbitrary nodes.
+</I>&gt;<i> Payment attempts can start to be sent out almost immediately.
+</I>&gt;<i>
+</I>&gt;<i> ***Now of course, the `dijkstra_cached` map will become obsolete as
+</I>&gt;<i> channels are created and destroyed***.
+</I>&gt;<i>
+</I>&gt;<i> Periodically, we can start a background process to perform a new Dijkstra
+</I>&gt;<i> run to update the cached data.
+</I>&gt;<i> We can implement this by a &quot;fast&quot; timer that performs some fraction of the
+</I>&gt;<i> Dijkstra run, then lets normal operation for some time before grabbing the
+</I>&gt;<i> CPU again to update the Dijkstra.
+</I>&gt;<i> This lets us process normal requests (updates of channel, `getroute` and
+</I>&gt;<i> `permuteroute` requests, etc.) while refreshing the cached shortest path
+</I>&gt;<i> tree.
+</I>&gt;<i> (other implementations might consider using separate threads, or some
+</I>&gt;<i> concept of low-priority thread: the C-lightning `gossipd` is
+</I>&gt;<i> single-threaded so we can avoid many of the issues with thread
+</I>&gt;<i> synchronization)
+</I>&gt;<i>
+</I>&gt;<i> Of course, that means that `getroutequick` cannot work while we are
+</I>&gt;<i> performing this refresh.
+</I>&gt;<i> To fix this, we turn to another game implementation technique:
+</I>&gt;<i> double-buffering.
+</I>&gt;<i>
+</I>&gt;<i> We use a `dijkstra_cached[2]` array, then fill in *one* entry during the
+</I>&gt;<i> refresh while `getroutequick` calls follows the *other* entry.
+</I>&gt;<i> Then when the refresh is completed, we &quot;flip&quot; the buffer that
+</I>&gt;<i> `getroutequick` uses (a single variable somewhere in our map object).
+</I>&gt;<i> Then on the next refresh, we use the `dijkstra_cached` entry that is not
+</I>&gt;<i> being used for `getroutequick`, then flip again.
+</I>&gt;<i>
+</I>&gt;<i> Thus the additional storage is 32 bytes per node, but potentially speeding
+</I>&gt;<i> up the first route request in a `pay` algorithm.
+</I>&gt;<i>
+</I>&gt;<i> Of note, is that this is not intended to replace `getroute` --- instead
+</I>&gt;<i> this is a faster but more limited alternative.
+</I>&gt;<i> We should still retain the generic `getroute` as a fallback in case the
+</I>&gt;<i> easy-to-find path exceeds `maxfeepercent` or `maxdelay`.
+</I>&gt;<i>
+</I>&gt;<i> A\* on Lightning
+</I>&gt;<i> ----------------
+</I>&gt;<i>
+</I>&gt;<i> As mentioned above, A\* is the typical algorithm in use by real-time
+</I>&gt;<i> strategy and other games.
+</I>&gt;<i> Its primary difference from Dijkstra, is the existence of the `h(n)`
+</I>&gt;<i> heuristic function, which accepts an arbitrary node `n` and returns the
+</I>&gt;<i> expected cost of going from that node to the destination.
+</I>&gt;<i>
+</I>&gt;<i> A\* has the same complexity O(n log n) as Dijkstra, but in practice finds
+</I>&gt;<i> paths faster than Dijkstra can since A\* focuses on exploring nodes that
+</I>&gt;<i> seem likely to reach the destination faster.
+</I>&gt;<i> Runs of A\* vs Dijkstra on the same map require fewer nodes to be visited
+</I>&gt;<i> by A\* before reaching the destination, resulting in faster runs of A\*
+</I>&gt;<i> than Dijkstra.
+</I>&gt;<i>
+</I>&gt;<i> However A\* use is not possible under Lightning as we cannot provide any
+</I>&gt;<i> estimate of the cost from a node to a particular other node, which is
+</I>&gt;<i> needed for the heuristic function `h(n)`.
+</I>&gt;<i>
+</I>&gt;<i> That is, unless we already have the costs pre-computed and cached
+</I>&gt;<i> somewhere... such as the `getroutequick` Dijkstra run.
+</I>&gt;<i>
+</I>&gt;<i> The `dijkstra` structure is basically just the total cost of arriving at
+</I>&gt;<i> that node from the source node in the Dijkstra run.
+</I>&gt;<i> For the `dijkstra_cached` double-buffered structures, these are the total
+</I>&gt;<i> cost of arriving at that node from the singular source node we have, our
+</I>&gt;<i> own self node.
+</I>&gt;<i>
+</I>&gt;<i> An A\* is now possible by starting at the payee node with the goal node
+</I>&gt;<i> being our own (payer) node.
+</I>&gt;<i> The `dijkstra_cached` structures contain the cost of reaching the node
+</I>&gt;<i> from our own node, and serves as our `h(n)` for the A\*.
+</I>&gt;<i> Assuming the channel topology then does not change, the `h(n)` is now an
+</I>&gt;<i> admissible heuristic, and in fact is an exact heuristic and A\* will run
+</I>&gt;<i> very quickly.
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="http://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html#exact-heuristics">http://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html#exact-heuristics</A>
+</I>&gt;<i>
+</I>&gt;<i> Now, as noted previously, this cached data may become stale and no longer
+</I>&gt;<i> exact.
+</I>&gt;<i> There are two cases:
+</I>&gt;<i>
+</I>&gt;<i> 1.  A new channel reduces the actual cost of going to a node from our own
+</I>&gt;<i> node.
+</I>&gt;<i>     This makes the cached data an inadmissible heuristic, as the cost of
+</I>&gt;<i> reaching that node from our own node is now lower than the cached cost.
+</I>&gt;<i> 2.  A deleted channel removes the shortest path to a node from our own
+</I>&gt;<i> node.
+</I>&gt;<i>     The cached data remains an admissible heuristic and A\* can find an
+</I>&gt;<i> optimal route quickly with help of the existing cached `h(n)`.
+</I>&gt;<i>
+</I>&gt;<i> The drawback of the first case may be acceptable in most cases: our
+</I>&gt;<i> tradeoff is faster payment attempts, not most-optimal-ever paths.
+</I>&gt;<i> The second case is precisely the case that would cause the above
+</I>&gt;<i> `getroutequick` proposal to fail, so A\* still succeeding here is a bonus.
+</I>&gt;<i>
+</I>&gt;<i> Thus, we can instead change the `getroutequick` algorithm as so:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Locate the payee node.
+</I>&gt;<i> 2.  Attempt to generate a route from the payee by looking up the
+</I>&gt;<i> shortest-path tree to our own node.
+</I>&gt;<i> 3.  If the above fails because a channel has been closed, instead use A\*
+</I>&gt;<i> starting on the node we were unable to continue the quick path on, with the
+</I>&gt;<i> precomputed total costs used for `h(b)`.
+</I>&gt;<i>     Splice from the generated partial route to the A\* route result, then
+</I>&gt;<i> fix up the path by removing loops (as in the `permuteroute` algorithm).
+</I>&gt;<i>
+</I>&gt;<i> First using the `dijkstra_cached` data to form a route without A\* is
+</I>&gt;<i> faster since A\* will need to set up an OPEN set.
+</I>&gt;<i> In addition, in case multiple candidates with same `h(n)` occur, A\* will
+</I>&gt;<i> insist on putting both in the OPEN set, when in principle we can just take
+</I>&gt;<i> either path (as both paths are equal in cost).
+</I>&gt;<i>
+</I>&gt;<i> We expect `getroutequick` to still be fast in the best case where channels
+</I>&gt;<i> have not been removed and the shortest-path tree is still valid for the
+</I>&gt;<i> payment node.
+</I>&gt;<i> If channels have been removed, then it falls back to almost-as-fast A\*,
+</I>&gt;<i> using the same cost data to approximate the distance to the source.
+</I>&gt;<i> Thus, the same `pay` algorithm will work, and has an improved chance of
+</I>&gt;<i> being able to quickly find its first route.
+</I>&gt;<i>
+</I>&gt;<i> Direct Channels
+</I>&gt;<i> ---------------
+</I>&gt;<i>
+</I>&gt;<i> A user might notice that our node is taking long routes to a payee.
+</I>&gt;<i> This user might then decide to manually open a direct channel to that
+</I>&gt;<i> payee in hope of reducing their fee and risk costs.
+</I>&gt;<i>
+</I>&gt;<i> However, because we only periodically refresh the `dijkstra_cached` data,
+</I>&gt;<i> our initial attempts at paying will ignore the direct route.
+</I>&gt;<i> This will disappoint the user and cause him or her to file an issue in our
+</I>&gt;<i> bug database, which is generally considered bad.
+</I>&gt;<i>
+</I>&gt;<i> A simple way to fix this is to provide a `getroutedirect` that only scans
+</I>&gt;<i> for direct channels from our own node to the destination.
+</I>&gt;<i> Then we simply prioritize using such a direct route first regardless of
+</I>&gt;<i> the state of our pathfinding acceleration structure.
+</I>&gt;<i>
+</I>&gt;<i> As the user can only control its own node (typically), we generally can
+</I>&gt;<i> assume that the user will consider it acceptable if channels between nodes
+</I>&gt;<i> the user does not control are ignored in our pathfinding acceleration.
+</I>&gt;<i> However since the user is in direct control of our own node, he or she
+</I>&gt;<i> expects that the node can find its own direct channels to the payee easily.
+</I>&gt;<i> We can consider this equivalent to the user micromanaging our payments,
+</I>&gt;<i> and since the user can only control our own node, it can only do so by
+</I>&gt;<i> making direct channels.
+</I>&gt;<i>
+</I>&gt;<i> Our `pay` algorithm then becomes:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Use `getroutedirect`.
+</I>&gt;<i> 2.  If that fails, use `getroutequick`.
+</I>&gt;<i> 3.  If that fails, use `getroute`.
+</I>&gt;<i> 4.  Use the current route for `sendpay`.
+</I>&gt;<i> 5.  If `sendpay` fails, use `permuteroute`.
+</I>&gt;<i> 6.  If that fails, use `getroute`.
+</I>&gt;<i> 7.  GOTO 4.
+</I>&gt;<i>
+</I>&gt;<i> Alternately, we can simply add this direct-channel behavior to
+</I>&gt;<i> `getroutequick`, having it try three sub-algorithms: direct channel
+</I>&gt;<i> finding, shortest-path tree traversal, and finally A\*.
+</I>&gt;<i>
+</I>&gt;<i> Skip Links
+</I>&gt;<i> ==========
+</I>&gt;<i>
+</I>&gt;<i> Note that `getroute` remains a bottleneck.
+</I>&gt;<i> It is the fallback when `getroutequick` or `permuteroute` cannot find a
+</I>&gt;<i> path or returns a too-expensive path.
+</I>&gt;<i>
+</I>&gt;<i> Another technique from the real-time strategy game cookbook is:
+</I>&gt;<i> <A HREF="https://theory.stanford.edu/~amitp/GameProgramming/MapRepresentations.html#skip-links">https://theory.stanford.edu/~amitp/GameProgramming/MapRepresentations.html#skip-links</A>
+</I>&gt;<i>
+</I>&gt;<i> This is yet another &quot;preprocessing&quot; technique.
+</I>&gt;<i> We have a continuously-running background task that simply randomly
+</I>&gt;<i> explores the map.
+</I>&gt;<i>
+</I>&gt;<i> It starts at some randomly-selected node, then follows one least-cost
+</I>&gt;<i> channel to another node (avoiding already-visited nodes).
+</I>&gt;<i> After a few such hops, it creates a &quot;skip link&quot; from the first node to the
+</I>&gt;<i> last node.
+</I>&gt;<i> This is an extra link containing the total cost of the path from the first
+</I>&gt;<i> node to the last node, as well as the exact path itself.
+</I>&gt;<i>
+</I>&gt;<i> The stored total cost of the path is discounted mildly; typical guidelines
+</I>&gt;<i> are 1% reduction of the cost.
+</I>&gt;<i> The Dijkstra algorithm immediately puts the other end of the skip link to
+</I>&gt;<i> the unvisited set, pointing through the skip link.
+</I>&gt;<i>
+</I>&gt;<i> The discount exists to &quot;break ties&quot;.
+</I>&gt;<i> A &quot;tie&quot; occurs when the cost on two possible paths is equal.
+</I>&gt;<i> This makes the discount bias towards the preexisting skip link.
+</I>&gt;<i>
+</I>&gt;<i> Skip links need to store the individual channels passed through.
+</I>&gt;<i> In particular, if we know that one of the component channels of the skip
+</I>&gt;<i> link is currently failing, we should ignore the entire skip link.
+</I>&gt;<i>
+</I>&gt;<i> With skip links, there is now a tiny possibility of non-optimal
+</I>&gt;<i> pathfinding, which should still be fine.
+</I>&gt;<i> (we could implement a `getrouteslow` that ignores skip links.)
+</I>&gt;<i> In particular we might reach a destination by first going through a skip
+</I>&gt;<i> link that goes through that node, then a &quot;back out&quot; hop from the end of the
+</I>&gt;<i> skip link to the destination node.
+</I>&gt;<i> This can be fixed by a postprocessing step (similar to that in
+</I>&gt;<i> `permuteroute`) to shortcut such loops in the route.
+</I>&gt;<i>
+</I>&gt;<i> Hierarchical Maps and Rough/Smooth Pathfinding
+</I>&gt;<i> ==============================================
+</I>&gt;<i>
+</I>&gt;<i> Another preprocessing idea for maps is to create a high-level &quot;rough&quot; map
+</I>&gt;<i> and a low-level &quot;smooth&quot; map.
+</I>&gt;<i> Then, we can start with a &quot;rough&quot; path and then incrementally promote this
+</I>&gt;<i> to a &quot;smooth&quot; path with all the details as our game unit / payment
+</I>&gt;<i> approaches the next location / node in the rough path.
+</I>&gt;<i>
+</I>&gt;<i> See:
+</I>&gt;<i> <A HREF="https://theory.stanford.edu/~amitp/GameProgramming/MapRepresentations.html#hierarchical">https://theory.stanford.edu/~amitp/GameProgramming/MapRepresentations.html#hierarchical</A>
+</I>&gt;<i>
+</I>&gt;<i> Now this might not make sense in the current Lightning Network.
+</I>&gt;<i>
+</I>&gt;<i> However, do note that one incoming improvement we are planning to
+</I>&gt;<i> introduce is &quot;trampoline routing&quot;, where we have a &quot;rough&quot; path of various
+</I>&gt;<i> (not necessarily adjacent) nodes embedded in a &quot;smooth&quot; path of
+</I>&gt;<i> directly-adjacent nodes.
+</I>&gt;<i>
+</I>&gt;<i> So we can build a &quot;rough&quot; map from the normal detailed map as follows:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Randomly select some small fraction of nodes with high liquidity in
+</I>&gt;<i> channels, and (if we can get this information) high uptime.
+</I>&gt;<i>     We might want to randomly eliminate some of these for no reason from
+</I>&gt;<i> the set of nodes to consider.
+</I>&gt;<i>     We shall call these the &quot;high-level&quot; nodes.
+</I>&gt;<i> 2.  Use the smooth map to determine the costs of the shortest paths
+</I>&gt;<i> between these nodes.
+</I>&gt;<i>     Use a limited-hops Dijkstra to limit the rough links between nodes to
+</I>&gt;<i> some number of hops on the smooth map.
+</I>&gt;<i>     Set the cost of the links in the &quot;rough&quot; map based on the cost of the
+</I>&gt;<i> smooth path.
+</I>&gt;<i> 3.  Find the largest &quot;island&quot; of interconnected high-levels nodes and use
+</I>&gt;<i> that as the high-level &quot;rough&quot; map.
+</I>&gt;<i>
+</I>&gt;<i> This is a preprocessing stage very much like what we would do for
+</I>&gt;<i> `getroutequick`, and double-bufferring while refreshing this high-level map
+</I>&gt;<i> is likely to be useful as in the `getroutequick` case.
+</I>&gt;<i>
+</I>&gt;<i> Then, when attempting to pay to an arbitrary node:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Find a route from the destination node to *any* of the nodes in the
+</I>&gt;<i> high-level map; use the normal low-level &quot;smooth&quot; map.
+</I>&gt;<i>     Dijkstra can also work with multiple candidate destinations, exiting
+</I>&gt;<i> once any of those candidates is reached.
+</I>&gt;<i>     (we can also add the source node as a candidate, and with such a
+</I>&gt;<i> direct route can exit at this point without a trampoline route)
+</I>&gt;<i>     Keep track of the &quot;destination-side high-level node&quot; and discard the
+</I>&gt;<i> actual route.
+</I>&gt;<i> 2.  Find a route from the source node to *any* of the nodes in the
+</I>&gt;<i> high-level map; use the normal low-level &quot;smooth&quot; map.
+</I>&gt;<i>     Keep track of the &quot;source-side high-level node&quot; but retain the actual
+</I>&gt;<i> route.
+</I>&gt;<i> 3.  On the high-level &quot;rough&quot; map, find a route from source-side
+</I>&gt;<i> high-level node to the destination-side high-level node.
+</I>&gt;<i>     Append the destination node to this to form the trampoline part of the
+</I>&gt;<i> route.
+</I>&gt;<i>
+</I>&gt;<i> This provides a normal route to a high-level &quot;rough&quot; node, then a short
+</I>&gt;<i> trampoline route from that node to the destination.
+</I>&gt;<i>
+</I>&gt;<i> Step #2 above can be cached: we can run a Dijkstra starting at our own
+</I>&gt;<i> node running on the &quot;smooth&quot; map, that terminates once it has reached some
+</I>&gt;<i> small number of high-level nodes (say the 5 nearest high-level nodes), then
+</I>&gt;<i> just round-robining among those nodes per invocation of route finding.
+</I>&gt;<i> This caching can be done in the same refresh as the one that generated the
+</I>&gt;<i> high-level rough map in the first place.
+</I>&gt;<i>
+</I>&gt;<i> Step #3 is expected to be very fast since it looks at the rough map, which
+</I>&gt;<i> has a tiny fraction of the nodes in the smooth map, and Dijkstra is O(n log
+</I>&gt;<i> n) on number of nodes.
+</I>&gt;<i>
+</I>&gt;<i> This leaves step #1 to be the potentially slow part of this algorithm.
+</I>&gt;<i> This is mitigated by the fact that this stage has multiple candidate
+</I>&gt;<i> destinations, and terminates as soon as it reaches *any* candidate.
+</I>&gt;<i> Thus we expect Dijkstra to only have to explore a small amount of nodes.
+</I>&gt;<i> The more distributed the high-level nodes are, the more likely that we can
+</I>&gt;<i> reach any high-level node from the destination in a small number of hops.
+</I>&gt;<i>
+</I>&gt;<i> As channels open and close, the trampoline route remains potentially
+</I>&gt;<i> valid: as a trampoline node opens one hop of the trampoline route it can
+</I>&gt;<i> derive the &quot;smooth&quot; path from itself to the next trampoline node.
+</I>&gt;<i> This thus implements the Rough/Smooth pathfinding idea.
+</I>&gt;<i>
+</I>&gt;<i> If trampoline routes can be concatenated without permission from the
+</I>&gt;<i> original source of the trampoline route, then a trampoline node may itself
+</I>&gt;<i> utilize this algorithm when sending to the next trampoline node.
+</I>&gt;<i>
+</I>&gt;<i> A privacy-preserving implementation would prefer to periodically &quot;refresh&quot;
+</I>&gt;<i> the high-level map (possibly changing the nodes that are put in the
+</I>&gt;<i> high-level map to increase the chances that it will not use a high-level
+</I>&gt;<i> node repeatedly).
+</I>&gt;<i> Again, this will be similar to the `getroutequick` refresh, we
+</I>&gt;<i> double-buffer so that we can use the existing high-level rough map while
+</I>&gt;<i> generating the next high-level rough map.
+</I>&gt;<i>
+</I>&gt;<i> Tr\*sted Rough Maps
+</I>&gt;<i> -------------------
+</I>&gt;<i>
+</I>&gt;<i> Centralized tr\*sted servers might exist that provide rough maps to nodes
+</I>&gt;<i> with extremely limited space (and cannot store the smooth, detailed
+</I>&gt;<i> channel-level map at all).
+</I>&gt;<i> The server selects a small fraction of the available nodes, preferring
+</I>&gt;<i> high-uptime high-connectivity nodes, and generates a rough map as above.
+</I>&gt;<i>
+</I>&gt;<i> Then, for each node, it determines the nearest high-level node.
+</I>&gt;<i> Each high-level node has some fixed-size probabilistic set representation,
+</I>&gt;<i> such as a Bloom filter or a Goulomb-coded set.
+</I>&gt;<i> When it determines for a node which high-level node it is nearest to, it
+</I>&gt;<i> adds that node to the Bloom filter / Goulomb-coded set for that high-level
+</I>&gt;<i> node.
+</I>&gt;<i>
+</I>&gt;<i> A payer node that has no knowledge of the detailed channel map beyond its
+</I>&gt;<i> own channels can generate a rough trampoline route as follows:
+</I>&gt;<i>
+</I>&gt;<i> 1.  It searches the payee in each high-level node in the rough map, using
+</I>&gt;<i> the Bloom filter / Goulomb-coded set.
+</I>&gt;<i>     Looking up in a Bloom filter would be O(1), and we would have to scan
+</I>&gt;<i> the entire map, so complexity is O(n) effectively.
+</I>&gt;<i> 2.  It searches for the nearest high-level node to itself, again using the
+</I>&gt;<i> Bloom filter / Goulomb-coded set.
+</I>&gt;<i> 3.  It uses the rough map to route from the high-level node near itself to
+</I>&gt;<i> the high-level node near the payee.
+</I>&gt;<i>     Then it appends the payee to this route.
+</I>&gt;<i>
+</I>&gt;<i> Knowing only its own channels, it can simply deliver the above generated
+</I>&gt;<i> trampoline route to any adjacent node that claims to support trampoline
+</I>&gt;<i> routing.
+</I>&gt;<i>
+</I>&gt;<i> This provides some measure of privacy: the payer does not need to reveal
+</I>&gt;<i> any data to the server, other than the fact that it wants a rough map.
+</I>&gt;<i> If the map is small enough, it could cache for multiple payment attempts.
+</I>&gt;<i> Finally, it could also get multiple such maps from different servers, and
+</I>&gt;<i> score each map based on how successful payment ends up being when using
+</I>&gt;<i> that map.
+</I>&gt;<i>
+</I>&gt;<i> These servers are tr\*sted to indicate high-uptime nodes with good
+</I>&gt;<i> liquidity and connectivity to the network, and to not lie about the actual
+</I>&gt;<i> network topology.
+</I>&gt;<i> They are also tr\*sted to not generate maps that have themselves in the
+</I>&gt;<i> center of the map and have every other high-level node only have edges to
+</I>&gt;<i> their central node.
+</I>&gt;<i> As such, users of this system must consider how much trust they can put in
+</I>&gt;<i> these servers.
+</I>&gt;<i>
+</I>&gt;<i> The payer node will need to periodically get updates of the rough map as
+</I>&gt;<i> the topology changes.
+</I>&gt;<i> A tr\*sted server might use the pay-for-data protocol to require payment
+</I>&gt;<i> for providing this map.
+</I>&gt;<i> A newly deployed node will need to be started with a tr\*sted (and
+</I>&gt;<i> probably obsolete) rough map, however.
+</I>&gt;<i> Alternately a protocol delivering a proof-of-payment can be executed
+</I>&gt;<i> onchain, or the server can publish its node pubkey and public contact point
+</I>&gt;<i> so that the node can start its first channel with the server and pay for
+</I>&gt;<i> the rough map over a direct channel.
+</I>&gt;<i>
+</I>&gt;<i> Self-Serving
+</I>&gt;<i> ------------
+</I>&gt;<i>
+</I>&gt;<i> Servers providing rough maps like the above can be written with free and
+</I>&gt;<i> open source software.
+</I>&gt;<i> Thus, one might run a limited-smooth-map node on the same hardware as a
+</I>&gt;<i> server generating rough maps for the limited-smooth-map node.
+</I>&gt;<i>
+</I>&gt;<i> One might wonder though, whether it might be better to just run a node
+</I>&gt;<i> that can keep the entire smooth map and not use a rough map at all.
+</I>&gt;<i>
+</I>&gt;<i> The difference here is that the server does not need to perform any
+</I>&gt;<i> pathfinding in a tight schedule.
+</I>&gt;<i> All its smooth-map pathfinding is done to simply determine which
+</I>&gt;<i> high-level node every node on the smooth map is near to, and thiis not need
+</I>&gt;<i> to be fast in order to serve outgoing payments quickly.
+</I>&gt;<i> This means the server can potentially store the smooth routemap in a
+</I>&gt;<i> database in slow persistent storage rather than in high-speed memory.
+</I>&gt;<i>
+</I>&gt;<i> Indeed, since the rough map is likely to still be mostly valid even as the
+</I>&gt;<i> network changes topology, the server can generate new rough maps while the
+</I>&gt;<i> hardware is idle, then coordinate with the limited-smooth-map node on every
+</I>&gt;<i> update of a fresh rough map.
+</I>&gt;<i>
+</I>&gt;<i> This removes tr\*st issues, in much the same way that running Electrum
+</I>&gt;<i> Personal Server on a fullnode one controls removes the tr\*st issue in
+</I>&gt;<i> Electrum and leaves it as a high-quality wallet interface.
+</I>&gt;<i>
+</I>&gt;<i> This also provides an approach towards scaling up our nodes to handle
+</I>&gt;<i> routemaps with 100 billion channels.
+</I>&gt;<i> We can conceptually split our routemap between a &quot;total global routemap&quot;
+</I>&gt;<i> stored strictly on disk, and a &quot;myopic local routemap&quot; that is kept in
+</I>&gt;<i> memory.
+</I>&gt;<i> The server stores the entire detailed global routemap on-disk.
+</I>&gt;<i> The node software queries the server for two things:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Nodes and channels within N hops of the node.
+</I>&gt;<i>     This is the myopic local routemap.
+</I>&gt;<i> 2.  A rough routemap of the rest of the network as described above.
+</I>&gt;<i>
+</I>&gt;<i> The node keeps both of the above in-memory, but they should be small
+</I>&gt;<i> compared to the total global routemap stored on-disk.
+</I>&gt;<i> Keeping the map in-memory lets the node quickly find routes.
+</I>&gt;<i>
+</I>&gt;<i> 1.  If the destination is in the local routemap already, then the node
+</I>&gt;<i> does not need to do trampoline routing.
+</I>&gt;<i> 2.  If the destination is not in the local routemap, then the node uses
+</I>&gt;<i> the rough routemap to find a reasonable trampoline route, then finds a path
+</I>&gt;<i> in the local routemap to the first node in the trampoline.
+</I>&gt;<i>
+</I>&gt;<i> Our bandwidth requirements still remain (we still need to gossip the
+</I>&gt;<i> entire routemap containing 100 billion channels).
+</I>&gt;<i> Similarly, our on-disk space requirement still remains.
+</I>&gt;<i> However it does greatly reduce our memory requirement, making it possible
+</I>&gt;<i> to still fit Lightning nodes on single-board-computer-level devices
+</I>&gt;<i> (admittedly, those that are connected to large permanent storage and fast
+</I>&gt;<i> Internet connections, but let me work on one problem at a time mkay?).
+</I>&gt;<i>
+</I>&gt;<i> Myopic Trampoline Nodes
+</I>&gt;<i> -----------------------
+</I>&gt;<i>
+</I>&gt;<i> I have argued this before, but I think that nodes that do not have a
+</I>&gt;<i> complete smooth-level routemap should still be allowed to advertise
+</I>&gt;<i> themselves as trampoline nodes.
+</I>&gt;<i>
+</I>&gt;<i> As the network grows to 100 billion channels, fewer and fewer nodes will
+</I>&gt;<i> have the ability to find detailed paths from themselves to any arbitrary
+</I>&gt;<i> next-trampoline-node.
+</I>&gt;<i> It is important that the risk of running trampoline nodes be shared
+</I>&gt;<i> widely, and we should strongly prefer the &quot;trampoline advertising feature
+</I>&gt;<i> bit&quot; to be a proxy for &quot;not too lazy to update the software&quot; rather than
+</I>&gt;<i> &quot;rich enough to afford really good hardware&quot;.
+</I>&gt;<i>
+</I>&gt;<i> However, this implies that some trampoline nodes will fall back to
+</I>&gt;<i> themselves using a rough map to reach some nodes.
+</I>&gt;<i> This implies that they need to prepend additional nodes to the trampoline
+</I>&gt;<i> route, without permission from whoever created the original trampoline
+</I>&gt;<i> route.
+</I>&gt;<i>
+</I>&gt;<i> Flocking
+</I>&gt;<i> ========
+</I>&gt;<i>
+</I>&gt;<i> A common issue in real-time strategy games is that a player, fighting for
+</I>&gt;<i> an important objective, needs to immediately send a large group of units to
+</I>&gt;<i> a location.
+</I>&gt;<i> If all the units were to individually request for paths from the
+</I>&gt;<i> pathfinding system, then the units would lag and start moving one by one,
+</I>&gt;<i> as the pathfinding system gets overloaded and gives the paths one by one.
+</I>&gt;<i> This is particularly bad behavior if the player is currently in a
+</I>&gt;<i> high-pressure situation where the objective might be lost soon if the
+</I>&gt;<i> commanded units are unable to move immediately to the objective.
+</I>&gt;<i>
+</I>&gt;<i> Worse, often the pathfinding system will make the units follow almost the
+</I>&gt;<i> exact same path, meaning that slower units can prevent faster units from
+</I>&gt;<i> going around them, and they will all travel in single file, which is
+</I>&gt;<i> usually a strategic problem when their line is intercepted by enemy units.
+</I>&gt;<i>
+</I>&gt;<i> The usual solution for this is, when multiple units are selected and
+</I>&gt;<i> commanded to move to a single location, is:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Select one unit at random as leader.
+</I>&gt;<i> 2.  Have only the leader request a path from the pathfinding system.
+</I>&gt;<i> 3.  Have the other units &quot;flock&quot; around that leader:
+</I>&gt;<i> <A HREF="http://www.red3d.com/cwr/boids/">http://www.red3d.com/cwr/boids/</A>
+</I>&gt;<i>
+</I>&gt;<i> Flocking simply means that units follow some rules:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Do not get too near other flock members.
+</I>&gt;<i> 2.  Do not get too far other flock members.
+</I>&gt;<i> 3.  Face in the same direction as other flock members (if units in the
+</I>&gt;<i> game world have this sense).
+</I>&gt;<i> 4.  Leaders ignore the above rules, but are considered flock members by
+</I>&gt;<i> the other flock members.
+</I>&gt;<i>
+</I>&gt;<i> This reduces the pathfinding load to only one unit, the leader unit, and
+</I>&gt;<i> the rest of the units simply follow the designated leader until the leader
+</I>&gt;<i> reaches the objective location, or is killed or given another command (in
+</I>&gt;<i> which case another leader is chosen).
+</I>&gt;<i> The individual units can request shorter paths from the pathfinding system
+</I>&gt;<i> to any point near the leader, or if it is &quot;near enough&quot; to the leader it
+</I>&gt;<i> can simply stop where it is.
+</I>&gt;<i> As they have been following the leader, other units should be &quot;near&quot; to
+</I>&gt;<i> the indicated location when the ledaer has reached the destination, so the
+</I>&gt;<i> paths they request should be short and it should not take too long for the
+</I>&gt;<i> pathfinding system to get those paths.
+</I>&gt;<i>
+</I>&gt;<i> Further, this often encourages the grouped units to move as a &quot;blob&quot; on
+</I>&gt;<i> multiple nearby paths rather than in single file, which is generally better
+</I>&gt;<i> for strategic defense when they are intercepted by enemies.
+</I>&gt;<i>
+</I>&gt;<i> Now of course in Lightning Network we do not have anything like this
+</I>&gt;<i> problem, right?
+</I>&gt;<i>
+</I>&gt;<i> Right?
+</I>&gt;<i>
+</I>&gt;<i> Now consider the Feature Either Called AMP or Multi-Part Payments or Bass
+</I>&gt;<i> Amplifier.
+</I>&gt;<i> In this case, we have multiple payments arising from a source, all of
+</I>&gt;<i> which are commanded to then converge at a singular destination.
+</I>&gt;<i> We would like:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Not to spend two entire seconds for each alternate path.
+</I>&gt;<i> 2.  Have the various split payments travel in different paths, not in
+</I>&gt;<i> &quot;single file&quot; where they mostly travel the same path except they start at
+</I>&gt;<i> different channels but almost immediately converge to travelling over the
+</I>&gt;<i> same channels.
+</I>&gt;<i>
+</I>&gt;<i> Flocking Over Lightning
+</I>&gt;<i> -----------------------
+</I>&gt;<i>
+</I>&gt;<i> Suppose our node is asked to provide a large payment to some destination.
+</I>&gt;<i> Our node then computes a path (possibly using any of the previous
+</I>&gt;<i> shortcuts to speed up this initial pathfinding).
+</I>&gt;<i>
+</I>&gt;<i> However, the direct channel where this route starts from has too little
+</I>&gt;<i> liquidity on our side.
+</I>&gt;<i> So our node also selects another channel from which to make up the
+</I>&gt;<i> difference in liquidity, using AMP/Multi-part/Bass Amplifier.
+</I>&gt;<i>
+</I>&gt;<i> This is a &quot;split&quot; payment, and we then use a flocking system, with the
+</I>&gt;<i> first payment as the leader.
+</I>&gt;<i> Our rules are:
+</I>&gt;<i>
+</I>&gt;<i> 1.  At each hop of the leader route, we should seek any route that gets us
+</I>&gt;<i> to within one node away from the leader.
+</I>&gt;<i> 2.  Channels going to nodes that the leader uses on its route (or which
+</I>&gt;<i> have been used by the other split payments in the flock) have a much higher
+</I>&gt;<i> cost.
+</I>&gt;<i> 3.  Channels directly connected to the source cannot be used at all (as
+</I>&gt;<i> that defeats the entire point of doing multipath).
+</I>&gt;<i>
+</I>&gt;<i> We simulate the leader following its path one hop at a time.
+</I>&gt;<i> The leader starts at the source, then takes one hop to the next node.
+</I>&gt;<i>
+</I>&gt;<i> The split payment starts at the other node of the channel we selected to
+</I>&gt;<i> make up the difference in payments.
+</I>&gt;<i> We then use a multi-destination Dijkstra that terminates as soon as it
+</I>&gt;<i> finds any node that is within one hop of where the leader currently is.
+</I>&gt;<i> Channels used by the leader, and those already used by other splits, are
+</I>&gt;<i> penalized in cost so that we avoid reusing them, but still can pass through
+</I>&gt;<i> them if they are the only options available.
+</I>&gt;<i> This initial Dijkstra can potentially take a long time, but hopefully it
+</I>&gt;<i> should be easy to cut short since it is a multiple-destination Dijkstra and
+</I>&gt;<i> achieving any destination terminates the algorithm.
+</I>&gt;<i>
+</I>&gt;<i> For subsequent hops of the leader, we use a multi-destination limited-hops
+</I>&gt;<i> Dijkstra.
+</I>&gt;<i> As the split payment starts one node away from the previous node of the
+</I>&gt;<i> leader, in the worst case it can simply just jump to the previous node of
+</I>&gt;<i> the leader if it cannot find an alternate path close by.
+</I>&gt;<i> Jumping to this is penalized by rule 2 above so other paths are preferred,
+</I>&gt;<i> but this still allows the &quot;flock&quot; to pass through chokepoints in the
+</I>&gt;<i> network.
+</I>&gt;<i>
+</I>&gt;<i> When we simulate the leader reaching the destination node, then we use a
+</I>&gt;<i> multi-destination limited-hops Dijkstra to the destination node.
+</I>&gt;<i> This lets every split payment reach the leader.
+</I>&gt;<i>
+</I>&gt;<i> Thus, the payments form a &quot;blob&quot; around the leader, instead of almost
+</I>&gt;<i> always following the same channels.
+</I>&gt;<i> This provides better reliability of the entire payment attempt.
+</I>&gt;<i>
+</I>&gt;<i> Conclusion
+</I>&gt;<i> ==========
+</I>&gt;<i>
+</I>&gt;<i> Lightning Network does not need to pioneer any new research into
+</I>&gt;<i> pathfinding.
+</I>&gt;<i> There already exists an entire field of programming that has similar
+</I>&gt;<i> issues (dynamic map, incomplete information, large maps with low acceptable
+</I>&gt;<i> latency of pathfinding, quickly-found &quot;okay&quot; paths are better than
+</I>&gt;<i> slowly-found &quot;best&quot; paths).
+</I>&gt;<i> That is real-time strategy game programming, and such games have existed
+</I>&gt;<i> in some form or another for the past 4 decades.
+</I>&gt;<i> Shortcuts, techniques, and optimizations used in real-time strategy games
+</I>&gt;<i> deserve closer examination, as potential points of inspiration for similar
+</I>&gt;<i> techniques for Lightning.
+</I>&gt;<i>
+</I>&gt;<i> This writeup is a result of a quick review of pathfinding techniques used
+</I>&gt;<i> in real-time strategy games.
+</I>&gt;<i> There are potentially many more techniques whose ideas might be possible
+</I>&gt;<i> to adapt in finding Lightning Network routes in large public networks in
+</I>&gt;<i> short amounts of time with acceptable fees and locktimes.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190731/ae5331d5/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190731/ae5331d5/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002095.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by	Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+	<LI>Next message: <A HREF="002105.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2103">[ date ]</a>
+              <a href="thread.html#2103">[ thread ]</a>
+              <a href="subject.html#2103">[ subject ]</a>
+              <a href="author.html#2103">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

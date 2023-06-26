@@ -1,0 +1,99 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Routemap%20scaling%20%28was%3A%20Just%20in%20Time%20Routing%0A%09%28JIT-Routing%29%20and%20a%20channel%20rebalancing%20heuristic%20as%20an%20add%0A%09on%20for%20improved%20routing%20success%20in%20BOLT%201.0%29&In-Reply-To=%3C1JZK5UlECD7cTK0T8b7NTxCEEhBqn2Uj9D4TQ4s8CwJeQbaQwTH5r2pJCJUzZDJPvH5BkZ7Flt84ruFygqNnQP8scZ2dX5E6ypcdceWkq8U%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001970.html">
+   <LINK REL="Next"  HREF="001973.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)</H1>
+    <B>m.a.holden</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Routemap%20scaling%20%28was%3A%20Just%20in%20Time%20Routing%0A%09%28JIT-Routing%29%20and%20a%20channel%20rebalancing%20heuristic%20as%20an%20add%0A%09on%20for%20improved%20routing%20success%20in%20BOLT%201.0%29&In-Reply-To=%3C1JZK5UlECD7cTK0T8b7NTxCEEhBqn2Uj9D4TQ4s8CwJeQbaQwTH5r2pJCJUzZDJPvH5BkZ7Flt84ruFygqNnQP8scZ2dX5E6ypcdceWkq8U%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)">m.a.holden at protonmail.com
+       </A><BR>
+    <I>Mon Apr  8 14:01:43 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001970.html">[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)
+</A></li>
+        <LI>Next message: <A HREF="001973.html">[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1971">[ date ]</a>
+              <a href="thread.html#1971">[ thread ]</a>
+              <a href="subject.html#1971">[ subject ]</a>
+              <a href="author.html#1971">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+&gt;<i> Let me clarify: When you say &quot;node&quot; here, do you mean Lightning Network node?
+</I>&gt;<i> Or do you mean instead an in-memory node?
+</I>
+Neither. I meant a node in a tree. I tried to use the term bucket to make the distinction between this and Lightning node.
+The tree is not strictly in-memory. There is a purely conceptual global quadtree.
+
+Each bucket is essentially a view over the union of its 4 children. The bucket 00b is (0000b U 0001b U 0010b U 0011b). The bucket 0011b is (001100b U 001101b U 001110b 001111b), etc. Each client choses a suitable max_depth &lt;= HASHLEN/2, and the leaves of their tree contain a set of all PKH whose prefix matches the bucket index. A client will keep, at minimum, a subtree of the global quadtree (and both nodes for all channels where at least one of the nodes is in the same subtree).
+
+As you state, you can use any data structure for storing this in memory, but there are obvious benefits to using a quadtree-index to mirror the conceptual global one in terms of efficient querying, filtering, spilling, aggregating branch sizes.
+
+If many clients follow the convention then the optimisation opportunities arise, because the majority of routes will be discoverable with a single (possibly parallel) query to the network. Gossip size can be reduced and unwanted gossip can be eliminated, which alleviates the most constrained resource, bandwidth. If the conventions are widely followed, the benefits are maximized for everybody. Not following convention does not break things, it just limits the potential wins.
+
+---
+
+&gt;<i> As I understand your proposal, taking over or taking down a node near the root of the tree will make it difficult to look up several nodes at once.
+</I>&gt;<i> This is because the tree nature makes nodes near the root of the tree (top of the hierarchy) much more important than leaf nodes, which only worry about themselves.
+</I>
+If a node advertises itself near the top of the tree then it will be a better information provider than others, but this is never at the exclusion of others below it. All of the information a node in the parent bucket holds is held in part by the nodes in the child buckets. The parent does not know anything that other people don't know too. No nodes are &quot;more important&quot;, but they might potentially be &quot;more optimal&quot;.
+
+If you know about some nodes in bucket 0011b, but none in 0001b where a payment destination is, then you could query any node in 0011b and ask about any nodes in bucket 0001b. Since the buckets are nearby, there is a greater probability that they'll know about more nodes than somebody further away. This would be similar to how your proposal operates. If somebody did advertise being in bucket 00b, then they're able to find a potentially better (shorter) path to the destination because they know more information and you don't need to find a path through multiple buckets. If they are under DDoS, it doesn't bring down the network or limit access to the child buckets - it just makes it trivially less optimal to route because it *might* (low probability) require more queries to reach the destination.
+
+When querying, it is expected that if you know about any nodes in the same bucket as the payment destination, then there's a high probability that they will know a route to the destination. A parent bucket of that bucket is not any more likely to know about the destination, they have the same information. I've shown that at small depth, there's a high probability that you will have knowledge about a reasonable quantity of paths to every other bucket in the global network - so the majority of payments will only need to visit one bucket outside your own. The reason to specifically query parent buckets is limited, and not ultimately necessary.
+
+The only way I can see the problem you raise being a concern is if misconfigured clients have an unreasonably large depth for the amount of information in the network, such that there are few, or no channels from their own bucket to other buckets. In that case, they might become over-reliant on the parent's buckets to receive payments, but there are likely to be numerous parents at every depth of the tree (correctly configured clients), meaning there isn't a clear-cut target that an attacker could DDoS to try and disrupt a bucket.
+
+Nodes do not need to present the real depth at which they keep gossip, but there are potentially greater fee-earning opportunities if publicly advertising their maximum information capability. Nodes could counterbalance potential DDoS risk with higher routing fees, where people might pay more to have a greater chance of finding shorter routes in fewer queries, but a frugal client would simply chose the cheapest routes, and the more expensive routes via parent buckets would be less desirable to them - meaning DDoS on nodes in parent buckets may be wasted effort because it would drive people towards saving money on fees. Also, since the opportunity cost for missed routing fees would be increased for nodes nearer the top of the tree, they are incentivized to make the efforts to maintain uptime and try to mitigate DDoS attacks against themselves.
+
+It's hard to say for certain whether the risks would be real cause for concern without testing on real world data, which we don't yet have the scale to test, but I just can't see it being realistic that there would be so few targets which make DDoS feasible to begin with, and that if attacks against a significant number of nodes were successful, the potential degrading of the network would be trivial or even unnoticeable. As the network grows, it seems the attack vector would get even more unrealistic because the number of targets that one would need DDoS would increase.
+
+&gt;<i> What happens if a node near the root of the tree is brought down?
+</I>
+Buckets closer to the root do not hold any exclusive information. If you bring down every node in the root bucket, and every node at depth=1, then nodes at depth&gt;=2 will continue to communicate and still collectively know the entire network map, with still a good probability that any node can find any other node in the network by asking just one other node.
+
+Regards,
+Mark H
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001970.html">[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)
+</A></li>
+	<LI>Next message: <A HREF="001973.html">[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1971">[ date ]</a>
+              <a href="thread.html#1971">[ thread ]</a>
+              <a href="subject.html#1971">[ subject ]</a>
+              <a href="author.html#1971">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

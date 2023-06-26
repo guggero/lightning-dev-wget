@@ -1,0 +1,242 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Rebalancing argument
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rebalancing%20argument&In-Reply-To=%3CCAO3Pvs8K5EWGDWo3BeyZhyawPJuqO4L8s-iA8cxdvgXW-gA0nQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001331.html">
+   <LINK REL="Next"  HREF="001343.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Rebalancing argument</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rebalancing%20argument&In-Reply-To=%3CCAO3Pvs8K5EWGDWo3BeyZhyawPJuqO4L8s-iA8cxdvgXW-gA0nQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Rebalancing argument">laolu32 at gmail.com
+       </A><BR>
+    <I>Tue Jul  3 19:33:22 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001331.html">[Lightning-dev] Rebalancing argument
+</A></li>
+        <LI>Next message: <A HREF="001343.html">[Lightning-dev] Rebalancing argument
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1344">[ date ]</a>
+              <a href="thread.html#1344">[ thread ]</a>
+              <a href="subject.html#1344">[ subject ]</a>
+              <a href="author.html#1344">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dmytro wrote:
+&gt;<i> Yet the question remains &#8212; are there obvious advantages of cycle
+</I>&gt;<i> transactions over a smart fee/routing system?
+</I>
+That's a good question, it may be the case that by modifying the fee
+structure to punish flows that unbalance channels further, then this can
+simplify the problem as the heuristics can target solely the fee rate. The
+earliest suggestion of this I can recall was from Tadge way back in like
+2015 or so. The goal here is for a node to ideally maintain relatively
+balanced channels, but then charge a payment an amount that scales super
+linearly when flows consume most of their available balance.
+
+The current fee schedule is essentially:
+
+  base_fee + amt*rate
+
+clighting and lnd (borrowed from c-lightning) currently use a &quot;risk factor&quot;
+to factor in the impact of the time lock on the &quot;weight&quot; of an edge when
+path finding. With this, the fee schedule looks like:
+
+  (base_fee + amt*rate) + (cltv_delta * risk_factor / 1,000,0000)
+
+In the future, we may want to allow nodes to also signal how they wish the
+fee to scale with the absolute CLTV of the HTLC extend to this. This would
+allow them to more naturally factor in their conception of the time value of
+their BTC.
+
+Finally, if we factor in an &quot;balance disruption&quot; factor, the fee schedule
+may look something like this:
+
+  (base_fee + amt*rate) + (cltv_delta * risk_factor / 1,000,0000) +
+  gamma*f(capacity, amt)
+
+Here f is a function whose output is proportional to the distance the
+payment flow (assuming full capacity at that instance) puts the channel away
+from being fully balanced, and gamma is a coefficient that allows nodes to
+express the degree of penalty for unbalancing a channel. f itself is either
+agreed upon by the network completely, or resembles a certain polynomial,
+allowing nodes to select coefficients as they wish.
+
+We may want to consider moving to something like this for BOLT 1.x+ as it
+allows nodes to quantify their apprehension to time locks and also
+channel balance equilibrium affinity.
+
+Alternatively, if we move to something like HORNET, then during the set up
+phase, nodes can ask for an initial &quot;quote&quot; for a set of payment ranges,
+then just use that quote for all payments sent. This allows nodes to keep
+their fee schedules private (for w/e reason) and also change them at a whim
+if they wish.
+
+-- Laolu
+
+
+On Sun, Jul 1, 2018 at 8:39 AM Dmytro Piatkivskyi &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">dmytro.piatkivskyi at ntnu.no</A>&gt; wrote:
+
+&gt;<i> Hi Rene,
+</I>&gt;<i>
+</I>&gt;<i> Thanks for your answer!
+</I>&gt;<i>
+</I>&gt;<i> 1. The Lightning network operates under different assumptions, that is
+</I>&gt;<i> true. However, the difference is minor in terms of the issue posed. The
+</I>&gt;<i> premise for the quoted statement is that taking fees changes the nodes&#8217;
+</I>&gt;<i> balances, therefore selected paths affect the liquidity. In the Lightning
+</I>&gt;<i> network fees are very small, so the change in liquidity may be negligible.
+</I>&gt;<i> Moreover, intermediate nodes gain in fees, which only increases the
+</I>&gt;<i> liquidity.
+</I>&gt;<i>
+</I>&gt;<i> 2.A. It is too early to speculate where the privacy requirements will
+</I>&gt;<i> settle down. Flare suggests a mechanism of sharing the infrastructure view
+</I>&gt;<i> between nodes, possibly sharing weights. As the network grows routing will
+</I>&gt;<i> become more difficult, however we don&#8217;t know yet to which extent. It may
+</I>&gt;<i> organise itself in &#8216;domains&#8217;, so when we send a payment we know to which
+</I>&gt;<i> domain we are sending to, knowing the path to it beforehand. The point is
+</I>&gt;<i> we don&#8217;t know yet, so we can&#8217;t speculate.
+</I>&gt;<i>
+</I>&gt;<i> 2.B. That is surely an interesting aspect. HTLC locks
+</I>&gt;<i> temporarily downgrade the network liquidity. Now the question is how it
+</I>&gt;<i> changes the order of transactions and how that order change affects the
+</I>&gt;<i> transaction feasibility. Does it render some transactions infeasible or
+</I>&gt;<i> just defers them? It definitely needs a closer look.
+</I>&gt;<i>
+</I>&gt;<i> Yet the question remains &#8212; are there obvious advantages of cycle
+</I>&gt;<i> transactions over a smart fee/routing system? In any sense. Path lengths,
+</I>&gt;<i> for example. To answer that I am going to run a simulation, but also would
+</I>&gt;<i> appreciate your opinions.
+</I>&gt;<i>
+</I>&gt;<i> Best,
+</I>&gt;<i> Dmytro
+</I>&gt;<i>
+</I>&gt;<i> From: Ren&#233; Pickhardt &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">r.pickhardt at googlemail.com</A>&gt;
+</I>&gt;<i> Date: Sunday, 1 July 2018 at 13:59
+</I>&gt;<i> To: Dmytro Piatkivskyi &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">dmytro.piatkivskyi at ntnu.no</A>&gt;
+</I>&gt;<i> Cc: lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt;
+</I>&gt;<i> Subject: Re: [Lightning-dev] Rebalancing argument
+</I>&gt;<i>
+</I>&gt;<i> Hey Dmytro,
+</I>&gt;<i>
+</I>&gt;<i> thank your for your solid input to the discussion. I think we need to
+</I>&gt;<i> consider that the setting in the lightning network is not exactly
+</I>&gt;<i> comparable to the one described in the 2010 paper.
+</I>&gt;<i>
+</I>&gt;<i> 1st: the paper states in section 5.2: &quot;It appears that a mathematical
+</I>&gt;<i> analysis of a transaction routing model where intermediate nodes charged a
+</I>&gt;<i> routing fee would require an entirely new approach since it would
+</I>&gt;<i> invalidate the cycle-reachability relation that forms the basis of our
+</I>&gt;<i> results.&quot;
+</I>&gt;<i> Since we have routing fees in the lightning network to my understanding
+</I>&gt;<i> the theorem and lemma you quoted in your medium post won't hold.
+</I>&gt;<i>
+</I>&gt;<i> 2nd: Even if we neglect the routing fees and assume the theorem still
+</I>&gt;<i> holds true we have two conditions that make the problem way more dynamic:
+</I>&gt;<i>  A) In the lightning network we do not know the weights of the directed
+</I>&gt;<i> edges. (only the sum of two opposing edges) So while theoretically the flow
+</I>&gt;<i> in the network will only depend on the liquidity of the nodes I guess in
+</I>&gt;<i> practice well balanced channels will increase the probability to actually
+</I>&gt;<i> find a working route.
+</I>&gt;<i> B) I believe the HTLCs create a situation where funds are being locked up
+</I>&gt;<i> while routing takes place and thus have an impact to the entire flow of the
+</I>&gt;<i> network. While Alice searches for a route for her payment a proper route
+</I>&gt;<i> could be blocked do to the fact that Bob is using it currently. Since the
+</I>&gt;<i> funds of Bob have not arrived Alice might also not be able to find a
+</I>&gt;<i> different route.
+</I>&gt;<i>
+</I>&gt;<i> However those scientific results are a strong call for Atomic Multipath
+</I>&gt;<i> Payments. I personally think they are also a strong call for splicing since
+</I>&gt;<i> this allows to easilly increase the flow of the network by updating a
+</I>&gt;<i> channel (athough you might argue that following the paper this could be
+</I>&gt;<i> achieved by just creating a new channel)
+</I>&gt;<i>
+</I>&gt;<i> best Rene
+</I>&gt;<i>
+</I>&gt;<i> On Sun, Jul 1, 2018 at 12:21 PM Dmytro Piatkivskyi &lt;
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">dmytro.piatkivskyi at ntnu.no</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi everyone,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I have been working academically on the Lightning network for a while
+</I>&gt;&gt;<i> now. I didn&#8217;t not participate in the list to form my own vision of what it
+</I>&gt;&gt;<i> should be. So please, bear with me if I&#8217;ll be saying nonsense sometimes.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> There has been a lot of discussion on sending cycle transactions to
+</I>&gt;&gt;<i> oneself to &#8216;re-balance&#8217; the network. On LN mailing list
+</I>&gt;&gt;<i> &lt;<A HREF="../2018-February/001005.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/001005.html</A>&gt; [1] or
+</I>&gt;&gt;<i> numerous places elsewhere. There has been even a paper suggesting a smart
+</I>&gt;&gt;<i> mechanism to do the re-balancing (see Revive or Liquidity network [2]). My
+</I>&gt;&gt;<i> question is what do we actually get from it? [3] states that the
+</I>&gt;&gt;<i> distribution of funds in channels does not really affect the network
+</I>&gt;&gt;<i> liquidity. I can see cheaper fees or shorter paths if the network is kept
+</I>&gt;&gt;<i> balanced. But don&#8217;t you think that a smart fee strategy will do the job?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> To save your time, [4] explains the gist from [3].
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [1]
+</I>&gt;&gt;<i> <A HREF="../2018-February/001005.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/001005.html</A>
+</I>&gt;&gt;<i> [2]
+</I>&gt;&gt;<i> <A HREF="https://www.reddit.com/r/ethereum/comments/7bse33/were_very_happy_to_announce_the_liquiditynetwork/">https://www.reddit.com/r/ethereum/comments/7bse33/were_very_happy_to_announce_the_liquiditynetwork/</A>
+</I>&gt;&gt;<i> [3] <A HREF="https://arxiv.org/abs/1007.0515">https://arxiv.org/abs/1007.0515</A>
+</I>&gt;&gt;<i> [4]
+</I>&gt;&gt;<i> <A HREF="https://medium.com/@dimapiatkivskyi/why-would-you-re-balance-a-payment-network-796756ad4f31">https://medium.com/@dimapiatkivskyi/why-would-you-re-balance-a-payment-network-796756ad4f31</A>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> www.rene-pickhardt.de
+</I>&gt;<i> &lt;<A HREF="http://www.beijing-china-blog.com/">http://www.beijing-china-blog.com/</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> Skype: rene.pickhardt
+</I>&gt;<i>
+</I>&gt;<i> mobile: +49 (0)176 5762 3618 &lt;+49%20176%2057623618&gt;
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180703/d412a8b5/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180703/d412a8b5/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001331.html">[Lightning-dev] Rebalancing argument
+</A></li>
+	<LI>Next message: <A HREF="001343.html">[Lightning-dev] Rebalancing argument
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1344">[ date ]</a>
+              <a href="thread.html#1344">[ thread ]</a>
+              <a href="subject.html#1344">[ subject ]</a>
+              <a href="author.html#1344">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

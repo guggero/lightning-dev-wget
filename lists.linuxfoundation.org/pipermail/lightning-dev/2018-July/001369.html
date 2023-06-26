@@ -1,0 +1,370 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] proposal for Lightning Network improvement proposals
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20proposal%20for%20Lightning%20Network%20improvement%0A%20proposals&In-Reply-To=%3CCWLP265MB0274DC08997A9CF2B7360A1AD8560%40CWLP265MB0274.GBRP265.PROD.OUTLOOK.COM%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001368.html">
+   <LINK REL="Next"  HREF="001370.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] proposal for Lightning Network improvement proposals</H1>
+    <B>Mr Hodlen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20proposal%20for%20Lightning%20Network%20improvement%0A%20proposals&In-Reply-To=%3CCWLP265MB0274DC08997A9CF2B7360A1AD8560%40CWLP265MB0274.GBRP265.PROD.OUTLOOK.COM%3E"
+       TITLE="[Lightning-dev] proposal for Lightning Network improvement proposals">hodlen at outlook.com
+       </A><BR>
+    <I>Mon Jul 23 19:15:28 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001368.html">[Lightning-dev] proposal for Lightning Network improvement	proposals
+</A></li>
+        <LI>Next message: <A HREF="001370.html">[Lightning-dev] proposal for Lightning Network improvement	proposals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1369">[ date ]</a>
+              <a href="thread.html#1369">[ thread ]</a>
+              <a href="subject.html#1369">[ subject ]</a>
+              <a href="author.html#1369">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, new guy here. I've also been a bit confused about the process from just 
+reading the BOLTs.
+
+I'm working on an implementation of the BOLTs with the intention of 
+experimenting with new features.
+My concerns are mainly about assignment of values for types and feature bits, 
+and how we can test new features without conflicting with other developers. 
+
+For example, looking at the current BOLT#9, it appears bits 8/9 are the next 
+free bits available for use, so if I were implementing a new optional feature, 
+I would pick the next available bits, 
+however, I find that other developers have also opted to use the same bits: 
+<A HREF="https://github.com/rgb-org/spec/blob/master/04-lightning-network.md">https://github.com/rgb-org/spec/blob/master/04-lightning-network.md</A>
+
+I think issue of requiring centralized number assignment can be easily avoided 
+for experimental features by using a unique identifier for the feature instead, 
+such as a hash of the feature name. 
+This should make it simpler for independent developers to try new features 
+before creating new pull requests for a BOLT assignment.
+
+Here's an extremely rough draft of the idea. The intent is that once an 
+experiment has been tested and is succesful, it can move towards being 
+standardized as a BOLT. Is it worth adding something like this?
+
+--- BOLT #(-1): Experimental Features  [tentatively named]
+
+Overview
+
+The experimental features protocol is intended for testing protocol features 
+which are not necessarily intended to become standard BOLTs.
+
+* Lightning base protocol messages:
+
+** experiment
+
+A message for arbitrary protocol implementaion with a unique ID for each 
+feature supported.
+
+  type: &lt;??&gt;
+  data:
+    [32: experiment_name_hash]
+    [2: payloadlen]
+    [payloadlen: payload]
+
+`experiment_name_hash` is be a SHA256 of the feature name, in ASCII, 
+concatenated with a good source of randomness to avoid any conflict if any two 
+developers chose the same name.
+
+`payloadlen` is the length of the remaining message, which MUST equal the 
+length of the outer message -34 bytes.
+
+`payload` is the payload of the experiment message, which should have the same 
+format as a regular Lightning message described in BOLT #1.
+
+A sending node:
+    - MUST send the `init_experiments` message with `experiment_name_hash` set 
+to 0 before any other `experiment` message is sent.
+    - MUST NOT send an experiment message with any non-zero 
+`experiment_name_hash` if the receiver has not already declared support for 
+the feature_hash.
+
+A receiving node:
+    - If experiment_name_hash is zero:
+        - Treat the payload as the same format of lightning message, ie, a 16-
+bit big endian experiment_type followed by the data.
+    - If the experiment_name_hash is not recognized or disabled, MUST ignore 
+the message. (SHOULD also fail the channels?)
+
+Rationale:
+
+The base lightning layer allows extension through feature bits and new odd 
+message types, but these require centralized assignment by the Lightning 
+community. 
+This creates a chicken and egg problem for developers testing experimental 
+features: In order to be assigned numbers, we need to standarize our feature 
+through the BOLT process,
+but we might not wish to attempt standardization until our experimental 
+features have been tested. 
+Without standardization, different teams working on different experimental 
+features may cause conflicts if different clients are treating feature bits or 
+message types differently.
+
+By moving all experimental features to a new message where they are wrapped in 
+a unique feature name, this eradicates chance of conflicting implementations.
+
+Additionally, this message can serve as a generic transport mechanism between 
+any two lightning nodes who have agreed to support the expierment_name_hash, 
+as there is no restriction on the format of the payload. This may make it 
+possible to serve e.g: HTTP over Lightning.
+
+
+* General experiment messages:
+
+If `experiment_name_hash` in the experiment message is 0, treat its payload as 
+on of the following messages:
+
+** init_experiments message
+
+Informs a peer of features supported by the client.
+
+  1. experiment_type: 16
+  2. data:
+      * [2: eflen]
+      * [eflen*32: experiment_name_hashes]
+
+A sending node:
+   * MUST send the `init_experiments` message before any other `experiment` 
+message for each connection.
+   * SHOULD send the `experiment_name_hash` for any features supported and set 
+to enabled in their software client.
+
+A receiving node:
+   * For each experiment_name_hash:
+      * If the hash is unknown or 0: Ignore the feature
+      * If the hash is known: SHOULD enable the feature for communication with 
+this peer.
+
+** experiment_error message
+
+ experiment_type: 17
+ data:
+    [32: channel_id]
+    [32: experiment_name_hash]
+    [2: len]
+    [len: data]
+
+For all messages before funding_created: Must use temporary_channel_id in lieu 
+of channel_id.
+
+A sending node:
+   * If error is critical, should also send the regular lightning `error` 
+message from BOLT #1
+   * If the error is not specific to any channel: set channel_id to 0.
+
+A receiving node
+   * If experiment_name_hash is unknown:
+      - MUST fail the channel.
+   * If channel_id is 0
+      - MUST fail all the channels
+
+Rationale
+
+This message is not intended to replace `error` for criticial errors, but is 
+provided for additional debugging information
+related to the experimental feature being used. 
+A client may decide whether or not it can recover from such errors 
+individually per experimental feature, which may include aborting channels and 
+the connection.
+
+TODO: Define gossip/query messages related to nodes/channels which support 
+features by experiment_hash_name.
+
+---EOF
+
+
+On Sunday, 22 July 2018 13:32:02 BST Olaoluwa Osuntokun wrote:
+&gt;<i> No need to apologize! Perhaps this confusion shows that the current process
+</I>&gt;<i> surrounding creating/modifying/drafting BOLT documents does indeed need to
+</I>&gt;<i> be better documented. We've more or less been rolling along with a pretty
+</I>&gt;<i> minimal process among the various implementations which I'd say has worked
+</I>&gt;<i> pretty well so far. However as more contributors get involved we may need
+</I>&gt;<i> to add a bit more structure to ensure things are transparent for newcomers.
+</I>&gt;<i> 
+</I>&gt;<i> On Sun, Jul 22, 2018, 12:57 PM Ren&#233; Pickhardt &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">r.pickhardt at googlemail.com</A>&gt;
+</I>&gt;<i> 
+</I>&gt;<i> wrote:
+</I>&gt;<i> &gt; Sorry did not realized that BOLTs are the equivalent - and aparently many
+</I>&gt;<i> &gt; people I spoke to also didn't realize that.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I thought BOLT is the protocol specification and the bolts are just the
+</I>&gt;<i> &gt; sections. And the BOLT should be updated to a new version.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Also I suggested that this should take place for example within the
+</I>&gt;<i> &gt; lightning rfc repo. So my suggestion was not about creating another place
+</I>&gt;<i> &gt; but more about making the process more transparent or kind of filling the
+</I>&gt;<i> &gt; gap that I felt was there.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I am sorry for spaming mailboxes with my suggestion just because I didn't
+</I>&gt;<i> &gt; understand the current process.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; schrieb am So., 22. Juli 2018
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 20:59:
+</I>&gt;<i> &gt;&gt; We already have the equiv of improvement proposals: BOLTs. Historically
+</I>&gt;<i> &gt;&gt; new standardization documents are proposed initially as issues or PR's
+</I>&gt;<i> &gt;&gt; when
+</I>&gt;<i> &gt;&gt; ultimately accepted. Why do we need another repo?
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; On Sun, Jul 22, 2018, 6:45 AM Ren&#233; Pickhardt via Lightning-dev &lt;
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;<i> &gt;&gt;&gt; Hey everyone,
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; in the grand tradition of BIPs I propose that we also start to have our
+</I>&gt;<i> &gt;&gt;&gt; own LIPs (Lightning Network Improvement proposals)
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; I think they should be placed on the github.com/lightning account in a
+</I>&gt;<i> &gt;&gt;&gt; repo called lips (or within the lightning rfc repo) until that will
+</I>&gt;<i> &gt;&gt;&gt; happen
+</I>&gt;<i> &gt;&gt;&gt; I created a draft for LIP-0001 (which is describing the process and is
+</I>&gt;<i> &gt;&gt;&gt; 95%
+</I>&gt;<i> &gt;&gt;&gt; influenced by BIP-0002) in my github repo:
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; <A HREF="https://github.com/renepickhardt/lips">https://github.com/renepickhardt/lips</A>  (There are some open Todos and
+</I>&gt;<i> &gt;&gt;&gt; Questions in this LIP)
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; The background for this Idea: I just came home from the bitcoin munich
+</I>&gt;<i> &gt;&gt;&gt; meetup where I held a talk examining BOLT. As I was asked to also talk
+</I>&gt;<i> &gt;&gt;&gt; about the future plans of the developers for BOLT 1.1 I realized while
+</I>&gt;<i> &gt;&gt;&gt; preparing the talk that many ideas are distributed within the community
+</I>&gt;<i> &gt;&gt;&gt; but
+</I>&gt;<i> &gt;&gt;&gt; it seems we don't have a central place where we collect future
+</I>&gt;<i> &gt;&gt;&gt; enhancements
+</I>&gt;<i> &gt;&gt;&gt; for BOLT1.1. Having this in mind I think also for the meeting in
+</I>&gt;<i> &gt;&gt;&gt; Australia
+</I>&gt;<i> &gt;&gt;&gt; it would be nice if already a list of LIPs would be in place so that the
+</I>&gt;<i> &gt;&gt;&gt; discussion can be more focused.
+</I>&gt;<i> &gt;&gt;&gt; potential LIPs could include:
+</I>&gt;<i> &gt;&gt;&gt; * Watchtowers
+</I>&gt;<i> &gt;&gt;&gt; * Autopilot
+</I>&gt;<i> &gt;&gt;&gt; * AMP
+</I>&gt;<i> &gt;&gt;&gt; * Splicing
+</I>&gt;<i> &gt;&gt;&gt; * Routing Protcols
+</I>&gt;<i> &gt;&gt;&gt; * Broadcasting past Routing statistics
+</I>&gt;<i> &gt;&gt;&gt; * eltoo
+</I>&gt;<i> &gt;&gt;&gt; * ...
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; As said before I would volunteer to work on a LIP for Splicing (actually
+</I>&gt;<i> &gt;&gt;&gt; I already started)
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; best Rene
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; --
+</I>&gt;<i> &gt;&gt;&gt; <A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; Skype: rene.pickhardt
+</I>&gt;<i> &gt;&gt;&gt; 
+</I>&gt;<i> &gt;&gt;&gt; mobile: +49 (0)176 5762 3618
+</I>&gt;<i> &gt;&gt;&gt; _______________________________________________
+</I>&gt;<i> &gt;&gt;&gt; Lightning-dev mailing list
+</I>&gt;<i> &gt;&gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt;&gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Am 22.07.2018 20:59 schrieb &quot;Olaoluwa Osuntokun&quot; &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt;:
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; We already have the equiv of improvement proposals: BOLTs. Historically
+</I>&gt;<i> &gt; new standardization documents are proposed initially as issues or PR's
+</I>&gt;<i> &gt; when
+</I>&gt;<i> &gt; ultimately accepted. Why do we need another repo?
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; On Sun, Jul 22, 2018, 6:45 AM Ren&#233; Pickhardt via Lightning-dev &lt;
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;<i> &gt;&gt; Hey everyone,
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; in the grand tradition of BIPs I propose that we also start to have our
+</I>&gt;<i> &gt;&gt; own LIPs (Lightning Network Improvement proposals)
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; I think they should be placed on the github.com/lightning account in a
+</I>&gt;<i> &gt;&gt; repo called lips (or within the lightning rfc repo) until that will
+</I>&gt;<i> &gt;&gt; happen
+</I>&gt;<i> &gt;&gt; I created a draft for LIP-0001 (which is describing the process and is
+</I>&gt;<i> &gt;&gt; 95%
+</I>&gt;<i> &gt;&gt; influenced by BIP-0002) in my github repo:
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; <A HREF="https://github.com/renepickhardt/lips">https://github.com/renepickhardt/lips</A>  (There are some open Todos and
+</I>&gt;<i> &gt;&gt; Questions in this LIP)
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; The background for this Idea: I just came home from the bitcoin munich
+</I>&gt;<i> &gt;&gt; meetup where I held a talk examining BOLT. As I was asked to also talk
+</I>&gt;<i> &gt;&gt; about the future plans of the developers for BOLT 1.1 I realized while
+</I>&gt;<i> &gt;&gt; preparing the talk that many ideas are distributed within the community
+</I>&gt;<i> &gt;&gt; but
+</I>&gt;<i> &gt;&gt; it seems we don't have a central place where we collect future
+</I>&gt;<i> &gt;&gt; enhancements
+</I>&gt;<i> &gt;&gt; for BOLT1.1. Having this in mind I think also for the meeting in
+</I>&gt;<i> &gt;&gt; Australia
+</I>&gt;<i> &gt;&gt; it would be nice if already a list of LIPs would be in place so that the
+</I>&gt;<i> &gt;&gt; discussion can be more focused.
+</I>&gt;<i> &gt;&gt; potential LIPs could include:
+</I>&gt;<i> &gt;&gt; * Watchtowers
+</I>&gt;<i> &gt;&gt; * Autopilot
+</I>&gt;<i> &gt;&gt; * AMP
+</I>&gt;<i> &gt;&gt; * Splicing
+</I>&gt;<i> &gt;&gt; * Routing Protcols
+</I>&gt;<i> &gt;&gt; * Broadcasting past Routing statistics
+</I>&gt;<i> &gt;&gt; * eltoo
+</I>&gt;<i> &gt;&gt; * ...
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; As said before I would volunteer to work on a LIP for Splicing (actually
+</I>&gt;<i> &gt;&gt; I already started)
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; best Rene
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; --
+</I>&gt;<i> &gt;&gt; <A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; Skype: rene.pickhardt
+</I>&gt;<i> &gt;&gt; 
+</I>&gt;<i> &gt;&gt; mobile: +49 (0)176 5762 3618
+</I>&gt;<i> &gt;&gt; _______________________________________________
+</I>&gt;<i> &gt;&gt; Lightning-dev mailing list
+</I>&gt;<i> &gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001368.html">[Lightning-dev] proposal for Lightning Network improvement	proposals
+</A></li>
+	<LI>Next message: <A HREF="001370.html">[Lightning-dev] proposal for Lightning Network improvement	proposals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1369">[ date ]</a>
+              <a href="thread.html#1369">[ thread ]</a>
+              <a href="subject.html#1369">[ subject ]</a>
+              <a href="author.html#1369">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

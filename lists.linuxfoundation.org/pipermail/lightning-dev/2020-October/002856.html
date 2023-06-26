@@ -1,0 +1,278 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Full Disclosure: CVE-2020-26895 LND &quot;Hodl my	Shitsig&quot;
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2020-26895%20LND%20%22Hodl%20my%0A%09Shitsig%22&In-Reply-To=%3CCALZpt%2BGKcMgpry-qGo2pME-V8KUXgBQEFYCRMoC9Tx%2BS%2BYqEhg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002855.html">
+   <LINK REL="Next"  HREF="002859.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Full Disclosure: CVE-2020-26895 LND &quot;Hodl my	Shitsig&quot;</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2020-26895%20LND%20%22Hodl%20my%0A%09Shitsig%22&In-Reply-To=%3CCALZpt%2BGKcMgpry-qGo2pME-V8KUXgBQEFYCRMoC9Tx%2BS%2BYqEhg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Full Disclosure: CVE-2020-26895 LND &quot;Hodl my	Shitsig&quot;">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Oct 20 22:56:09 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002855.html">[Lightning-dev] Full Disclosure: CVE-2020-26896 LND &quot;The (un)covert	channel&quot;
+</A></li>
+        <LI>Next message: <A HREF="002859.html">[Lightning-dev] Full Disclosure: CVE-2020-26895 LND &quot;Hodl my	Shitsig&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2856">[ date ]</a>
+              <a href="thread.html#2856">[ thread ]</a>
+              <a href="subject.html#2856">[ subject ]</a>
+              <a href="author.html#2856">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE># Problem
+
+A lightning node must verify that its channel transactions are not only
+consensus-valid but also tx-relay standard. The counterparty signatures are
+part of the local txn (commitment/HTLC) as provided in the
+`commitment_signed`. Verifying consensus-validity of these signatures but
+not their tx-relay standardness, let an attacker provoke a permanent
+tx-relay failure of the victim transactions. The attacker can steal
+in-flight HTLCs once they expire as the victim can't trustlessly claim them
+onchain during the CLTV delay.
+
+Bitcoin ECDSA signatures are made of the scalar pair (R, S). Since Bitcoin
+Core 0.10 [0], high-S (above curve order / 2) signatures aren't standard
+and thus any transaction containing one won't be relayed/mined on the
+regular p2p network. Note, that this check isn't part of consensus rules
+even if it has been proposed to be soft-forked [1].
+
+Prior to v0.10, LND would have accepted counterparty high-S signature and
+broadcast tx-relay invalid local commitment/HTLC transactions. This can be
+exploited by any peer with an already open channel whatever victim
+situation (routing node, payment-receiver, payment-sender [2]).
+
+Contrary to other Lightning implementations, LND uses
+`btcd.btcec.signature` for verifying counterparty signatures at commitment
+signed exchange. This go package relies itself on the default golang crypto
+ecdsa package. It differs from libsecp256k1, as the verification method
+doesn't enforce the lower-S form of the signature, thus a libsecp256k1
+signature validity is tighter than a golang ecdsa package one.
+
+The `btcec` serialization code was correctly normalizing signature to low-S
+but this step wasn&#8217;t included when that code was brought into LND&#8217;s
+`lnwire`.
+
+Note, that LND didn't suffer from this vulnerability on opening/closing as
+it was relying on btcd.txscript witness verification method with the
+correct standard flags, enforcing low-S signatures.
+
+Note that Bitcoin Core (`CPubKey::Verify`) always normalizes signatures
+before passing them to libsecp256k1 verification method which
+unconditionally enforces low-S (`secp256k1_ecdsa_verify`).
+
+# Solution
+
+As ECDSA signatures are inherently malleable, even if the counterparty
+provides a high-S signature it can be normalized by the receiver to a
+tx-relay standard one.
+
+A more proactive solution is to fail the channel at any reception of a
+high-S signature as it's a clear signal that your counterparty is either
+malicious or buggy (most bitcoin softwares generates low-S signature since
+a while [3]).
+
+For now, the first solution has been adopted by the LND team. A spec change
+has been proposed to make the second a requirement.
+
+# Background
+
+A lightning node security underlies the assumption to be always able to
+unilaterally broadcast channel transactions in the aim to timely confirm
+them on-chain to enforce an off-chain negotiated balance.
+
+It must be remembered that channel transactions are asymmetric, thus each
+party owns a different version including all parties's balances/HTLCs. To
+broadcast its version, a party must own a valid witness at any time.
+
+For commitment transactions, the witness stack is the following :
+
+0 &lt;localfunding_sig&gt; &lt;remotefunding_sig&gt;
+
+For HTLC-Success:
+
+0 &lt;remotehtlc_sig&gt; &lt;localhtlc_sig&gt; &lt;payment_preimage&gt;
+
+For HTLC-Timeout:
+
+0 &lt;remotehtlc_sig&gt; &lt;localhtlc_sig&gt; &lt;&gt; (empty vector)
+
+The &lt;remotefunding_sig&gt;/&lt;remotehtlc_sig&gt; are the ones which might have been
+maliciously malleated by an attacker.
+
+These signatures are provided at channels updated by a counterparty's
+`commitment signed`. Once it's accepted, the local node must release the
+revocation secret for the previous channel state, thus relying on the
+validity of highest state transactions for its funds' safety.
+
+These transactions must be unilaterally broadcasted in case of reaching the
+off-chain resolution deadline for [4]:
+* offered HTLCs for a routing/original sender
+* received HTLCs for a routing/last receiver
+
+Note, this off-chain resolution deadline even if it's expressed as block
+height it's not equal to a HTLC absolute timelock but must always be
+inferior. It offers a block buffer for a local node to broadcast, fee-bump
+and hopefully confirm its transactions.
+
+A non-standard transaction can still be confirmed by out-of-band agreement
+with a miner or a user intervention to correct the transaction if possible.
+In the case of Lightning, the security model doesn't assume this kind of
+user intervention and deployed timelocks would have been too short for a
+reasonable intervention of a node operator.
+
+# Discovery
+
+While working on Rust-Lightning, I observed that the implementation was
+generating MINIMALIF-invalid transactions due to a regression. This case
+wasn't covered by our test framework as there is no easy-to-integrate
+utility to test transaction standardness. After patching the spec, to
+recall the MINIMALIF requirement on some channel transactions witnesses
+[5], I audited deployed Lightning implementations w.r.t to Core script
+interpreter policy flags. A quick test against LND (65f5119) revealed this
+vulnerability.
+
+After informing the LND team, I also informed the c-lightning and Eclair
+teams. Even if this vulnerability is implementation specific, the tx-relay
+standardness issues it underscored could have been failed by other
+implementations. Thus an urgency fix by one of the team could have revealed
+easy-to-exploit weaknesses in other in-production implementations. As the
+vulnerability involves language-specific serializers and dependencies, it's
+a hard task to evaluate correctness of an implementation without alerting
+the concerned developers teams. For the future, it would be better to have
+a clearer Lightning-wise coordination policy [6].
+
+Note, that we agreed with the LND team for a 6-month embargo period, the
+double of channel funding check CVEs. As the Lightning ecosystem is
+maturing, the funds at stake are also growing. It should be minded how much
+Lightning software is sensible compared to other security/cryptographic
+software (e.g TLS). The high-stake nodes are known, channel connections are
+mostly open, they're operating on top of a public infrastructure (the
+Bitcoin network) and the codebases are fully open source. Lightning node
+operators are running a Bitcoin bank in the plainsight, any failure might
+be observed and exploited by an attacker.
+
+I'm eager to engage the wider Lightning community on what a reasonable
+vulnerability embargo should endure, both incentivizing dev teams to
+proactively fix their security vulnerabilities while minding a wide range
+of users, from business to hobbyists.
+
+# Ecosystem Implications
+
+This vulnerability is a case of a transaction standardness malleability.
+Transaction standardness is a set of supplementary anti-DoS rules on top of
+Bitcoin consensus rules. For e.g, MIN_STANDARD_TX_NONWITNESS_SIZE or
+MINIMALIF-compliant witnesses. This set of rules isn't well-defined as it's
+part of a full-node policy, which varies across implementations and
+versions.
+
+There is no _a_ tx-relay policy but as many tx-relay policies as there are
+full-node deployed as some checks might be tightened by node settings. This
+fact is acknowledged by LN devs since a while who are most of the time
+testing channel transactions standardness against the latest Core release,
+for lack of better.
+
+This situation is concerning and sound to have been an undersight during
+Lightning/payment channels protocols design. The transaction standardness
+surface is quite wide, and any standardness fault, either accidental or
+malicious triggered, can provoke a loss of funds for a LN node.
+
+Further, this tx-relay standardness issue has a wider echo as other
+time-sensitive multi-party protocols (e.g vaults/CoinSwaps) are affected.
+All Bitcoin software implementing this class of protocols must correctly
+sanitize counterparty contribution, to avoid jeopardizing funds security or
+introducing easy DoS (e.g a dual-funded channel with counterparty
+non-standard input) [7]
+
+At the Bitcoin base layer, a tighter, new tx-relay standard rule could
+potentially break the security of all these off-chain protocols and thus be
+deployed silently without anyone realizing before it's an easy
+exploitation. As of today, tx-relay standardness fog is a systematic risk
+for layer 2 protocols relying on time-sensitive transactions and I engage
+the wider Bitcoin ecosystem to address it.
+
+# Timeline
+
+2020-04-03: Vulnerability discovered, LND team notified
+2020-04-29: lnd v0.10.0-beta released
+2020-07-31: lnd v0.11.0-beta released
+2020-10-08: Partial Disclosure, encourage lnd users to upgrade to lnd
+v1.11.x ASAP
+2020-10-09: CVE assigned (
+<A HREF="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-26895">https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-26895</A>)
+2020-10-15: Preventive Disclosure to c-lightning, Electrum and Eclair teams
+2020-10-20: Full Disclosure
+
+[0] <A HREF="https://github.com/bitcoin/bitcoin/pull/6769">https://github.com/bitcoin/bitcoin/pull/6769</A>
+[1] <A HREF="https://github.com/bitcoin/bips/blob/master/bip-0147.mediawiki">https://github.com/bitcoin/bips/blob/master/bip-0147.mediawiki</A>
+[2] A sender won't be able to timeout its offered payment on the first link
+of the payment path thus it might be claimed after the expiration with a
+preimage of which the utility is out-of-date
+[3]
+<A HREF="https://github.com/bitcoinops/scaling-book/issues/9#issuecomment-599047992">https://github.com/bitcoinops/scaling-book/issues/9#issuecomment-599047992</A>
+[4] For more information, see the Flood &amp; Loot paper (
+<A HREF="https://arxiv.org/pdf/2006.08513.pdf">https://arxiv.org/pdf/2006.08513.pdf</A>). The
+channel timelocks which could have been exploited due to this current
+vulnerable are similar, even if the attack building block differs (i.e
+malicious mempool-congestion)
+[5] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/764">https://github.com/lightningnetwork/lightning-rfc/pull/764</A>
+[6] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/772">https://github.com/lightningnetwork/lightning-rfc/pull/772</A>
+[7] For a wider discussion, see
+<A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-July/018063.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-July/018063.html</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201020/425937a8/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201020/425937a8/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002855.html">[Lightning-dev] Full Disclosure: CVE-2020-26896 LND &quot;The (un)covert	channel&quot;
+</A></li>
+	<LI>Next message: <A HREF="002859.html">[Lightning-dev] Full Disclosure: CVE-2020-26895 LND &quot;Hodl my	Shitsig&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2856">[ date ]</a>
+              <a href="thread.html#2856">[ thread ]</a>
+              <a href="subject.html#2856">[ subject ]</a>
+              <a href="author.html#2856">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,292 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Reconciling%20the%20off-chain%20and%0A%09on-chain%20models%20with%20eltoo&In-Reply-To=%3C87ef0doh0w.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002151.html">
+   <LINK REL="Next"  HREF="002155.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Reconciling%20the%20off-chain%20and%0A%09on-chain%20models%20with%20eltoo&In-Reply-To=%3C87ef0doh0w.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo">decker.christian at gmail.com
+       </A><BR>
+    <I>Wed Sep 18 13:44:47 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002151.html">[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo
+</A></li>
+        <LI>Next message: <A HREF="002155.html">[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2154">[ date ]</a>
+              <a href="thread.html#2154">[ thread ]</a>
+              <a href="subject.html#2154">[ subject ]</a>
+              <a href="author.html#2154">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; writes:
+&gt;&gt;<i> cooperative close:
+</I>&gt;&gt;<i> * when all parties mutually agree to close the channel
+</I>&gt;&gt;<i> * close the channel with a layer one transaction which finalizes the outputs from the most recent channel output state
+</I>&gt;&gt;<i> * should be optimized for privacy and low on-chain fees
+</I>&gt;<i>
+</I>&gt;<i> Of note is that a close of an update mechanism does not require the
+</I>&gt;<i> close of any hosted update mechanisms, or more prosaically, &quot;close of
+</I>&gt;<i> channel factory does not require close of hosted channels&quot;.  This is
+</I>&gt;<i> true for both unilateral and cooperative closes.
+</I>&gt;<i>
+</I>&gt;<i> Of course, the most likely reason you want to unilaterally close an
+</I>&gt;<i> outer mechanism is if you have some contract in some deeply-nested
+</I>&gt;<i> mechanism that will absolute-locktime expire &quot;soon&quot;, in which case you
+</I>&gt;<i> have to close everything that hosts it.  But for example if a channel
+</I>&gt;<i> factory has channels A B C and only A has an HTLC that will expire
+</I>&gt;<i> soon, while the factory and A have to close, B and C can continue
+</I>&gt;<i> operation, even almost as if nothing happened to A.
+</I>
+Indeed this is something that I think we already mentioned back in the
+duplex micropayment channel days, though it was a bit hidden and only
+mentioned HTLCs (though the principle carries over for other structures
+built on the raw update mechanism):
+
+&gt;<i> The process simply involves one party creating the teardown
+</I>&gt;<i> transaction, both parties signing it and committing it to the
+</I>&gt;<i> blockchain. HTLC outputs which have not been removed by agreement can
+</I>&gt;<i> be copied over to the summary transaction such that the same timelocks
+</I>&gt;<i> and resolution rules apply.
+</I>
+Notice that in the case of eltoo the settlement transaction is already
+the same as the teardown transaction in DMC.
+
+&gt;&gt;<i> membership change (ZmnSCPxj ritual):
+</I>&gt;&gt;<i> * when channel parties want to leave or add new members to the channel
+</I>&gt;&gt;<i> * close and reopen a new channel via something like a channel splicing transaction to the layer one blockchain
+</I>&gt;&gt;<i> * should be optimized for privacy and low on-chain fees paid for by parties entering and leaving the channel
+</I>&gt;<i>
+</I>&gt;<i> Assuming you mean that any owned funds will eventually have to be
+</I>&gt;<i> claimed onchain, I suppose this is doable as splice-out.
+</I>&gt;<i>
+</I>&gt;<i> But note that currently we have some issues with splice-in.
+</I>&gt;<i>
+</I>&gt;<i> As far as I can tell (perhaps Lisa Neigut can correct me, I believe
+</I>&gt;<i> she is working on this), splice-in has the below tradeoffs:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Option 1: splice-in is async (other updates can continue after all participants have sent the needed signatures for the splice-in).
+</I>&gt;<i>     Drawback is that spliced-in funds need to be placed in a temporary
+</I>&gt;<i>     n-of-n, meaning at least one additional tx.
+</I>
+Indeed this is the first proposal I had back at the Milan spec meeting,
+and you are right that it requires stashing the funds in a temporary
+co-owned output to make sure the transition once we splice in is
+atomic. Batching could help here, if we have 3 participants joining they
+can coordinate to set the funds aside together and then splice-in at the
+same time. The downside is the added on-chain transaction, and the fact
+that the funds are not operational until they reach the required depth
+(I don't think we can avoid this with the current security guarantees
+provided by Bitcoin). Notice that there is still some uncertainty
+regarding the confirmation of the splice-in even though the funds were
+stashed ahead of time, and we may end up in a state where we assumed
+that the splice-in will succeed, but the fees we attached turn out to be
+too low. In this case we built a sandcastle that collapses due to our
+foundation being washed away, and we'd have to go back and agree on
+re-splicing with corrected fees (which a malicious participant might
+sabotage) or hope the splice eventually confirms.
+
+&gt;<i> 2.  Option 2: splice-in is efficient (only the splice-in tx appears onchain).
+</I>&gt;<i>     Drawback is that subsequent updates can only occur after the splice-in tx is deeply confirmed.
+</I>&gt;<i>     * This can be mitigated somewhat by maintaining a pre-splice-in
+</I>&gt;<i>     and post-splice-in mechanism, until the splice-in tx is deeply
+</I>&gt;<i>     confirmed, after which the pre-splice-in version is discarded.
+</I>&gt;<i>       Updates need to be done on *both* mechanisms until then, and any
+</I>&gt;<i>     introduced money is &quot;unuseable&quot; anyway until the splice-in tx
+</I>&gt;<i>     confirms deeply since it would not exist in the pre-splice-in
+</I>&gt;<i>     mechanism yet.
+</I>
+This is the more complex variant we discussed during the last
+face-to-face in Australia, and it seemed to me that people were mostly
+in favor of doing it this way. It adds complexity since we maintain
+multiple variants (making it almost un-implementable in LN-penalty),
+however the reduced footprint, and the uncertainty regarding
+confirmations in the first solution are strong arguments in favor of
+this option.
+
+&gt;<i> But perhaps a more interesting thing (and more in keeping with my
+</I>&gt;<i> sentiment &quot;a future where most people do not typically have
+</I>&gt;<i> single-signer ownership of coins onchain&quot;) would be to transfer funds
+</I>&gt;<i> from one multiparticipant offchain mechanism to another
+</I>&gt;<i> multiparticipant offchain, by publishing a single transaction onchain.
+</I>&gt;<i> It may be doable via some extension of my proposed ritual for changing
+</I>&gt;<i> membership set.
+</I>
+Aside from a bit more coordination I don't see any roadblocks to do
+this, and it'd be an awesome improvement. It even allows sub-dust
+transfers between channels, as long as the total funds in the channel
+remain above dust :-)
+
+&gt;&gt;<i> uncooperative membership change:
+</I>&gt;&gt;<i> * a subset of channel parties might want to cooperatively sign a channel splicing transaction to 'splice out' uncooperative parties
+</I>&gt;<i>
+</I>&gt;<i> I believe this is currently considered unsafe.
+</I>&gt;<i> <A HREF="../2019-April/001975.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/001975.html</A>
+</I>&gt;<i>
+</I>&gt;<i> Unless you refer to another mechanism...?
+</I>&gt;<i>
+</I>&gt;<i> I believe this will end up requiring deep confirmation of the
+</I>&gt;<i> uncooperative close followed by a new mechanism open.
+</I>
+Not necessarily. If we have an escape hatch in the scripts that allows
+to spend any output attached to the settlement transaction by n-1
+participants we could reclaim these into a new open right away. The
+footprint would be 1 unilateral close, n outputs for participants, m
+outputs for contracts built on top, and 1 open transaction that
+recollects all outputs in which the non-responding participant is not a
+co-signer. The main advantage is that we can avoid downtime.
+
+Just spit-balling here, since it'd leak some of the update logic back
+into the contracts built on top of the update mechanism, which for me is
+enough to discard this idea again.
+
+&gt;&gt;<i> mining, mining reward and difficulty adjustment
+</I>&gt;&gt;<i> * no equivalent concept for multi-party channels
+</I>&gt;<i>
+</I>&gt;<i> Fees for each update.  Consider how HTLC routing in Lightning
+</I>&gt;<i> implicitly pays forwarding nodes to cooperate with the forwarding.  I
+</I>&gt;<i> imagine most nodes in a multiparticipant offchain system will want to
+</I>&gt;<i> be paid for cooperation, even if just a nominal sub-satoshi amount.
+</I>
+If we allow generic contracts on top of the base update mechanism it'll
+be rather difficult to identify the beneficiary of an update, so it's
+hard to know who should pay a fee. I'd rather argue that cooperating is
+in the interest of all participants since they'd eventually want to
+create an update of their own, and there is no upside to become
+unresponsive.
+
+Notice that the fees we leverage in LN are because we expose our funds
+to the risk of not being available by allocating them to an HTLC, not
+for the updates themselves. Since in the forwarding scenario we're only
+exposing the funds of the forwarding nodes to this risk it's only
+natural that they'd be the ones leveraging a fee, not the other
+participants that simply sign off on the change.
+
+&gt;&gt;<i> privacy:
+</I>&gt;&gt;<i> * disassociate a particular update from signer(s)
+</I>&gt;&gt;<i> * disassociate IP address of signers from signature
+</I>&gt;&gt;<i> * using SIGHASH_ALL for cooperative closes
+</I>&gt;<i>
+</I>&gt;<i> I suppose Tor can be used to disassociate IP address from signers if
+</I>&gt;<i> everyone is from a hidden service.  However, we need to include some
+</I>&gt;<i> kind of mix mechanism to allow individual signers to disassociate
+</I>&gt;<i> their ownership of funds from their identity as signers.  Though such
+</I>&gt;<i> mechanisms already exist as theoretical constructs, so &quot;just needs
+</I>&gt;<i> implementing&quot;.
+</I>&gt;<i>
+</I>&gt;<i> But then again: if you own funds in the mechanism, you *should* be a
+</I>&gt;<i> signer (else you are trusting a federation).  So a basic fact here is
+</I>&gt;<i> that if you are a participant in some offchain mechanism, you are
+</I>&gt;<i> likely (approaching 100% probability) to own money in it.
+</I>
+Notice that we are negotiating whether or not to apply generic
+transactions to a shared state. This also means that there is no direct
+relationship between the ownership of an output and the ID signing off
+on a change.
+
+The privacy guarantees are identical to Bitcoin on-chain, with the one
+caveat that we may identify the proposing participant, but we can defend
+against this by mixing as you propose.
+
+&gt;&gt;<i> liveness:
+</I>&gt;&gt;<i> * if signers know they will be offline, can they pre-sign updates that just commit their own outputs, rather then splice out?
+</I>&gt;&gt;<i> * contingent tap-leafs to splice out non-responsive signers
+</I>&gt;<i>
+</I>&gt;<i> It might be possible to create a new mechanism-within-mechanism layer,
+</I>&gt;<i> if a signer knows they will be offline.
+</I>&gt;<i>
+</I>&gt;<i> For example, suppose entities A, B, and C have an offchain update
+</I>&gt;<i> mechanism, which we shall call a &quot;factory&quot;.  Suppose this factory
+</I>&gt;<i> contains an A-B channel, a B-C channel, a A-C channel, and some funds
+</I>&gt;<i> owned by B only.  Then suppose A knows he or she will be offline for
+</I>&gt;<i> some time.  Before A goes offline, they can move from this UTXO set:
+</I>&gt;<i>
+</I>&gt;<i> * A-B channel
+</I>&gt;<i> * B-C channel
+</I>&gt;<i> * A-C channel
+</I>&gt;<i> * B funds
+</I>&gt;<i>
+</I>&gt;<i> To this UTXO set:
+</I>&gt;<i>
+</I>&gt;<i> * A-B channel
+</I>&gt;<i> * A-C channel
+</I>&gt;<i> * B-C offchain update mechanism (sub-factory), which itself has its own UTXO set:
+</I>&gt;<i>   * B-C channel
+</I>&gt;<i>   * B funds
+</I>&gt;<i>
+</I>&gt;<i> This allows B and C to manage the B-C channels and B funds without
+</I>&gt;<i> cooperation of A.  Then, later, when A returns online, the B-C
+</I>&gt;<i> offchain update mechanism is collapsed back to the parent A-B-C
+</I>&gt;<i> offchain update mechanism.
+</I>&gt;<i>
+</I>&gt;<i> This assumes A knows it will be offline (which it might do for
+</I>&gt;<i> e.g. regular maintenance, or software updates).
+</I>
+We could theoretically play this game, having each participant create
+two updates with the same state-number at each update:
+
+ 1) A normal one that just keeps them in the contract
+ 2) A fallback splice all outputs they own (direct ones, HTLCs, ...) and
+    putting the rest back into a channel without them.
+
+In case of one user becoming inactive the others can sign the splice,
+dropping the inactive participant and continue like nothing
+happened. The worst case scenario is that the normal update gets
+broadcast and confirmed instead, which means we are back to the
+unilateral close that we'd have to do anyway without this mechanism.
+
+Notice however that this only works if participants drop off one by one,
+otherwise we get a combinatorial explosion for the fallback cases where
+each combination of inactive participants needs to splice themselves
+out. It also adds the complexity of having to identify which participant
+is the co-owner of an output, otherwise I can claim ownership of an
+unrelated output and force that to move on-chain by including it in my
+fallback and then becoming unresponsive (added rounds of communication
+can help here, but are cumbersome).
+
+It may be a bit much added complexity for a small complexity to be
+honest, hopefully this won't be needed too often :-)
+
+Cheers,
+Christian
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002151.html">[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo
+</A></li>
+	<LI>Next message: <A HREF="002155.html">[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2154">[ date ]</a>
+              <a href="thread.html#2154">[ thread ]</a>
+              <a href="subject.html#2154">[ subject ]</a>
+              <a href="author.html#2154">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,216 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning over taproot with PTLCs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3C20211019041613.GA1515%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003306.html">
+   <LINK REL="Next"  HREF="003325.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning over taproot with PTLCs</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3C20211019041613.GA1515%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Lightning over taproot with PTLCs">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Oct 19 04:16:13 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003306.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+        <LI>Next message: <A HREF="003325.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3324">[ date ]</a>
+              <a href="thread.html#3324">[ thread ]</a>
+              <a href="subject.html#3324">[ subject ]</a>
+              <a href="author.html#3324">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Oct 13, 2021 at 03:15:14PM +1100, Lloyd Fournier wrote:
+&gt;<i>     If you're willing to accept that &quot;worst case&quot; happening more often, I
+</I>&gt;<i>     think you could then retain the low latency forwarding, by having the
+</I>&gt;<i>     transaction structure be:
+</I>
+So the idea here is that we have two channel parameters:
+
+   PD - the payment delay or payment timeout delta, say 40 blocks
+   RD - the channel recovery delay, say 2016 blocks
+
+and the idea is that if you publish an old state, I have the longer delay
+(RD) to correct that; *but* if the currently active state includes a
+payment that I've forwarded to you, I may only have the shorter delay
+(PD) in order to forward the payment claim details back in order to
+avoid being out of pocket.
+
+The goal is to keep that working while also allowing me to tell you about
+a payment to you in such a way that you can safely forward it on *without*
+an additional round-trip back to me (to acknowledge that you've received
+it and that I've received your acknowledgement).
+
+It's not really a super-important goal; it could shave off 50% of
+the time to accept a ln tx when everything goes right, and there's no
+bottlenecks elsewhere in the implementation, but it can't do anything
+more than that, and doesn't help the really slow cases when things go
+wrong. Mostly, I just find it interesting.
+
+Suppose that a payment is forwarded from Alice to Bob, Carol and finally
+reaches Dave. Alice/Bob and Carol/Dave are both colocated in a data centre
+and have high bandwidth and have 1ms (rtt) latency, but Bob/Carol are
+on different continents (but not via tor) and have 100ms (rtt) latency.
+
+With 1.5 round-trips before forwarding, we'd get:
+
+  t=0     Alice tells Bob
+  t=1.5   Bob tells Carol
+  t=151.5 Carol tells Dave
+  t=153   Dave reveals the secret to Carol
+  t=153.5 Carol reveals the secret to Bob
+  t=203.5 Bob reveals the secret to Alice
+  t=204   Alice knows the secret!
+
+That's how things work now, with &quot;X tells Y&quot; being:
+
+  X-&gt;Y: update_add_htlc, commitment_signed
+  Y-&gt;X: commitment_signed, revoke_and_ack
+  X-&gt;Y: revoke_and_ack
+
+and &quot;X reveals the secret to Y&quot; being:
+
+  X-&gt;Y: update_fulfill_htlc
+
+However, if we could do it optimally we would have:
+
+  t=0     Alice tells Bob about the payment
+  t=0.5   Bob tells Carol about the payment
+  t=50.5  Carol tells Dave about the payment
+  t=51    Dave accepts the payment and tells Carol the secret
+  t=51.5  Carol accepts the payment and tells Bob the secret
+  t=101.5 Bob accepts the payment and tells Alice the secret
+  t=102   Alice knows the secret!
+
+Looking just at Bob/Carol we might also have the underlying commitment
+state updates:
+
+  t=50.5  Carol acks the payment to Bob (commitment_signed,
+          revoke_and_ack)
+  t=100.5 Bob acks Carol's ack, revoking old state (revoke_and_ack)
+  t=150.5 Carol's safe with the new state including the payment
+
+  t=51.5  Carol reveals the secret and signs a new updated state
+          (update_fulfill_htlc, commitmnt_signed)
+  t=101.5 Bob acks receipt of the secret (commitment_signed,
+          revoke_and_ack)
+  t=151.5 Carol's safe with the new state with an increased balance
+          (revoke_and_ack)
+  t=201.5 Bob's state is up to date
+
+Note that the first of those doesn't complete until well after Alice
+would know the secret in an optimal construction; and that as described
+the second upate overlaps the first, which might not be particularly
+desirable.
+
+&gt;<i> In my mind your &quot;update the base channel state&quot; idea seems to fix everything by
+</I>&gt;<i> itself.
+</I>
+Yeah -- if you're willing to do 1.5 round-trips (and thanks to musig2 this
+doesn't blow out to 2.5 (?) round-trips) that does solve everything. The
+challenge is to do it in 0.5 round-trips. :)
+
+&gt;<i> So at T - to_self_delay (or a bit before) you say to your counterparty
+</I>&gt;<i> &quot;can we lift this HTLC out of your in-flight tx into the 'balance tx' (which
+</I>&gt;<i> will go back to naming a 'commitment tx' since it doesn't just have balance
+</I>&gt;<i> outputs anymore) so I can use it too? -- otherwise I'll have to close the
+</I>&gt;<i> channel on chain now to force you to reveal it to me on time?&quot;. If they agree,
+</I>&gt;<i> after the revocation and new commit tx everything is back to (tx symmetric)
+</I>&gt;<i> Poon-Dryja so no need for extra CSVs.
+</I>
+Maybe? So the idea is that:
+
+ 1) Bob gets a &quot;low-latency&quot; tx that spends Alice's balance and has a
+    bunch of outputs for really recent payments
+ 2) In normal conditions, in 5 or 10 or 30 seconds, Alice/Bob renegotiate
+    the base commitment to move those payments out of the &quot;low-latency&quot;
+    tx
+ 3) In abnormal conditions, with an active forwarded &quot;low-latency&quot; tx and
+    communications failure of length up to &quot;PD&quot;, Alice closes the channel
+    on chain.
+ 4) Bob then has &quot;PD&quot; period to post the &quot;low-latency&quot; tx, if he
+    doesn't, Alice can do a layered claim of her balance preventing Bob
+    from oing so.
+ 5) If Bob does post his &quot;low-latency&quot; tx, then he'll also need to reveal
+    secrets prior to the payment timeout.
+
+So taking the payment timeout as T, then he'll have to post the
+low-latency tx (4) and reveal the secret (5) no later than T, which
+means he'll be upset if Alice drops to the chain later than T-PD, and
+Alice won't do that unless comms failure begins at T-2*PD.
+
+That means that:
+
+ * Alice should not propose and Bob should not accept a low-latency
+   payment if T &lt; now+2*PD
+
+ * Alice should drop the commitment tx on-chain no later than T-PD,
+   Bob should drop the commitment and low-latency txs on chain prior
+   to T (Alice to ensure she can timeout any payments, Bob to ensure
+   he can claim any payments prior to Alice timing them out)
+
+ * Alice should reserve her balance asap (at time T) if Bob does not
+   post the low-latency transaction
+
+ * ... and not much else?
+
+&gt;<i> I realise this kills some of the elegance of your original protocol and adds
+</I>&gt;<i> quite a bit of complexity but I think it retains the important properties.
+</I>
+I think the only complexity it actually adds is that Alice needs to
+be able to prevent Bob from posting the &quot;low-latency&quot; tx if he doesn't
+react within &quot;PD&quot; -- which is just a signature from Bob allowing her to
+spend the output with nSequence set to &quot;PD&quot;?
+
+Since it's putting payments back into the commitment tx, it also makes
+it more separable -- you could stick it behind a feature bit so nodes
+can just not implement low-latency payments, particularly if they're
+not usually forwarding payments, or are only connected to nearby nodes
+anyway...
+
+(I don't think that approach works for &quot;offline&quot; peers, though, because
+they'd need to be able to post the low-latency tx within the &quot;PD&quot; delay,
+and can't do that because they're offline)
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003306.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+	<LI>Next message: <A HREF="003325.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3324">[ date ]</a>
+              <a href="thread.html#3324">[ thread ]</a>
+              <a href="subject.html#3324">[ subject ]</a>
+              <a href="author.html#3324">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

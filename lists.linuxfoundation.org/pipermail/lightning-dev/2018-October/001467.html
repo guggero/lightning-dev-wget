@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Feedback please!
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3ClvooVgO4tOvBcd3hUg12F1A1Wy6lINvljIe9rr9jwyLCN5AwOmjZ8LAYx59ZDjJ2W94iznUfF5Us0Tuz9Qz32vJa8ifdAtzbEjjopucfWA8%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001476.html">
+   <LINK REL="Next"  HREF="001439.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Feedback please!</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3ClvooVgO4tOvBcd3hUg12F1A1Wy6lINvljIe9rr9jwyLCN5AwOmjZ8LAYx59ZDjJ2W94iznUfF5Us0Tuz9Qz32vJa8ifdAtzbEjjopucfWA8%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Feedback please!">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Oct 19 02:40:10 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001476.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+        <LI>Next message: <A HREF="001439.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1467">[ date ]</a>
+              <a href="thread.html#1467">[ thread ]</a>
+              <a href="subject.html#1467">[ subject ]</a>
+              <a href="author.html#1467">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty et al,
+
+Would this work?
+
+Glossary
+--------
+
+Old funding output - the TXO that the channel uses pre-splice.  This must be a SegWit 2-of-2.
+
+New funding output - the TXO that the channel will use post-splice.  This must be a SegWit 2-of-2.
+
+Old commitment transaction - a Poon-Dryja-revocable commitment transaction that consumes the old funding output.
+
+New commitment transaction - a Poon-Dryja-revocable commitment transaction that consumes the new funding output.
+
+Spliced input - a TXO wholly controlled solely by one channel party, which is intended for splicing into the channel.  This must be SegWit.
+
+Splicing transaction - a transaction that consumes the old funding output and one or more spliced inputs, and outputs the new funding output.
+
+oldfunding --&gt; [splicing]--&gt; newfunding
+                 /\
+                 ||
+    splicedin  ==++
+
+Splice Preparation Protocol
+---------------------------
+
+1.  Both sides provide a list of spliced inputs.  They confirm that the transactions are either confirmed or on their mempool.
+2.  Both sides maintain a separate pair of division of their money.  One pair is the amount of money that can be currently used during the splice, and is initialized to the current state of the channel (money-during-splice).  The other pair is the amount of money each has that will be added after the splice is confirmed (money-added-to-splice).
+3.  Both sides generate (but do not provide signatures or broadcast) the splicing transaction.
+4.  Both sides sign the new commitment transaction of the opposing side (which spends the new funding transaction of the splicing transaction).
+5.  Both sides now sign the splicing transaction, providing signatures for their nominated spliced inputs, and broadcast the fully signed splicing transaction.
+
+Operation During Splice
+-----------------------
+
+While the splicing transaction is not sufficiently confirmed but is validly in their mempool or confirmed lightly, the channel is in &quot;currently splicing&quot; mode and changes to commitment transactions can be changed only according to these rules:
+
+1.  Both old commitment transactions and new commitment transactions are updated in parallel.
+2.  Each side can only use money that is theirs during the splice (money-during-splice) to offer HTLCs.  They cannot use spliced-in money yet to offer HTLCs.
+
+Failure Modes
+-------------
+
+If the splicing transaction becomes invalidated from the mempool, and was not confirmed/included in the block, then the splice has failed.  Both sides should inform this splice failure to the other.
+
+1.  If any old commitment transaction was spent to invalidate the splice transaction, then the channel has closed and both sides drop to tracking the channel closure as unilateral close.
+2.  Otherwise, the splicing transaction became invalidated either due to a spend of any spliced input, or by invalidation of spliced input via transaction replacement (RBF).  In this case, the protocol moves to splice failure.
+
+Splice Failure
+--------------
+
+1.  One side notices the splice failure and claims that the splice has failed.
+2.  The other side monitors its own mempool for invalidation of the splicing transaction, with a timeout.
+3.  If the other side also notices the splice failure, then both sides can drop the (money-added-to-splice) and revert back to the pre-splice channel.  Spliced inputs should be considered by their owner to be spendable again for other onchain purposes.
+3.  Otherwise if the other side times out without seeing the splicing transaction getting invalidated, it will publish the latest old commitment transaction and the latest new commitment transaction and consider the channel as closing and tracking it as a unilateral close, checking for either the old funding output or the new funding output to be spent.
+
+Regards,
+ZmnSCPxj
+
+
+Sent with ProtonMail Secure Email.
+
+&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+On Wednesday, October 17, 2018 6:30 AM, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> Rusty Russell <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A> writes:
+</I>&gt;<i>
+</I>&gt;<i> &gt; If we're going to do side splice-in like this, I would use a very
+</I>&gt;<i> &gt; different protocol: the reason for this protocol was to treat splice-in
+</I>&gt;<i> &gt; and splice-out the same, and inline splice-in requires wait time. Since
+</I>&gt;<i> &gt; splice-out doesn't, we don't need this at all.
+</I>&gt;<i> &gt; It would look much more like:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 1.  Prepare any output with script of specific form. eg:
+</I>&gt;<i> &gt;     OP_DEPTH 3 OP_EQUAL OP_IF
+</I>&gt;<i> &gt;     &lt;funding_pubkey1&gt; &lt;funding_pubkey2&gt; OP_CHECKMULTISIG
+</I>&gt;<i> &gt;     OP_ELSE
+</I>&gt;<i> &gt;     &lt;blockheight&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+</I>&gt;<i> &gt;     &lt;myrescue_pubkey&gt; OP_CHECKSIG
+</I>&gt;<i> &gt;     OP_ENDIF
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 2.  type: 40 (`splice_in`) (`option_splice`)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 3.  data:
+</I>&gt;<i> &gt;     -   [`32`:`channel_id`]
+</I>&gt;<i> &gt;     -   [`8`: `satoshis`]
+</I>&gt;<i> &gt;     -   [`32`: `txid`]
+</I>&gt;<i> &gt;     -   [`4`: `txoutnum`]
+</I>&gt;<i> &gt;     -   [`4`: `blockheight`]
+</I>&gt;<i> &gt;     -   [`33`: `myrescue_pubkey`]
+</I>&gt;<i> &gt; 4.  type: 137 (`update_splice_in_accept`) (`option_splice`)
+</I>&gt;<i> &gt;     data:
+</I>&gt;<i> &gt;     -   [`32`:`channel_id`]
+</I>&gt;<i> &gt;     -   [`32`: `txid`]
+</I>&gt;<i> &gt;     -   [`4`: `txoutnum`]
+</I>&gt;<i> &gt; 5.  type: 138 (`update_splice_in_reject`) (`option_splice`)
+</I>&gt;<i> &gt;     data:
+</I>&gt;<i> &gt;     -   [`32`:`channel_id`]
+</I>&gt;<i> &gt;     -   [`32`: `txid`]
+</I>&gt;<i> &gt;     -   [`2`:`len`]
+</I>&gt;<i> &gt;     -   [`len`:`errorstr`]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The recipient of `splice_in` checks that it's happy with the
+</I>&gt;<i> &gt; `blockheight` (far enough in future). Once it sees the tx referred to
+</I>&gt;<i> &gt; buried to its own `minimum_depth`, it checks output is what they
+</I>&gt;<i> &gt; claimed, then sends `update_splice_in_accept`; it's followed up
+</I>&gt;<i> &gt; `commitment_signed` like normal, but from this point onwards, all
+</I>&gt;<i> &gt; commitment txs signatures have one extra sig.
+</I>&gt;<i>
+</I>&gt;<i> Lisa started asking pointed questions, and so I noticed that parallel
+</I>&gt;<i> splice doesn't work with Poon-Dryja channels.
+</I>&gt;<i>
+</I>&gt;<i> The counterparty can spend the old funding txout with a revoked spend.
+</I>&gt;<i> Sure, I can take all the money from that, but what about the spliced
+</I>&gt;<i> input?
+</I>&gt;<i>
+</I>&gt;<i> I came up with increasingly elaborate workarounds, but nothing stuck.
+</I>&gt;<i>
+</I>&gt;<i> Back to Plan A...
+</I>&gt;<i> Rusty.
+</I>&gt;<i>
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001476.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+	<LI>Next message: <A HREF="001439.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1467">[ date ]</a>
+              <a href="thread.html#1467">[ thread ]</a>
+              <a href="subject.html#1467">[ subject ]</a>
+              <a href="author.html#1467">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

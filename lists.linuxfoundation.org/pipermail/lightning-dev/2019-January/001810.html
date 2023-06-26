@@ -1,0 +1,136 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Quick analysis of channel_update data
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Quick%20analysis%20of%20channel_update%20data&In-Reply-To=%3C871s5nfafb.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001803.html">
+   <LINK REL="Next"  HREF="001811.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Quick analysis of channel_update data</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Quick%20analysis%20of%20channel_update%20data&In-Reply-To=%3C871s5nfafb.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Quick analysis of channel_update data">decker.christian at gmail.com
+       </A><BR>
+    <I>Tue Jan  8 15:15:04 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001803.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+        <LI>Next message: <A HREF="001811.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1810">[ date ]</a>
+              <a href="thread.html#1810">[ thread ]</a>
+              <a href="subject.html#1810">[ subject ]</a>
+              <a href="author.html#1810">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+&gt;&gt;<i> But only 18 000 pairs of channel updates carry actual fee and/or HTLC
+</I>&gt;&gt;<i> value change. 85% of the time, we just queried information that we
+</I>&gt;&gt;<i> already had!
+</I>&gt;<i>
+</I>&gt;<i> Note that this can happen in two legitimate cases:
+</I>&gt;<i> 1. The weekly refresh of channel_update.
+</I>&gt;<i> 2. A node updated too fast (A-&gt;B-&gt;A) and the -&gt;A update caught up with the
+</I>&gt;<i>    -&gt;B update.
+</I>&gt;<i>  
+</I>&gt;<i> Fortunately, this seems fairly easy to handle: discard the newer
+</I>&gt;<i> duplicate (unless &gt; 1 week old).  For future more advanced
+</I>&gt;<i> reconstruction schemes (eg. INV or minisketch), we could remember the
+</I>&gt;<i> latest timestamp of the duplicate, so we can avoid requesting it again.
+</I>
+Unfortunately this assumes that you have a single update partner, and
+still results in flaps, and might even result in a stuck state for some
+channels.
+
+Assume that we have a network in which a node D receives the updates
+from a node A through two or more separate paths:
+
+A --- B --- D
+ \--- C ---/
+
+And let's assume that some channel of A (c_A) is flapping (not the ones
+to B and C). A will send out two updates, one disables and the other one
+re-enables c_A, otherwise they are identical (timestamp and signature
+are different as well of course). The flush interval in B is sufficient
+to see both updates before flushing, hence both updates get dropped and
+nothing apparently changed (D doesn't get told about anything from
+B). The flush interval of C triggers after getting the re-enable, and D
+gets the disabling update, followed by the enabling update once C's
+flush interval triggers again. Worse if the connection A-C gets severed
+between the updates, now C and D learned that the channel is disabled
+and will not get the re-enabling update since B has dropped that one
+altogether. If B now gets told by D about the disable, it'll also go
+&quot;ok, I'll disable it as well&quot;, leaving the entire network believing that
+the channel is disabled.
+
+This is really hard to debug, since A has sent a re-enabling
+channel_update, but everybody is stuck in the old state.
+
+At least locally updating timestamp and signature for identical updates
+and then not broadcasting if they were the only changes would at least
+prevent the last issue of overriding a dropped state with an earlier
+one, but it'd still leave C and D in an inconsistent state until we have
+some sort of passive sync that compares routing tables and fixes these
+issues.
+
+&gt;&gt;<i> Adding a basic checksum (4 bytes for example) that covers fees and
+</I>&gt;&gt;<i> HTLC min/max value to our channel range queries would be a significant
+</I>&gt;&gt;<i> improvement and I will add this the open BOLT 1.1 proposal to extend
+</I>&gt;&gt;<i> queries with timestamps.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I also think that such a checksum could also be used
+</I>&gt;&gt;<i> - in &#8220;inventory&#8221; based gossip messages
+</I>&gt;&gt;<i> - in set reconciliation schemes: we could reconcile [channel id |
+</I>&gt;&gt;<i> timestamp | checksum] first
+</I>&gt;<i>
+</I>&gt;<i> I think this is overkill?
+</I>
+I think all the bolted on things are pretty much overkill at this point,
+it is unlikely that we will get any consistency in our views of the
+routing table, but that's actually not needed to route, and we should
+consider this a best effort gossip protocol anyway. If the routing
+protocol is too chatty, we should make efforts towards local policies at
+the senders of the update to reduce the number of flapping updates, not
+build in-network deduplications. Maybe something like &quot;eager-disable&quot;
+and &quot;lazy-enable&quot; is what we should go for, in which disables are sent
+right away, and enables are put on an exponential backoff timeout (after
+all what use are flappy nodes for routing?).
+
+Cheers,
+Christian
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001803.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+	<LI>Next message: <A HREF="001811.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1810">[ date ]</a>
+              <a href="thread.html#1810">[ thread ]</a>
+              <a href="subject.html#1810">[ subject ]</a>
+              <a href="author.html#1810">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

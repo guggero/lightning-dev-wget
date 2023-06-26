@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%22Updates%20Overflow%22%20Attacks%20against%20Two-Party%0A%20Eltoo%20%3F&In-Reply-To=%3CY5f2zF0ioenBKs0Q%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003798.html">
+   <LINK REL="Next"  HREF="003805.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%22Updates%20Overflow%22%20Attacks%20against%20Two-Party%0A%20Eltoo%20%3F&In-Reply-To=%3CY5f2zF0ioenBKs0Q%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Dec 13 03:51:40 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003798.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+        <LI>Next message: <A HREF="003805.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3800">[ date ]</a>
+              <a href="thread.html#3800">[ thread ]</a>
+              <a href="subject.html#3800">[ subject ]</a>
+              <a href="author.html#3800">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Dec 12, 2022 at 08:38:43PM -0500, Antoine Riard wrote:
+&gt;<i> The attack purpose is to delay the confirmation of the final settlement
+</I>&gt;<i> transaction S, to double-spend a HTLC forwarded by a routing hop.
+</I>&gt;<i> The cltv_expiry_delta requested by Ned is equal to N=144.
+</I>
+I believe what you're suggesting here is:
+
+  Mallory has two channels with Bob, M1 and M2. Both have a to_self_delay
+  of 144 blocks. In that case cltv_expiry_delay should include some slack,
+  I'm going to assume it's 154 blocks in total.
+
+  Mallory forwards a large payment, M1-&gt;Bob-&gt;M2.
+
+  Mallory claims the funds on M2 just prior to the timeout, but
+  goes offline on M1.
+
+  Bob chose the timeout for M2 via cltv_expiry_delay, so now has 154
+  blocks before the CLTV on the M1-&gt;Bob payment expires.
+
+In this scenario, under the two-party eltoo scheme, Bob should:
+
+  1) immediately broadcast the most recent UB.n state for M1/Bob,
+     aiming for this to be confirmed within 5 blocks
+
+  2) wait 144 blocks for the relative timelock to expire
+
+  3) broadcast SB.n to finalise the funds, and immediately claim the
+     large HTLC. providing this confirms within 5 blocks, it will confirm
+     before the HTLC timelock expires, and Mallory will have been unable
+     to claim the funds.
+
+The only transactions Mallory could broadcast are:
+
+  prior to (1): UA.k (k &lt;= n) -- However this allows Bob to immediately
+  broadcast one of either CA.n or RA.n, and will then have ~150 blocks
+  to claim the HTLC before its timeout
+
+  during (2): CA.n -- Again, this allows Bob to claim the HTLC
+  immediately, prior to its timeout
+
+The only delaying attack with repeated transactions comes if Bob
+broadcasts an old state UB.k (k &lt; n), in which case Mallory can broadcast
+(n-k) WA.i watchtower transactions prior to finalising the state. However
+if Bob *only* has old state, Mallory can simply broadcast WA.n, at which
+point Bob can do nothing, as (by assumption) he doesn't have access
+to current state and thus doesn't have SB.n to broadcast it.
+
+&gt;<i> The attack scenario works in the following way: Malicia updates the Eltoo
+</I>&gt;<i> channel N time, getting the possession of N update transactions. At block
+</I>&gt;<i> A, she breaks the channel and confirms the update transaction 0 by
+</I>&gt;<i> attaching a feerate equal to or superior to top mempool block space + 1
+</I>&gt;<i> sat. At each new block, she iterates by confirming the next update
+</I>&gt;<i> transaction, i.e update transaction 1 at block A+1, update transaction
+</I>&gt;<i> transaction 2 at block A+2, update transaction 3 at block A+3, ...
+</I>
+I think traditional eltoo envisages being able to spend update transaction
+1 immediately, without having to wait for the next block.  This might
+not be compatible with the version 3 relay rules that are being thought
+about, though, and presumably would hit ancestor limits.
+
+I think a simple way to avoid that problem would be for eltoo nodes
+to have a priority tx relay network -- if they see a channel close to
+state N, always replace any txs closing to an earlier state K&lt;N, and
+always quickly relay that close to all other peers. There's no reason
+to assume the bad guys have the best access to the network when we can
+write code so that the honest participants have it instead.
+
+&gt;<i> From Ned's viewpoint, there is limited rationality of the network mempools,
+</I>&gt;<i> as such each punishment transaction R, as it's confirmation could have been
+</I>&gt;<i> delay due to &quot;honest&quot; slow propagation on the network is likely to be
+</I>&gt;<i> pre-signed with top mempool block space feerate, but not more to save on
+</I>&gt;<i> fees. Therefore, transaction RN.0 should fail to punish update transaction
+</I>&gt;<i> 0 as it's double-spent by update transaction 1, transaction RN.1 should
+</I>&gt;<i> fail to punish update transaction 1 as it's double-spent by update
+</I>&gt;<i> transaction 2, transaction RN.2 should fail to punish update transaction 2
+</I>&gt;<i> as it's double-spent by update transaction 3...
+</I>
+In the two-party scheme, the only transaction Mallory can broadcast
+after sending UA.k and having it confirmed on chain is SA.k, and that
+only after a 144 block relative timelock. UA.(k+1) etc only spend the
+funding output, but that has already been spent by UA.k.
+
+Cheers,
+aj
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003798.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+	<LI>Next message: <A HREF="003805.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3800">[ date ]</a>
+              <a href="thread.html#3800">[ thread ]</a>
+              <a href="subject.html#3800">[ subject ]</a>
+              <a href="author.html#3800">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

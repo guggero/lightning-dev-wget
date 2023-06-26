@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Security issue in anchor outputs implementations
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Security%20issue%20in%20anchor%20outputs%20implementations&In-Reply-To=%3CCACdvm3PzPs%3D%3DxTo9w3BQh3qmOm2cxgvVGQem875DL-6WXZpOyw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003571.html">
+   <LINK REL="Next"  HREF="003567.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Security issue in anchor outputs implementations</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Security%20issue%20in%20anchor%20outputs%20implementations&In-Reply-To=%3CCACdvm3PzPs%3D%3DxTo9w3BQh3qmOm2cxgvVGQem875DL-6WXZpOyw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Security issue in anchor outputs implementations">bastien at acinq.fr
+       </A><BR>
+    <I>Fri Apr 22 09:22:49 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003571.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003567.html">[Lightning-dev] [RELEASE] core-lightning v0.11.0: Simon's Carefully	Chosen Release Name
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3561">[ date ]</a>
+              <a href="thread.html#3561">[ thread ]</a>
+              <a href="subject.html#3561">[ subject ]</a>
+              <a href="author.html#3561">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I will describe here a vulnerability found in older versions of some
+lightning implementations of anchor outputs. As most implementations
+have not yet released support for anchor outputs, they should verify
+that they are not impacted by this type of vulnerability while they
+implement this feature.
+
+I want to thank the impacted implementations for their reactivity in
+fixing this issue, which hasn't impacted any user (as far as I know).
+
+## Timeline
+
+- March 23 2021: I discovered an interesting edge case while
+implementing anchor outputs in eclair ([1]).
+- August 2021: while I was finalizing support for the 0-htlc-fees
+variant of anchor outputs in eclair, I was able to do in-depth
+interoperability tests with other implementations that supported
+anchor outputs (only lnd and c-lightning at that time). These tests
+revealed that both implementations were impacted by the edge case
+discovered in March and that it could be exploited to steal funds.
+- September 2 2021: I notified both development teams.
+- October 11 2021: I disclosed the vulnerability to Electrum and LDK
+to ensure they would not ship a version of anchor outputs containing
+the same issue (anchor outputs wasn't shipped in their software yet).
+- November 2021: a fix for this vulnerability was released in lnd 0.14.0
+and c-lightning 0.10.2.
+
+## Impacted users
+
+- Users running versions of lnd prior to 0.14.0
+- Users running versions of c-lightning prior to 0.10.2 if they have
+activated experimental features (and have anchor outputs channels)
+
+## Description of the vulnerability
+
+With anchor outputs, your lightning node doesn't use `SIGHASH_ALL` when
+sending its signatures for htlc transactions in `commitment_signed`.
+It uses `SIGHASH_SINGLE | SIGHASH_ANYONECANPAY` instead and the other
+node is supposed to add a `SIGHASH_ALL` signature when they broadcast
+the htlc transaction.
+
+Interestingly, this lets the other node combine multiple htlcs in a
+single transaction without invalidating your signatures, as long as the
+`nLockTime` of all htlcs match. This has been a known fact for a long
+time, which can be used to batch transactions and save on fees.
+
+The vulnerability lies in how *revoked* htlc transactions were handled.
+Because we historically used `SIGHASH_ALL`, we could assume that htlc
+transactions had a single output. For example, older eclair versions
+used that fact, and when presented with a revoked htlc transaction,
+would claim a single output of that transaction via a penalty/justice
+transaction (see [2]). This was completely ok before anchor outputs.
+But after anchor outputs, if the revoked htlc transaction actually
+contained many htlcs, your node should claim *all* of the revoked
+outputs with penalty/justice transactions.
+
+When presented with a transaction containing multiple revoked htlcs,
+both impacted implementations would fail to claim any output. This means
+the attacker could publish a revoked commitment with htlcs that have
+been settled since then, and claim these htlcs a second time on-chain,
+thus stealing funds.
+
+Let's take a concrete example, where Bob is under attack.
+Bob has channels with Alice and Carol: Alice ---&gt; Bob ---&gt; Carol.
+Alice sends N htlcs to Carol spending all of her channel balance, which
+Carol then fulfills.
+Carol has then irrevocably received the funds from Bob.
+Then Alice publishes her old commitment where all the htlcs were pending
+and aggregates all of her htlc-timeouts in a single transaction.
+Bob will fail to claim the revoked htlc outputs which will go back to
+Alice's on-chain wallet. Bob has thus lost the full channel amount.
+
+## Caveat
+
+An important caveat is that this attack will not work all the time, so
+it can carry a risk for the attacker. The reason for that is that the
+htlc transactions have a relative delay of 1 block. If the node under
+attack is able to make his penalty/justice transactions confirm
+immediately after the revoked commitment (by claiming outputs directly
+from the commitment transaction with a high enough feerate) the
+attacker won't be able to broadcast the aggregated htlc transaction
+(and loses their channel reserve).
+
+The success of the attack depends on what block target implementations
+use for penalty/justice transactions and how congested the mempool is
+(unless the attacker notices that their peer is offline, in which case
+they can use this opportunity to carry out the attack).
+
+I'm pretty confident all users have already upgraded to newer versions
+(particularly since there have been important bug fixes on unrelated
+issues since then), but if your node still hasn't upgraded, you should
+consider doing it as soon as possible.
+
+Cheers,
+Bastien
+
+[1] <A HREF="https://github.com/ACINQ/eclair/pull/1738">https://github.com/ACINQ/eclair/pull/1738</A>
+[2]
+<A HREF="https://github.com/ACINQ/eclair/blob/35b070ee5de2ea3847cf64b86f7e47abcca10b95/eclair-core/src/main/scala/fr/acinq/eclair/transactions/Transactions.scala#L613">https://github.com/ACINQ/eclair/blob/35b070ee5de2ea3847cf64b86f7e47abcca10b95/eclair-core/src/main/scala/fr/acinq/eclair/transactions/Transactions.scala#L613</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220422/62503f9e/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220422/62503f9e/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003571.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003567.html">[Lightning-dev] [RELEASE] core-lightning v0.11.0: Simon's Carefully	Chosen Release Name
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3561">[ date ]</a>
+              <a href="thread.html#3561">[ thread ]</a>
+              <a href="subject.html#3561">[ subject ]</a>
+              <a href="author.html#3561">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

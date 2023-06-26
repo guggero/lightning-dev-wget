@@ -1,0 +1,101 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DRAFT: interactive tx construction protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CBVjcYucJCYkVxGPh_ALgHjRj9Uwhg1uZqFFXXFKXCP_hRQLkxlbO9HeWTKxt707Di5sS6pN-6iTq7wEozJEqOXHoGu5ohfcI7ftM7S88nRM%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002476.html">
+   <LINK REL="Next"  HREF="002480.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DRAFT: interactive tx construction protocol</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CBVjcYucJCYkVxGPh_ALgHjRj9Uwhg1uZqFFXXFKXCP_hRQLkxlbO9HeWTKxt707Di5sS6pN-6iTq7wEozJEqOXHoGu5ohfcI7ftM7S88nRM%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] DRAFT: interactive tx construction protocol">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Jan 30 23:31:59 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002476.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+        <LI>Next message: <A HREF="002480.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2479">[ date ]</a>
+              <a href="thread.html#2479">[ thread ]</a>
+              <a href="subject.html#2479">[ subject ]</a>
+              <a href="author.html#2479">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning darosior, ariard, niftynei, and list,
+
+&gt;<i> We could also consider PoDLE as used in JoinMarket, which solves a similar problem.
+</I>&gt;<i> <A HREF="https://gist.github.com/AdamISZ/9cbba5e9408d23813ca8#defence-2-committing-to-a-utxo-in-publicplaintext-at-the-start-of-the-handshake">https://gist.github.com/AdamISZ/9cbba5e9408d23813ca8#defence-2-committing-to-a-utxo-in-publicplaintext-at-the-start-of-the-handshake</A>
+</I>&gt;<i> Basically, a PoDLE commits to a UTXO, without being trivially grindable from the UTXO set and also including a proof that the creator of the PoDLE knows the secret key behind it.
+</I>&gt;<i> It can later be opened to reveal which UTXO the opener allocated.
+</I>&gt;<i> If the opener aborts (i.e. does not provide its signatures to the funding transaction) then the acceptor can gossip the UTXO and the revealed PoDLE as well to the rest of Lightning, so that the opener at least cannot reuse the same UTXO to probe other potential acceptors.
+</I>&gt;<i> (though, my understanding, there is no clear way to determine when we can safely delete old PoDLEs: maybe each node can keep it around for a month, which might be good enough to limit the practical ability of a snoop to probe other nodes)
+</I>&gt;<i> I believe JoinMarket also has solved the issue of allowing a UTXO to be used at most N times (for example due to &quot;honest&quot; failures, such as connectivity interruptions which might cause an abort of the protocol); I think it involves appending a single byte to something that is hashed, and ensuring its value is less than N, so that it can only be used from 0 to N - 1 (and thus allow a UTXO to be used at most N times).
+</I>&gt;<i>
+</I>&gt;<i> Getting into contact with waxwing / Adam Gibson for this might be useful to fill out how PoDLE works and so on; basically, I believe this issue is a practically solved problem already for JoinMarket, though waxwing may be able to provide a more nuanced opinion.
+</I>
+I communicated with waxwing, and he said:
+
+* See also: <A HREF="https://joinmarket.me/blog/blog/poodle">https://joinmarket.me/blog/blog/poodle</A> \[sic\].
+* The counter I mentioned is implemented using the second generator point.
+  * The PoDLE construction requires the standard base point `G`, and another generator point `J`.
+  * To create the generator point `J`, JoinMarket appends the counter byte (the one used to limit N number of uses of the same UTXO) to `G`, hashes it, then uses a coerce-to-point.
+* PoDLE is sometimes called DLEQ elsewhere.
+* There is no concrete answer on &quot;when to delete old PoDLE&quot;; JoinMarket never deletes (though they might if throughput increases).
+* Watermarks like `nLockTime`, `nSequence`, `nVersion` are currently fixed values; JoinMarket sees no reason to change this since equal-valued CoinJoins are otherwise obvious to chain analysis anyway.
+  * But note: JoinMarket implements PayJoin, which is not otherwise obvious onchain, and does indeed do anti-fee-sniping emulation for PayJoin.
+  * JoinMarket also strives to make similar feerates across users.
+
+In any case, for myself, my thoughts are:
+
+* I observe that our use-case is quite similar to a PayJoin:
+  * The opener proposes to make a payment (to a channel between the opener and the acceptor, rather than outright giving control to the acceptor as in PayJoin).
+  * The acceptor adds some UTXOs which will contribute to the payment output (i.e. the channel).
+  * This probably does mean we want to later consider `nLockTime` anti-fee-sniping as well in multi-funded channel opens.
+* Speaking of multi-funded channel opens, it seems to me this interactive tx construction mechanism as well can be later used for channel factories.
+  * Similarly, PoDLE techniques would be useful as well to multi-funded channel factories.
+* It would probably be a good idea to share PoDLE format with JoinMarket so we can share PoDLE with them (there could be bridges that share PoDLE between a JoinMarket maker and a Lightning node, and each network already has its own gossip protocols, so LN just needs a gossip protocol for sharing PoDLEs as well).
+* Probably we can mandate in some BOLT spec to retain PoDLE for at least a year or a month or two weeks or so, which should be enough to slow down probe attempts.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002476.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+	<LI>Next message: <A HREF="002480.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2479">[ date ]</a>
+              <a href="thread.html#2479">[ thread ]</a>
+              <a href="subject.html#2479">[ subject ]</a>
+              <a href="author.html#2479">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

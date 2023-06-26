@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Loop attack with onion routing..
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Loop%20attack%20with%20onion%20routing..&In-Reply-To=%3C87k2sljyci.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000148.html">
+   <LINK REL="Next"  HREF="000150.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Loop attack with onion routing..</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Loop%20attack%20with%20onion%20routing..&In-Reply-To=%3C87k2sljyci.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Loop attack with onion routing..">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Aug 24 00:59:09 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000148.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+        <LI>Next message: <A HREF="000150.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#149">[ date ]</a>
+              <a href="thread.html#149">[ thread ]</a>
+              <a href="subject.html#149">[ subject ]</a>
+              <a href="author.html#149">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> On 20 August 2015 at 07:49, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> I think in this case we need to peel the onion[1]:
+</I>
+I changed my mind by the way.  You don't need to peel the onion, you
+just need the commit transaction + htlc transactions tied to the closure
+(and you can see the HTLC is yours, by the R value).
+
+&gt;<i> &#8203;Okay, so how might this actually work?
+</I>&gt;<i>
+</I>&gt;<i> Alice sends a payment to Emma, via Bob, Carol and Dave.
+</I>&gt;<i>
+</I>&gt;<i> Case 1: Dave misbehaves by taking a few minutes rather than a few seconds
+</I>&gt;<i> to talk to Emma.
+</I>&gt;<i>
+</I>&gt;<i>  * Carol decides that's unacceptable and asks Dave for an excuse. Dave
+</I>&gt;<i> cannot provide one. Carol closes the channel (unilaterally, or with Dave's
+</I>&gt;<i> grudging cooperation)
+</I>
+A -&gt; B -&gt; C XXX D -&gt; E
+
+&gt;<i>  * At this point Bob believes Carol has taken too long too, so he asks
+</I>&gt;<i> Carol for an excuses. Carol says its Dave's fault, and points to the
+</I>&gt;<i> transaction closing the Carol/Dave channel as evidence; Bob knows that Dave
+</I>&gt;<i> was cheating because the HTLC is still present in that transaction (Carol
+</I>&gt;<i> reveals the P2SH script if necessary); Bob knows that Dave was who Carol
+</I>&gt;<i> was forwarding to, because Carol provides a verifiable decryption of the
+</I>&gt;<i> onion routing message Bob passed on to Carol.
+</I>&gt;<i>  * Bob likewise passes this back on to Alice as the explanation of why it's
+</I>&gt;<i> taking so long.
+</I>
+Yep, seems to work.
+
+&gt;<i> Case 2: Carol misbehaves by pretending Dave was misbehaving, when he wasn't.
+</I>&gt;<i>
+</I>&gt;<i>  &#8203;* Carol closes the channel with Dave before accepting Dave's resolution
+</I>&gt;<i> of the HTLC, passing the info to Bob as before.
+</I>&gt;<i> &#8203; * &#8203;Since he's not cheating, Dave claims the HTLC output on the blockchain.
+</I>&gt;<i>  * Bob sees the HTLC output Carol was pointing at has been spent in a
+</I>&gt;<i> timely fashion, indicating Carol is cheating.
+</I>&gt;<i>  * Bob claims funds from Alice in a timely fashion, so does not have to
+</I>&gt;<i> justify being a cheat himself.
+</I>&gt;<i>  * Bob closes the channel with Carol since she's being weird.
+</I>&gt;<i>
+</I>&gt;<i> &#8203;That seems like it works as expected to me?&#8203;
+</I>
+No, that doesn't work: Bob can't tell if Dave really sent it to Carol or
+not.  But Alice doesn't care: she just knows that someone paid 2 txfees
+in apology money for the delay.
+
+To recap (mainly for others), there are two failure cases:
+
+The good one:
+1) Carol can't reach Dave in 20 seconds (no timely response to the
+   update_add_htlc packet).  She send update_remove_htlc() back to Bob,
+   who sends it back to Alice, undoing all the HTLCs just like any
+   route or fee failure.
+
+The bad one:
+2) Dave starts the HTLC process, but then times out (doesn't resolve
+   HTLC in 20*11 seconds, and doesn't send back a blame
+   packet from Emma, either).
+
+In the latter case, Carol dumps the commit tx to the blockchain, and the
+screwed-up HTLC (and any other casualty HTLCs in progress, sorry).  She
+can include this commit tx + htlc txs in the blame packet back to Bob;
+there's no reason to name Dave AFAICT[1].
+
+If Carol values Dave too much to drop the channel, she risks that Bob
+will drop the channel with her.  It's not foolproof, but it provides
+some disincentive.  I'm hoping that along with the profit motive, it's
+sufficient.
+
+Cheers,
+Rusty.
+[1] Normal bitcoin coin analysis might reveal who Dave is, of course...
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000148.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+	<LI>Next message: <A HREF="000150.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#149">[ date ]</a>
+              <a href="thread.html#149">[ thread ]</a>
+              <a href="subject.html#149">[ subject ]</a>
+              <a href="author.html#149">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ask%20First%2C%20Shoot%20%28PTLC/HTLC%29%20Later&In-Reply-To=%3CUkiSCfl33reTva1Y4XEyXMHfBs4e0K55wnAnRwVszXuH3P_EshzwSylF6HosHlYBLRBxKOede_IBvBOkHOfN7KQvid-63Cic4y4qSfSbIV0%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003254.html">
+   <LINK REL="Next"  HREF="003268.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ask%20First%2C%20Shoot%20%28PTLC/HTLC%29%20Later&In-Reply-To=%3CUkiSCfl33reTva1Y4XEyXMHfBs4e0K55wnAnRwVszXuH3P_EshzwSylF6HosHlYBLRBxKOede_IBvBOkHOfN7KQvid-63Cic4y4qSfSbIV0%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Sep 29 03:40:01 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003254.html">[Lightning-dev] Theory: Proofs of Payment are Signatures
+</A></li>
+        <LI>Next message: <A HREF="003268.html">[Lightning-dev] [bitcoin-dev]  Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3256">[ date ]</a>
+              <a href="thread.html#3256">[ thread ]</a>
+              <a href="subject.html#3256">[ subject ]</a>
+              <a href="author.html#3256">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+While discussing something tangentially related with aj, I wondered this:
+
+&gt;<i> Why do we shoot an HTLC first and then ask the question &quot;can you actually resolve this?&quot; later?
+</I>
+Why not something like this instead?
+
+* For a payer:
+  * Generate a path.
+  * Ask first hop if it can resolve an HTLC with those specs (passing the encrypted onion).
+  * If first hop says &quot;yes&quot;, actually do the `update_add_htlc` dance.
+    Otherwise try again.
+* For a forwarder:
+  * If anybody asks &quot;can you resolve this path&quot; (getting an encrypted onion):
+    * Decrypt one layer to learn the next hop.
+    * Check if the next hop is alive and we have the capacity towards it, if not, answer no.
+    * Ask next hop if it can resolve the next onion layer.
+    * Return the response from the next hop.
+* For a payee:
+  * If anybody asks &quot;can you resolve this path&quot;:
+    * If it is not a multipart and we have the preimage, say yes.
+    * If it is a multipart and we have the preimage, wait for all the parts to arrive, then say yes to all of them.
+    * Otherwise say no.
+
+Now, the most obvious reason against this, that comes to mind, is that this is a potential DoS vector.
+Random node can trigger a lot of network activity by asking random stuff of random nodes.
+Asking the question is free, after all.
+
+However, we should note that sending *actual* HTLCs is a similar DoS vector **today**.
+This is still &quot;free&quot; in that the asker has no need to pay fees for failed HTLCs; they just lose the opportunity cost of the amount being locked up in the HTLCs.
+And presumably the opportunity cost is low since Lightning forwarding earnings are so tiny.
+
+One way to mitigate against this is to make generating an onion costly but validating and decrypting it cheap.
+We could use an encryption scheme that is more computationally expensive to encrypt but cheap to decrypt, for example.
+Or we could require proof-of-work on the onion: each unwrapped onion layer, when hashed, has to have a hash that is less than some threshold (this scales according to the number of hops in the onion, as well).
+Ultimate askers need to grind the shared secret until the onion layer hash achieves the target.
+
+Obviously just because you asked a few milliseconds ago if a path is viable does not mean that the path *remains* viable right now when you actually send out an HTLC, but presumably that risk is now lessened.
+Unexpected shutdowns or loss of connectivity has to appear in a smaller and shorter time frame to negatively affect intermediate nodes.
+
+Another thought is: Does the forwarding node have an incentive to lie?
+Suppose the next hop is alive but the forwarding node has insufficient capacity towards the next hop.
+Then the forwarding node can lie and claim it can still resolve the HTLC, in the hope that a few milliseconds later, when the actual HTLC arrives, the capacity towards the next hop has changed.
+Thus, even if the capacity now is insufficient, the forwarding node has an incentive to lie and claim sufficient capacity.
+
+Against the above, we can mitigate this by accepting &quot;no&quot; from *any* node along the path, but only accepting &quot;yes&quot; from the actual payee.
+We already have a mechanism where any node along a route can report a forwarding or other payment error, and the sender is able to identify which node along the path raised it.
+Thus, the payer can identify which node along the route responded with a &quot;yes&quot;, and check that it definitely reached the payee.
+Presumably, when a node receives a question, it checks if the asking node has sufficient capacity towards it first, and if not, fails the channel between them, since obviously the asking node is not behaving according to protocol and is buggy.
+
+Now, this can be used to probe capacities, for free, but again --- we already *have* probing capacities, for free, today, by just using random hashes.
+
+
+
+Why is this advantageous at all?
+
+One reason for doing this is that it improves payment latency.
+Some paths *will* fail, because there is no single consistent view of the network and its capacity (which is impossible due to others also possibly sending out via the same forwarding nodes you are using, and besides, even if such a view could be made to exist, it would be dangerously anti-privacy).
+This mechanism does not require that intermediate nodes respond with a signature and wait for a replied signature *before* they forward the onion to the next hop; when they are *just* asking, there is no HTLC involved, no updates to the channel state, and the question can be forwarded as soon as we can check locally.
+Further, in the current mechanism where we shoot HTLCs first and ask questions later, failures also require 1.5 roundtrips due to sharing signatures; with the &quot;just ask first&quot; phase there is no need for round trips to respond to questions.
+
+Basically, we replace multiple round trips per hop in case of a failure along a route, with a single large round trip from the payer to the failure point.
+In case of a success we just add more latency, but as we move to more multipath payments, perhaps it becomes more advantageous, since the probability of a particular sub-path failing is now higher?
+
+More importantly, by allowing to ask first, we reduce the probability that HTLCs made in good faith --- i.e. those that are fully intended to reach a destination and be resolved --- it may now be more palatable to charge for failing actual HTLCs.
+Since we expect that HTLC failures due to a node or channel failing along the way is lessened compared to today, because the sender *asks* first before *shooting* the HTLC, then the effect of charging for failing *actual* HTLCs is lessened, possibly to a more acceptable level.
+
+
+So, to lightning-dev --- is this a decent idea at all?
+Note that in particular this is something that requires a whole-network upgrade, as intermediate nodes have to upgrade as well.
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003254.html">[Lightning-dev] Theory: Proofs of Payment are Signatures
+</A></li>
+	<LI>Next message: <A HREF="003268.html">[Lightning-dev] [bitcoin-dev]  Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3256">[ date ]</a>
+              <a href="thread.html#3256">[ thread ]</a>
+              <a href="subject.html#3256">[ subject ]</a>
+              <a href="author.html#3256">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

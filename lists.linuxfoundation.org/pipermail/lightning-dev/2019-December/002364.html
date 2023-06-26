@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] eltoo towers and implications for settlement	key derivation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%20towers%20and%20implications%20for%20settlement%0A%09key%20derivation&In-Reply-To=%3C87tv6g19vt.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002363.html">
+   <LINK REL="Next"  HREF="002357.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] eltoo towers and implications for settlement	key derivation</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%20towers%20and%20implications%20for%20settlement%0A%09key%20derivation&In-Reply-To=%3C87tv6g19vt.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] eltoo towers and implications for settlement	key derivation">decker.christian at gmail.com
+       </A><BR>
+    <I>Wed Dec  4 13:46:30 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002363.html">[Lightning-dev] eltoo towers and implications for settlement	key derivation
+</A></li>
+        <LI>Next message: <A HREF="002357.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2364">[ date ]</a>
+              <a href="thread.html#2364">[ thread ]</a>
+              <a href="subject.html#2364">[ subject ]</a>
+              <a href="author.html#2364">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>(I wrote this a couple of days ago but forgot to send it, sorry for that)
+
+Hi Conner,
+
+thanks for looking into this. I hadn't really thought too much about
+watchtowers while writing the paper, so there might definitely be things
+I hadn't considered. I fail to see where the watchtower needs to
+generate the witness script if he's given the update transaction and the
+matching settlement transaction (see deployment option 2 below).
+
+There are a couple of deployment options for watchtowers, from simple
+forward ratchetting to fully settling watchtowers. As you correctly
+point out if the watchtower just ratchets forward the state, all it
+needs is the latest update transaction that is bindable to any prior
+update transaction and therefore the per-channel state is a single
+update transaction. The channel operator would then come back at a later
+time, when the watchtower has ratchetted forward and prevented any cheat
+attempt by the counterparty and just release the latest settlement tx.
+
+This is the model I had in mind when writing since it has constant
+per-channel state on the watchtower independent of the number of updates
+and of the size of the state (HTLCs, simple outputs, ...)  attached to
+that settlement. This is safe since the operator knows when it has to
+check back in at the latest in order to settle HTLCs built on top since
+they have absolute locktimes (this is not true if we start building
+relative locktime things on top of eltoo channels, but let's keep it
+simple for now).
+
+The second deployment option is to give the watchtower the settlement
+transaction along with the update transaction. The settlement
+transaction is fully signed and uses noinput/anyprevout to bind to the
+update, so the bundle of update and settlement transactions is
+broadcastable right away, no need to produce any scripts or
+signatures. This ensures that we at least drop the correct state
+on-chain, but comes at the cost of the watchtower learning intermediate
+states, or at least the size of the state (number of outputs) if we
+encrypt it.
+
+A third deployment option would be to allow the watchtower the ability
+to further settle things we built on top of the base eltoo contract,
+such as HTLCs, but at that point we are leaking a lot of information,
+watchtowers become very complex and we lose the flexibility of having
+clear layering.  If we are aiming for this third option indeed the
+watchtower would also need the ability to bind the HTLC settlement or
+whatever we build on top of eltoo, which implies they'd also use
+noinput/anyprevout, but that's hardly an issue, as long as the binding
+is unique.
+
+Cheers,
+Christian
+
+Conner Fromknecht &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">conner at lightning.engineering</A>&gt; writes:
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> I recently revisited the eltoo paper and noticed some things related
+</I>&gt;<i> watchtowers that might affect channel construction.
+</I>&gt;<i>
+</I>&gt;<i> Due to NOINPUT, any update transaction _can_ spend from any other, so
+</I>&gt;<i> in theory the tower only needs the most recent update txn to resolve
+</I>&gt;<i> any dispute.
+</I>&gt;<i>
+</I>&gt;<i> In order to spend, however, the tower must also produce a witness
+</I>&gt;<i> script which when hashed matches the witness program of the input. To
+</I>&gt;<i> ensure settlement txns can only spend from exactly one update txn,
+</I>&gt;<i> each update txn uses unique keys for the settlement clause, meaning
+</I>&gt;<i> that each state has a _unique_ witness program.
+</I>&gt;<i>
+</I>&gt;<i> Naively then a tower could store settlement keys for all states,
+</I>&gt;<i> permitting it to reconstruct arbitrary witness scripts for any given
+</I>&gt;<i> sequence of confirmed update txns.
+</I>&gt;<i>
+</I>&gt;<i> So far, the only work around I&#8217;ve come up with to avoid this is to
+</I>&gt;<i> give the tower an extended parent pubkey for each party, and then
+</I>&gt;<i> derive non-hardened settlement keys on demand given the state numbers
+</I>&gt;<i> that get confirmed. It's not the most satisfactory solution though,
+</I>&gt;<i> since leaking one hot settlement key now compromises all sibling
+</I>&gt;<i> settlement keys.
+</I>&gt;<i>
+</I>&gt;<i> Spending the unique witness programs is mentioned somewhat in section
+</I>&gt;<i> 4.1.4, which refers to deriving keys via state numbers, but to me it
+</I>&gt;<i> reads mostly from the PoV of the counterparties and not a third-party
+</I>&gt;<i> service. Is requiring non-hardened keys a known consequence of the
+</I>&gt;<i> construction? Are there any alternative approaches folks are aware of?
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Conner
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002363.html">[Lightning-dev] eltoo towers and implications for settlement	key derivation
+</A></li>
+	<LI>Next message: <A HREF="002357.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2364">[ date ]</a>
+              <a href="thread.html#2364">[ thread ]</a>
+              <a href="subject.html#2364">[ subject ]</a>
+              <a href="author.html#2364">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

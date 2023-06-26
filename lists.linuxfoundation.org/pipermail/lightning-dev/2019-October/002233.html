@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Atomic Secrets Exchange
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Atomic%20Secrets%20Exchange&In-Reply-To=%3C1571458024.2745.9.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002231.html">
+   <LINK REL="Next"  HREF="002235.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Atomic Secrets Exchange</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Atomic%20Secrets%20Exchange&In-Reply-To=%3C1571458024.2745.9.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] Atomic Secrets Exchange">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Sat Oct 19 04:07:04 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002231.html">[Lightning-dev] Increasing fee defaults to 5000+500 for a	healthier network?
+</A></li>
+        <LI>Next message: <A HREF="002235.html">[Lightning-dev] Atomic Secrets Exchange
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2233">[ date ]</a>
+              <a href="thread.html#2233">[ thread ]</a>
+              <a href="subject.html#2233">[ subject ]</a>
+              <a href="author.html#2233">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>(Note to IAEA &amp; others: this is not about nuclear technology. Feel free
+to read it though.)
+(Note 2: beware of awkward misspellings like atomic secret sexchange or
+the like. I have no idea how to fix this.)
+
+Hi,
+
+I admit I spend way too little time reading this mailing list, but in
+my recent futile attempt to get up-to-date, I got inspired by the
+recent elliptic curve based smart contracting discussions. I'd like to
+present my still somewhat half-baked solution to a problem I found in
+the discussion. I believe my solution, Atomic Secrets Exchange, is
+likely to have applications beyond this particular problem. In the
+description below, I am assuming some future Lightning where elliptic
+curve payment points are already used which allow EC arithmetic.
+
+# The use case
+The problem I'm trying to solve is in the proposed protocol for placing
+bets, as described by Nadav[1]. The idea is:
+
+* There is an oracle that promises to either publish p, or publish q,
+at a certain point in time, for instance, based on some real-world
+information.
+* Alice and Bob place bets on what the oracle will publish: Alice pays
+Bob if the oracle publishes p; Bob pays Alice if the oracle publishes
+q.
+* This can be realized by locking funds in two Lightning transactions:
+one from Alice to Bob, which can be redeemed by Bob with knowledge of
+p, and one from Bob to Alice, which can be redeemed by Alice with
+knowledge of q. The time-out of these transactions must be after the
+point of publication of the oracle.
+
+The problem is that one of the two transactions will always be created
+first; if, for instance, the tx from Alice to Bob is the first, then
+Bob no longer has an incentive to create his tx to Alice. Not creating
+the second tx results in a one-sided bet; this makes it risky to take
+part in the protocol (in this case, Alice is the victim).
+
+Nadav proposed a solution with a partially trusted escrow party. I will
+try to find a solution without an escrow party.
+
+#Solution outline
+In my approach, the payment from Alice to Bob requires Bob to know p
+*and* know a secret sa, which is initially only known by Alice.
+Similarly, the payment from Bob to Alice requires Alice to know q *and*
+a secret sb, which is initially only known to Bob. As long as they
+don't reveal these secrets to anyone, these are bound to time out (or
+voluntarily canceled), even after the oracle has spoken. This makes
+them safe to be locked in in any order. After locking in the
+transactions, Alice and Bob must reveal their secrets to each other, to
+make the locked-in transactions equivalent to an honest, two-sided bet.
+
+This changes the problem of atomically locking two transactions into
+atomically exchanging two secrets.
+
+Maybe the problem of atomically exchanging two secrets has already been
+solved in a more elegant way (ECDH, anyone?), but I came up with this
+method:
+
+* Alice locks in a Lightning tx to Bob that requires Bob to know sa and
+sb, and reveal at least sb to Alice.
+* Bob then locks in a Lightning tx, with a similar amount of funds,
+back to Alice that requires Alice to know sa and reveal sa to Bob. This
+must time out sooner than the first tx.
+* Alice redeems the second tx, revealing sa to Bob.
+* Bob redeems the first tx, revealing sb to Alice.
+
+Note that Bob can actually 'split the atom' by not redeeming the first
+tx, but he receives a penalty for this that roughly equals the tx
+amount. This amount can be made sufficiently large (in comparison to
+e.g. the bet) as required to move Bob's incentives towards honest
+behavior.
+
+#Some details
+In the application of paid bets, one detail is time-outs of the three
+transactions. I believe this is the correct order:
+
+* Locking in the bet txes
+* Locking in the secrets exchange txes
+* Time-out of the secrets exchange txes 
+* Publication by the oracle
+* Time-out of the bet txes 
+
+Another &quot;detail&quot; is how to do the elliptic curve magic. This is my
+beginners' attempt:
+P = p*G
+Q = q*G
+SA = sa*G
+SB = sb*G
+Bet txes: PP_b0 = P+SA, PP_b1 = Q+SB
+Secrets Exchange txes: PP_x0 = SA+SB, PP_x1 = SA
+Bob has to know SA to verify the value of PP_x0, and to generate PP_x1.
+I don't know if a subtract operation exists for elliptic curve points;
+in that case Bob could calculate SA = PP_b0 - P. Otherwise, Alice could
+just tell Bob SA, e.g. as meta-data included in the first bet tx.
+Similarly, Alice has to know SB to generate PP_x0; Alice could
+calculate SB = PP_b1 - Q, or Bob could tell Alice SB, e.g. as meta-data 
+included in the second bet tx.
+
+CJP
+
+[1] idea 2 in <A HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev">https://lists.linuxfoundation.org/pipermail/lightning-dev</A>
+/2019-October/002213.html
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002231.html">[Lightning-dev] Increasing fee defaults to 5000+500 for a	healthier network?
+</A></li>
+	<LI>Next message: <A HREF="002235.html">[Lightning-dev] Atomic Secrets Exchange
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2233">[ date ]</a>
+              <a href="thread.html#2233">[ thread ]</a>
+              <a href="subject.html#2233">[ subject ]</a>
+              <a href="author.html#2233">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Lightning gossip alternative
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20gossip%20alternative&In-Reply-To=%3C87sfsjpmhn.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003471.html">
+   <LINK REL="Next"  HREF="003478.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Lightning gossip alternative</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20gossip%20alternative&In-Reply-To=%3C87sfsjpmhn.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [RFC] Lightning gossip alternative">rusty at blockstream.com
+       </A><BR>
+    <I>Wed Feb 16 02:35:16 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003471.html">[Lightning-dev] [RFC] Lightning gossip alternative
+</A></li>
+        <LI>Next message: <A HREF="003478.html">[Lightning-dev] [RFC] Lightning gossip alternative
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3474">[ date ]</a>
+              <a href="thread.html#3474">[ thread ]</a>
+              <a href="subject.html#3474">[ subject ]</a>
+              <a href="author.html#3474">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; writes:
+&gt;<i> Hi Rusty,
+</I>&gt;<i>
+</I>&gt;<i> Nice to see the proposal in more concrete terms. Few questions:
+</I>&gt;<i>
+</I>&gt;<i> - The total proved utxo value (not counting any utxos which are spent)
+</I>&gt;&gt;<i>   is multiplied by 10 to give the &quot;announcable_channel_capacity&quot; for that
+</I>&gt;&gt;<i> node.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Could this work as a dynamic value too, similar to the minimum relay fee on
+</I>&gt;<i> L1?
+</I>
+I made the number up, so I'm not very attached to it.  How would we
+choose to scale it though?  If nodes don't use the same value it makes
+for wasted gossip (and minisketch-based gossip much harder).
+
+&gt;&gt;<i> 1. `tlv_stream`: `channel_update_v2_tlvs`
+</I>&gt;&gt;<i>
+</I>&gt;<i> 2. types:
+</I>&gt;&gt;<i>     1. type: 4 (`capacity`)
+</I>&gt;&gt;<i>     2. data:
+</I>&gt;&gt;<i>         * [`tu64`:`satoshis`]
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> What does capacity mean exactly outside the context of a real channel? Will
+</I>&gt;<i> this be reduced to that maximum htlc amount that the nodes want to route,
+</I>&gt;<i> to save as much of the announceable budget as possible?
+</I>
+Yes, it's the old htlc_maximum_msat, but expressed in satoshis because
+msat seems to finegrained?
+
+&gt;<i> It is also the question of whether 10 x 10k channels should weigh as much
+</I>&gt;<i> on the budget as a 1 x 100k channel. A spammer may be able to do more harm
+</I>&gt;<i> with multiple smaller channels because there is more for the sender's
+</I>&gt;<i> pathfinding algorithms to explore. Maybe it doesn't matter as long as there
+</I>&gt;<i> is some mechanism to discourage spam.
+</I>
+Yes, I suggested a minimum cost to avoid 100k 1sat channels, I don't
+know if we should be more sophisticated.
+
+&gt;&gt;<i>     1. type: 5 (`cost`)
+</I>&gt;&gt;<i>     2. data:
+</I>&gt;&gt;<i>        * [`u16`:`cltv_expiry_delta`]
+</I>&gt;&gt;<i>        * [`u32`:`fee_proportional_millionths`]
+</I>&gt;&gt;<i>        * [`tu32`:`fee_base_msat`]
+</I>&gt;&gt;<i>     1. type: 6 (`min_msat`)
+</I>&gt;&gt;<i>     2. data:
+</I>&gt;&gt;<i>         * [`tu64`:`min_htlc_sats`]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - `channel_id_and_claimant` is a 31-bit per-node channel_id which can be
+</I>&gt;&gt;<i>   used in onion_messages, and a one bit stolen for the `claim` flag.
+</I>&gt;<i>
+</I>&gt;<i> If you'd increase the budget multiplier from 10 to 20, couldn't this be
+</I>&gt;<i> simplified to always applying the cost to both nodes?
+</I>
+Yes!  I forgot that capacity doesn't have to be symmetrical; if I open a
+giant channel with you, and you don't want to expose more UTXOs, you
+just set your capacity to some lower value.
+
+&gt;&gt;<i> - A channel is not considered to exist until both peers have sent a
+</I>&gt;&gt;<i>   channel_update_v2, at least one of which must set the `claim` flag.
+</I>&gt;&gt;<i> - If a node sets `claim`, the capacity of the channel is subtracted from
+</I>&gt;&gt;<i>   the remaining announcable_channel_capacity for that node (minimum
+</I>&gt;&gt;<i>   10,000 sats).
+</I>&gt;<i>
+</I>&gt;<i> Same question about magic value and whether it can be dynamic.
+</I>
+Yes, 10ksat might be giant one day?  We can change it naively with a
+feature bit (&quot;I use v2 capacity calcs&quot;), or in some more finegrained
+way, but what do we base it on?
+
+Cheers!
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003471.html">[Lightning-dev] [RFC] Lightning gossip alternative
+</A></li>
+	<LI>Next message: <A HREF="003478.html">[Lightning-dev] [RFC] Lightning gossip alternative
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3474">[ date ]</a>
+              <a href="thread.html#3474">[ thread ]</a>
+              <a href="subject.html#3474">[ subject ]</a>
+              <a href="author.html#3474">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

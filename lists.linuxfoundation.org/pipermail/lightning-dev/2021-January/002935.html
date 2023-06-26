@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PoDLEs revisited
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3CCAH5Bsr1JiBUCO%3Dqsnj1cwtn7RDcgtWu7Hfv9CCiNYqTDu%2BGsxQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002934.html">
+   <LINK REL="Next"  HREF="002936.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PoDLEs revisited</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3CCAH5Bsr1JiBUCO%3Dqsnj1cwtn7RDcgtWu7Hfv9CCiNYqTDu%2BGsxQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] PoDLEs revisited">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Fri Jan 15 01:28:49 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002934.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+        <LI>Next message: <A HREF="002936.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2935">[ date ]</a>
+              <a href="thread.html#2935">[ thread ]</a>
+              <a href="subject.html#2935">[ subject ]</a>
+              <a href="author.html#2935">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Jan 13, 2021 at 11:54 AM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+wrote:
+
+&gt;<i> Lloyd Fournier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lloyd.fourn at gmail.com</A>&gt; writes:
+</I>&gt;<i> &gt; Rusty, Zman,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; A concern I have with only doing one signaling transaction out of the
+</I>&gt;<i> whole
+</I>&gt;<i> &gt; group of inputs is that it means you don't prove ownership of the other
+</I>&gt;<i> &gt; inputs.
+</I>&gt;<i>
+</I>&gt;<i> But that's by design.  You can contact two peers and middleman between
+</I>&gt;<i> them to produce a single tx.
+</I>&gt;<i>
+</I>
+Ah. I missed this motivation. So you actually want to have sessions where
+you use the same signaling transaction in all of them. That's a cool idea.
+
+&gt;<i>
+</I>&gt;<i> The practical problem with a signalling tx is that it's hard to tell if
+</I>&gt;<i> it's conflicting.  Mallory uses a single UTXO to probe for everyone's
+</I>&gt;<i> UTXO at once.  Poor Bob wants to both wait 60 seconds to see if a
+</I>&gt;<i> conflicting tx ends up in his mempool, *and* broadcast it ASAP to signal
+</I>&gt;<i> to others.  He wants to do both of these *before* revealing his own
+</I>&gt;<i> UTXOs.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>I think this is a problem with all three schemes I mentioned. You will
+always have to wait for things to be gossiped in some way to catch attempts
+at parallel sessions.
+Of course there could be faster mediums than the mempool but it does seem a
+convenient one to use.
+Note that you should not wait a predictable amount of time but rather a
+randomly sampled amount from e.g. 0-60 seconds (or longer). If everyone is
+waiting the same predictable amount of time it does nothing to protect you.
+
+But the &quot;middleman&quot; idea you mentioned above makes this all the more
+complicated: If you are meant to have parallel sessions then this is a
+problem for an honest Alice who initiates a funding with Bob and Carol.
+Bob decides to wait 24s and Carol decides to wait 55s to check the mempool
+for the signaling before revealing their utxos. After Bob wakes up from his
+24s he will add his own utxos and demand that Alice complete the
+transaction by signing it. But since Alice is trying to also add Carol's
+UTXOs to the transaction she will have to wait until Carol becomes
+responsive again. To Bob this will look like Alice has become unresponsive
+through no fault of her own and Bob will broadcast the signaling tx.
+
+In other words, if parallel sessions are legal then you shouldn't try and
+catch parallel sessions. But if parallel sessions are legal there will
+always be an effective dual funding UTXO discovery attack by using one UTXO
+to hit many targets. I think this is true for all three schemes I mentioned.
+
+It seems the really difficult question is: is it even worth trying to stop
+sequential attacks if parallel attacks are unstoppable?
+
+Not sure how to square this, but I do prefer this approach over PoDLE.
+&gt;<i>
+</I>
+I think PoDLE might actually have an advantage in parallel attacks if the
+scheme was changed a bit. A weakness of the lightning proposal as compared
+to the joinmarket idea is that the `h2` point is not broadcast immediately
+-- rather you wait for failure and then broadcast it.  Instead, a peer
+should broadcast h2 as soon as they have agreed to create a transaction
+with the initiator. Then if at any time during the tx creation protocol
+they receive the same h2 from someone else, they cancel and don't reveal
+their UTXOs (let's say they wait ~10s after broadcasting before revealing
+any utxos). Note that here you don't have to randomly select the time you
+wait.
+
+There are several (perhaps addressable) downsides to this scheme but it at
+least has better protection against parallel attacks than the others.
+Since it is effective it would also break the &quot;middleman&quot; idea unless Alice
+funds with two utxos (a different h2 for each party) or there is some way
+for all parties involved in the funding to distinguish gossiped h2s from
+their funding session from others.
+
+Cheers,
+
+LL
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210115/db7150a5/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210115/db7150a5/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002934.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+	<LI>Next message: <A HREF="002936.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2935">[ date ]</a>
+              <a href="thread.html#2935">[ thread ]</a>
+              <a href="subject.html#2935">[ subject ]</a>
+              <a href="author.html#2935">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,268 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] SIGHASH_SINGLE + update_fee Considered Harmful
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20SIGHASH_SINGLE%20%2B%20update_fee%20Considered%20Harmful&In-Reply-To=%3CCAD3i26CXZaBiyNz-N-7%3D3CJWQcp958va4q4W41BoHc4WdoRzUg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002881.html">
+   <LINK REL="Next"  HREF="002883.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] SIGHASH_SINGLE + update_fee Considered Harmful</H1>
+    <B>Johan Tor&#229;s Halseth</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20SIGHASH_SINGLE%20%2B%20update_fee%20Considered%20Harmful&In-Reply-To=%3CCAD3i26CXZaBiyNz-N-7%3D3CJWQcp958va4q4W41BoHc4WdoRzUg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] SIGHASH_SINGLE + update_fee Considered Harmful">johanth at gmail.com
+       </A><BR>
+    <I>Mon Nov 23 15:11:52 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002881.html">[Lightning-dev] Minor tweaks to blinded path proposal
+</A></li>
+        <LI>Next message: <A HREF="002883.html">[Lightning-dev] [c-lightning] v0.9.2 &quot;Now with 0-of-N Multisig&quot;	Released
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2882">[ date ]</a>
+              <a href="thread.html#2882">[ thread ]</a>
+              <a href="subject.html#2882">[ subject ]</a>
+              <a href="author.html#2882">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+Posting an update to this thread, as we are inching closer to an
+implementation in lnd that handles this scenario.
+
+I put up a proposed PR today that attempts to solve this in a
+backwards compatible manner:
+<A HREF="https://github.com/lightningnetwork/lnd/pull/4795">https://github.com/lightningnetwork/lnd/pull/4795</A>
+
+The gist is that in every state we check that the &quot;worst case fee
+leak&quot; is at most the channel reserve. The idea is that there should be
+no incentive to perform the attack as described, as the cheating party
+will gain at most the channel reserve, but at the same time lose its
+channel reserve.
+
+Since this makes small channels unusable at high fee rates (the leaked
+fee would exceed the channel reserve for just a few, even a single
+HTLC) we also clamp the maximum update_fee we'll send at 10 sat/b (a
+configurable value). As an example a 1,000,000 sat channel with a 1%
+channel reserve would have space for 6 HTLCs at this fee rate.
+
+&gt;<i> Completely adhering to the bring-your-own-fee model for HTLC-txn sounds better as it splits more fairly fees burden between channel participants.
+</I>
+I totally agree that this sounds like the best solution! AFAICT this
+would require a (simple) spec change, but would definitely be a big
+win and a simple implementation change when we are doing BYOF on the
+HTLC transactions anyway :)
+
+- Johan
+
+On Mon, Sep 14, 2020 at 1:30 AM Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt; wrote:
+&gt;<i>
+</I>&gt;<i> Hi Johan,
+</I>&gt;<i>
+</I>&gt;<i> &gt; I would be open to patching the spec to disallow update_fee for anchor
+</I>&gt;<i> &gt; channels, but maybe we can just add a warning and discourage it.
+</I>&gt;<i>
+</I>&gt;<i> My initial thinking was just to restrain it for the commitment-level only.
+</I>&gt;<i>
+</I>&gt;<i> Completely adhering to the bring-your-own-fee model for HTLC-txn sounds better as it splits more fairly fees burden between channel participants. The initiator won't have to pay for the remote's HTLC-txn, especially in periods of high-congestion. A participant shouldn't have to bear the cost of the counterparty choosing to go onchain, as it's mostly a client security parameter (&quot;how many blocks it will take me to confirm ?&quot;)  or an economic decision (&quot;is this HTLC worthy to claim/expire ?&quot;).
+</I>&gt;<i>
+</I>&gt;<i> One could argue it's increasing the blockspace footprint as you will use one more pair of input-output but if you're paying the feerate that's lawful usage.
+</I>&gt;<i>
+</I>&gt;<i> Antoine
+</I>&gt;<i>
+</I>&gt;<i> Le ven. 11 sept. 2020 &#224; 04:15, Johan Tor&#229;s Halseth &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">johanth at gmail.com</A>&gt; a &#233;crit :
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Hi,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Very good observation, most definitely not a type of attack I forseen!
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Luckily, it was the plan to phase out update_fee all along, in favor
+</I>&gt;&gt;<i> of only accepting the minimum relay fee (zero fee if/when package
+</I>&gt;&gt;<i> relay is a reality). If I understand the scenario correctly, that
+</I>&gt;&gt;<i> should mitigate this attack completely, as the attacker cannot impact
+</I>&gt;&gt;<i> the intended miner fees on the HTLCs, and could only siphon off the
+</I>&gt;&gt;<i> minimal miner fee if anything at all.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I would be open to patching the spec to disallow update_fee for anchor
+</I>&gt;&gt;<i> channels, but maybe we can just add a warning and discourage it.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Johan
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On Thu, Sep 10, 2020 at 8:13 PM Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Hi Antoine,
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Great findings!
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; I think an even simpler mitigation is just for the non-initiator to _reject_
+</I>&gt;&gt;<i> &gt; update_fee proposals that are &quot;unreasonable&quot;. The non-initiator can run a
+</I>&gt;&gt;<i> &gt; &quot;fee leak calculation&quot; to compute the worst-case leakage of fees in the
+</I>&gt;&gt;<i> &gt; revocation case. This can be done to day without any significant updates to
+</I>&gt;&gt;<i> &gt; implementations, and some implementations may already be doing this.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; One issue is that we don't have a way to do a &quot;soft reject&quot; of an update_fee
+</I>&gt;&gt;<i> &gt; as is. However, depending on the implementations, it may be possible to just
+</I>&gt;&gt;<i> &gt; reconnect and issue a co-op close if there're no HTLCs on the commitment
+</I>&gt;&gt;<i> &gt; transaction.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; As you mentioned by setting proper values for max allowed htlcs, max in
+</I>&gt;&gt;<i> &gt; flight, reserve, etc, nodes are able to quantify this fee leak risk ahead of
+</I>&gt;&gt;<i> &gt; time, and set reasonable parameters based on their security model. One issue
+</I>&gt;&gt;<i> &gt; is that these values are set in stone rn when the channel is opened, but
+</I>&gt;&gt;<i> &gt; future iterations of dynamic commitments may allow us to update them on the
+</I>&gt;&gt;<i> &gt; fly.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; In the mid-term, implementations can start to phase out usage of update_fee
+</I>&gt;&gt;<i> &gt; by setting a minimal commitment fee when the channel is first opened, then
+</I>&gt;&gt;<i> &gt; relying on CPFP to bump up the commitment and any HTLCs if needed. This
+</I>&gt;&gt;<i> &gt; discovery might very well hasten the demise of update_fee in the protocol
+</I>&gt;&gt;<i> &gt; all together as well.  I don't think we need to depend entirely on a
+</I>&gt;&gt;<i> &gt; theoretical package relay Bitcoin p2p upgrade assuming implementations are
+</I>&gt;&gt;<i> &gt; willing to make an assumption that say 20 sat/byte or w/e has a good chance
+</I>&gt;&gt;<i> &gt; of widespread propagation into mempools.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; From the perspective of channel safety, and variations of attacks like
+</I>&gt;&gt;<i> &gt; &quot;flood &amp; loot&quot;, imo it's absolutely critical that nodes are able to update
+</I>&gt;&gt;<i> &gt; the fees on their second-level HTLC transactions. As this is where the real
+</I>&gt;&gt;<i> &gt; danger lies: if nodes aren't able to get 2nd level HTLCs in the chain in
+</I>&gt;&gt;<i> &gt; time, then the incoming HTLC expiry will expire, creating a race condition
+</I>&gt;&gt;<i> &gt; across both commitments which can potentially cascade.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; In lnd today, anchors is still behind a build flag, but we plan to enable
+</I>&gt;&gt;<i> &gt; it by default for our upcoming 0.12 release. The blockers on our end were to
+</I>&gt;&gt;<i> &gt; add support for towers, and add basic deadline aware bumping, both of which
+</I>&gt;&gt;<i> &gt; are currently on track. We'll now also look into setting clamps on the
+</I>&gt;&gt;<i> &gt; receiver end to just not accept unreasonable values for the fee rate of a
+</I>&gt;&gt;<i> &gt; commitment, as this ends up eating into the true HTLC values for both sides.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; -- Laolu
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; On Thu, Sep 10, 2020 at 9:28 AM Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Hi,
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; In this post, I would like to expose a potential vulnerability introduced by the recent anchor output spec update related to the new usage of SIGHASH_SINGLE for HTLC transactions. This new malleability combined with the currently deployed mechanism of `update_fee` is likely harmful for funds safety.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; This has been previously shared with deployed implementations devs, as anchor channels are flagged as experimental it's better to discuss and solve this publicly. That said, if you're currently running experimental anchor channels with non-trusted parties on mainnet, you might prefer to close them.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; # SIGHASH_SINGLE and `update_fee` (skip it if you're familiar)
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; First, let's get started by a quick reminder of the data set committed by signature digest algorithm of Segwit transactions (BIP 143):
+</I>&gt;&gt;<i> &gt;&gt; * nVersion
+</I>&gt;&gt;<i> &gt;&gt; * hashPrevouts
+</I>&gt;&gt;<i> &gt;&gt; * hashSequence
+</I>&gt;&gt;<i> &gt;&gt; * outpoint
+</I>&gt;&gt;<i> &gt;&gt; * scriptCode of the input
+</I>&gt;&gt;<i> &gt;&gt; * value of the output spent by this input
+</I>&gt;&gt;<i> &gt;&gt; * nSequence of the input
+</I>&gt;&gt;<i> &gt;&gt; * hashOutputs
+</I>&gt;&gt;<i> &gt;&gt; * nLocktime
+</I>&gt;&gt;<i> &gt;&gt; * sighash type of the signature
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Anchor output switched the sighash type from SIGHASH_ALL to SIGHASH_SINGLE | SIGHASH_ANYONECANPAY for HTLC signatures sent to your counterparty. Thus it can spend non-cooperatively its HTLC outputs on its commitment transactions. I.e when Alice broadcasts her commitment transaction, every Bob's signatures on Alice's HTLC-Success/Timeout transactions are now flagging the new sighash type.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Thus `hashPrevouts`, `hashSequence` (ANYONECANPAY) and `hashOutputs` (SINGLE) aren't committed anymore. SINGLE only enforces commitment to the output scriptpubkey/amount at the same index that
+</I>&gt;&gt;<i> &gt;&gt; the spending input. Alice is free to attach additional inputs/outputs to her HTLC transaction. This change is aiming to let a single-party bump the feerate of 2nd-stage HTLC transactions in case of mempool-congestion, without counterparty cooperation and thus make HTLC funds safer.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; The attached outputs are _not_ encumbered by a revokeable redeemscript for a potential punishment.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; That said, anchor ouput spec didn't change disable the current fee mechanism already covering HTLC transactions. Pre/post-anchor channels are negotiating a feerate through `update_fee` exchange, initiated by the channel funder. This `update_fee` can be rejected by the receiver if it's deemed unreasonable compared to your local fee estimator view, but as of today implementations are pretty liberal in their acceptance, admitting a divergence from a scale of 1 to no-bound at all.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; This negotiated feerate (`feerate_per_kw`) is used by channel participants to compute effective fees which have to be deduced either from the funder balance output for commitment transactions or from HTLC output value for HTLC transactions.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; # The Vulnerability : a Penalty Escape Vector
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; By increasing the feerate thanks to `update_fee`, a malicious party can inflate fees committed on HTLC input/output pairs and redirect this inflated fee to a single-controlled output attached to these malleable pairs. This won't be punishable by an honest party in case of revoked state broadcast and thus enable to partially escape the penalty.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; As an example, Alice and Bob have a 100_000 sats channel. `feerate_per_kw` is 10000 sats.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; At state N, Alice balance is all on her side. She announces 10 outgoing HTLCs of value 7000 sats.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; As Commitment tx weight with 10 outputs is 2844 (post-anchor), the absolute fee committed is 28440 sats.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; As HTLC-timeout weight is 666 (post-anchor), the absolute fee committed is of 6660 sat, the HTLC tx output as counter-signed by Bob is of 340 sat. This absolute fee aims to pay the miner fee in case Alice needs to timeout HTLC onchain.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Her remaining balance is 1560 sat, above both dust_limit_satoshi and the channel reserve as constrained by Bob (likely 1%).
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Alice waits for HTLCs to expire and advances state to N+1. Then she empties her balance minus reserve by sending a HTLC relayed by Bob either to a colluding channel on the rest of network or back to an onchain address thanks to a swap service.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; At state N+2, Alice finalizes HTLC-timeout of state N by capturing almost all of the absolute fee to a new P2WPKH output only controlled by her. She broadcasts the revoked commitment tx N and burns 28440 sats in commitment fee.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Her balance of 1560 sats is punished by Bob's justice transaction.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; After confirmation and thus maturing of the CSV of 1 on her HTLC output Alice broadcasts her 10 HTLC-timeout sending back to her 6660 sat - 660 to pay a low-fee. Bob punishes the 10 HTLC-timeout outputs of 340 sats.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Alice gain =  99_000 (swap spend) + 66_660 (HTLCs escape) - 1560 (commitment balance punishment) - 28440 (commitment fee) - 660*10 (HTLCs fees) - 340*10 (HTLCs output) = 125600 sats.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Alice's gain is superior at channel value as it has been partially double-spend by bypassing the revocation punishment.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; # Limitations of Attacker Success
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; A first limitation of attack success which can be point of is the fact that post-anchor HTLC outputs are CSV'ed by 1, which means in theory a honest party can punish this output before the malicious spend them with the revoked HTLC txn. In practice a malicious party can attach a branch of descendants to its anchor output and that way only allowing one more mempool victim's transaction on the revoked commitment. The victim must spend all outputs at once or otherwise they're going to obstrucate each other at mempool acceptance.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Secondly, other limitations  are the per-implementation channel policy `max_accepted_htlcs`, `max_htlc_value_in_flight`, `channel_reserve` and acceptance bound of `update_fee`. A quick look at default policies, even if they vary between deploy implementations, let it think there is room to escape a substantial part of channel value.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Lastly, after the revoked commitment transaction is confirmed, both attacker and victim are in a feerate race to confirm either a justice transaction or a malicious HTLC-timeout. As fee estimator logic of the victim's implementation is a public piece of knowledge, it shouldn't be hard for the attacker to know the range of the first fee bid and override it by a bit to confirm it before the victim RBF at next block. Currently, not all implementations have RBF of justice transactions.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; As of today, if anchor output is deployed and given how LN implementations are managing fees/rebroadcast of onchain transactions, the chance of attack success sounds high in my opinion.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; # Countermeasures
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Channel policies could be tighter, like bounded further down `max_accepted_htlcs` or restraining acceptance of `update_fee`. For the latter, it's pretty hard as a) fee estimators diverge on mempool views b) an attacker can craft escape HTLC-txn in a period of high-fee and patiently waits a low-fee period to launch the exploitation.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Justice transactions can adopt a scorched earth approach binding their feerate to the max to increase odds of winning the feerate race and thus deter attackers. But this sounds like introducing a griefing attack vector. Your counterparty can burn more of your lawful balance in fees than you'll punish its revoked balance.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; A workable option would be to patch current anchor spec to remove `feerate_per_kw` appliance on 2nd-stage transactions, maybe just committing a minimal relay fee.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Thoughts of further countermeasures ?
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; I think the vulnerability described is mostly right but please point any missing details.
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Cheers,
+</I>&gt;&gt;<i> &gt;&gt;
+</I>&gt;&gt;<i> &gt;&gt; Antoine
+</I>&gt;&gt;<i> &gt;&gt; _______________________________________________
+</I>&gt;&gt;<i> &gt;&gt; Lightning-dev mailing list
+</I>&gt;&gt;<i> &gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> &gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; _______________________________________________
+</I>&gt;&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002881.html">[Lightning-dev] Minor tweaks to blinded path proposal
+</A></li>
+	<LI>Next message: <A HREF="002883.html">[Lightning-dev] [c-lightning] v0.9.2 &quot;Now with 0-of-N Multisig&quot;	Released
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2882">[ date ]</a>
+              <a href="thread.html#2882">[ thread ]</a>
+              <a href="subject.html#2882">[ subject ]</a>
+              <a href="author.html#2882">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

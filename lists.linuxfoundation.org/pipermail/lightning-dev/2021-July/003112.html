@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Eltoo / Anyprevout &amp; Baked in Sequences
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%20/%20Anyprevout%20%26%20Baked%20in%20Sequences&In-Reply-To=%3CCAD5xwhgO5p2Ldy1P1rUuqDHcJ0opSe7Tg_mX_rb%2BZpLOxa47cA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003142.html">
+   <LINK REL="Next"  HREF="003114.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Eltoo / Anyprevout &amp; Baked in Sequences</H1>
+    <B>Jeremy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%20/%20Anyprevout%20%26%20Baked%20in%20Sequences&In-Reply-To=%3CCAD5xwhgO5p2Ldy1P1rUuqDHcJ0opSe7Tg_mX_rb%2BZpLOxa47cA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Eltoo / Anyprevout &amp; Baked in Sequences">jlrubin at mit.edu
+       </A><BR>
+    <I>Thu Jul  8 01:00:20 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003142.html">[Lightning-dev] Error Codes for LN
+</A></li>
+        <LI>Next message: <A HREF="003114.html">[Lightning-dev] [bitcoin-dev] Eltoo / Anyprevout &amp; Baked in	Sequences
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3112">[ date ]</a>
+              <a href="thread.html#3112">[ thread ]</a>
+              <a href="subject.html#3112">[ subject ]</a>
+              <a href="author.html#3112">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I made a comment on
+<A HREF="https://github.com/bitcoin/bips/pull/943#issuecomment-876034559">https://github.com/bitcoin/bips/pull/943#issuecomment-876034559</A> but it
+occurred to me it is more ML appropriate.
+
+In general, one thing that strikes me is that when anyprevout is used for
+eltoo you're generally doing a script like:
+
+```
+IF
+    10 CSV DROP
+    1::musigkey(As,Bs) CHECKSIG
+ELSE
+    &lt;S+1&gt; CLTV DROP
+   1::musigkey(Au,Bu) CHECKSIG
+ENDIF
+```
+
+This means that you're overloading the CLTV clause, which means it's
+impossible to use Eltoo and use a absolute lock time, it also means you
+have to use fewer than a billion sequences, and if you pick a random # to
+mask how many payments you've done / pick random gaps let's say that
+reduces your numbers in half. That may be enough, but is still relatively
+limited. There is also the issue that multiple inputs cannot be combined
+into a transaction if they have signed on different locktimes.
+
+Since Eltoo is the primary motivation for ANYPREVOUT, it's worth making
+sure we have all the parts we'd need bundled together to see it be
+successful.
+
+A few options come to mind that might be desirable in order to better serve
+the eltoo usecase
+
+1) Define a new CSV type (e.g. define (1&lt;&lt;31 &amp;&amp; 1&lt;&lt;30) as being dedicated
+to eltoo sequences). This has the benefit of giving a per input sequence,
+but the drawback of using a CSV bit. Because there's only 1 CSV per input,
+this technique cannot be used with a sequence tag.
+2) CSFS -- it would be possible to take a signature from stack for an
+arbitrary higher number, e.g.:
+```
+IF
+    10 CSV DROP
+    1::musigkey(As,Bs) CHECKSIG
+ELSE
+    DUP musigkey(Aseq, BSeq) CSFSV &lt;S+1&gt; GTE VERIFY
+   1::musigkey(Au,Bu) CHECKSIG
+ENDIF
+```
+Then, posession of a higher signed sequence would allow for the use of the
+update path. However, the downside is that there would be no guarantee that
+the new state provided for update would be higher than the past one without
+a more advanced covenant.
+3) Sequenced Signature: It could be set up such that ANYPREVOUT keys are
+tagged with a N byte sequence (instead of 1), and a part of the process of
+signature verification includes hashing a sequence on the signature itself.
+
+E.g.
+
+```
+IF
+    10 CSV DROP
+    1::musigkey(As,Bs) CHECKSIG
+ELSE
+   &lt;N&gt;::musigkey(Au,Bu) CHECKSIG
+ENDIF
+```
+To satisfy this clause, a signature `&lt;N+1&gt;::S` would be required. When
+validating the signature S, the APO digest would have to include the value
+&lt;N+1&gt;. It is non cryptographically checked that N+1 &gt; N.
+5) Similar to 3, but look at more values off the stack. This is also OK,
+but violates the principle of not making opcodes take variable numbers of
+things off the stack. Verify semantics on the extra data fields could
+ameliorate this concern, and it might make sense to do it that way.
+4) Something in the Annex: It would also be possible to define a new
+generic place for lock times in the annex (to permit dual height/time
+relative/absolute, all per input. The pro of this approach is that it would
+be solving an outstanding problem for script that we want to solve anyways,
+the downside is that the Annex is totally undefined presently so it's
+unclear that this is an appropriate use for it.
+5) Do Nothing :)
+
+
+Overall I'm somewhat partial to option 3 as it seems to be closest to
+making ANYPREVOUT more precisely designed to support Eltoo. It would also
+be possible to make it such that if the tag N=1, then the behavior is
+identical to the proposal currently.
+
+--
+@JeremyRubin &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+&lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210707/9e3fa6d7/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210707/9e3fa6d7/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003142.html">[Lightning-dev] Error Codes for LN
+</A></li>
+	<LI>Next message: <A HREF="003114.html">[Lightning-dev] [bitcoin-dev] Eltoo / Anyprevout &amp; Baked in	Sequences
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3112">[ date ]</a>
+              <a href="thread.html#3112">[ thread ]</a>
+              <a href="subject.html#3112">[ subject ]</a>
+              <a href="author.html#3112">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

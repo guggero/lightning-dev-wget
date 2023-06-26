@@ -1,0 +1,270 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset	Representation Overlay
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Taro%3A%20A%20Taproot%20Asset%0A%09Representation%20Overlay&In-Reply-To=%3CCAPv7TjYTjvSV7UFgOwif6tFj3jVxDfJdW-p_cyPoAGGWKQbwRQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003539.html">
+   <LINK REL="Next"  HREF="003541.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset	Representation Overlay</H1>
+    <B>Ruben Somsen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Taro%3A%20A%20Taproot%20Asset%0A%09Representation%20Overlay&In-Reply-To=%3CCAPv7TjYTjvSV7UFgOwif6tFj3jVxDfJdW-p_cyPoAGGWKQbwRQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset	Representation Overlay">rsomsen at gmail.com
+       </A><BR>
+    <I>Thu Apr  7 17:14:03 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003539.html">[Lightning-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+        <LI>Next message: <A HREF="003541.html">[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3540">[ date ]</a>
+              <a href="thread.html#3540">[ thread ]</a>
+              <a href="subject.html#3540">[ subject ]</a>
+              <a href="author.html#3540">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Laolu,
+
+Nice work. This is an interesting protocol, in my opinion.
+
+Seeing as there's a large amount of overlap with RGB, a protocol which I
+have examined quite extensively, I believe some of the issues I uncovered
+in that project also apply here.
+
+The biggest issue revolves around the scripting expectations for this
+protocol. Taro is described as being able to have its own scripting
+capabilities that will initially be similar to Bitcoin and eventually be
+made to do more. I'm afraid this is fundamentally impossible. Conditional
+scripts (and thus most scripts that could potentially be of interest) won't
+be possible if the satisfaction of the condition is not recorded publicly
+on-chain.
+
+The core problem here is that you have two levels of scripting. At the
+Bitcoin level the UTXO is encumbered by the Bitcoin script, then at the
+Taro level you have yet another script. This may seem similar at first
+glance to how taproot has a key path and a script path, but there are a few
+key differences. In taproot only one of the two needs to be satisfied,
+while here you need to satisfy both. Furthermore, the Taro script is not
+enforced by Bitcoin, meaning those who control the Bitcoin script can
+always choose to ignore the Taro script and destroy the Taro assets as a
+result.
+
+I'll describe an example. Imagine Alice wants to send Bob a payment inside
+Taro, but she wants to make it conditional. Bob gets the Taro tokens if he
+reveals a pre-image, while Alice can claim the tokens back after the
+timelock expires (i.e. the minimum scripting requirements for HTLCs). Alice
+starts by locking up coins in a 2-of-2 multisig on the mainchain with some
+Taro tokens inside. She then gives Bob a pre-signed transaction that only
+requires him to reveal the pre-image in order to claim the tokens. The
+issue here is that from Bitcoin's perspective, you're giving Bob a valid
+transaction, regardless of whether he reveals the pre-image. If Bob
+maliciously broadcasts it without the pre-image, he will have destroyed
+your tokens.
+
+Of course this was a contrived example, as these conditions could simply
+take place entirely in Bitcoin script, but it demonstrates that Taro script
+fundamentally cannot handle conditional payments, which is the basis for
+any meaningful script other than self-encumbering covenants (i.e. if you
+send your Taro tokens in any way other than specified, the tokens will be
+destroyed). Luckily this has no effect on whether Taro can function over
+Lightning, because solely relying on Bitcoin's scripting capabilities
+should be sufficient for that use case.
+
+As a side note, it may be worth pointing out that it *is* possible to
+create conditional payments if the satisfaction of the condition is
+recorded publicly on the mainchain (e.g. in an op_return), making it sort
+of a hybrid on-chain/off-chain model, but it would increase complexity
+considerably. I can explain this model in more detail, if it happens to
+interest you.
+
+Now there's a second issue I want to bring up, but unfortunately my
+understanding of how exactly you made assets divisible is not complete
+enough to know how this problem might have manifested in Taro. Nonetheless,
+I'll try to describe it.
+
+One of the core concepts of Taro/RGB is that the sender of the token has to
+reveal the history to the recipient. In case of an NFT the history is
+simply every prior owner and grows linearly, but in the case of fungible
+tokens things are more complicated. Let's say Carol receives 2 fungible
+Taro tokens from Alice and 3 fungible Taro tokens from Bob. Now Carol wants
+to send 4 of them to Dave and keep 1. There are two possible designs here:
+
+a.) The token history remains separate &#8211; Dave receives Alice's 2 tokens,
+Bob's tokens are split and he receives 2 (or 3 from Bob 1 from Alice).
+
+b.) The token history gets merged &#8211; Dave receives 4 tokens (linking the new
+output with both Alice and Bob's history).
+
+The issue with a.) is that you're only ever fragmenting tokens, so
+eventually you end up with lots of tiny but separate amounts. This will
+cause making large payments to involve sending lots of tokens, each with
+their own history. Under this model, I suspect the fixed value token model
+(e.g. 1, 2, 4, 8) might be preferable, as this prevents the entire supply
+from getting split into tiny fragments.
+
+The issue with b.) is that you end up with a linked transaction graph, just
+like in Bitcoin. If you pick a random Bitcoin UTXO and try to trace it back
+to a coinbase, you'll quickly find that it could have come from many of
+them. The graph that you'd traverse to get to all of these coinbases is
+equivalent to the amount of history that a recipient of a Taro token has to
+validate in order to accept it, which I suspect quickly becomes a
+bottleneck that is not unlike that of a regular blockchain.
+
+It'd probably be wise to make a model of the potential transaction flow,
+and simulate how it affects the size of the history in order to determine
+what's the best approach and to generally get a better idea of how it
+affects scaling. Also, the repeated sharing of history makes me skeptical
+about the privacy this protocol may provide. If large amounts of history
+moved through the hands of a large number of people, it wouldn't be very
+private.
+
+There's a third third smaller issue I want to point out, which is easily
+fixable and perhaps was just a typo. In your slides, you showed a
+screenshot of a taproot tree containing the Taro tree as the third element
+of four. This implies the location of the Taro tree inside the taproot tree
+is not fixed. What needs to be prevented here is that a taproot tree
+contains more than one Taro tree, as that would enable the owner of the
+commitment to show different histories to different people.
+
+Finally, let me conclude with two questions. Could you clarify the purpose
+of the sparse merkle tree in your design? I suppose you want to be able to
+open a commitment and show it contains a certain asset without having to
+reveal any of the other assets and simultaneously guarantee that you
+haven't committed to the same asset twice (i.e. the SMT guarantees each
+asset gets a specific location in the tree)? Or is there another reason?
+
+And the second question &#8211; when transferring Taro token ownership from one
+Bitcoin UTXO to another, do you generate a new UTXO for the recipient or do
+you support the ability to &quot;teleport&quot; the tokens to an existing UTXO like
+how RGB does it? If the latter, have you given consideration to timing
+issues that might occur when someone sends tokens to an existing UTXO that
+simultaneously happens to get spent by the owner?
+
+In any case, I hope this email was useful. Feel free to reach out if I can
+clarify anything.
+
+Good luck with the protocol.
+
+Best regards,
+Ruben
+
+On Tue, Apr 5, 2022 at 5:06 PM Olaoluwa Osuntokun via bitcoin-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Hi y'all,
+</I>&gt;<i>
+</I>&gt;<i> I'm excited to publicly publish a new protocol I've been working on over
+</I>&gt;<i> the
+</I>&gt;<i> past few months: Taro. Taro is a Taproot Asset Representation Overlay which
+</I>&gt;<i> allows the issuance of normal and also collectible assets on the main
+</I>&gt;<i> Bitcoin
+</I>&gt;<i> chain. Taro uses the Taproot script tree to commit extra asset structured
+</I>&gt;<i> meta
+</I>&gt;<i> data based on a hybrid merkle tree I call a Merkle Sum Sparse Merkle Tree
+</I>&gt;<i> or
+</I>&gt;<i> MS-SMT. An MS-SMT combined the properties of a merkle sum tree, with a
+</I>&gt;<i> sparse
+</I>&gt;<i> merkle tree, enabling things like easily verifiable asset supply proofs and
+</I>&gt;<i> also efficient proofs of non existence (eg: you prove to me you're no
+</I>&gt;<i> longer
+</I>&gt;<i> committing to the 1-of-1 holographic beefzard card during our swap). Taro
+</I>&gt;<i> asset
+</I>&gt;<i> transfers are then embedded in a virtual/overlay transaction graph which
+</I>&gt;<i> uses a
+</I>&gt;<i> chain of asset witnesses to provably track the transfer of assets across
+</I>&gt;<i> taproot outputs. Taro also has a scripting system, which allows for
+</I>&gt;<i> programmatic unlocking/transfer of assets. In the first version, the
+</I>&gt;<i> scripting
+</I>&gt;<i> system is actually a recursive instance of the Bitcoin Script Taproot VM,
+</I>&gt;<i> meaning anything that can be expressed in the latest version of Script can
+</I>&gt;<i> be
+</I>&gt;<i> expressed in the Taro scripting system. Future versions of the scripting
+</I>&gt;<i> system
+</I>&gt;<i> can introduce new functionality on the Taro layer, like covenants or other
+</I>&gt;<i> updates.
+</I>&gt;<i>
+</I>&gt;<i> The Taro design also supports integration with the Lightning Network
+</I>&gt;<i> (BOLTs) as
+</I>&gt;<i> the scripting system can be used to emulate the existing HTLC structure,
+</I>&gt;<i> which
+</I>&gt;<i> allows for multi-hop transfers of Taro assets. Rather than modify the
+</I>&gt;<i> internal
+</I>&gt;<i> network, the protocol proposes to instead only recognize &quot;assets at the
+</I>&gt;<i> edges&quot;,
+</I>&gt;<i> which means that only the sender+receiver actually need to know about and
+</I>&gt;<i> validate the assets. This deployment route means that we don't need to
+</I>&gt;<i> build up
+</I>&gt;<i> an entirely new network and liquidity for each asset. Instead, all asset
+</I>&gt;<i> transfers will utilize the Bitcoin backbone of the Lightning Network, which
+</I>&gt;<i> means that the internal routers just see Bitcoin transfers as normal, and
+</I>&gt;<i> don't
+</I>&gt;<i> even know about assets at the edges. As a result, increased demand for
+</I>&gt;<i> transfers of these assets as the edges (say like a USD stablecoin), which
+</I>&gt;<i> in
+</I>&gt;<i> will turn generate increased demand of LN capacity, result in more
+</I>&gt;<i> transfers, and
+</I>&gt;<i> also more routing revenue for the Bitcoin backbone nodes.
+</I>&gt;<i>
+</I>&gt;<i> The set of BIPs are a multi-part suite, with the following breakdown:
+</I>&gt;<i>  * The main Taro protocol:
+</I>&gt;<i> <A HREF="https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro.mediawiki">https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro.mediawiki</A>
+</I>&gt;<i>  * The MS-SMT structure:
+</I>&gt;<i> <A HREF="https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-ms-smt.mediawiki">https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-ms-smt.mediawiki</A>
+</I>&gt;<i>  * The Taro VM:
+</I>&gt;<i> <A HREF="https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-vm.mediawiki">https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-vm.mediawiki</A>
+</I>&gt;<i>  * The Taro address format:
+</I>&gt;<i> <A HREF="https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-addr.mediawiki">https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-addr.mediawiki</A>
+</I>&gt;<i>  * The Taro Universe concept:
+</I>&gt;<i> <A HREF="https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-universe.mediawiki">https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-universe.mediawiki</A>
+</I>&gt;<i>  * The Taro flat file proof format:
+</I>&gt;<i> <A HREF="https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-proof-file.mediawiki">https://github.com/Roasbeef/bips/blob/bip-taro/bip-taro-proof-file.mediawiki</A>
+</I>&gt;<i>
+</I>&gt;<i> Rather than post them all in line (as the text wouldn't fit in the allowed
+</I>&gt;<i> size
+</I>&gt;<i> limit), all the BIPs can be found above.
+</I>&gt;<i>
+</I>&gt;<i> -- Laolu
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> bitcoin-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev">https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220407/88044966/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220407/88044966/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003539.html">[Lightning-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+	<LI>Next message: <A HREF="003541.html">[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3540">[ date ]</a>
+              <a href="thread.html#3540">[ thread ]</a>
+              <a href="subject.html#3540">[ subject ]</a>
+              <a href="author.html#3540">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

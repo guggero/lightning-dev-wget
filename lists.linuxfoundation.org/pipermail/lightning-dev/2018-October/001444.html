@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Feedback please!
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C87k1mn7q36.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001443.html">
+   <LINK REL="Next"  HREF="001461.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Feedback please!</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C87k1mn7q36.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Feedback please!">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Oct 12 04:21:01 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001443.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+        <LI>Next message: <A HREF="001461.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1444">[ date ]</a>
+              <a href="thread.html#1444">[ thread ]</a>
+              <a href="subject.html#1444">[ subject ]</a>
+              <a href="author.html#1444">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Christian Decker &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt; writes:
+&gt;<i> On Thu, Oct 11, 2018 at 3:40 AM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> &gt; * Once we have enough confirmations we merge the channels (either
+</I>&gt;&gt;<i> &gt; automatically or with the next channel update). A new commitment tx is
+</I>&gt;&gt;<i> &gt; being created which now spends each output of each of the two funding tx
+</I>&gt;&gt;<i> &gt; and assigns the channel balance to the channel partners accordingly to
+</I>&gt;&gt;<i> the
+</I>&gt;&gt;<i> &gt; two independent channels. The old commitment txs are being invalidated.
+</I>&gt;&gt;<i> &gt; * The disadvantage is that while splicing is not completed and if the
+</I>&gt;&gt;<i> &gt; funder of the splicing tx is trying to publish an old commitment tx the
+</I>&gt;&gt;<i> &gt; node will only be punished by sending all the funds of the first funding
+</I>&gt;&gt;<i> tx
+</I>&gt;&gt;<i> &gt; to the partner as the special commitment tx of the 2nd output has no
+</I>&gt;&gt;<i> newer
+</I>&gt;&gt;<i> &gt; state yet.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Yes, this is the alternative method; produce a parallel funding tx
+</I>&gt;&gt;<i> (which only needs to support a single revocation, or could even be done
+</I>&gt;&gt;<i> by a long timeout) and then join them when it reaches the agreed depth.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> It has some elegance; particularly because one side doesn't have to do
+</I>&gt;&gt;<i> any validation or store anything until it's about to splice in.  You get
+</I>&gt;&gt;<i> asked for a key and signature, you produce a new one, and sign whatever
+</I>&gt;&gt;<i> tx they want.  They hand you back the tx and the key you used once it's
+</I>&gt;&gt;<i> buried far enough, and you check the tx is indeed buried and the output
+</I>&gt;&gt;<i> is the script you're expecting, then you flip the commitment tx.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> But I chose chose not to do this because every transaction commitment
+</I>&gt;&gt;<i> forever will require 2 signatures, and doesn't allow us to forget old
+</I>&gt;&gt;<i> revocation information.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> And it has some strange side-effects: onchain this looks like two
+</I>&gt;&gt;<i> channels; do we gossip about both?  We have to figure the limit on
+</I>&gt;&gt;<i> splice-in to make sure the commitment tx stays under 400kSipa.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> This is a lot closer to my original proposal for splicing, and I
+</I>&gt;<i> still like it a lot more since the transition from old to new
+</I>&gt;<i> channel is bascially atomic (not having to update state on both
+</I>&gt;<i> pre-splice and post-splice version). The new funds will remain
+</I>&gt;<i> unavailable for the same time, and since we allow only one
+</I>&gt;<i> concurrent splice in your proposal we don't even lose any
+</I>&gt;<i> additional time regarding the splice-outs.
+</I>&gt;<i>
+</I>&gt;<i> So pulling the splice_add_input and splice_add_output up to
+</I>&gt;<i> signal the intent of adding funds to a splice. Splice_all_added
+</I>&gt;<i> is then used to start moving the funds to a pre-allocated 2-of-2
+</I>&gt;<i> output where the funds can mature. Once the funds are
+</I>&gt;<i> matured (e.g., 6 confirmations) we can start the transition: both
+</I>&gt;<i> parties claim the funding output, and the pre-allocated funds, to
+</I>&gt;<i> create a new funding tx which is immediately broadcast, and we
+</I>&gt;<i> flip over to the new channel state. No need to keep parallel
+</I>&gt;<i> state and then disambiguating which one it was.
+</I>
+If we're going to do side splice-in like this, I would use a very
+different protocol: the reason for this protocol was to treat splice-in
+and splice-out the same, and inline splice-in requires wait time.  Since
+splice-out doesn't, we don't need this at all.
+
+It would look much more like:
+
+1. Prepare any output with script of specific form. eg:
+        OP_DEPTH 3 OP_EQUAL OP_IF
+                &lt;funding_pubkey1&gt; &lt;funding_pubkey2&gt; OP_CHECKMULTISIG
+        OP_ELSE
+                &lt;blockheight&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+                &lt;myrescue_pubkey&gt; OP_CHECKSIG
+        OP_ENDIF
+
+1. type: 40 (`splice_in`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`8`: `satoshis`]
+   * [`32`: `txid`]
+   * [`4`: `txoutnum`]
+   * [`4`: `blockheight`]
+   * [`33`: `myrescue_pubkey`]
+
+1. type: 137 (`update_splice_in_accept`) (`option_splice`)
+   data:
+   * [`32`:`channel_id`]
+   * [`32`: `txid`]
+   * [`4`: `txoutnum`]
+
+1. type: 138 (`update_splice_in_reject`) (`option_splice`)
+   data:
+   * [`32`:`channel_id`]
+   * [`32`: `txid`]
+   * [`2`:`len`]
+   * [`len`:`errorstr`]
+
+The recipient of `splice_in` checks that it's happy with the
+`blockheight` (far enough in future).  Once it sees the tx referred to
+buried to its own `minimum_depth`, it checks output is what they
+claimed, then sends `update_splice_in_accept`; it's followed up
+`commitment_signed` like normal, but from this point onwards, all
+commitment txs signatures have one extra sig.
+
+Similarly, splice-out:
+
+1. type: 139 (`update_splice_out`) (`option_splice`)
+   * [`32`:`channel_id`]
+   * [`8`: `satoshis`]
+   * [`2`: `scriptlen`]
+   * [`scriptlen`: `outscript`]
+
+The recipient checks that the output script is standard, and the amount
+can be afforded by the other side.  From then on, each commitment tx has
+a new output.
+
+Note this doesn't put the splice out on the blockchain!
+
+1. type: 140 (`propose_reopen`) (`option_splice`)
+   * [`32`:`channel_id`]
+   * [`4`:`feerate_per_kw`]
+   * [`33`:`funding_pubkey`]
+
+This is initiates a mutually-agreed broadcast of the current state: all
+inputs (original and spliced), all spliced outputs, and a funding-style
+2x2 which has all the remaining funds.  Call this a 'reopen tx'.
+
+This must be done with no outstanding commitments, like closing tx
+negotiation, and it's a back-and-forth until both sides agree on
+feerate.  Then you send:
+
+1. type: 141 (`reopen_accept`) (`option_splice`)
+   * [`32`:`channel_id`]
+   * [`4`:`feerate_per_kw`]
+   * [`64`: `new_commitment_sig`]
+
+Once you've received and sent this, you're ready to sign the reopen tx:
+
+1. type: 142 (`reopen`) (`option_splice`)
+   * [`32`:`channel_id`]
+   * [`64`: `reopen_commitment_sig`]
+
+We need similar 'what happens on reconnect at various points' logic to
+the previous one &lt;handwave&gt;.
+
+Once you've sent and received the `reopen`, you can broadcast the reopen
+tx at will and start updating again.  If we recommend that public
+channels reuse their old `funding_pubkey` then that means that we should
+also have gossip continuity for upgraded nodes, and don't need the
+previous channel_update hack.
+
+We could add a new `reopen_locked` message which indicates that both
+sides are happy with the reopen depth, if we don't want to allow reopens
+back-to-back?
+
+&gt;<i> This is one of the cases where a simpler solution (relatively
+</I>&gt;<i> speaking ^^) is to be preferred imho, allowing for future
+</I>&gt;<i> iterations.
+</I>
+Unless we can have both :)
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001443.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+	<LI>Next message: <A HREF="001461.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1444">[ date ]</a>
+              <a href="thread.html#1444">[ thread ]</a>
+              <a href="subject.html#1444">[ subject ]</a>
+              <a href="author.html#1444">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

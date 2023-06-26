@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3C7avEjBfxfoRK0ezN0F2j5Pv82hlqw4Ewb16UKFgZdvXyQNOdNqdmLkmX-DsenF4j_6BJbKGTOrSe7KYxweTVrjoS_0L0wqCHneBeN4J4qA0%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002862.html">
+   <LINK REL="Next"  HREF="002864.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3C7avEjBfxfoRK0ezN0F2j5Pv82hlqw4Ewb16UKFgZdvXyQNOdNqdmLkmX-DsenF4j_6BJbKGTOrSe7KYxweTVrjoS_0L0wqCHneBeN4J4qA0%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Oct 22 17:56:12 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002862.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+        <LI>Next message: <A HREF="002864.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2863">[ date ]</a>
+              <a href="thread.html#2863">[ thread ]</a>
+              <a href="subject.html#2863">[ subject ]</a>
+              <a href="author.html#2863">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning t-bast,
+
+&gt;<i> Sorry in advance for the lengthy email,
+</I>
+Come on, ZmnSCPxj writes lengthier.
+
+&gt;<i> but I think it's worth detailing my hybrid proposal
+</I>&gt;<i> (bidirectional upfront payments), it feels to me like a workable solution that builds on
+</I>&gt;<i> previous proposals. You can safely ignore the details at the end of the email and focus only on
+</I>&gt;<i> the high-level mechanism at first.
+</I>&gt;<i>
+</I>&gt;<i> Let's consider the following route: A -----&gt; B -----&gt; C -----&gt; D
+</I>&gt;<i>
+</I>&gt;<i> We add a `hold_grace_period_delta` field to `channel_update` (in seconds).
+</I>&gt;<i> We add two new fields in the tlv extension of `update_add_htlc`:
+</I>&gt;<i>
+</I>&gt;<i> * `hold_grace_period` (seconds)
+</I>&gt;<i> * `hold_fees` (msat)
+</I>&gt;<i>
+</I>&gt;<i> We add an `outgoing_hold_grace_period` field in the onion per-hop payload.
+</I>&gt;<i>
+</I>&gt;<i> When nodes receive an `update_add_htlc`, they verify that:
+</I>&gt;<i>
+</I>&gt;<i> * `hold_fees` is not unreasonable large
+</I>&gt;<i> * `hold_grace_period` is not unreasonably small or large
+</I>&gt;<i> * `hold_grace_period` - `outgoing_hold_grace_period` &gt;= `hold_grace_period_delta`
+</I>&gt;<i>
+</I>&gt;<i> Otherwise they immediately fail the HTLC instead of relaying it.
+</I>&gt;<i>
+</I>&gt;<i> For the example we assume all nodes use `hold_grace_period_delta = 10`.
+</I>&gt;<i>
+</I>&gt;<i> We add a forward upfront payment of 1 msat (fixed) that is paid unconditionally when offering an HTLC.
+</I>&gt;<i> We add a backwards upfront payment of `hold_fees` that is paid when receiving an HTLC, but refunded
+</I>&gt;<i> if the HTLC is settled before the `hold_grace_period` ends (see footnotes about this).
+</I>
+My first instinct is that additional complications are worse in general.
+
+However, it looks like simpler solutions are truly not enough, so adding the complication may very well be necessary.
+
+Possibly one of the issues with previous proposals is that we considered the source as the payer of upfront fees always, without considering the possibility of the destination paying upfront fees.
+
+We should consider *why* we did so.
+Is it only because of lack of imagination?
+
+The succeeding text refers to HTLCs &quot;settling&quot;.
+What does this mean exactly?
+Does it refer to the preimage being revealed only?
+Or does it refer to *either* `update_fulfill_htlc` **OR** `update_fail_htlc`?
+
+If &quot;settling&quot; does not include failing the HTLC, I can extract hold fees from my peers by giving them HTLCs to random hashes that with very high probability has a preimage unknown to my peer.
+
+Thus, &quot;settling&quot; here must also include failing the HTLC.
+
+
+Can we arrange the HTLC as below?
+
+* The HTLC is lower by the from-destination hold fee than what it &quot;should&quot; be.
+  * So in your example, A would offer an HTLC that is 5 msat lower than what it &quot;should&quot; be, to represent the from-destination hold-fee.
+* When the HTLC is fulfilled offchain, we move the hold fee amount from offerrer to acceptor, thus &quot;refunding&quot; the hold fee.
+* If the HTLC is failed offchain, we just delete the HTLC.
+
+The above would disincentivize dropping the channel onchain for whatever shenanigans might be possible there.
+
+Note that if hold fees are always from the &quot;main output&quot; of the acceptor, then we cannot use single-funded channel opening.
+Single-funded channel opening is significantly lower-risk as, if somebody opens a channel to you and then goes offline forever, you would not care, none of your funds are in the channel.
+(Sure they could move funds out of the channel and *then* go offline forever, but you got paid for that by the forwarding fees in the first place.)
+Dual-funding requires some amount of trust/reputation, where you would only be willing to put funds on the initiating peer if you are reasonably sure that they would remain online so that the funds you put in the channel are not uselessly locked.
+
+If we also require that the hold fee be funded from the main output, then we cannot use single-funded channels, except perhaps with `push_msat`.
+
+On the other hand, it might be useful to require that though, as a promise from the funder that yes, it *is* committed to making that channel work, and will thus `push_msat` at you so you can pay for hold fees.
+
+
+&gt;<i>
+</I>&gt;<i> * A sends an HTLC to B:
+</I>&gt;<i> * `hold_grace_period = 100 sec`
+</I>&gt;<i> * `hold_fees = 5 msat`
+</I>&gt;<i> * `next_hold_grace_period = 90 sec`
+</I>&gt;<i> * forward upfront payment: 1 msat is deduced from A's main output and added to B's main output
+</I>&gt;<i> * backwards upfront payment: 5 msat are deduced from B's main output and added to A's main output
+</I>&gt;<i> * B forwards the HTLC to C:
+</I>&gt;<i> * `hold_grace_period = 90 sec`
+</I>&gt;<i> * `hold_fees = 6 msat`
+</I>&gt;<i> * `next_hold_grace_period = 80 sec`
+</I>&gt;<i> * forward upfront payment: 1 msat is deduced from B's main output and added to C's main output
+</I>&gt;<i> * backwards upfront payment: 6 msat are deduced from C's main output and added to B's main output
+</I>&gt;<i> * C forwards the HTLC to D:
+</I>&gt;<i> * `hold_grace_period = 80 sec`
+</I>&gt;<i> * `hold_fees = 7 msat`
+</I>&gt;<i> * `next_hold_grace_period = 70 sec`
+</I>&gt;<i> * forward upfront payment: 1 msat is deduced from C's main output and added to D's main output
+</I>&gt;<i> * backwards upfront payment: 7 msat are deduced from D's main output and added to C's main output
+</I>
+The fact that the hold fees are incrementing with distance from the source means intermediate nodes now have an unreliable oracle for distance-from-source, though I guess you mention that later.
+
+It seems to me that we have no escape here, and we really do need to leak some more information, sigh.
+
+
+&gt;<i>
+</I>&gt;<i> * Scenario 1: D settles the HTLC quickly:
+</I>&gt;<i> * all backwards upfront payments are refunded (returned to the respective main outputs)
+</I>&gt;<i> * only the forward upfront payments have been paid (to protect against `uncontrolled spam`)
+</I>&gt;<i>
+</I>&gt;<i> * Scenario 2: D settles the HTLC after the grace period:
+</I>&gt;<i> * D's backwards upfront payment is not refunded
+</I>&gt;<i> * If C and B relay the settlement upstream quickly (before `hold_grace_period_delta`) their backwards
+</I>&gt;<i> upfront payments are refunded
+</I>
+And in this case C earns.
+
+Can C delay the refund to D to after the grace period even if D settled the HTLC quickly?
+Hopefully the only way C can do that would be if it refused to respond to D giving the result of the HTLC, in which case --- would D be justified in dropping the channel onchain and hurting the connectivity of C (but also hurting its own connectivity, which might not be symmetric)?
+
+
+&gt;<i> * all the forward upfront payments have been paid (to protect against `uncontrolled spam`)
+</I>&gt;<i>
+</I>&gt;<i> * Scenario 3: C delays the HTLC:
+</I>&gt;<i> * D settles before its `grace_period`, so its backwards upfront payment is refunded by C
+</I>&gt;<i> * C delays before settling upstream: it can ensure B will not get refunded, but C will not get
+</I>&gt;<i> refunded either so B gains the difference in backwards upfront payments (which protects against
+</I>&gt;<i> `controlled spam`)
+</I>&gt;<i> * all the forward upfront payments have been paid (to protect against `uncontrolled spam`)
+</I>&gt;<i>
+</I>&gt;<i> * Scenario 4: the channel B &lt;-&gt; C closes:
+</I>&gt;<i> * D settles before its `grace_period`, so its backwards upfront payment is refunded by C
+</I>&gt;<i> * for whatever reason (malicious or not) the B &lt;-&gt; C channel closes
+</I>&gt;<i> * this ensures that C's backwards upfront payment is paid to B
+</I>&gt;<i> * if C publishes an HTLC-fulfill quickly, B may have his backwards upfront payment refunded by A
+</I>&gt;<i> * if B is forced to wait for his HTLC-timeout, his backwards upfront payment will not be refunded
+</I>&gt;<i> but it's ok because B got C's backwards upfront payment
+</I>&gt;<i> * all the forward upfront payments have been paid (to protect against `uncontrolled spam`)
+</I>&gt;<i>
+</I>&gt;<i> If done naively, this mechanism may allow intermediate nodes to deanonymize sender/recipient.
+</I>&gt;<i> If the base `grace_period` and `hold_fees` are randomized, I believe this attack vector disappears,
+</I>&gt;<i> but it's worth exploring in more details.
+</I>&gt;<i>
+</I>&gt;<i> The most painful part of this proposal will be handling the `grace_period`:
+</I>&gt;<i>
+</I>&gt;<i> * when do you start counting: when you send/receive `update_add_htlc`, `commit_sig` or
+</I>&gt;<i> `revoke_and_ack`?
+</I>&gt;<i> * what happens if there is a disconnection (how do you account for the delay of reconnecting)?
+</I>
+You do not: a reliable peer would not have disconnected in the first place, in which case, it is the fault of the peer for getting disconnected and having a delay in reconnecting, possibly forfeiting the hold fee because of that.
+
+&gt;<i> * what happens if the remote settles after the `grace_period`, but refunds himself when sending his
+</I>&gt;<i> `commit_sig` (making it look like from his point of view he settled before the `grace_period`)?
+</I>&gt;<i> I think in that case the behavior should be to give your peers some leeway and let them get away
+</I>&gt;<i> with it, but record it. If they're doing it too often, close channels and ban them; stealing
+</I>&gt;<i> upfront fees should never be worth losing channels.
+</I>
+Right, because there is the risk that communications latency delays a response that was *sent out* at the correct time but was *received in* after the grace period.
+
+&gt;<i>
+</I>&gt;<i> I chose to make the backwards upfront payment fixed instead of scaling it based on the time an HTLC
+</I>&gt;<i> is left pending; it's slightly less penalizing for spammers, but is less complex and introduces less
+</I>&gt;<i> potential griefing against honest nodes. With the scaling approach, an honest node that has its
+</I>&gt;<i> channel unilaterally closed is too heavily penalized IMHO (because it has to pay for the maximum
+</I>&gt;<i> hold duration).
+</I>&gt;<i>
+</I>&gt;<i> I also chose to make the forward upfront payment constant (1 msat). Is it going to be a pain to
+</I>&gt;<i> bikeshed this constant? Do we need to add a mechanism to upgrade it? We don't want to make this
+</I>&gt;<i> more complex than it should.
+</I>
+Is 1msat going to even deter anyone?
+I can make a thousand probes and just get charged a measly satoshi, which will not even buy a single piece of fish ball at a local street vendor (we call them &quot;fish ball&quot; as a courtesy, but in reality they are &quot;flour disks&quot; made with flour that was processed in equipment that was once in contact with fish at some unknown point in the past; still delicious when deep-fried and dipped in vinegar though), would that really deter anyone?
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002862.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+	<LI>Next message: <A HREF="002864.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2863">[ date ]</a>
+              <a href="thread.html#2863">[ thread ]</a>
+              <a href="subject.html#2863">[ subject ]</a>
+              <a href="author.html#2863">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

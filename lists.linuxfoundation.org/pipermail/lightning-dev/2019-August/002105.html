@@ -1,0 +1,114 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%09by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CTxd5_vcG3lryTJve18ZMTsvY5QKrEvTFx6ahjaqdOWKcqiINTkeqBcbav-e-NUi2rURcYeR5surrn0znomFSbu4-RDXiCdpMeJEGd2Jq8Ho%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002103.html">
+   <LINK REL="Next"  HREF="002096.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%09by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CTxd5_vcG3lryTJve18ZMTsvY5QKrEvTFx6ahjaqdOWKcqiINTkeqBcbav-e-NUi2rURcYeR5surrn0znomFSbu4-RDXiCdpMeJEGd2Jq8Ho%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sat Aug  3 07:27:42 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002103.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+        <LI>Next message: <A HREF="002096.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2105">[ date ]</a>
+              <a href="thread.html#2105">[ thread ]</a>
+              <a href="subject.html#2105">[ subject ]</a>
+              <a href="author.html#2105">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+&gt;<i>     Map Preprocessing
+</I>&gt;<i>     =================
+</I>&gt;<i>
+</I>
+
+Differential Heuristics for A\*
+-------------------------------
+
+While researching further, I came upon some hints of a concept called &quot;differential heuristics&quot;.
+I tried to search further for this:
+
+* <A HREF="https://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html#approximate-heuristics">https://theory.stanford.edu/~amitp/GameProgramming/Heuristics.html#approximate-heuristics</A>
+* Slide 44: <A HREF="https://www.slideshare.net/StavrosVassos/interactive-objects-pathfindingpart3">https://www.slideshare.net/StavrosVassos/interactive-objects-pathfindingpart3</A>
+* <A HREF="http://research.microsoft.com/pubs/154937/soda05.pdf">http://research.microsoft.com/pubs/154937/soda05.pdf</A> &lt;- this seems to be the original paper
+* <A HREF="https://www.aaai.org/ocs/index.php/SOCS/SOCS11/paper/viewFile/4020/4340">https://www.aaai.org/ocs/index.php/SOCS/SOCS11/paper/viewFile/4020/4340</A>
+
+In summary, differential heuristics involve an A\* `h(n)` function built from precomputed distances from multiple landmarks.
+The primary advantage of differential heuristics is that they make A\* search fewer nodes than e.g. Manhattan distance.
+
+Ideally, `h(n)` is the `distance(n, t)` where `t` is the destination.
+With differential heuristics, `h(n)` is then the maximum of `abs(distance(n, l) - distance(t, l))` among all landmarks `l`, where `t` is the destination.
+`distance(_, l)` for all landmarks is precomputed.
+
+Now of course in LN we cannot use heuristics like Manhattan distance anyway.
+But we can definitely use precomputed distances.
+
+I proposed a `getroutequick` which uses precomputed distances from the source in order to guide an algorithm towards the source.
+This is based on the observation that our source tends to be always a single location, our own node.
+
+However, we may still want to acquire a route that does not arise from our own node.
+For example, consider a variant of `permuteroute` that, if it cannot heal from the pivot to some postfix node within 3 hops, falls back to performing A\* from the pivot to the final destination.
+Presumably, the pivot is nearer to the destination and we are more likely to quickly reach the destination from the pivot rather than the actual payment source.
+
+Another example of creating a route not from our own node is generalized rebalancing.
+Rebalancing transfers funds from one of our local channels to another of our local channels.
+We can derive this path by finding a route from the counterparty of the source channel to the counterparty of the destination channel, exclude our own node from consideration in pathfinding.
+Then we just append the destination channel and prepend the source channel.
+(Admittedly a friend-of-friend limited subgraph like proposed by Rene will work almost as well and would still be much faster, but this can be a fallback in case we cannot find a rebalancing route when scanning the friend-of-friend.)
+
+Suppose we treat our own node as the single landmark in a differential heuristic system.
+When finding a route, the payee is actually the source and the payer (our own node) is the destination.
+The distance from the destination (the payer, our own node) to the landmark (again, our own node) --- i.e. `distance(t, l)` --- is 0, so the `abs(distance(n, l) - distance(t, l))` becomes `abs(distance(n, l) - 0)` becomes `distance(n, l)`.
+So differential heuristics is actually a generalization of the preprocessing I proposed earlier that enables us to use A\*, but only for routes arising from our own node.
+
+Thus, we can use this same preprocessed stored cost data of total-distance-from-our-own-node, not only to implement a `getroutequick` that works only for routes where our own node is one end of the route, but also for a `getroutequick` that can arise from any node.
+The speed benefit is much much greater for routes where we are one end of the route, but we still get the benefit of using A\* if neither end of the requested route is not our own node.
+
+As we would still want to store the preprocessed total-distance-from-our-own-node anyway to implement a `getroutequick` that uses A\* on an almost-exact heuristic, it means that we can implement a `getroutequick` from any node without increasing our memory usage, and with a relatively small tweak to the code.
+Specifically, we need to look up `distance(t, l)` where `t` is the start of the route, and to compute the heuristic, subtract this from `distance(n, l)` and get the absolute value.
+If the start of the route is our own node (which is the landmark `l`) then that distance is 0 and we automatically fall back to the A\* variant that uses an almost-exact heuristic to reach our own node.
+
+Further landmarks beyond our own node can be selected (preferably distant from our own node) to improve the speed of searching in the case where we need to find from an arbitrary node, at the cost of increasing the memory space needed.
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002103.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+	<LI>Next message: <A HREF="002096.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2105">[ date ]</a>
+              <a href="thread.html#2105">[ thread ]</a>
+              <a href="subject.html#2105">[ subject ]</a>
+              <a href="author.html#2105">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

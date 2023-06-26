@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Mitigations for loop attacks
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3C87efiesy58.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001271.html">
+   <LINK REL="Next"  HREF="001284.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Mitigations for loop attacks</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3C87efiesy58.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Mitigations for loop attacks">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon May 14 03:40:19 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001271.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+        <LI>Next message: <A HREF="001284.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1275">[ date ]</a>
+              <a href="thread.html#1275">[ thread ]</a>
+              <a href="subject.html#1275">[ subject ]</a>
+              <a href="author.html#1275">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Jim Posen &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">jim.posen at gmail.com</A>&gt; writes:
+&gt;<i> Thanks for the thoughtful responses.
+</I>&gt;<i>
+</I>&gt;&gt;<i> You missed the vital detail: that you must prove channel closure if you
+</I>&gt;&gt;<i> can't unpeel the onion further.  That *will* hit an unresponsive party
+</I>&gt;&gt;<i> with a penalty.
+</I>&gt;<i>
+</I>&gt;<i> Ah, that is a good point. I still find the proposal overall worryingly
+</I>&gt;<i> complex in terms of communication overhead, time it takes to prove channel
+</I>&gt;<i> closure, all of your points in [1], [2], [3], etc. Furthermore, this
+</I>&gt;<i> mandates that immediate channel closure is the only allowed reaction to a
+</I>&gt;<i> party delaying an HTLC for a time period above a threshold -- the node
+</I>&gt;<i> reputation approach gives more discretion to the preceding hop.
+</I>&gt;<i> Deobfuscating the route may turn out to be the right option, but I think
+</I>&gt;<i> the reputation system has certain advantages over this.
+</I>
+Agreed, it's a tradeoff.
+
+&gt;&gt;<i> The models we tried in Milan all created an incentive to fail payments,
+</I>&gt;&gt;<i> which is a non-starter.
+</I>&gt;<i>
+</I>&gt;<i> Do you mind elaborating or summarizing the reasons? The way I'm analyzing
+</I>&gt;<i> it, even if there's a nominal spam fee paid to routing nodes that fail
+</I>&gt;<i> payments, as long as it's low enough (say 2-5% for arguments sake), the
+</I>&gt;<i> nodes still have more to gain by forwarding the payment and earning the
+</I>&gt;<i> full fee on a completed payment, and possibly the reputation boost
+</I>&gt;<i> associated with completing a payment if that system was in effect.
+</I>
+You're forgetting the failure cases, where now I can profit.
+
+If I disconnect from another node, I now have a disincentive to tell
+others.  At the moment we send an update disabling the channel (though
+we should give a few seconds for reconnect first, but whatever).
+
+Similarly, the rewards aren't proportional: being cheaper than other
+routes gets you all the traffic, but now you profit even if you can't
+service the payments.  In fact, once a channel becomes hard to use (low
+capacity, transient disconnect, whatever), I *should* advertize it as
+cheaper route than anyone else: free money!
+
+I'm sure there are other ways to game it, but the underlying reason is
+clear: it misaligns user and node incentives.
+
+&gt;<i> Moreover, a node that constantly fails payments will be blacklisted by the
+</I>&gt;<i> sender eventually and stop receiving HTLCs from them at all. Overall, I
+</I>&gt;<i> don't think this is a profitable strategy. Furthermore, I think it works
+</I>&gt;<i> quite well in combination with the reputation system.
+</I>
+If the system is sufficiently decentralized, managing to cheat everyone
+once is very profitable though.
+
+&gt;&gt;<i> This seems like we'd need some serious evaluation to show that this
+</I>&gt;&gt;<i> works, because the risks are very high.
+</I>&gt;<i>
+</I>&gt;<i> I agree that it needs to be evaluated. I may start working on some network
+</I>&gt;<i> simulations to test various DOS mitigation strategies.
+</I>&gt;<i>
+</I>&gt;&gt;<i> I can destroy your node's reputation by routing crap through you; even
+</I>&gt;&gt;<i> if it costs me marginaly more reputation than it does you, that just
+</I>&gt;&gt;<i> means that the largest players can force failure upon smaller players,
+</I>&gt;&gt;<i> centralizing the network.  And I think trying to ensure that it costs me
+</I>&gt;&gt;<i> more reputation than the sum of downstream reputation loss leaks too
+</I>&gt;&gt;<i> much information
+</I>&gt;<i>
+</I>&gt;<i> I will add to ZmnSCPxj's response, which is mostly on point. The key here
+</I>&gt;<i> is that the only way to lose significant reputation is to delay a payment
+</I>&gt;<i> yourself or forward to a malicious downstream that delays -- neither of
+</I>&gt;<i> these can be forced by the sender alone. This amounts to a system where you
+</I>&gt;<i> are on the hook for any malicious behavior of your downstream peers, which
+</I>&gt;<i> is why you must keep a reputation score for each which they earn over time.
+</I>&gt;<i> This should keep all links in the network high quality and quickly
+</I>&gt;<i> disconnect off delaying nodes if the incentives are right.
+</I>
+But I can make you look like a delaying node whenever I want.  The only
+way to ensure that I lose more reputation than you do is to leak
+information about route length for *everyone*.  And even then, it's just
+a matter of numbers.  I can make successful payments to myself through
+the same peers (but not you!) to stay above their threshold so my
+reputation is intact.
+
+So it's basically a question of how expensive is it for me to throw you
+off the network?  You have to tune that number carefully.
+
+&gt;<i> While I agree that a lot of reputation is leaked by aggregating the losses
+</I>&gt;<i> along the route, this serves exactly to prevent large nodes with high
+</I>&gt;<i> reputation from ruining links elsewhere. There are two things a node
+</I>&gt;<i> looking to cause reputation loss could do. 1) Identify a node (not itself)
+</I>&gt;<i> it thinks will delay a payment and send to them. This locks up funds on
+</I>&gt;<i> their behalf, but is actually good behavior because it identifies a faulty
+</I>&gt;<i> node and rightfully forces a loss in their reputation, eventually resulting
+</I>&gt;<i> in them being booted from the network. Everyone upstream loses some
+</I>&gt;<i> reputation for having connectivity to them, but less because of the loss
+</I>&gt;<i> aggregation along the route. 2) Delay a payment oneself and force upstream
+</I>&gt;<i> reputation loss. This is why I think it's important that the reputation
+</I>&gt;<i> loss aggregate so that the malicious party loses the most.
+</I>
+But we're busy trying to remove all the methods of deanonymizing the
+network, and you seem to be adding a new one, *and* providing an
+incentive to deanonymize.
+
+&gt;<i> As for the amount of information leaked, yes, it helps determine the number
+</I>&gt;<i> of upstream hops in a route. However, the CLTV values help determine the
+</I>&gt;<i> number of downstream hops in a route in exactly the same way. I see these
+</I>&gt;<i> as symmetric in a sense.
+</I>
+Yes, which is why we have mitigations in place (which are still probably
+insufficient).  I really don't want to add another vector.
+
+&gt;<i> This is exactly the question that your local view of peer reputations helps
+</I>&gt;<i> solve: are the potential fees here worth the risk of forwarding this
+</I>&gt;<i> payment to this downstream?
+</I>
+So now I'll try to deanonymize all payments so I can determine this.
+Those who do this best will be rewarded, and those who don't try will be
+knocked off the network, probably by those who can!
+
+So I'd like to see a real design of the reputation system.  If it's
+practical (which is a significant hurdle), we then need to carefully
+evaluate whether we're creating significant disincentives to
+neighbourliness.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001271.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+	<LI>Next message: <A HREF="001284.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1275">[ date ]</a>
+              <a href="thread.html#1275">[ thread ]</a>
+              <a href="subject.html#1275">[ subject ]</a>
+              <a href="author.html#1275">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

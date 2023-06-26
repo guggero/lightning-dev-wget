@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Reduce the amount of collateral locked by	scripts for transferring funds in lightning network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Reduce%20the%20amount%20of%20collateral%20locked%20by%0A%09scripts%20for%20transferring%20funds%20in%20lightning%20network&In-Reply-To=%3C9YXdsVjPUcKsuXgYVZixZ4fUqg3frIFgK_xpLkq_U1Z7xhye0nsTKdggkblMcLZ8LJK5Cdn2hGIGWDp8V596-Q4gyZarsVPM-jM6fpPPZwM%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002454.html">
+   <LINK REL="Next"  HREF="002467.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Reduce the amount of collateral locked by	scripts for transferring funds in lightning network</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Reduce%20the%20amount%20of%20collateral%20locked%20by%0A%09scripts%20for%20transferring%20funds%20in%20lightning%20network&In-Reply-To=%3C9YXdsVjPUcKsuXgYVZixZ4fUqg3frIFgK_xpLkq_U1Z7xhye0nsTKdggkblMcLZ8LJK5Cdn2hGIGWDp8V596-Q4gyZarsVPM-jM6fpPPZwM%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Reduce the amount of collateral locked by	scripts for transferring funds in lightning network">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Mon Jan 27 15:10:24 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002454.html">[Lightning-dev] Reduce the amount of collateral locked by scripts for transferring funds in lightning network
+</A></li>
+        <LI>Next message: <A HREF="002467.html">[Lightning-dev] Reduce the amount of collateral locked by scripts for transferring funds in lightning network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2460">[ date ]</a>
+              <a href="thread.html#2460">[ thread ]</a>
+              <a href="subject.html#2460">[ subject ]</a>
+              <a href="author.html#2460">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Subhra,
+
+The paper does not describe how Lightning works today, so I was confused.
+It seems to claim to have a constant *lock time*, but still a decrementing *amount*, across the entire payment attempt.
+In any case: any offchain updateable cryptocurrency system can host any contract that the hosting cryptocurrency system can host, including instances of itself.
+
+To be a little clear, here is how I view a class hierarchy of cryptocurrency systems.
+
+    abstract class CryptocurrencySystem { ... };
+    final class Blockchain : public CryptocurrencySystem {
+    public:
+        /* A blockchain requires the laws of physics in order to work.  */
+        Blockchain(LawsOfPhysics);
+        ...
+    };
+    abstract class OffchainCryptocurrencySystem : public CryptocurrencySystem {
+    public:
+        /* An offchain cryptocurrency system requires a pre-existing
+         * cryptocurrency system in order to work.
+         */
+        OffchainCryptocurrencySystem(CryptocurrencySystem);
+        ...
+    };
+    final class PoonDryja : public OffchainCryptocurrencySystem {
+    public:
+        /* The Lightning Network Poon-Dryja mechanism is an offchain
+         * cryptocurrency system.
+         */
+        PoonDryja(CryptocurrencySystem host) : OffchainCryptocurrencySystem(host) { ... }
+        ...
+    };
+
+Of note is that the construction of an `OffchainCryptocurrencySystem` aka &quot;payment channel&quot; does *not* require a `Blockchain`!
+It requires any `CryptocurrencySystem`.
+While the only `CryptocurrencySystem` that needs only a real world in order to instantiate it, is a `Blockchain`, an `OffchainCryptocurrencySystem` is itself a `CryptocurrencySystem` that can be used to instantiate another `OffchainCryptocurrencySystem`.
+
+So, the base technique used by the AMCU paper is to realize that, from a payment channel (aka `OffchainCryptocurrencySystem`) it can instantiate *two* inner payment channels.
+So something like this:
+
+     void amcu_algorithm(OffchainCryptocurrencySystem channel) {
+         OffchainCryptocurrencySystem subchannel1 = new OffchainCryptocurrencySystem(channel);
+         OffchainCryptocurrencySystem subchannel2 = new OffchainCryptocurrencySystem(channel);
+         ...
+     }
+
+This is doable in any offchain cryptocurrency system (though is not currently coded in any Lightning Network implementation, because maintenance issues).
+See also: <A HREF="../2018-December/001721.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-December/001721.html</A>
+
+How does it &quot;close&quot; a sub-channel?
+Well, how do you &quot;claim&quot; an HTLC or &quot;fail&quot; an HTLC inside an existing Lightning Network payment channel?
+Basically, the participants in the offchain updateable cryptocurrency system decide according to the rules of the protocol, in a way that is also consistent with the rules of the hosting cryptocurrency system (in the case of LN, the Bitcoin blockchain).
+For example, in Lightning, in order to &quot;claim&quot; an HTLC, the participant with the ability to claim that HTLC must present the preimage corresponding to the hash indicated in the contract.
+Then the participants check that the rules have been followed, then update the channel state to remove the HTLC and put the money that used to be in the HTLC into the fund of who claimed it.
+
+Similarly, if you have a super-channel containing a sub-channel, and want to &quot;close&quot; the sub-channel, what do you do?
+Closing the sub-channel requires particular protocol rules to be followed, culminating in a transaction that spends the fund of the sub-channel to whatever set of contracts was agreed to be the latest channel state.
+Then, that transaction is presented to the participants in the super-channel, who validate that it is indeed a valid spending of the sub-channel funds, then agree to update the channel state, removing the sub-channel funds and re-assigning it to the outputs of the latest channel state of the sub-channel.
+
+More concretely. suppose we have:
+
+    channel the_super_channel:
+        1 Bitcoin -&gt; ZmnSCPxj
+        1 Bitcoin -&gt; Subhra
+        2 Bitcoin -&gt; channel the_sub_channel (ZmnSCPxj &amp;&amp; Subhra)
+    channel the_sub_channel:
+        1 Bitcoin -&gt; HTLC(H=ZmnSCPxj hash=XXXXX,T=Subhra timelock=615021)
+        1 Bitcoin -&gt; Subhra
+
+Then to close the inner channel, what happens is then all the participants in the super-channel agree to update to this new state:
+
+    channel the_super_channel:
+        1 Bitcoin -&gt; ZmnSCPxj
+        1 Bitcoin -&gt; Subhra
+        1 Bitcoin -&gt; HTLC(H=ZmnSCPxj hash=XXXXX,T=Subhra timelock=615021)
+        1 Bitcoin -&gt; Subhra
+
+(As an optimization, they could merge the two &quot;Subhra&quot; outputs together into a single 2 Bitcoin output, which is what is automatically done by Lightning for HTLC claims and fails.)
+
+How are sub-channels created?
+By whatever was agreed upon by the participants of the channel.
+For example, suppose ZmnSCPxj propose to make a sub-channel of its own funds in a new sub-channel.
+Then the total state becomes:
+
+    channel the_super_channel:
+        1 Bitcoin -&gt; channel the_new_sub_channel (ZmnSCPxj &amp;&amp; Subhra)
+        1 Bitcoin -&gt; Subhra
+        1 Bitcoin -&gt; HTLC(H=ZmnSCPxj hash=XXXXX,T=Subhra timelock=615021)
+        1 Bitcoin -&gt; Subhra
+    channel the_new_sub_channel:
+        1 Bitcoin -&gt; ZmnSCPxj
+
+Or, from another point-of-view: offchain updateable cryptocurrency systems implement a cut-through mechanism.
+In principle, presenting a transaction to the participants of the offchain updateable cryptocurrency system, that can validly spend one or more outputs of the current state of the system (and does not consume any coins outside of the system), should be enough to convince the participants to delete those spent outputs and replace it with the outputs of that transaction in the next state of the offchain cryptocurrency system.
+(This is not done in Lightning simply because sending smaller pieces of data containing just the essential parts of the transactions that *would* have fulfilled the HTLCs is cheaper than sending entire transactions through.
+Not to mention having to embed a SCRIPT interpreter in our codebases would be ***HORRID***.)
+And a transaction which spends some output to create a payment channel is just another transaction that such a system can process according to the rules of the hosting cryptocurrency system.
+Similarly, a transaction which formalizes the closure of a payment channel is just another transaction, which represents a change in the state of the cryptocurrency system.
+
+One might consider that cryptocurrency systems basically allow the creation and destruction of UTXOs.
+Thus, both blockchains and payment channels are cryptocurrency systems.
+The difference is that blockchains allow safely storing coins held by anyone, whereas payment channels can only safely store coins held by the participants of the channel (because it is an n-of-n federation where *you* the user is a member of that federation: see <A HREF="https://zmnscpxj.github.io/offchain/safety.html">https://zmnscpxj.github.io/offchain/safety.html</A>).
+
+Conversely, I think the measuring-stick for the AMCU technique is that it should be possible to do it onchain to implement a multi-participant CoinSwap, because in principle a channel is just a cryptocurrency system and a blockchain is one as well.
+
+In any case, from a skim of the AMCU paper, it looks like all the intermediate hops *need* to validate that all the *other* intermediate hops follow the protocol, by presenting all the transactions involved.
+This probably implies that all the intermediate hops know the entire route, and thus who the ultimate sender and receiver are, thus utterly bad for privacy.
+Hopefully my reading is wrong, or this is fixable, but if neither, it is unlikely to be used in Lightning.
+
+Regards,
+ZmnSCPxj
+
+&gt;<i> Hi ZmnSCPxj,
+</I>&gt;<i> &#160;&#160;&#160;&#160;&#160; It is stated in the paper &quot;Atomic multi-channel updates with constant collateral in bitcoin-compatible payment-channel networks&quot; and I am quoting verbatim (page 11) (last email still waiting moderator approval) &quot;Phase I: Setup. The first phase requires to freeze the coins available at each channel involved in the protocol. Doing this naively (i.e., locking the complete balance in the channel at once) would lock more coins than required, unnecessarily increasing the collateral in the protocol. Instead, during the setup phase, the balance at each payment channel is split in two, effectively creating thereby two sub-channels: one sub-channel is set with the coins required for the present protocol session, while the other one is set with the
+</I>&gt;<i> remaining coins, which can then be freely spent. In the illustrative example shown in Figure 4.2, the setup phase starts with the user A collaborating with user B to create the transaction Tx A
+</I>&gt;<i> setup , where they split the 10 coins they have in the channel in two sub-channels: one sub-channel with 8 coins to be used in the rest of the protocol session and one sub-channel with the rest (i.e., 2 coins). This transaction is signed by both users so that it can be eventually enforced on-chain if required. The rest of the users behave analogously. Note that operations at each channel in this phase of the protocol can be carried out in parallel.&quot; Does this sound good ?
+</I>&gt;<i>
+</I>&gt;<i> On Mon, Jan 27, 2020 at 9:41 AM Subhra Mazumdar &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">subhra.mazumdar1993 at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Hi ZmnSCPxj,
+</I>&gt;<i> &gt; &#160;&#160;&#160;&#160;&#160;&#160; It is stated in the paper &quot;Atomic multi-channel updates with constant collateral in bitcoin-compatible payment-channel networks&quot;. I am attaching the screenshot of the paragraph which mentions about locking the amount which is required for payment transfer and not the entire channel fund.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Mon, Jan 27, 2020 at 6:15 AM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Good morning Subhra,
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; This does not seem to make sense?
+</I>&gt;<i> &gt; &gt; For a payment that is less than the channel funds on your side, only that amount is locked behind an HTLC, and the rest remains useable for other HTLCs.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; What exactly are you referring to?
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Hi,
+</I>&gt;<i> &gt; &gt; &gt; &#160;&#160;&#160;&#160; I was wondering when parties apply condition on fraction of channel fund for ensuring successful payment, entire channel fund is held. Is it possible to lock just partial amount of fund of a payment channel and leave the rest to be used by some another payment request ? Concept of subchannels of a single channel has been suggested in &quot;Atomic multi-channel updates with constant collateral in bitcoin-compatible payment-channel networks&quot;&#160; <A HREF="https://scholar.google.com/scholar?cluster=40566801298747858&amp;hl=en&amp;as_sdt=2005&amp;sciodt=0,5">https://scholar.google.com/scholar?cluster=40566801298747858&amp;hl=en&amp;as_sdt=2005&amp;sciodt=0,5</A> but I am still in doubt what happens during closing of subchannel ?
+</I>&gt;<i> &gt; &gt; &gt; --
+</I>&gt;<i> &gt; &gt; &gt; Yours sincerely,
+</I>&gt;<i> &gt; &gt; &gt; Subhra Mazumdar.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; --
+</I>&gt;<i> &gt; Yours sincerely,
+</I>&gt;<i> &gt; Subhra Mazumdar.
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Yours sincerely,
+</I>&gt;<i> Subhra Mazumdar.
+</I>
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002454.html">[Lightning-dev] Reduce the amount of collateral locked by scripts for transferring funds in lightning network
+</A></li>
+	<LI>Next message: <A HREF="002467.html">[Lightning-dev] Reduce the amount of collateral locked by scripts for transferring funds in lightning network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2460">[ date ]</a>
+              <a href="thread.html#2460">[ thread ]</a>
+              <a href="subject.html#2460">[ subject ]</a>
+              <a href="author.html#2460">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

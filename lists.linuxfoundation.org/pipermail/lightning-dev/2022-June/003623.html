@@ -1,0 +1,208 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Onion messages rate-limiting
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20rate-limiting&In-Reply-To=%3CCACdvm3PsoH1PioqA-pXQ29HTSaQFieduEXBEpYpkP4jMjVfCQQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003618.html">
+   <LINK REL="Next"  HREF="003631.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Onion messages rate-limiting</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20rate-limiting&In-Reply-To=%3CCACdvm3PsoH1PioqA-pXQ29HTSaQFieduEXBEpYpkP4jMjVfCQQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Onion messages rate-limiting">bastien at acinq.fr
+       </A><BR>
+    <I>Wed Jun 29 08:28:26 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003618.html">[Lightning-dev] Three Strategies for Lightning Forwarding Nodes
+</A></li>
+        <LI>Next message: <A HREF="003631.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3623">[ date ]</a>
+              <a href="thread.html#3623">[ thread ]</a>
+              <a href="subject.html#3623">[ subject ]</a>
+              <a href="author.html#3623">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>During the recent Oakland Dev Summit, some lightning engineers got
+together to discuss DoS
+protection for onion messages. Rusty proposed a very simple
+rate-limiting scheme that
+statistically propagates back to the correct sender, which we describe
+in details below.
+
+You can also read this in gist format if that works better for you [1].
+
+Nodes apply per-peer rate limits on _incoming_ onion messages that
+should be relayed (e.g.
+N/seconds with some burst tolerance). It is recommended to allow more
+onion messages from
+peers with whom you have channels, for example 10/seconds when you
+have a channel and 1/second
+when you don't.
+
+When relaying an onion message, nodes keep track of where it came from
+(by using the `node_id` of
+the peer who sent that message). Nodes only need the last such
+`node_id` per outgoing connection,
+which ensures the memory footprint is very small. Also, this data
+doesn't need to be persisted.
+
+Let's walk through an example to illustrate this mechanism:
+
+* Bob receives an onion message from Alice that should be relayed to Carol
+* After relaying that message, Bob stores Alice's `node_id` in its
+per-connection state with Carol
+* Bob receives an onion message from Eve that should be relayed to Carol
+* After relaying that message, Bob replaces Alice's `node_id` with
+Eve's `node_id` in its
+per-connection state with Carol
+* Bob receives an onion message from Alice that should be relayed to Dave
+* After relaying that message, Bob stores Alice's `node_id` in its
+per-connection state with Dave
+* ...
+
+We introduce a new message that will be sent when dropping an incoming
+onion message because it
+reached rate limits:
+
+1. type: 515 (`onion_message_drop`)
+2. data:
+   * [`rate_limited`:`u8`]
+   * [`shared_secret_hash`:`32*byte`]
+
+Whenever an incoming onion message reaches the rate limit, the
+receiver sends `onion_message_drop`
+to the sender. The sender looks at its per-connection state to find
+where the message was coming
+from and relays `onion_message_drop` to the last sender, halving their
+rate limits with that peer.
+
+If the sender doesn't overflow the rate limit again, the receiver
+should double the rate limit
+after 30 seconds, until it reaches the default rate limit again.
+
+The flow will look like:
+
+Alice                      Bob                      Carol
+  |                         |                         |
+  |      onion_message      |                         |
+  |------------------------&gt;|                         |
+  |                         |      onion_message      |
+  |                         |------------------------&gt;|
+  |                         |    onion_message_drop   |
+  |                         |&lt;------------------------|
+  |    onion_message_drop   |                         |
+  |&lt;------------------------|                         |
+
+The `shared_secret_hash` field contains a BIP 340 tagged hash of the
+Sphinx shared secret of the
+rate limiting peer (in the example above, Carol):
+
+* `shared_secret_hash = SHA256(SHA256(&quot;onion_message_drop&quot;) ||
+SHA256(&quot;onion_message_drop&quot;) || sphinx_shared_secret)`
+
+This value is known by the node that created the onion message: if
+`onion_message_drop` propagates
+all the way back to them, it lets them know which part of the route is
+congested, allowing them
+to retry through a different path.
+
+Whenever there is some latency between nodes and many onion messages,
+`onion_message_drop` may
+be relayed to the incorrect incoming peer (since we only store the
+`node_id` of the _last_ incoming
+peer in our outgoing connection state). The following example highlights this:
+
+ Eve                       Bob                      Carol
+  |      onion_message      |                         |
+  |------------------------&gt;|      onion_message      |
+  |      onion_message      |------------------------&gt;|
+  |------------------------&gt;|      onion_message      |
+  |      onion_message      |------------------------&gt;|
+  |------------------------&gt;|      onion_message      |
+                            |------------------------&gt;|
+Alice                       |    onion_message_drop   |
+  |      onion_message      |                    +----|
+  |------------------------&gt;|      onion_message |    |
+  |                         |--------------------|---&gt;|
+  |                         |                    |    |
+  |                         |                    |    |
+  |                         |                    |    |
+  |    onion_message_drop   |&lt;-------------------+    |
+  |&lt;------------------------|                         |
+
+In this example, Eve is spamming but `onion_message_drop` is
+propagated back to Alice instead.
+However, this scheme will _statistically_ penalize the right incoming
+peer (with a probability
+depending on the volume of onion messages that the spamming peer is
+generating compared to the
+volume of legitimate onion messages).
+
+It is an interesting research problem to find formulas for those
+probabilities to evaluate how
+efficient this will be against various types of spam. We hope
+researchers on this list will be
+interested in looking into it and will come up with a good model to
+evaluate that scheme.
+
+To increase the accuracy of attributing `onion_message_drop`, more
+data could be stored in the
+future if it becomes necessary. We need more research to quantify how
+much accuracy would be
+gained by storing more data and making the protocol more complex.
+
+Cheers,
+Bastien
+
+[1] <A HREF="https://gist.github.com/t-bast/e37ee9249d9825e51d260335c94f0fcf">https://gist.github.com/t-bast/e37ee9249d9825e51d260335c94f0fcf</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220629/513b6829/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220629/513b6829/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003618.html">[Lightning-dev] Three Strategies for Lightning Forwarding Nodes
+</A></li>
+	<LI>Next message: <A HREF="003631.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3623">[ date ]</a>
+              <a href="thread.html#3623">[ thread ]</a>
+              <a href="subject.html#3623">[ subject ]</a>
+              <a href="author.html#3623">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

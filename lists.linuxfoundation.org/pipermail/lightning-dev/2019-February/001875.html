@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Multi-frame sphinx onion format
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Multi-frame%20sphinx%20onion%20format&In-Reply-To=%3C877edxlz4y.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001874.html">
+   <LINK REL="Next"  HREF="001880.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Multi-frame sphinx onion format</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Multi-frame%20sphinx%20onion%20format&In-Reply-To=%3C877edxlz4y.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Multi-frame sphinx onion format">decker.christian at gmail.com
+       </A><BR>
+    <I>Mon Feb 18 18:39:25 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001874.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+        <LI>Next message: <A HREF="001880.html">[Lightning-dev] Multi-frame sphinx onion format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1875">[ date ]</a>
+              <a href="thread.html#1875">[ thread ]</a>
+              <a href="subject.html#1875">[ subject ]</a>
+              <a href="author.html#1875">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Heya everybody,
+
+during the spec meeting in Adelaide we decided that we'd like to extend
+our current onion-routing capabilities with a couple of new features,
+such as rendez-vous routing, spontaneous payments, multi-part payments,
+etc. These features rely on two changes to the current onion format:
+bigger per-hop payloads (in the form of multi-frame payloads) and a more
+modern encoding (given by the TLV encoding).
+
+In the following I will explain my proposal on how to extend the per-hop
+payload from the current 65 bytes (which include realm and HMAC) to
+multiples.
+
+Until now we had a 1-to-1 relationship between a 65 byte segment of
+payload and a hop in the route. Since this is no longer the case, I
+propose we call the 65 byte segment a frame, to differentiate it from a
+hop in the route, hence the name multi-frame onion. The creation and
+decoding process doesn't really change at all, only some of the
+parameters.
+
+When constructing the onion, the sender currently always right-shifts by
+a single 65 byte frame, serializes the payload, and encrypts using the
+ChaCha20 stream. In parallel it also generates the fillers (basically 0s
+that get appended and encrypted by the processing nodes, in order to get
+matching HMACs), these are also shifted by a single 65 byte frame on
+each hop. The change in the generation comes in the form of variable
+shifts for both the payload serialization and filler generation,
+depending on the payload size. So if the payload fits into 32 bytes
+nothing changes, if the payload is bigger, we just use additional frames
+until it fits. The payload is padded with 0s, the HMAC remains as the
+last 32 bytes of the payload, and the realm stays at the first
+byte. This gives us
+
+&gt;<i> payload_size = num_frames * 65 byte - 1 byte (realm) - 32 bytes (hmac)
+</I>
+The realm byte encodes both the payload format as well as how many
+additional frames were used to encode the payload. The MSB 4 bits encode
+the number of frames used, while the 4 LSB bits encode the realm/payload
+format.
+
+The decoding of an onion packet pretty much stays the same, the
+receiving node generates the shared secret, then generates the ChaCha20
+stream, and decrypts the packet (and additional padding that matches the
+filler the sender generated for HMACs). It can then read the realm byte,
+and knows how many frames to read, and how many frames it needs to left-
+shift in order to derive the next onion.
+
+This is a competing proposal with the proposal by roasbeef on the
+lightning-onion repo [1], but I think it is superior in a number of
+ways. The major advantage of this proposal is that the payload is in one
+contiguous memory region after the decryption, avoiding re-assembly of
+multiple parts and allowing zero-copy processing of the data. It also
+avoids multiple decryption steps, and does not waste space on multiple,
+useless, HMACs. I also believe that this proposal is simpler than [1],
+since it doesn't require re-assembly, and creates a clear distinction
+between payload units and hops.
+
+To show that this proposal actually works, and is rather simple, I went
+ahead and implemented it for c-lightning [2] and lnd [3] (sorry ACINQ,
+my scala is not sufficient to implement if for eclair). Most of the code
+changes are preparation for variable size payloads alongside the legacy
+v0 payloads we used so far, the relevant commits that actually change
+the generation of the onion are [4] and [5] for c-lightning and lnd
+respectively.
+
+I'm hoping that this proposal proves to be useful, and that you agree
+about the advantages I outlined above. I'd also like to mention that,
+while this is working, I'm open to suggestions :-)
+
+Cheers,
+Christian
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-onion/pull/31">https://github.com/lightningnetwork/lightning-onion/pull/31</A>
+[2] <A HREF="https://github.com/ElementsProject/lightning/pull/2363">https://github.com/ElementsProject/lightning/pull/2363</A>
+[3] <A HREF="https://github.com/lightningnetwork/lightning-onion/pull/33">https://github.com/lightningnetwork/lightning-onion/pull/33</A>
+[4] <A HREF="https://github.com/ElementsProject/lightning/pull/2363/commits/aac29daeeb5965ae407b9588cd599f38291c0c1f">https://github.com/ElementsProject/lightning/pull/2363/commits/aac29daeeb5965ae407b9588cd599f38291c0c1f</A>
+[5] <A HREF="https://github.com/lightningnetwork/lightning-onion/pull/33/commits/216c09c257d1a342c27c1e85ef6653559ef39314">https://github.com/lightningnetwork/lightning-onion/pull/33/commits/216c09c257d1a342c27c1e85ef6653559ef39314</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001874.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+	<LI>Next message: <A HREF="001880.html">[Lightning-dev] Multi-frame sphinx onion format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1875">[ date ]</a>
+              <a href="thread.html#1875">[ thread ]</a>
+              <a href="subject.html#1875">[ subject ]</a>
+              <a href="author.html#1875">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

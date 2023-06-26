@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [BOLT Draft] Onion Routing Spec
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3C87oa58ox54.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000560.html">
+   <LINK REL="Next"  HREF="000580.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [BOLT Draft] Onion Routing Spec</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3C87oa58ox54.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [BOLT Draft] Onion Routing Spec">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Aug  5 00:52:07 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000560.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+        <LI>Next message: <A HREF="000580.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#562">[ date ]</a>
+              <a href="thread.html#562">[ thread ]</a>
+              <a href="subject.html#562">[ subject ]</a>
+              <a href="author.html#562">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; writes:
+&gt;&gt;<i> Hmm, I think we should combine the &quot;header&quot; and &quot;per-hop payload&quot; into a
+</I>&gt;&gt;<i> single 40 byte field.  They're not meaningfully distinct for lightning,
+</I>&gt;&gt;<i> AFAICT.
+</I>&gt;<i>
+</I>&gt;<i> It's not clear to me what we gain by squashing the header (hop's ephemeral
+</I>&gt;<i> key,
+</I>&gt;<i> MAC, next hop) and the per-hop payload (amount to forward, possibly an
+</I>&gt;<i> allowed
+</I>&gt;<i> CLTV range, etc) into a single blob. I think the extensibility features are
+</I>&gt;<i> the
+</I>&gt;<i> same regardless.
+</I>
+Ephemeral key and mac make sense as a header, but it's fairly easy
+to image a different next hop address format for different networks.
+See also &quot;realm byte&quot; below.
+
+Thus I'm suggesting a format like:
+
+  [ephemeral key] [mac] [realm] [per-realm-information]
+
+Per-realm-information is next-hop, amount, etc.
+
+&gt;&gt;<i> And I think we should add/steal at least one byte for &quot;realm&quot;.  0 =
+</I>&gt;&gt;<i> terminal.  1 = bitcoin lightning.  2 = TBA. etc.
+</I>&gt;<i>
+</I>&gt;<i> What does &quot;terminal&quot; represent in this context?
+</I>
+You're right; &quot;Terminus&quot; aka &quot;you're the final hop&quot;, rather than using
+magic HMAC value.
+
+&gt;<i> I don't think we need an equivalent of Bitcoin's &quot;net magic&quot; bytes within
+</I>&gt;<i> the
+</I>&gt;<i> onion blob itself, as I'd imagine that the onion blob would be encapsulated
+</I>&gt;<i> within a fixed-length field within the &quot;htlcAdd&quot; message. The &quot;htlcAdd&quot;
+</I>&gt;<i> message
+</I>&gt;<i> would then have a header similar to Bitcoin's, in which the &quot;net magic&quot;
+</I>&gt;<i> bytes
+</I>&gt;<i> would be placed.
+</I>
+An explicit network byte makes sense since we could eventually have
+multiple networks (atomic cross-chain exchange).  While node keys are
+network globally unique (thus the exchange is *implied* by the next
+hop), it's nice to be explicit.
+
+We need some flag for the terminal node anyway, so it makes sense IMHO
+to expand it.
+
+&gt;&gt;<i> We can't simply deny multiple HTLCs with the same r hash, since that
+</I>&gt;<i> allows an
+</I>&gt;&gt;<i> attacker to probe the network to see where an HTLC went (note that in the
+</I>&gt;&gt;<i> longer run, it's in a node's short-term economic interest to allow this,
+</I>&gt;<i> which
+</I>&gt;&gt;<i> is why rhash is troubling).
+</I>&gt;<i>
+</I>&gt;<i> We wouldn't deny multiple HTLC's with the same r hash. We'd deny a packet
+</I>&gt;<i> with
+</I>&gt;<i> a shared secret we've already seen, meaning one that we've processed
+</I>&gt;<i> before.
+</I>
+Sorry, I was unclear: We're agreeing.  I was clarifying why an
+alternative approach to replay avoidance (using r hash uniqueness)
+doesn't work.
+
+&gt;<i> (as a side note: I think we should establish some better terminology than
+</I>&gt;<i> r-hash, or H)
+</I>
+Ergh, yes!
+
+Strawman proposal:
+1) HTLC-hash and HTLC-preimage? (aha H-hash &amp; H-preimage).
+2) committx-hash and committx-preimage (C-hash / C-preimage) for the
+   commitment transaction revocation?
+
+That avoids R altogether, which is overloaded...
+
+&gt;&gt;<i> If we switch from hash/preimage to the privkeys with point addition scheme
+</I>&gt;&gt;<i> (which has other benefits) this is no longer an issue and we can simply
+</I>&gt;<i> refuse
+</I>&gt;&gt;<i> to accept two HTLCs with the same pubkey.
+</I>&gt;<i>
+</I>&gt;<i> The point addition derivation (P2CH style) scheme only applies to
+</I>&gt;<i> revocations.
+</I>&gt;<i>
+</I>&gt;<i> It's not clear to me how one can switch to priv/pub key based HTLC's without
+</I>&gt;<i> modifying Bitcoin Script. At the moment, we're unable to guarantee/force key
+</I>&gt;<i> disclosure with Script's current capabilities.
+</I>
+Yeah, it was easy to miss; it's buried deep in a thread (see the
+&quot;alternative approach&quot;):
+
+        <A HREF="../2015-November/000344.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000344.html</A>
+
+Basically, you force r-value reuse in signatures to reveal the private
+key.  The script to do this would be pretty big though, involving two
+other keys, three signatures and three OP_CHECKMULTISIG.
+
+And AFAIK nobody has actually written such a script...
+
+Cheers,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000560.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+	<LI>Next message: <A HREF="000580.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#562">[ date ]</a>
+              <a href="thread.html#562">[ thread ]</a>
+              <a href="subject.html#562">[ subject ]</a>
+              <a href="author.html#562">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

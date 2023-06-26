@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Blinded channel observation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3C87d1leodg7.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000576.html">
+   <LINK REL="Next"  HREF="000582.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Blinded channel observation</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3C87d1leodg7.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Blinded channel observation">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Aug 12 03:47:52 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000576.html">[Lightning-dev] Blinded channel observation
+</A></li>
+        <LI>Next message: <A HREF="000582.html">[Lightning-dev] Blinded channel observation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#579">[ date ]</a>
+              <a href="thread.html#579">[ thread ]</a>
+              <a href="subject.html#579">[ subject ]</a>
+              <a href="author.html#579">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Joseph Poon &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joseph at lightning.network</A>&gt; writes:
+&gt;<i> On Wed, Aug 10, 2016 at 11:33:46AM +0930, Rusty Russell wrote:
+</I>&gt;&gt;<i> Unfortunately, watcher knows revocation preimage N, so it can figure out
+</I>&gt;&gt;<i> some or all previous revocation preimages (and thus hashes). 
+</I>&gt;<i>
+</I>&gt;<i> If you take the results then HMAC it as the final step in
+</I>&gt;<i> shachain/elkrem (to establish a single leaf), should be fine even if
+</I>&gt;<i> revocation hashes are used in lieu of a revocation pubkey.
+</I>
+Sure, or just SHA the leaf again.  But such schemes prevent the watcher
+from using the elkrem/shachain space-savings themselves, which is kind
+of painful.  (Though see below...)
+
+Let's look at space &amp; comms requirements, per new commitment tx, for
+different schemes.  Let's say we have N htlcs in the current HTLC.
+
+                        Bytes           Bytes
+                        Communicated    Stored (per tx)
+Naive (whole steal tx)  ~300 * (N+1)    ~300 * (N+1)
+rhash+sig+HTLCdata      32 + 32 + 24*N  32 + 32 + 24*N
++shachain/elkrem        32 + 32 + 24*N  32 + 24*N
++SIG_NOINPUT            32 + 24*N       24*N
++Dual-scriptpubkey MAST 32              0
+
+The ultimate is shachain/elkrem, SIG_NOINPUT and a MAST scheme which
+places two scripthashes into the scriptpubkey, either of which would
+allow spending.  In that case, we'd simply send a series of SIG_NOINPUT
+signed steal txs with 1, 2, 3 ... inputs at the beginning, and then send
+each new revocation preimage as we learned it.  The storage overhead is
+basically constant (technically, log(N) for the shachain).
+
+Interestingly, MAST by itself buys us nothing (bytewise): the 32 bytes
+we'd need to send for the other branch of MAST is larger than the 24
+bytes for the HTLC description.
+
+Revealing the preimages seems a win, BUT if we give them unencrypted to
+the watcher we need some other way of avoiding guessable prior
+commitment txs.  Which implies we change at least one key in some way,
+which means we need to send that key to the watcher to store, which
+costs as much as they save using shachain/elkrem!
+
+The other win is sharing HTLCs across transactions somehow (which
+reduces N to the &quot;number of new HTLCs&quot; instead of &quot;number of HTLCs&quot;).
+I can't come up with anything very good here, though :(
+
+&gt;&gt;<i> But it rests on the assumption that there are no unknown malleability
+</I>&gt;&gt;<i> issues on signatures, which I believe makes crypto people nervous.  I've
+</I>&gt;&gt;<i> asked some, though, as that's above my pay grade!
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> It also assumes they can't set up the witness such that our sig is not
+</I>&gt;&gt;<i> 2nd or 3rd in the witness element.  I think that's true...
+</I>&gt;<i>
+</I>&gt;<i> Yeah, good point. Perhaps it could be better to keep it simple and just
+</I>&gt;<i> use an HMAC of the non-witness transaction. There shouldn't be stuff
+</I>&gt;<i> that's easily mutatable, and the exposure is not expanded (since that
+</I>&gt;<i> would break LN's child transactions anyway).
+</I>
+I still don't understand why use an HMAC-of-tx instead of just the txid?
+What does it gain?
+
+Thanks!
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000576.html">[Lightning-dev] Blinded channel observation
+</A></li>
+	<LI>Next message: <A HREF="000582.html">[Lightning-dev] Blinded channel observation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#579">[ date ]</a>
+              <a href="thread.html#579">[ thread ]</a>
+              <a href="subject.html#579">[ subject ]</a>
+              <a href="author.html#579">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

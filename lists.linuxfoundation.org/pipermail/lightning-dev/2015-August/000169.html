@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Loop attack with onion routing..
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Loop%20attack%20with%20onion%20routing..&In-Reply-To=%3CCAJS_LCUOmpr9PLxqnXunaQ2zfEbbOtNy%2BvOt-dYeOBZmU6Pfhg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000163.html">
+   <LINK REL="Next"  HREF="000168.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Loop attack with onion routing..</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Loop%20attack%20with%20onion%20routing..&In-Reply-To=%3CCAJS_LCUOmpr9PLxqnXunaQ2zfEbbOtNy%2BvOt-dYeOBZmU6Pfhg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Loop attack with onion routing..">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Aug 31 21:08:58 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000163.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+        <LI>Next message: <A HREF="000168.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#169">[ date ]</a>
+              <a href="thread.html#169">[ thread ]</a>
+              <a href="subject.html#169">[ subject ]</a>
+              <a href="author.html#169">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 31 August 2015 at 04:01, CJP &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">cjp at ultimatestunts.nl</A>&gt; wrote:
+
+&gt;<i> &gt;         A - b - c - D - e - F - g - H
+</I>&gt;<i> &gt;         H pays 0.003 mBTC to F (explicit source routing fee; H
+</I>&gt;<i> &gt;         selected F for
+</I>&gt;<i> &gt;         onion-routing towards D, without A's knowledge)
+</I>&gt;<i> &gt; You mean &quot;D selected F for onion-routing towards H&quot; here, surely?
+</I>&gt;<i> No :-)
+</I>&gt;<i> Both sides of a payment may value their privacy, so both sides may want
+</I>&gt;<i> to perform onion routing independently.
+</I>&gt;<i> &#8203; &#8203;
+</I>&gt;<i> It's a bit similar to TOR hidden
+</I>
+services: you route from both sides towards a &quot;meeting point&quot; somewhere
+&gt;<i> on the route, which is not necessarily one of the end points.
+</I>&gt;<i>
+</I>
+Hmm. I would look at that more like:
+
+Setup:
+ - H wants to be secretive.
+ - H establishes a channel with g
+ - H tells F he can route to H via g
+ - H tells D he can route to H via F
+
+Announcement:
+ - H tells other people (such as A) they can route to H via D
+
+Then A sends a txn for H to D as instructed, and D chooses to forward it on
+via F.
+
+(Hmm. In that scenario, if e tried to send a txn to H, she would route via
+D, then find D routed the txn back to it -- using the same R -- and that F
+was the next destination. This would be an information leak, arguably.
+Likewise for anyone whose cheapest path to D was through e)
+
+Note that, because locking of transaction funds is always done in payer
+&gt;<i> -&gt; payee direction, this requires a separate routing phase before the
+</I>&gt;<i> locking. So, first you find a route (where all parties say they agree to
+</I>&gt;<i> fees, tx amount, timeouts and other conditions), and then you start
+</I>&gt;<i> performing transaction-channel actions.
+</I>&gt;<i>
+</I>
+Isn't that a bit circular -- &quot;you obtain the route by sending messages
+along the route&quot; ?
+
+It also relies on end-to-end communication in realtime, which wouldn't work
+for paying to a cold-wallet lightning channel that's only occassionally
+online.
+
+If you *did* assume everything is in realtime, you could avoid fines
+entirely just by having the protocol be something like:
+
+ - the official timeout was 4 days, the unofficial timeout is 4 minutes
+ - ...
+ - okay 4 minutes is up, do you know R?
+ - no, okay, we're revoking the transaction.
+ - you don't want to? fine, channel is closed.
+
+Maybe that's what the default protocol should be anyway, and fines are just
+an extension to that to bribe the payer not to close the channel...
+
+You could of course ignore source routing for the fines, and distribute
+&gt;<i> the fines as if it is only a non-source routing path. The problem is
+</I>&gt;<i> that an attacker can create an arbitrarily long path with source
+</I>&gt;<i> routing, thereby creating arbitrarily large total damage to the network,
+</I>&gt;<i> corresponding to arbitrarily large total fines.
+</I>
+
+&#8203;I don't think it can go arbitrarily large -- if the recipient is paying
+the fines at each point, then the scenario is:
+
+ incoming HTLC: (Alice to Bob)
+   timeout T
+   X (onward funds) + f (Bob's fees) on success
+   x*t (fine Bob pays Alice) if it takes a long time, t
+
+ forwarded HTLC (Bob to Carol)
+   timeout T'
+   X (onward funds)
+   (x+y)*t' (fine Carol pays Bob) if it takes a long time, t'
+
+So Bob can set T' &lt;= M/x where M is the maximum fine I'm willing to pay
+Alice to keep the channel open, if Carol fails to pay the fine and just
+closes the channel. If T'&lt;=1 hour or similar, you just return a
+PKT_ROUTE_FAIL quickly and don't pay any fines.
+
+&#8203;Carol is faced with T'' &lt;= M/(x+y) which is likely smaller still, and s on.
+
+In the case where a node &#8203;is expected to take a while, the original payer
+should be able to send a fee along to cover that node's fines.
+
+If you use
+&gt;<i> pre-calculated fine amounts, an attacker can always make a route that
+</I>&gt;<i> will result in a (large) loss for some intermediate nodes.
+</I>&gt;<i>
+</I>
+&#8203;Only by sacrificing a channel, though.&#8203; If you set
+
+  commit_fee = 1 mBTC   (how much a unilateral channel close costs)
+  close_fee = 0.1 mBTC  (fees on a cooperative close)
+
+then if you've got N open HTLC's on your channel with Mallory, then you can
+set M=0.8/N mBTC and offer Mallory the following options:
+
+  a) he pays you the fines he owes, and everyone's happy
+  b) he closes the channel unilaterally and gets whatever he can
+  c) you both close the channel cooperatively, splitting the 0.9 mBTC in
+fees as 0.8 to you, 0.1 to him.
+
+Mallory's better off in c) than b), and with c) you can afford to pay your
+fines. Active HTLCs in both directions complicate matters, and 0.8/N mBTC
+still isn't very much, though.
+
+&#8203;Cheers,
+aj&#8203;
+
+-- 
+Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150901/3b9dbce4/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150901/3b9dbce4/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000163.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+	<LI>Next message: <A HREF="000168.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#169">[ date ]</a>
+              <a href="thread.html#169">[ thread ]</a>
+              <a href="subject.html#169">[ subject ]</a>
+              <a href="author.html#169">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

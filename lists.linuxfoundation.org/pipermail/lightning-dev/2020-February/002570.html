@@ -1,0 +1,134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] On massive channel closing and fee bumping
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20On%20massive%20channel%20closing%20and%20fee%20bumping&In-Reply-To=%3Czl7oV0qJMtZFCAINvXrPl_sA2B0aV9WGdtCU9xlLzBC5YQ0YlUDiFpHgCnp7s11SQYcnZ22Eajh1aZUvEXeaao25lWrscbVUSo9sXjohz3k%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002569.html">
+   <LINK REL="Next"  HREF="002571.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] On massive channel closing and fee bumping</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20On%20massive%20channel%20closing%20and%20fee%20bumping&In-Reply-To=%3Czl7oV0qJMtZFCAINvXrPl_sA2B0aV9WGdtCU9xlLzBC5YQ0YlUDiFpHgCnp7s11SQYcnZ22Eajh1aZUvEXeaao25lWrscbVUSo9sXjohz3k%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] On massive channel closing and fee bumping">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Feb 28 13:00:58 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002569.html">[Lightning-dev] On massive channel closing and fee bumping
+</A></li>
+        <LI>Next message: <A HREF="002571.html">[Lightning-dev] On massive channel closing and fee bumping
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2570">[ date ]</a>
+              <a href="thread.html#2570">[ thread ]</a>
+              <a href="subject.html#2570">[ subject ]</a>
+              <a href="author.html#2570">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Gleb,
+
+&gt;<i> In this email, myself (gleb) and ariard want to discuss some aspects of the LN implementations when it comes to massive channel closing.
+</I>&gt;<i>
+</I>&gt;<i> LN security model relies on the unilateral capability to timely confirm on-chain commitment transaction. Currently, fee rates of both commitment transaction and HTLC-timeout/HTLC-Success are pre-committed at signatures and can be interactively updated with a `update_fee` message. In case of mempool fee rates surge and a counterparty being adversarial or irresponsive (by being offline by occasion or under attack), this mechanism isn&#8217;t reliable because a low-fee rate commitment transaction may never make it into network mempools. Switching to automatic single-party dynamic fee-bumping of *their* commitment transaction via CPFP/package relay would solve this issue, while potentially opening new attack vectors.&#160;
+</I>
+A concern I have been ruminating upon for a good while already is that dynamic fee-bumping violates Initiator Pays.
+
+Suppose I have a permanent LN node somewhere on the network.
+Then I trivially make up a completely-new identity and fund a channel to your node, over Tor.
+Then I transfer out as much of those funds as possible to my permanent LN node.
+Afterwards, after creating a signature from your commitment transaction, spending the `to_remote` (i.e. mine, as the commitment transaction is yours), I burn the private keys for the temporary alias and disconnect from you.
+
+This leaves you with a channel containing a chunk of your funds in an illiquid dead-end channel and you are forced to eventually close the channel unilaterally.
+
+It seems to me that the reserve system, plus the fact that channel-funder-pays-closing-fee, helps deter against the above attack, since I have to (1) leave a little of my money in the channel (reserve) and this is as well reduced by (2) since I am the original channel funder I am forced to pay for the closing fee on the unilateral close as well.
+
+Removing the channel-funder-pays-closing-fee (i.e. adding dynamic pay-for-your-own-close) worries me as it seems to reduce the cost of this attack.
+Though the attack remains costly, as I still have to pay for onchain fees to establish the channel in the first place, and is the reason why I cannot find myself bringing this up otherwise.
+
+
+
+If onchain feerates rise quickly, then you should really consider dropping the channel onchain if I am offline, so as to not have the feerate *too* obsolete.
+Unfortunately due to feerate disagreements this behavior has a lot of leeway in current implementations, as otherwise feerate changes tend to make the LN drop channels across the network, especially between different implementations (which tend to use slightly different feerate estimations / heuristics).
+
+
+&gt;<i>
+</I>&gt;<i> If dynamic fee-bumping is used by a significant fraction of LN nodes, this security measure may be exploited by a miner, a massive LN channels closing would choke the mempool, dynamic fee-bumpers would react in consequence and fee rates raise to the roof. Miners would harvest abnormal high-fees for multiple blocks.
+</I>
+I suggest that a node that has been online for a good amount of time, that is still connected to you and has been willing to sign fee updates, and has other published channels as well, would probably be better given some leeway and should not be dropped as easily as some unknown node with bad uptime and low liquidity.
+
+&gt;<i>
+</I>&gt;<i> A massive channel closing may be provoked by feeding an invalid block to light clients (in the BIP157 paradigm), as they don&#8217;t have utxo access, they can&#8217;t verify input signatures (note: the only utxo spend they can check is the funding_output and they should do so) and lead to think than their channel is closed. This may provoke a spurious broadcast of their local commitment transaction, this one being valid and propagating on the base layer. Even if an invalid block isn&#8217;t fetched, the secure strategy on what to do when your chain view is messed up by an attacker is still an open question. Note that one invalid block may be used to force-close multiple channels, making this attack more economically feasible.
+</I>
+If the spend of the channel funding output is valid, then the miner has to somehow have access to one or more closing transactions of that channel in order to put them in an otherwise-invalid block.
+Even if a BIP157 server lies and claims that a block at blockheight N spends your channel, you can download that block and check that it contains a transaction that does spend your channel.
+Even if the place where you downloaded that block lies, it somehow had to have access to *some* transaction that spends your channel funding output, and is a *valid* spend of that output, and if you did not broadcast that transaction yourself, it must have come from your counterparty (only the two of you working together can make a valid spend of the funding output), in which case dropping the channel onchain would be the correct behavior, whether the block itself is valid or not: if somebody released a valid spend of the channel funding output you should presume that you did not do this yourself (else you would know about it) and therefore either your counterparty wants to close, is malicious, or is compromised (or you are amnesiac....).
+
+Unless I misunderstand something?
+
+&gt;<i>
+</I>&gt;<i> Another attack building block could be to exploit any LN protocol/implementation vulnerability like a malicious HTLC-of-death which would provoke honest parties to close their mutual channel when routed through [0]
+</I>&gt;<i>
+</I>&gt;<i> LN light clients should disable HTLC routing and avoid any aggressive fee-bumping for a broadcast of local commitment transactions as time-sensitivity doesn&#8217;t matter in this case beyond UX and funds stuck in-flight.
+</I>
+&quot;beyond UX&quot; yet if the UX is bad, nobody will use the software.
+
+
+&gt;<i> Bounding dynamic-fees engine may be viewed as a game-theoretic aspect between LN parties (burn the maximum in fee rate to avoid an attacker to make any profit) and macro-considerations (prevent miner to exploit the whole LN network, conservative mempool/resources usage).&#160;
+</I>&gt;<i>
+</I>&gt;<i> Considering that most of the block reward is currently subsidized, the incentives for miners to launch this attack are questionable. However, this might change when the fraction of fees in the reward becomes higher.
+</I>&gt;<i>
+</I>&gt;<i> As LN becomes an important part of the Bitcoin ecosystem, it&#8217;s important to acknowledge the mining-related incentives and risks, as these may at the end be used to influence protocol development.
+</I>&gt;<i>
+</I>&gt;<i> Since the LN infrastructure seems to be moving towards the heavy use of light clients, and the attacks we mentioned are expected to appear again (at least in some of the implementations), we believe it&#8217;s important to understand the mechanics of these attacks and countermeasures.
+</I>&gt;<i>
+</I>&gt;<i> It would be interesting to have an empirical study (based on the historical data) and a simulation of the fee spikes, with parameterized:
+</I>&gt;<i>
+</I>&gt;<i> - how many channels are vulnerable to force-closing (based on the particular LN implementations)
+</I>&gt;<i>
+</I>&gt;<i> - what are the properties of those channels (amount, timelocks)
+</I>&gt;<i>
+</I>&gt;<i> - what is the distribution of those channels across nodes
+</I>&gt;<i>
+</I>&gt;<i> - how many nodes implement dynamic bumping
+</I>
+My understanding is that the pay-your-own-commitment spec is still in-flux, unless you mean some other mechanism?
+
+
+
+Regards,
+ZmnSCPXj
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002569.html">[Lightning-dev] On massive channel closing and fee bumping
+</A></li>
+	<LI>Next message: <A HREF="002571.html">[Lightning-dev] On massive channel closing and fee bumping
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2570">[ date ]</a>
+              <a href="thread.html#2570">[ thread ]</a>
+              <a href="subject.html#2570">[ subject ]</a>
+              <a href="author.html#2570">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

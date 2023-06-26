@@ -1,0 +1,116 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Updated commitment design + Release thunder.network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Updated%20commitment%20design%20%2B%20Release%20thunder.network&In-Reply-To=%3C2E1E73BA-0362-48D9-8B95-C9CC274A617D%40blockchain.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000540.html">
+   <LINK REL="Next"  HREF="000541.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Updated commitment design + Release thunder.network</H1>
+    <B>Mats Jerratsch</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Updated%20commitment%20design%20%2B%20Release%20thunder.network&In-Reply-To=%3C2E1E73BA-0362-48D9-8B95-C9CC274A617D%40blockchain.com%3E"
+       TITLE="[Lightning-dev] Updated commitment design + Release thunder.network">mats at blockchain.com
+       </A><BR>
+    <I>Tue May 17 13:58:17 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000540.html">[Lightning-dev] BOLT #2: wire protocol: YA acknowledgement	change.
+</A></li>
+        <LI>Next message: <A HREF="000541.html">[Lightning-dev] Updated commitment design + Release	thunder.network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#538">[ date ]</a>
+              <a href="thread.html#538">[ thread ]</a>
+              <a href="subject.html#538">[ subject ]</a>
+              <a href="author.html#538">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey everybody,
+
+Using SegWit, I thought of a more elegant way to solve the coupling problem between revocation delay and payment timeouts. ( <A HREF="../2015-November/000339.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000339.html</A> and following)
+
+A basic schema with one included payment can be seen here:
+
+<A HREF="https://raw.githubusercontent.com/blockchain/thunder/master/docs/dual-tx-diagram.png">https://raw.githubusercontent.com/blockchain/thunder/master/docs/dual-tx-diagram.png</A>
+
+The idea is that each payment and each refund does not directly pay to their respective owner, but to a intermediate 2-of-2 transaction. For redeeming a payment, one has to also use R to broadcast Redeem-TX, for broadcasting Refund-TX one has to wait the agreed refund time. Having broadcasted the additional transaction, one basically *secured* the funds, under the premise that one has not cheated by using an old commitment transaction. If he did cheated though, the other party can claim all funds directly from the commitment outputs or from the Redeem-TX outputs.
+
+This makes it possible to set revocation delay and payment timeouts to completely separate values (if it is not obvious why this was not possible before, I suggest reading the thread linked above).
+
+Now there are two downsides to this approach:
+
+(1) Clearing a payment on the blockchain is more expensive. Because we have an additional transaction for each payment, fees for redeeming the payment are higher. One has to take into account the fee for the additional transaction when producing the outputs for the commitment transaction. However, as most channels will not get settled on the blockchain anyways, this is a minor issue.
+
+(2) Updating the commitment transaction, one has produce and send a new signature for each currently included payment. For channels that have lots of uncleared payments for a long time this might be problematic, however, uncleared payments are undesirable for many reasons and adding disincentives for delaying the clearing process is on the TODO anyways.
+
+However, having a clean solution to the problem of high refund times (&gt;30d) and low revocation times (&lt;3d) is more important in the long run. 
+
+This means adding a few more fields to the way a new commitment status is negotiated, you can see the full exchange thunder is using here:
+<A HREF="https://github.com/matsjj/lightning/blob/master/communications/high/%5BTN%5DPaymentNegotiation.md">https://github.com/matsjj/lightning/blob/master/communications/high/%5BTN%5DPaymentNegotiation.md</A>
+
+&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;&#8212;
+
+Also, following the tradition of the other releases here on the mailing list I like to bring it over here more formally.
+
+thunder.network is a full lightning network implementation, based on my ongoing development for the past 15 months. The software is now at a point where it can be actively used and also integrated into other projects. If you have not tried the wallet out and made a basic payment, feel invited to start up two instances and try it out. 
+
+The implementation already uses CSV and will utilize SegWit (in progress). It&#8217;s a small change, about 250 LoC[1]. The intention is to build as trustless a system as possible. SegWit was not prioritized any higher than it is since it will be awhile before it can be utilized for any mainnet system. 
+
+This release contains two executables, a node and a wallet, and they both use the same library. 
+The node is a passive participant of the network. On startup the user can specify which nodes to build payment channels with. It will broadcast its existence into the network, such that other peers can also build payment channels with it. If you do want to start up the node, make sure you forwarded port 2204, such that you can receive incoming connections.
+
+The wallet is the counterpart, an active participants. The wallet is used to make and receive payments, but it will not broadcast its existence. Once we have RP routing sorted out, it will not broadcast anything anymore (for routing it still broadcasts any payment channel it has). It also provides some GUI as an example and for easier usage. 
+
+By default wallet and nodes do not communicate with the bitcoin network yet, as this makes it easier to debug and to try out. If you want to use testcoins, toggle the setting in Constants. Also, if you do want to see which messages are sent under the hood, toggle EncryptionProcessorImpl.OUTPUT_MESSAGE.
+
+
+Both, Node and Wallet software can be downloaded at
+<A HREF="https://github.com/blockchain/thundernetwork/releases">https://github.com/blockchain/thundernetwork/releases</A>
+
+Further information can be found at
+<A HREF="https://github.com/blockchain/thundernetwork">https://github.com/blockchain/thundernetwork</A>
+<A HREF="https://blockchain.com/thunder">https://blockchain.com/thunder</A>
+
+Cheers!
+
+[1]
+<A HREF="https://github.com/blockchain/thunder/commit/e9132c9f30719f430385e88cc1c04d7611b5dfd0">https://github.com/blockchain/thunder/commit/e9132c9f30719f430385e88cc1c04d7611b5dfd0</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160517/d9d64c5a/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160517/d9d64c5a/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000540.html">[Lightning-dev] BOLT #2: wire protocol: YA acknowledgement	change.
+</A></li>
+	<LI>Next message: <A HREF="000541.html">[Lightning-dev] Updated commitment design + Release	thunder.network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#538">[ date ]</a>
+              <a href="thread.html#538">[ thread ]</a>
+              <a href="subject.html#538">[ subject ]</a>
+              <a href="author.html#538">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

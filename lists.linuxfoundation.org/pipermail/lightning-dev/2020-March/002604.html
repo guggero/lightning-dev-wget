@@ -1,0 +1,115 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Difference between ignoring htlc request due to	wrong payment hash vs refusing to release preimage in LND
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Difference%20between%20ignoring%20htlc%20request%20due%20to%0A%09wrong%20payment%20hash%20vs%20refusing%20to%20release%20preimage%20in%20LND&In-Reply-To=%3CTqC028xl3Z3tAFOm-D8LJW8BrExd2NlR3cw6CgSy8LcnIMv91e8L8zwDQOfmNB6UOEYvyVgRBBSHI997tJ6IPaYeiB6EfZgKfW-knsGatzk%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002602.html">
+   <LINK REL="Next"  HREF="002603.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Difference between ignoring htlc request due to	wrong payment hash vs refusing to release preimage in LND</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Difference%20between%20ignoring%20htlc%20request%20due%20to%0A%09wrong%20payment%20hash%20vs%20refusing%20to%20release%20preimage%20in%20LND&In-Reply-To=%3CTqC028xl3Z3tAFOm-D8LJW8BrExd2NlR3cw6CgSy8LcnIMv91e8L8zwDQOfmNB6UOEYvyVgRBBSHI997tJ6IPaYeiB6EfZgKfW-knsGatzk%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Difference between ignoring htlc request due to	wrong payment hash vs refusing to release preimage in LND">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Mar 24 11:15:34 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002602.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+        <LI>Next message: <A HREF="002603.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2604">[ date ]</a>
+              <a href="thread.html#2604">[ thread ]</a>
+              <a href="subject.html#2604">[ subject ]</a>
+              <a href="author.html#2604">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Subhra,
+
+&gt;<i> Thanks ZmnSCPxj. Just a clarification on the idea proposed so that means here B needs to delay the HTLC acceptance?&#160; Pardon my knowledge on c-lightning, but what exactly happens upon htlc_acceptance? Release of preimage or just an acknowledgment by B reaching to the point of irrevocably committed?&#160;&#160;
+</I>
+This event is emitted when an incoming HTLC is irrevocably committed.
+This is a hook, and what happens will depend on what the hook returns:
+
+* It returns `{&quot;result&quot;:&quot;continue&quot;}`: normal processing of the HTLC (forward, fail, or claim as normal operation).
+* It returns `{&quot;result&quot;:&quot;fail&quot;, &quot;failure_message&quot;: &quot;2002&quot;}`: fail the HTLC with the given failure message, failure message is a hex-encoded failure blob, see BOLT 4 for how.
+* It returns `{&quot;result&quot;: &quot;resolve&quot;, &quot;payment_key&quot;: &quot;0000000000000000000000000000000000000000000000000000000000000000&quot;}`: claim the HTLC regardless of whether it is a forward or terminates here, the given `payment_key` is the 64-hex-digits encoding of the preimage.
+
+For the most part, for purposes of griefing, you can just delay the default `{&quot;result&quot;:&quot;continue&quot;}` for as long as you want to grief the payment, this will work for both forwards and payment receives correctly, except griefed.
+
+See [our docs](<A HREF="https://lightning.readthedocs.io/PLUGINS.html#htlc-accepted">https://lightning.readthedocs.io/PLUGINS.html#htlc-accepted</A>) for more.
+
+Regards,
+ZmnSCPxj
+
+&gt;<i>
+</I>&gt;<i> On Tue, Mar 24, 2020 at 1:57 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Good morning Subhra,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Hi,
+</I>&gt;<i> &gt; &gt; &#160;&#160;&#160; I was just playing around with LND and established a channel between 2 parties A and B. When sending a payment to B via HTLC, B adds an invoice and over here I used a different payment hash for A for sendpayment with a delta of 144 blocks. The error I got on initiating send payment is &quot;incorrect or unknown payment details&quot;. So what is exactly happening here? Is B ignoring any formation of HTLC between them?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; A and B form an HTLC in them, to the point that it is &quot;irrevocably committed&quot;.
+</I>&gt;<i> &gt; It is a recommendation of BOLT spec that you pretty much do not do anything until an incoming HTLC reaches &quot;irrevocably committed&quot; state.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Then, B looks at the HTLC data.
+</I>&gt;<i> &gt; If B knows the preimage to the payment hash, it claims the HTLC immediately as soon as it is irrevocably committed.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If B does not know the preimage, it checks if there is forwarding data.
+</I>&gt;<i> &gt; If there is no forwarding data (B is the final hop) then B responds with &quot;incorrect or unknown payment details&quot;, then A waits for the channel state to advance so that the HTLC getting removed reaches &quot;irrevocably committed&quot;, then reports the failure to the user.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; I hope in this case no money gets locked in this case.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Money got locked temporarily int the HTLC, but was freed very soon afterwards, as fast as B and A can advance the channel state (which is limited by your hardware and network speeds).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Then how can one mimic griefing attack scenario (B refusing to release the correct preimage) in LND?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; You may need to modify LND code directly, or ask LND devs if there are any such hooks available.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; In C-Lightning, you will have to install a plugin, devise some way for the plugin to know of what payment hash you want to grief, then have the plugin hook into `htlc_accepted`.
+</I>&gt;<i> &gt; In `htlc_accepted` handler, if the incoming HTLC has a payment hash matching what you want to grief, you then perform a `waitblockheight` command to wait for the target block height you want to grief for, then return from the `htlc_accepted` handler.
+</I>&gt;<i> &gt; (This can be complicated by the exact language you use to implement the plugin, remember the plugin should be async so it should still respond with `{&quot;result&quot;:&quot;continue&quot;}` immediately to other incoming `htlc_accepted` as normal, if you implement the plugin in Python the Python C-Lightning plugin library should &quot;just work&quot; as far as I know as it transforms the Python into an async language, but ask cdecker for that; but if you have a sufficiently monadic framework for asynchronicity (a la Javascript `Promise`/Haskell `IO`) it should work like that.)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Regards,
+</I>&gt;<i> &gt; ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Yours sincerely,
+</I>&gt;<i> Subhra Mazumdar.
+</I>
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002602.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+	<LI>Next message: <A HREF="002603.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2604">[ date ]</a>
+              <a href="thread.html#2604">[ thread ]</a>
+              <a href="subject.html#2604">[ subject ]</a>
+              <a href="author.html#2604">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

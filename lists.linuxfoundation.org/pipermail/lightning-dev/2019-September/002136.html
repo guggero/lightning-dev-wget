@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Reconciling the off-chain and on-chain models with	eltoo
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Reconciling%20the%20off-chain%20and%20on-chain%20models%20with%0A%09eltoo&In-Reply-To=%3C87mufhva0k.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002143.html">
+   <LINK REL="Next"  HREF="002137.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Reconciling the off-chain and on-chain models with	eltoo</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Reconciling%20the%20off-chain%20and%20on-chain%20models%20with%0A%09eltoo&In-Reply-To=%3C87mufhva0k.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Reconciling the off-chain and on-chain models with	eltoo">decker.christian at gmail.com
+       </A><BR>
+    <I>Fri Sep  6 13:18:03 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002143.html">[Lightning-dev] Miniscript on LN (was: eltoo implementation in	Bitcoin functional test framework)
+</A></li>
+        <LI>Next message: <A HREF="002137.html">[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2136">[ date ]</a>
+              <a href="thread.html#2136">[ thread ]</a>
+              <a href="subject.html#2136">[ subject ]</a>
+              <a href="author.html#2136">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>With the recently published proof-of-concept of eltoo on signet by
+Richard, I thought it might a good time to share some thoughts on ho I
+think we can build this system. I think there are a few properties of
+eltoo that allow us to build a nicely layered protocol stack, which
+improves flexibility and simplifies the reasoning about their relative
+security.
+
+Since I don't like huge e-mails myself and I'm about to write one,
+here's a quick TL;DR:
+
+&gt;<i> Using the clean separation of protocol layers provided by eltoo we can
+</I>&gt;<i> reconcile many on-chain and off-chain concepts, and simplify the
+</I>&gt;<i> reasoning to build more complex functionality beyond simple
+</I>&gt;<i> HTLCs. Bitcoin transactions are a natural fit to represent proposed
+</I>&gt;<i> off-chain state-changes while they are being negotiated.
+</I>
+
+### Clean separation of protocol layers
+
+One of te big advantages of eltoo over other off-chain update mechanisms
+is that it provides strong guarantees regarding the state that will
+eventually end up confirmed on-chain. If parties in an eltoo off-chain
+contract agree on an update, we can be certain (within eltoo's security
+assumptions) that this is the state that will eventually confirm
+on-chain, if no newer states are agreed.
+
+In particular it means that we are guaranteed no earlier state can leak
+onto the chain, keeping anything we build on top of the update layer
+unencumbered since it doesn't have to deal with this case.
+
+This is in stark contrast to the penalty update mechanism, where
+old/revoked states can leak on-chain, resulting in anything built on top
+of the penalty mechanism having to deal with that eventuality. For
+example if we look at HTLCs as specified [1] we see that it needs an
+additional revokation path for the case the commitment transaction that
+created this HTLC output is confirmed:
+
+```btcscript
+# To remote node with revocation key
+OP_DUP OP_HASH160 &lt;RIPEMD160(SHA256(revocationpubkey))&gt; OP_EQUAL
+OP_IF
+    OP_CHECKSIG
+OP_ELSE
+    &lt;remote_htlcpubkey&gt; OP_SWAP OP_SIZE 32 OP_EQUAL
+    OP_IF
+        # To local node via HTLC-success transaction.
+        OP_HASH160 &lt;RIPEMD160(payment_hash)&gt; OP_EQUALVERIFY
+        2 OP_SWAP &lt;local_htlcpubkey&gt; 2 OP_CHECKMULTISIG
+    OP_ELSE
+        # To remote node after timeout.
+        OP_DROP &lt;cltv_expiry&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+        OP_CHECKSIG
+    OP_ENDIF
+OP_ENDIF
+```
+
+The update mechanism bleeding into the other layers is rather cumbersome
+if you ask me, and complicates the reasoning about security. Having to
+thread the penalty through outputs created by the off-chain contract may
+also not work if we deal with more than 2 parties, since penalties
+always steal all the funds, regardless of whether the output belonged to
+the cheater or not (see asymmetry vs symmetry argument from the paper
+[2]).
+
+With the clean separation we get from eltoo we can concentrate on
+building the output scripts we'd like to have without having to thread
+penalties through them. This reduces the complexity and our on-chain
+footprint.
+
+The update layer now exposes only two very simple operations:
+`add_output` and `remove_output` (this should sound very familiar :-p).
+
+
+### Ownership and atomic update model
+
+Now that we have a solid update layer, which ensures that agreed upon
+states will eventually be reflected on-chain, we can turn our attention
+to the next layer up: the negotiation layer. Each output in our
+agreed-upon state needs to be assigned one or more owners. The owners
+are the participants that need to sign off on removal of an output and
+the creation of new outputs which redistribute the funds contained in
+the removed outputs to newly created outputs.
+
+In addition we need to ensure that multiple `remove_output` and
+`add_output` are guaranteed to be applied atomically. By creating a
+datastructure that lists a number of operations that are to either be
+applied to the current state or discarded, we can have arbitrary complex
+changes of ownership, and the newly created outputs can have arbitrary
+scripts.
+
+If all of this sounds familiar that's because this is exactly the UTXO
+model and the transaction structure we have in Bitcoin. We
+collaboratively manage funds bound to some outputs (UTXO) and can change
+their ownership and allocation over time (transactions).
+
+This means that a subset of the participants in an off-chain contract
+can negotiate among themselves how to redistribute funds, join and split
+them in an arbitrary fashion, without the rest of the contract being
+involved. The end result is a valid Bitcoin transaction that spends some
+outputs of the current state, and is signed by the owners. The
+transaction can then be presented to the entire group, and applied to
+the state. Applying the transaction flattens multiple transactions built
+on top of the current state into a new state (similar to transaction
+cut-through in mimblewimble).
+
+Using transactions as a means to represent off-chain negotiations, and
+then applying them to the off-chain state via cut-through has a number
+of advantages over similar schemes:
+
+- Even if we failed to update the off-chain state, the transactions
+  building on top of it are valid transactions, so once we tear down
+  the channel, our negotiated new state can still be reached by
+  broadcasting the transaction after settlement (this is basically
+  what the channel factory paper [3] was using).
+    
+- We can reuse a lot of tools that we have already built for on-chain
+  transactions, including things like miniscript and hardware wallets,
+  without explicitly requiring them in our own specification. The
+  Bitcoin object model is our interface here.
+
+- It allows for experimentation even inside a running eltoo instance. If
+  you can find another participant that supports a fancy new protocol,
+  you can use that protocol even though some of the other participants
+  may not know anything about it. As long as you can understand the
+  Bitcoin transaction model you can participate in a multi-party
+  channel.
+
+I think this reconciliation between the off-chain model and the on-chain
+model, with many concepts cleanly mapping from one context to another
+(state outputs = UTXO, off-chain update = on-chain transactions,
+cut-through = confirmation, operation batching = block creation) is
+rather nice :-)
+
+That should be enough rambling on my side. I'm interested in what others
+think about this. Is it completely off, does it make no sense at all, or
+is this something we should be looking into going forward?
+
+Cheers,
+Christian
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#received-htlc-outputs">https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#received-htlc-outputs</A>
+[2] <A HREF="https://blockstream.com/eltoo.pdf">https://blockstream.com/eltoo.pdf</A>
+[3] <A HREF="https://tik-old.ee.ethz.ch/file/a20a865ce40d40c8f942cf206a7cba96/Scalable%5FFunding%5FOf%5FBlockchain%5FMicropayment%5FNetworks.pdf">https://tik-old.ee.ethz.ch/file/a20a865ce40d40c8f942cf206a7cba96/Scalable%5FFunding%5FOf%5FBlockchain%5FMicropayment%5FNetworks.pdf</A>
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002143.html">[Lightning-dev] Miniscript on LN (was: eltoo implementation in	Bitcoin functional test framework)
+</A></li>
+	<LI>Next message: <A HREF="002137.html">[Lightning-dev] [bitcoin-dev] Reconciling the off-chain and	on-chain models with eltoo
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2136">[ date ]</a>
+              <a href="thread.html#2136">[ thread ]</a>
+              <a href="subject.html#2136">[ subject ]</a>
+              <a href="author.html#2136">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

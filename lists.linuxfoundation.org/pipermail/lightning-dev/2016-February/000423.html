@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C1454435768.2011.28.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000420.html">
+   <LINK REL="Next"  HREF="000425.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C1454435768.2011.28.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Tue Feb  2 17:56:08 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000420.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+        <LI>Next message: <A HREF="000425.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#423">[ date ]</a>
+              <a href="thread.html#423">[ thread ]</a>
+              <a href="subject.html#423">[ subject ]</a>
+              <a href="author.html#423">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+&gt;<i> &gt; * Message confirmation: this is done manually (instead of relying on
+</I>&gt;<i> &gt; TCP), so that a node knows which messages were received / need to be
+</I>&gt;<i> &gt; re-transmitted, even after a crash + restart.
+</I>&gt;<i> 
+</I>&gt;<i> I think the protocol itself needs to be robust against retransmissions.
+</I>&gt;<i> There's no way to know if the other side received your acknowledgement
+</I>&gt;<i> before a crash, so you will always need to handle duplication on
+</I>&gt;<i> re-establishment.
+</I>
+Yes. Amiko Pay does that: It assigns a number to every message, and the
+receiving side can confirm &quot;I've received up to this number&quot;.
+Not-yet-confirmed messages will be retransmitted, and the receiving
+sides will ignore duplicates (except it will send a confirmation again,
+in case the previous confirmation was lost).
+
+&gt;<i> &gt; * There is not only two-way communication between linked peers, but also
+</I>&gt;<i> &gt; between payer and payee. This is necessary for Amiko Pay's
+</I>&gt;<i> &gt; bi-directional routing, but also useful e.g. for transmitting meta-data
+</I>&gt;<i> &gt; that doesn't fit in a QR code. Amiko Pay transmits an arbitrary-contents
+</I>&gt;<i> &gt; &quot;receipt&quot; from payee to payer; in the future, this might be digitally
+</I>&gt;<i> &gt; signed by the payee, as a &quot;proof of transfer of ownership&quot; of
+</I>&gt;<i> &gt; non-cryptographic goods.
+</I>&gt;<i> 
+</I>&gt;<i> I agree.  There's room in the initial onion design for payer -&gt; payee
+</I>&gt;<i> messages, but we don't have a channel for responses.
+</I>&gt;<i> 
+</I>&gt;<i> I can't see an easy way to implement the payee --&gt; payer comms reliably:
+</I>&gt;<i> to be reliable it would have to be published on-chain in the commit tx.
+</I>&gt;<i> (Which we could do by constructing HTLCs such that they require a blob
+</I>&gt;<i> signed by the payee, but that's tracable ...).
+</I>&gt;<i> 
+</I>&gt;<i> Mats and Laolu wanted to add an arbitrary comms protocol layer, but I
+</I>&gt;<i> think that's something we can defer.
+</I>
+In Amiko Pay, payer &lt;-&gt; payee communication is done on a direct TCP
+stream between them. Note that this also reduces latency: once
+transaction locking reaches the payee, the payee knows (s)he's capable
+of claiming the money, and can tell the payer that the payment is
+completed. If reduced latency is in the interest of the payee, this is
+likely to happen.
+
+&gt;<i> &gt; * Reserving before locking: this is an optimization, to reduce the risk
+</I>&gt;<i> &gt; of locking funds in payment channels on a part of the route, and then
+</I>&gt;<i> &gt; having to undo the locking when it turns out that the remaining part of
+</I>&gt;<i> &gt; the route doesn't exist (anymore). Reserving is an informal(*),
+</I>&gt;<i> &gt; temporary locking of funds for use in the transaction, and can be done
+</I>&gt;<i> &gt; and undone very fast, without any channel operations. It is done
+</I>&gt;<i> &gt; together with route searching + establishment.
+</I>&gt;<i> 
+</I>&gt;<i> I think that trades one DoS for another, though.  It saves cryptographic
+</I>&gt;<i> constructs, but latency is the real cost, and this increases it.
+</I>&gt;<i> 
+</I>&gt;<i> Of course, we'll have to revisit that if the network in practice proves
+</I>&gt;<i> subject to these problems...
+</I>
+For one category of channel designs, reserving is absolutely essential:
+channels where bi-directional payments are made possible with a
+decrementing lock time. There, you want to make sure that failed routing
+attempts don't cause lock time decrements, since that would reduce the
+channel lifetime more than necessary. I'd have to check whether there is
+still any use case for this channel design, and whether the reserving
+step is important for some other reason.
+
+Note that reserving is necessary for bi-directional routing: on the
+payee side of the meeting point, routing happens in the payee -&gt; meeting
+point direction, but locking has to happen in the meeting point -&gt; payee
+direction. So, they have to be different steps.
+
+On latency: what latency do you think is needed for different use cases,
+and what can we reach? Does this extra step really make a difference?
+
+My estimate is that we'll typically have 10 hops (&quot;six degrees of
+separation&quot; theory), and 100ms to transmit a message(*) over one hop.
+
+Without reserving, you need to traverse all hops once(**) (the locking
+operation) before payer(***)+payee know that the transaction has
+succeeded. Actual settlement on the channels happens afterwards, but is
+no longer critical for the latency as seen by payer+payee.
+
+With reserving, you need to traverse all hops three times(**), in the
+worst case that the meeting point is on one of the end points of the
+route: once for making the route and reserving funds, once for
+confirming that the route has been established and once for locking.
+
+So, instead of one second, a transaction might take three seconds. Is
+that a game changer? Maybe it is for e.g. public transport access gates,
+where passenger throughput is essential. But then, people could reduce
+latency a lot by having a direct channel with the public transport
+operator.
+
+For some use cases, e.g. high-frequency trading, people might of course
+manually optimize their network and physical location to get better
+figures than this.
+
+CJP
+
+(*) Not counting sending the confirmation back: a node that receives a
+message can immediately forward a message on the next hop; message
+confirmation on the receiving side can occur in parallel.
+
+(**) Not counting failed routing attempts
+
+(***) Assuming the payee tells the payer directly about the payment
+succes, over a low-latency connection
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000420.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+	<LI>Next message: <A HREF="000425.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#423">[ date ]</a>
+              <a href="thread.html#423">[ thread ]</a>
+              <a href="subject.html#423">[ subject ]</a>
+              <a href="author.html#423">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Multi-party channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Multi-party%20channels&In-Reply-To=%3CCAE-z3OVBiebsqK5%3DNGPKfyBAVQCDju5dhg99xShqReBgp-H8GA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000542.html">
+   <LINK REL="Next"  HREF="000545.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Multi-party channels</H1>
+    <B>Tier Nolan</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Multi-party%20channels&In-Reply-To=%3CCAE-z3OVBiebsqK5%3DNGPKfyBAVQCDju5dhg99xShqReBgp-H8GA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Multi-party channels">tier.nolan at gmail.com
+       </A><BR>
+    <I>Fri May 27 20:38:40 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000542.html">[Lightning-dev] Lightning C prototype v0.3: &quot;Nakamoto's Genesis	Coins&quot;
+</A></li>
+        <LI>Next message: <A HREF="000545.html">[Lightning-dev] Multi-party channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#543">[ date ]</a>
+              <a href="thread.html#543">[ thread ]</a>
+              <a href="subject.html#543">[ subject ]</a>
+              <a href="author.html#543">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hubs on the Lightning network require a large amount of capital.  If a hub
+wants to be able to send 1 BTC to N customers, then it needs to create N
+channels and lock 1BTC in each of them.
+
+This creates an economy of scale effect for hubs.  Hubs with more capital
+can support larger channels and/or more customers.  If the de facto barrier
+to entry for hubs is high enough, then the number of hubs will be small,
+making cartel formation easier.
+
+With multi-party channels, a hub could share its capital between multiple
+customers.
+
+I think it should be possible to shoehorn multi-party channels as a soft
+fork, but makes it harder to explain the concept.  For this post, I will
+assume a hard-fork and any rule change can be used.
+
+*** Basic Multiparty Channels ***
+
+A basic multi-party channel requires all participants to sign each state
+update.
+
+Each state update would incorporate the index number of the state.  This
+allows states to be ordered.  They would also have a unique channel id.
+
+Assuming everyone is honest, a channel would operate as follows.
+
+&lt;channel established by multiple participants and timeout agreed&gt;
+
+&lt;state update 1, signed by all participants&gt;
+&lt;state update 2, signed by all participants&gt;
+
+&lt;state update M, signed by all participants&gt;
+
+&lt;channel times out - closes are now allowed&gt;
+
+&lt;someone publishes a state update, signed by all but signed again (twice)
+by the broadcaster&gt;
+
+&lt;outputs unspendable for 24 hours&gt;
+
+If the broadcaster didn't publish the most recent state update, then
+another participant is allowed to broadcast a later update.  If this is
+included in a block within the 24 hour window, then it overwrites the
+original state update (and starts another 24 hour timeout).
+
+This is the main hard fork bit, the state update is a transaction that is
+included in the block chain.  Unlike normal transactions, state updates can
+be overwritten within 24 hours.  Locking the transaction outputs during
+that time means that this is safe.
+
+Since each broadcaster has to sign their broadcast, it is possible to
+determine who is to blame for broadcasting an expired state update.
+
+They could lose their contribution to the channel as with normal lightning
+network channels.
+
+This creates an incentive for all parties to broadcast only the most recent
+state.
+
+This system require signatures from all the parties for all state updates
+and updates are impossible while any of the parties are offline (or
+uncooperative).
+
+*** Flexible Multiparty Channels ***
+
+A better system is that state updates require the signatures of parties who
+lose out due to the state update only.  Unless a state update decreases a
+participant's holdings, that participant is not required to sign the update.
+
+For efficiency, the hub could be a special member that must sign all
+updates.  It is assumed that the hub is online all the time.
+
+Until the channel times out, only the hub can broadcast the final state of
+the channel.  After that point, any of the participants would be allowed to
+broadcast to close the channel.  This prevents a participant from closing a
+channel that everyone else wants to keep open.
+
+As before the outputs from the channel would be locked for 24 hours to give
+participants a chance to challenge the final state.
+
+Participants would have the option of broadcasting the latest state that
+they signed.  A challenge is only allowed if the participant has less
+holdings in the final state than in the latest one that they signed.
+
+The hub could then respond with a later state that the participant signed.
+If the hub broadcasts that proof of fraud, then the participant would lose
+their money (or vice versa, if the hub tried to steal their money).
+
+Since each fraud step causes a participant to be kicked from the channel,
+eventually, it should settle on the actual honest final state and in most
+cases, hubs would be honest anyway.
+
+The state updates could work like a blockchain with previous pointers.
+This means that if a participant signs state n, it is also signing all
+states below state n.
+
+Parties would download the entire state chain from the hub whenever they
+come online and verify that it is a valid history.  If the hub signs states
+on more than than 1 fork, then the hub would lose its deposit.
+
+If the hub is honest, then the close step should be reasonably fast.  Fraud
+claim timeouts could be handled in parallel too.
+
+It should be possible to set things up so that the channel is mostly
+eternal.  Parties could be added and removed from the channel without it
+having to be closed.  This would require some kind of on-chain activity
+though unless the withdrawal is handled by moving to another channel.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160527/ce86e199/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160527/ce86e199/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000542.html">[Lightning-dev] Lightning C prototype v0.3: &quot;Nakamoto's Genesis	Coins&quot;
+</A></li>
+	<LI>Next message: <A HREF="000545.html">[Lightning-dev] Multi-party channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#543">[ date ]</a>
+              <a href="thread.html#543">[ thread ]</a>
+              <a href="subject.html#543">[ subject ]</a>
+              <a href="author.html#543">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

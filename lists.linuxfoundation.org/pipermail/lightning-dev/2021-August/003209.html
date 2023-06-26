@@ -1,0 +1,530 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Handling nonzerobasefee when using Pickhard-Richter algo variants
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Handling%20nonzerobasefee%20when%20using%0A%20Pickhard-Richter%20algo%20variants&In-Reply-To=%3CCAJ5H3Z4cb7y64ZHfL7zZ%3D2khy0JJLnWn__F89SyY115DnPVV%2Bw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003208.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Handling nonzerobasefee when using Pickhard-Richter algo variants</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Handling%20nonzerobasefee%20when%20using%0A%20Pickhard-Richter%20algo%20variants&In-Reply-To=%3CCAJ5H3Z4cb7y64ZHfL7zZ%3D2khy0JJLnWn__F89SyY115DnPVV%2Bw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Handling nonzerobasefee when using Pickhard-Richter algo variants">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Mon Aug 30 12:32:30 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003208.html">[Lightning-dev] Handling nonzerobasefee when using Pickhard-Richter algo variants
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3209">[ date ]</a>
+              <a href="thread.html#3209">[ thread ]</a>
+              <a href="subject.html#3209">[ subject ]</a>
+              <a href="author.html#3209">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear ZmnSCPxj,
+
+thank you very much for this mail and in particular the openess to tinker
+about a protocol change with respect to the transport layer of HTLCs /
+PTLCs! I fully agree that we should think about adopting our onion
+transport layer in a way that supports local payment splits and merges to
+resemble the flowing nature of payments more closely! While an update for
+that might be tricky I think right now is a perfect moment for such
+discussions as we kind of need a full upgrade anyway when going to PTLCs
+(which in fact might even be helpful with a local splittling / merging
+logic as secrets would be additive / linear) Before I elaborate let me
+state a few things and correct an error in your mail about the convex
+nature of the fee function and the problems of the min-cost flow solver.
+
+I agree with you (and AJ) that there is a problem in the base fee that
+comes from overpaying when dissecting a flow into paths which share a
+channel. However this is not related to the convexity issue. In a recent
+mail [0] I conductd the calculation demonstrating why the current fee
+function f(x)=x*r+b is not even linear (every linear function should be
+convex). As described in the paper the problem is for the min cost flow
+solving algorithms if the cost-function (in that case the fee function) is
+neither linear nor convex.
+
+The issue that breaks convexity is really subtle here and comes when going
+from 0 flow to some flow. In that sense I apologize that the paper might be
+slightly misleading in its presentation. While convexity is often checked
+with the second derivative argument our function is in fact defined on
+integers and thus not even differentiable which is why the argument with
+the second derivative that we use to show the convexity of the negative log
+probabilities is not transferable.
+
+Let us better go with the wikipedia definition of convexity [1] that
+states:
+&quot;In mathematics, a real-valued function is called convex if the line
+segment between any two points on the graph of the function lies above the
+graph between the two points.&quot;
+
+So how you would test convexity is by making sure that for any two values
+x_1 and x_2 the line connecting the points (x_1,f(x_1)) and (x_2,f(x_2))
+lies above all other points (x,f(x)) for x  \in {x_1, ...., x_2}. In our
+case because f(0)=0 and f(2)=2r+b
+The line connecting those two points is defined by l(x)=((2r+b)/2)*x =
+(r+b/2)*x which means that l(1)=r+b/2.
+however f(1) = r+ b which is larger than l(1) for any positive value of b.
+(Note that again with a zerobasefee b=0 we have f(1)=r=l(1) which would be
+sufficient)
+
+If you implement the capacity scaling algorithm for a min-cost flow solver
+you will see that the algorithm linearizes the convex costs all the time by
+switching to a unit cost in each delta-scaling phase (as described in
+section 9, 10.2 and 14.1 through 14.5 of the book [2] that we refer to in
+the paper and that Stefan already mentioned to you). This seems very
+ismilar to the thoughts you seemed to have in your mail (though even after
+reading them 3 times I can't verify how you turned the base_fee into a
+proportional term by switching to a unisized payment amount). You will also
+recognize that the base fee is not linearizable as a unit cost and will
+break the reduced cost optimality criterium in the delta phases of the
+algorithm. That being said in our mainnet tests we actually used 10k and
+100k sats as a fixed min unit size for htlcs in flow computation but more
+about that in the already announced and soon to come mail about the mainnet
+tests.
+
+Long story short while the base fee yields indeed a problem for a flow to
+be dissected into paths the issues seems to be much more severe because of
+this non continious jump when going from f(0) to f(1).
+
+All that being said I am very delighted to see that you propose a protocol
+change towards &quot;whole flow payments&quot; (Please allow me to still call them
+payment flows as our paper title suggested). In my recent mail [0] I said I
+would want to write another mail about  our mainnet test results and the
+the consequences for the protocol, node operators, users etc... One of the
+consequences goes fully along with the idea that you described here and
+thus I very much like / appreciate your idea / proposal! As the other mail
+was too long anyway let me quickly copy and past the text about the 5
+consequences for the protocol that I saw from my draft and note that the
+second one goes fully along with your proposal:
+
+Consequences for the Protocol
+========================
+
+1.) As we send larger amounts we confirmed what many people already knew:
+Stuck and hanging HTLCs are becoming more of a problem. The main reason
+that in our experiments we could not deliver the full amount was that we
+&quot;lost&quot; htlcs as they did neither arrive at the destination in time nor did
+they return as errors to the sender quickly enough before the mpp timeout.
+We very very much need a cancable payment mechanism [3]. I know taproot and
+PTLCs are coming but I think we should really emphasize on this aspect. I
+think the focus is of particular interest as I think it is bad that the
+current way of canceling an onion with the help of PTLCs can still lead to
+channel failure on the remote channel where the PTLC is stuck and still
+bind the local liquidity for a long time potentially preventing the sender
+to conduct the full payment and also binding the liquidity of the residual
+flow.
+
+2.)  When dissecting a payment flow into several paths it can and might
+happen that the amount `amt` sent through a remote channel will be actually
+coming from several inbound channels of the sending node of that channel or
+be going to several outbound channels of the receiving node of that
+channel. To me it seems reasonable to adopt the transport of HTLCs (or when
+redesigning with PTLCs) to have a transport mechanism that is more
+reflecting this reality of flows. In particular I envision a new lightning
+message called `update_update_htlc` to compliment `update_add_htlc`. This
+message would allow to increase or reduce the amount of an HTLC committed /
+offered to a channel so that folks would not have to have parallel htlcs in
+a channel that all belonged to the same payment. Maybe the channel factory
+ideas on eltoo channels that  AJ Townes mentioned might be another
+direction to achieve this. Also I believe similar ideas have been discussed
+with link-AMP in the past.
+
+3.) Especially when optimizing for success probabilities I believe there is
+a strong argument to solve min cost flows not for the amount to be paid but
+rather in a way that the expected value to be delivered matches the amount
+that one wishes to send. We can achieve this by computing the optimal flow
+for a larger amount and then send out redundant but cancable onions similar
+to the mechanism described in the Boomerang Paper [4] which I am happy to
+recommend to look at again.
+
+4.) I want to recall that nodes probe the channels of their neighbors
+anyway while delivering the payment. If we had Friend of a Friend Balance
+sharing [5] together with a fee free rebalancing protocol we would reduce
+the uncertainty around the sender and the recipient (to be included in
+blinded path routing hints in the invoices or offers) drastically and
+improving the overall speed for larger payments to arrive because we first
+had more information about the neighborhood of the sender and the
+recipient. Additionally the prior probability changes from a uniform
+distribution to a normal distribution as shown in figure 13 in the
+probabilistic payment paper[6] which reduceses the necessary attempts again
+as shown in figure 14 of the same paper.
+
+5.) If we either believe it is the best to drop the base fee and/or if we
+see that users stop using it we might want to think about depricating the
+base fee also on a protocol level (or if I recall correctly as has been
+done with the do not fragment bit / flag in IP) to reinterpret that the
+semantics of the base fee.
+
+As you can see when I was about to introduce this idea not because I was
+not worried about paying the basefee several times in disection (I guess
+the base fee will go away anyway) but just because for more practical
+reasons about HTLC space in commitment transactions (which I think is
+another excellent reason) to think more about a transport layer that
+respects flows as it also addresses the fixed cost issues (not in terms of
+signatures but in terms of potential on chain fees and transaction size).
+That being said I am not sure how easy it will be for us to create an onion
+transport to actually communicate the flow but I was arguing that maybe
+with a simple new Lightning message called `update_update_htlc` that would
+allow to update the amount of a given HTLC we could create something
+similar to local payment splitting and merging . In fact this could work in
+particular if an HTLC of size X arrives at a channel that has less
+liquidity than X. The forwarding node could back propagate the value that
+was passoible by lowering all upstream HTLCs to the liquidity the payer has
+in the downstream channel (though I haven't fully thought about all the
+consequences with respect to security for this yet)
+
+with kind regards Rene
+
+[0]:
+<A HREF="003203.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/003203.html</A>
+[1]: <A HREF="https://en.wikipedia.org/wiki/Convex_function">https://en.wikipedia.org/wiki/Convex_function</A>
+[2]: Network Flows: Theory, Algorithms, and Applications Buch von James B.
+Orlin, Ravindra K. Ahuja und Thomas L. Magnanti
+[3]:
+<A HREF="../2019-June/002029.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/002029.html</A>
+[4]: <A HREF="https://arxiv.org/pdf/1910.01834.pdf">https://arxiv.org/pdf/1910.01834.pdf</A>
+[5]: <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/780">https://github.com/lightningnetwork/lightning-rfc/pull/780</A>
+[6]: <A HREF="https://arxiv.org/abs/2103.08576">https://arxiv.org/abs/2103.08576</A>
+
+
+On Mon, Aug 30, 2021 at 12:58 PM ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Good morning list,
+</I>&gt;<i>
+</I>&gt;<i> It seems to me that the cost function defined in Pickhard-Richter
+</I>&gt;<i> can in fact include a base fee:
+</I>&gt;<i>
+</I>&gt;<i>     -log(success_probability) + fudging_factor * amount * prop_fee +
+</I>&gt;<i> fudging_factor * base_fee
+</I>&gt;<i>
+</I>&gt;<i> (Rant: why do mathists prefer single-symbol var names, in software
+</I>&gt;<i> engineering there is a strong injunction **against** single-char
+</I>&gt;<i> var names, with exceptions for simple numeric iteration loop vars,
+</I>&gt;<i> I mean keeping track of the meaning of each single-symbol var name
+</I>&gt;<i> takes up working memory space, which is fairly limited on a wetware
+</I>&gt;<i> CPU, which is precisely why in software engineering there is an
+</I>&gt;<i> injunction against single-char var names, srsly.)
+</I>&gt;<i>
+</I>&gt;<i> It seems to me that the above is &quot;convex&quot;, as the `fudging_factor`
+</I>&gt;<i> for a run will be constant, and the `base_fee` for the channel
+</I>&gt;<i> would also be constant, and since it seems to me, naively, that
+</I>&gt;<i> the paper defines &quot;convex&quot; as &quot;the second derivative &gt;= 0 for all
+</I>&gt;<i> `amount`&quot;, and since the derivative of a constant is 0, the above
+</I>&gt;<i> would still remain convex.
+</I>&gt;<i> (I am not a mathist and this conjecture might be completely asinine.)
+</I>&gt;<i>
+</I>&gt;<i> So, it seems to me that the *real* reason for `#zerobasefee` is
+</I>&gt;<i> not that the **mincostflow** algorithm cannot handle non-zero `base_fee`,
+</I>&gt;<i> but rather, the **disect** phase afterwards cannot handle non-zero
+</I>&gt;<i> `base_fee`.
+</I>&gt;<i>
+</I>&gt;<i> For example, suppose the minflowcost algorithm were instructed to
+</I>&gt;<i> deliver 3,000msat from `S` to `D`, and returned the following flow:
+</I>&gt;<i>
+</I>&gt;<i>     S --&gt;3000--&gt; A -&gt;1000-&gt; B
+</I>&gt;<i>                  |          |
+</I>&gt;<i>                  |        1000
+</I>&gt;<i>                  |          v
+</I>&gt;<i>                  +--&gt;2000-&gt; C -&gt;3000-&gt; D
+</I>&gt;<i>
+</I>&gt;<i> In the &quot;disect&quot; phase afterwards, the above flow solution would have
+</I>&gt;<i> to be split into two sub-payments, a 1000 sub-payment `S-A-B-C-D`
+</I>&gt;<i> and a 2000 sub-payment `S-A-C-D`.
+</I>&gt;<i>
+</I>&gt;<i> However, this does mean that the base cost for `C-&gt;D` and `S-&gt;A` in
+</I>&gt;<i> the above flow will pay *twice* the base cost than what the above
+</I>&gt;<i> cost function would have computed, because in reality two independent
+</I>&gt;<i> payments pass through those channels.
+</I>&gt;<i>
+</I>&gt;<i> Thus, the current Pickhardt-Richter scheme cannot work with non-zero
+</I>&gt;<i> base fees if it were modified to consider fees, but not due to the
+</I>&gt;<i> mincostflow algorithm, rather because due to the disect algorithm.
+</I>&gt;<i>
+</I>&gt;<i> ### Converting Non-Zero Base Fees To Proportional Fees
+</I>&gt;<i>
+</I>&gt;<i> An alternative solution would be to optimize for a *maximum* fee
+</I>&gt;<i> rather than optimize for the *exact* fee.
+</I>&gt;<i>
+</I>&gt;<i> We can do this by virtually splitting up the entire payment into
+</I>&gt;<i> smaller bunches of value, and asking mincostflow to solve individual
+</I>&gt;<i> bunches rather than individual msats.
+</I>&gt;<i>
+</I>&gt;<i> For example, we can decide that the smallest practical HTLC would
+</I>&gt;<i> be 1000 msat.
+</I>&gt;<i> Let us call this the &quot;payment unit&quot;, and the mincostflow algo
+</I>&gt;<i> solves for paying in these payment units instead of 1msat units.
+</I>&gt;<i> (Actual implementations would need to have some heuristic or
+</I>&gt;<i> reasoned rule-of-thumb assumption on what the smallest practical
+</I>&gt;<i> HTLC would be.)
+</I>&gt;<i>
+</I>&gt;<i> In our example, suppose we need to send 2001msat from `S` to `D`,
+</I>&gt;<i> with the payment unit being 1000 msat.
+</I>&gt;<i> Then we would actually have the mincostflow algorithm work to
+</I>&gt;<i> deliver 3 payment units (3 * 1000msat) from `S` to `D`.
+</I>&gt;<i>
+</I>&gt;<i> Let us suppose that the mincostflow algorithm returns the following
+</I>&gt;<i> flow:
+</I>&gt;<i>
+</I>&gt;<i>     S --&gt;3-----&gt; A -&gt;1----&gt; B
+</I>&gt;<i>                  |          |
+</I>&gt;<i>                  |        1 |
+</I>&gt;<i>                  |          v
+</I>&gt;<i>                  +--&gt;2----&gt; C -&gt;3----&gt; D
+</I>&gt;<i>
+</I>&gt;<i> Actually, what the mincostflow algorithm uses as a cost function
+</I>&gt;<i> would be:
+</I>&gt;<i>
+</I>&gt;<i>     -log(success_probability) + fudging_factor * amount * prop_fee *
+</I>&gt;<i> payment_unit + fudging_factor * base_fee * amount
+</I>&gt;<i>
+</I>&gt;<i>     == -log(success_probability) + fudging_factor * amount * (prop_fee *
+</I>&gt;<i> payment_unit + base_fee)
+</I>&gt;<i>
+</I>&gt;<i>     where: amount is in units of 1000msat, our smallest practical HTLC.
+</I>&gt;<i>            payment_unit is the unit, i.e. 1000msat.
+</I>&gt;<i>
+</I>&gt;<i> What the above means is that the mincostflow algorithm *allocates*
+</I>&gt;<i> `3 * base_fee` for `C-&gt;D`, since the `amount` flowing through
+</I>&gt;<i> `C-&gt;D` would be 3.
+</I>&gt;<i> However, when we pass the above flow to the disect algorithm, it
+</I>&gt;<i> would actually only split this into 2 sub-payments, so the
+</I>&gt;<i> actual payment plan would only pay `2 * base_fee` for the
+</I>&gt;<i> `C-&gt;D` leg on both sub-payments.
+</I>&gt;<i>
+</I>&gt;<i> In short, this effectively converts the base fee to a proportional
+</I>&gt;<i> fee, removing the zerobasfee requirement imposed by the disect
+</I>&gt;<i> algorithm.
+</I>&gt;<i>
+</I>&gt;<i> That is, the cost computed by the mincostflow algorithm is really a
+</I>&gt;<i> maximum cost budget that the subsequent disect algorithm could later
+</I>&gt;<i> spend.
+</I>&gt;<i>
+</I>&gt;<i> In effect, this converts the base fee to a proportional fee.
+</I>&gt;<i>
+</I>&gt;<i> This may be acceptable in practice.
+</I>&gt;<i> This approximation has a bias against non-zerobasefee --- it would
+</I>&gt;<i> treat those channels as being far more expensive than they actually
+</I>&gt;<i> would end up being in an *actual* payment attempt --- but at least
+</I>&gt;<i> does not *require* zerobasefee.
+</I>&gt;<i> It would be able to still use non-zerobasefee channels if those are
+</I>&gt;<i> absolutely required to reach the destination.
+</I>&gt;<i>
+</I>&gt;<i> This should at least help create a practical payment algorithm that
+</I>&gt;<i> handles current LN with nonzerobasefee, and provide an impetus
+</I>&gt;<i> towards making zerobasefee a reality.
+</I>&gt;<i>
+</I>&gt;<i> Note that this approximation would be non-optimal --- there may
+</I>&gt;<i> be solutions that provide lower costs than the output of this
+</I>&gt;<i> approximation would provide.
+</I>&gt;<i>
+</I>&gt;<i> It may be practical to have the payment unit be adjustable by a
+</I>&gt;<i> higher-level (but still automated) process.
+</I>&gt;<i> For example, it may be considered that having more than 500 splits
+</I>&gt;<i> would be heuristically determined to be impractical, in which
+</I>&gt;<i> case the payment unit could be the actual amount divided by 500
+</I>&gt;<i> rounded up.
+</I>&gt;<i> Then if that results in extreme overestimation of base costs
+</I>&gt;<i> (i.e. the subsequent disect stage results in far fewer than 500
+</I>&gt;<i> splits) the payment unit could be adjusted upwards.
+</I>&gt;<i> Similarly, if that results in a payment plan that has high
+</I>&gt;<i> base fees, the payment unit could be adjusted downwrds.
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i>
+</I>&gt;<i> Similarly, having particular split amounts is helpful to reduce
+</I>&gt;<i> the ability of intermediate nodes snooping on payment amounts,
+</I>&gt;<i> so having a particular fixed payment unit may also be useful
+</I>&gt;<i> nevertheless, even if this approximation is otherwise undesirable.
+</I>&gt;<i>
+</I>&gt;<i> That is, in the above example, we just send 3 sub-payments
+</I>&gt;<i> instead of the minimum 2, so that every sub-payment is always
+</I>&gt;<i> uniformly 1000msat.
+</I>&gt;<i> This leaks the least amount of information to intermediate nodes,
+</I>&gt;<i> especially after payment decorrelation is widely deployed.
+</I>&gt;<i> (this is the same principle for why a uniform unit amount is
+</I>&gt;<i> needed in practical CoinJoin implementations; it increases the
+</I>&gt;<i> anonymity set of individual sub-payments.)
+</I>&gt;<i>
+</I>&gt;<i> This would be helped greatly by payment decorrelation;
+</I>&gt;<i> intermediate nodes would remain uncertain that multiple
+</I>&gt;<i> HTLCs with the same amount and the same in-channel and
+</I>&gt;<i> out-channel are from the same overall payment or not.
+</I>&gt;<i> Assuming many software uses the same payment unit consistently,
+</I>&gt;<i> less information can be extracted by surveillors, and the
+</I>&gt;<i> increased cost may be considered justifiable in paying for
+</I>&gt;<i> additional privacy.
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i>
+</I>&gt;<i> ### Whole-flow Payments
+</I>&gt;<i>
+</I>&gt;<i> Suppose we were to instead modify the LN protocol such that,
+</I>&gt;<i> instead of MPP having individual sub-payments that split at the
+</I>&gt;<i> source and join at the destination, we allow the source to
+</I>&gt;<i> instruct arbitrary intermediate nodes to join and/or split
+</I>&gt;<i> payments.
+</I>&gt;<i>
+</I>&gt;<i> That is, suppose LN allowed the source to indicate to arbitrary
+</I>&gt;<i> forwarding nodes to split payments and join them.
+</I>&gt;<i> (This would require nearly all nodes to upgrade, which may be
+</I>&gt;<i> impractical, but let us consider its implications first without
+</I>&gt;<i> committing to actually doing this.)
+</I>&gt;<i>
+</I>&gt;<i> A node that is a join node would be instructed to wait for all
+</I>&gt;<i> incoming HTLCs to arrive before they create any outgoing
+</I>&gt;<i> HTLCs.
+</I>&gt;<i> A node that is a split node would make more than one outgoing
+</I>&gt;<i> HTLCs.
+</I>&gt;<i> Forwarding nodes can be both join and split nodes.
+</I>&gt;<i>
+</I>&gt;<i> This would allow the output of the mincostflow algorithm to be
+</I>&gt;<i> used directly, without the problematic disect stage.
+</I>&gt;<i> Nodes that have more than one in-flow would be join nodes,
+</I>&gt;<i> while nodes with more than one out-flow would be split nodes.
+</I>&gt;<i>
+</I>&gt;<i> Returning to the example:
+</I>&gt;<i>
+</I>&gt;<i>     S --&gt;3000--&gt; A -&gt;1000-&gt; B
+</I>&gt;<i>                  |          |
+</I>&gt;<i>                  |        1000
+</I>&gt;<i>                  |          v
+</I>&gt;<i>                  +--&gt;2000-&gt; C -&gt;3000-&gt; D
+</I>&gt;<i>
+</I>&gt;<i> In the above, `S` sends a *single* payment out on channel
+</I>&gt;<i> `S-&gt;A`, and instructs `A` to split the payment.
+</I>&gt;<i> Then `S` also instructs `C` to join two payments, resulting
+</I>&gt;<i> in a single HTLC out on `C-&gt;D` if `C` receives on both
+</I>&gt;<i> `A-&gt;C` and `B-&gt;C`.
+</I>&gt;<i>
+</I>&gt;<i> The effect is that, for a single payment plan (presented as a
+</I>&gt;<i> flow, outputted by a mincostflow algorithm) for each channel
+</I>&gt;<i> with nonzero flow, there would only be one HTLC that gets paid
+</I>&gt;<i> for using a single `base_fee`.
+</I>&gt;<i>
+</I>&gt;<i> Then, the base fee computed by the cost function would be exact
+</I>&gt;<i> and there would be no underestimation of the base fee for
+</I>&gt;<i> non-zerobasefee channels.
+</I>&gt;<i>
+</I>&gt;<i> Let us then consider the practicality of this scheme.
+</I>&gt;<i>
+</I>&gt;<i> If a hop were to fail to deliver, then some join nodes would
+</I>&gt;<i> be left hanging, waiting for an incoming HTLC that will not
+</I>&gt;<i> arrive.
+</I>&gt;<i>
+</I>&gt;<i> The failure would have to be handled by a split node, when it
+</I>&gt;<i> receives a `update_fail_htlc`.
+</I>&gt;<i> That split node cannot propagate the failure backwards to the
+</I>&gt;<i> source, since it would still have other outgoing HTLCs in
+</I>&gt;<i> play, which it cannot safely ignore; it can only propagate
+</I>&gt;<i> the failure backwards if all the other outgoing HTLCs also
+</I>&gt;<i> fail.
+</I>&gt;<i>
+</I>&gt;<i> To support this, a split node could give a request-to-fail
+</I>&gt;<i> signal to its other outgoing HTLCs.
+</I>&gt;<i> Then, any other join nodes still waiting for an incoming
+</I>&gt;<i> HTLC (and would not yet have created any outgoing HTLCs,
+</I>&gt;<i> or for the destination, would not have claimed any incoming
+</I>&gt;<i> HTLCs) would fail all its incoming HTLCs.
+</I>&gt;<i> Otherwise, an intermediate node receiving a request-to-fail
+</I>&gt;<i> signal from any incoming HTLCs would simply propagate
+</I>&gt;<i> this request-to-fail outwards to all its outgoing HTLCs.
+</I>&gt;<i>
+</I>&gt;<i> This implies that for this scheme, if *any* hop fails, the
+</I>&gt;<i> entire payment fails and has to be restarted &quot;from the top&quot;.
+</I>&gt;<i>
+</I>&gt;<i> This is in contrast with the current scheme of splitting
+</I>&gt;<i> only at the source and joining only at the destination.
+</I>&gt;<i> In the current LN, if *any* hop of an MPP fails, only the
+</I>&gt;<i> sub-payment(s) going through that hop will need to be
+</I>&gt;<i> retried.
+</I>&gt;<i> Other sub-payment(s) can keep being &quot;in play&quot;, and the
+</I>&gt;<i> source, having all the information needed, only needs to
+</I>&gt;<i> recompute the failing outgoing payments.
+</I>&gt;<i>
+</I>&gt;<i> On the other hand, the same information (particular hops are
+</I>&gt;<i> failing) would be propagated back to the source, and the
+</I>&gt;<i> source having to recompute the entire flow rather than just
+</I>&gt;<i> some subset of the payments is not much worse computationally
+</I>&gt;<i> (work is still dominated by `O((m*m+m*n)*log n)` where `m` is
+</I>&gt;<i> the channels of the *entire network* and `n` is the nodes
+</I>&gt;<i> of the *entire network*, amount is just a piddling little
+</I>&gt;<i> `O(log(u))` term).
+</I>&gt;<i> It also removes the need to virtually reduce the capacity of
+</I>&gt;<i> intermediate hops while other sub-payments are in play
+</I>&gt;<i> (however, a practical implementation would need to consider
+</I>&gt;<i> the possibility of multiple *simultaneous* outgoing payments
+</I>&gt;<i> anyway and would still retain this reduction of capacity in
+</I>&gt;<i> case a new parallel outgoing payment is triggered while one
+</I>&gt;<i> is still ongoing).
+</I>&gt;<i>
+</I>&gt;<i> This leads us to some fairly interesting choices:
+</I>&gt;<i>
+</I>&gt;<i> * [ ] Whole-flow payment is a brilliant idea and we should
+</I>&gt;<i>   totally do it.  `#deletethezerobasefeedebate`
+</I>&gt;<i> * [ ] Whole-flow payment is a horrible idea and we should
+</I>&gt;<i>   totally not do it.
+</I>&gt;<i>   * [ ] As we can see, the LN community needs to get together
+</I>&gt;<i>     for better payment success, and supporting whole-flow
+</I>&gt;<i>     payments is worse than setting `basefee=0`. `#zerobasefee`
+</I>&gt;<i>   * [ ] As we can see, the current LN provides a vital service
+</I>&gt;<i>     (partial failure of MPP) and intermediate nodes need to be
+</I>&gt;<i>     compensated for this service.  `#nonzerobasefee`
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>
+
+-- 
+<A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210830/add37bb8/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210830/add37bb8/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003208.html">[Lightning-dev] Handling nonzerobasefee when using Pickhard-Richter algo variants
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3209">[ date ]</a>
+              <a href="thread.html#3209">[ thread ]</a>
+              <a href="subject.html#3209">[ subject ]</a>
+              <a href="author.html#3209">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DataStruct -- Data fragmentation over Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DataStruct%20--%20Data%20fragmentation%20over%20Lightning&In-Reply-To=%3CCACRHu9iOns0gzELrUj8yNkj1NE2baUM0RD6DnN1dDyy5TzV6_w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003613.html">
+   <LINK REL="Next"  HREF="003616.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DataStruct -- Data fragmentation over Lightning</H1>
+    <B>George Tsagkarelis</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DataStruct%20--%20Data%20fragmentation%20over%20Lightning&In-Reply-To=%3CCACRHu9iOns0gzELrUj8yNkj1NE2baUM0RD6DnN1dDyy5TzV6_w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] DataStruct -- Data fragmentation over Lightning">george.tsagkarelis at gmail.com
+       </A><BR>
+    <I>Thu Jun 16 15:48:26 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003613.html">[Lightning-dev] DataSig -- Data signatures over Lightning
+</A></li>
+        <LI>Next message: <A HREF="003616.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice via	Chain Signals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3610">[ date ]</a>
+              <a href="thread.html#3610">[ thread ]</a>
+              <a href="subject.html#3610">[ subject ]</a>
+              <a href="author.html#3610">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE># DataStruct -- Data fragmentation over Lightning
+
+## Introduction
+
+Greetings once again,
+
+This mail proposes a spec for data fragmentation over custom records,
+allowing for transmission of data exceeding the maximum allowed size
+over a single HTLC.
+
+As in the case of DataSig, we seek feedback as we want to improve
+and tweak this spec before submitting a BLIP version of it.
+
+## DataStruct
+
+The purpose of this spec is to define a structure that describes
+fragmented data, allowing for transmission over separate HTLCs
+and assisting reassembly on the receiving end.
+The proposed fragmentation structure also allows out-of-order
+reception of fragments.
+
+Since these fragments are assumed to be transmitted over Lightning
+HTLCs, we want to use a compact encoding mechanism, thus we describe
+their structure with protobuf:
+
+```protobuf
+message DataStruct {
+  uint32 version                 = 1;
+  bytes payload                  = 2;
+  optional FragmentInfo fragment = 3;
+}
+
+message FragmentInfo {
+  uint64 fragset_id = 1;
+  uint32 total_size = 2;
+  uint32 offset     = 3;
+}
+```
+* `version`: The version of DataStruct spec used.
+* `payload`: The data carried by this fragment.
+* `fragment`: Fragmentation information, in case of fragmented data.
+
+The `FragmentInfo` fields describe:
+  * `fragset_id`: Identifier indicating a fragment set, common to all
+    fragments of the same data.
+  * `total_size`: The total data size this fragment is part of.
+  * `offset`: Starting byte offset of this fragment's `payload`
+    in the total data.
+
+If the total data can be transmitted over a single HTLC, then the
+`fragment` field should be omitted.
+
+If the `fragment` field is set on a received DataStruct instance the
+receiving node should wait for the full fragment set to be received
+before reconstruction. For each received fragment of a fragment set
+(as indicated by `fragset_id`), the receiving node should assemble
+the data by inserting each `payload` at the offset indicated by the
+`fragment`'s `offset` field. Once the whole data range has been
+received, a node can safely assume the data has been received in
+full.
+
+### Sending
+
+In this section we will walk through the procedure of utilizing
+DataStruct in order to transmit some data `D` that have a size of
+42KB.
+
+It is also important to note that we don't describe an algorithm that
+efficiently and dynamically splits the byte array `D` into an
+optimal set of fragments. A fragment's transmission may fail for
+various reasons (including uncertain channel liquidity, stale routing
+data or route lengths that prohibit meaningful data injection).
+It is the responsibility of the sender to fragment the data and
+transmit the fragments towards the destination. The receiver simply
+receives fragments that will (ideally) completely cover `D`, allowing
+its reconstruction.
+
+In this example, we will assume that the sender will settle for
+splitting the data `D` into 84 fragments of 512B size each.
+This is not optimal as it will probably result in raised transmission
+costs, depending on route length.
+
+A sender intending to transmit the data `D` to another node should:
+
+1. Split the bytes of `D`  into 84 fragments of 512B each.
+2. Generate an identifier for this data transmission, `Di`.
+3. For each fragment `f`, a `DataStruct` instance should be created:
+    1. Populate `version` with the spec version followed,
+    2. Populate payload with `f`,
+    3. Populate `fragment` as follows:
+        1. Populate `fragset_id` with `Di`,
+        2. Populate `total_size` with len(`D`),
+        3. Populate `offset` with the fragment's starting byte index.
+    4. Encode the created DataStruct instance, resulting in a byte
+       array `DS`.
+    5. Transmit `DS` over the custom records of an HTLC.
+    6. In case of failure, transmission can be retried over a
+       different route.
+
+### Receiving
+
+Continuing the last example, the receiving node can execute the
+following steps for each received fragment `DS` in order to assemble
+the data `D`:
+
+1. Decode `DS` according to DataStruct definition.
+2. Check `version` field, and decide whether to proceed or ignore
+   the fragment.
+3. If the received DataStruct instance contains a `fragment` field:
+    1. Retrieve the reconstruction buffer identified by `fragset_id`,
+       creating it with size `total_size` if it does not exist.
+    2. Insert `payload` at `offset` to reconstruction buffer.
+    3. Check if reconstruction buffer is complete. If all of the
+       body of the reconstruction buffer is filled, the buffer
+       contains the total data `D`.
+
+### Notes / Remarks
+
+* We mention that the encoded DataStruct is placed inside a custom
+  TLV record, but do not specify the exact TLV key. This is a spec
+  regarding data fragment transmission, and as such should not define
+  specific TLV keys to be used.
+
+* Interoperability could be achieved by different applications
+  utilizing the same TLV as well as data encoding for transmission.
+
+* A node can send and receive payments that carry data in different
+  TLV keys. It is the responsibility of the application to send and
+  listen for data over specific TLV keys.
+
+* It is the responsibility of the sender to transmit fragments that
+  allow for full data reconstruction on the receiving end.
+
+* Fragments could carry ranges of bytes that overlap (e.g. two
+  fragments that cover the range 256-511 (0-511, 256-767)).
+
+* A DataSig could accompany a transmitted DataStruct, allowing the
+  receiving node to verify the data source and destination.
+
+* If DataSig is also included with each fragment, the receiver could
+  identify reconstruction buffers based not only on `fragset_id` but
+  the sender's address as well. This means that a node could
+  simultaneously be receiving two different fragment sets with the
+  same `fragset_id`, as long as they are originating from different
+  nodes.
+
+* It is the responsibility of the sender to properly coordinate
+  simultaneous transmissions to a destination node by using different
+  `fragset_id` values for each fragment set.
+
+* If the sender uses an AMP payment's HTLCs to carry the different
+  fragments, it is not strictly necessary to declare the `total_size`
+  of the data. The condition for data reconstruction completion could
+  be the success of the AMP payment, unless they want to utilize both
+  AMP and single path payments for data transmission (transmit over
+  multiple payments possibly with multiple HTLCs on each payment).
+
+* There is a lot of room for optimisations, like signing larger
+  chunks of data and not each transmitted fragment. This way you would
+  transmit less DataSig instances and leave more available space for
+  the fragment data.
+
+- A working proof of concept that utilizes DataSig and DataStruct
+  over single path payments can be found here:
+  <A HREF="https://github.com/GeorgeTsagk/satoshi-read-write">https://github.com/GeorgeTsagk/satoshi-read-write</A>
+
+
+-- 
+George Tsagkarelis | @GeorgeTsag | c13n.io
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220616/ebb61e73/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220616/ebb61e73/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003613.html">[Lightning-dev] DataSig -- Data signatures over Lightning
+</A></li>
+	<LI>Next message: <A HREF="003616.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice via	Chain Signals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3610">[ date ]</a>
+              <a href="thread.html#3610">[ thread ]</a>
+              <a href="subject.html#3610">[ subject ]</a>
+              <a href="author.html#3610">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

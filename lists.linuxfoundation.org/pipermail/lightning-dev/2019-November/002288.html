@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Potential Minor Sphinx Privacy Leak and Patch
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Potential%20Minor%20Sphinx%20Privacy%20Leak%20and%20Patch&In-Reply-To=%3CCAO3Pvs83QEszaFB2XAu4ZiRsVXeS4AwUZU302QNYuYSjzf11RQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002338.html">
+   <LINK REL="Next"  HREF="002294.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Potential Minor Sphinx Privacy Leak and Patch</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Potential%20Minor%20Sphinx%20Privacy%20Leak%20and%20Patch&In-Reply-To=%3CCAO3Pvs83QEszaFB2XAu4ZiRsVXeS4AwUZU302QNYuYSjzf11RQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Potential Minor Sphinx Privacy Leak and Patch">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Nov  6 02:37:10 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002338.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+        <LI>Next message: <A HREF="002294.html">[Lightning-dev] HORNET via Circular Self-payment Routing in a	Decorrelation Payment Points+Scalar Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2288">[ date ]</a>
+              <a href="thread.html#2288">[ thread ]</a>
+              <a href="subject.html#2288">[ subject ]</a>
+              <a href="author.html#2288">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all,
+
+A new paper analyzing the security of the Sphinx mix-net packet format [1]
+(and also HORNET) has recently caught my attention. The paper is rather long
+and very theory heavy, but the TL;DR is this:
+
+    * The OG Sphinx paper proved various aspects of its security using a
+      model for onion routing originally put forth by Camenisch and
+      Lysyanskaya [2].
+    * This new paper discovered that certain security notions put forth in
+      [2] weren't actually practically achievable by real-world onion
+routing
+      implementations (in this case Onion-Correctnes), or weren't entirely
+      correct or additive.  New stronger security notions are put forth in
+      response, along with extensions to the original Sphinx mix-net packet
+      format that achieve these notions.
+    * A flaw they discovered in the original Sphinx paper [3], can allow an
+      exit node to deduce a lower bound of the length of the path used to
+      reach it. The issue is that the original paper constructs the
+      _starting packet_ (what the exit hop will receive) by adding extra
+      padding zeroes after the destination and identifier (we've more or
+      less revamped this with our new onion format, but it still stands).
+      An adversarial exit node can then locate the first set bit after the
+      identifier (our payload in this case), then use that to compute the
+      lower bound.
+     * One of the (?) reference Sphinx implementations recognizes that this
+       was/is an issue in the paper and implements the mitigation [4].
+     * The fix on our end is easy: we need to replace those zero bytes with
+       random bytes when constructing the starting packet.
+
+I've created a PR to lnd's lightning-onion PR implementing this mitigation
+[5].  As this changes the starting packet format, we also need to either
+update the test vectors or we can keep them as is, and note that we use
+zeroes so the test vectors are fully deterministic. My PR to the spec
+patching the privacy leak leaves the test vectors untouched as is [6].
+
+With all that said, IMO we have larger existing privacy leaks just due to
+our unique application of the packet format. As an example, a receiver can
+use the CLTV of the final HTLC to deduce bounds on the path length as we
+have a restricted topology and CLTV values for public channels are all
+known. Another leak is our usage of the variable length onion payloads which
+a node can use to ascertain path length since they space they consume counts
+towards the max hop count of 20-something.
+
+In any case, we can patch this with just a few lines of code (fill out with
+random bytes) at _senders_, and don't need any intermediate nodes to update.
+The new and old packet construction algos are compatible as packet
+_processing_ isn't changing, instead just the starting set of bytes are.
+
+As always, please double-check by interpretation of the paper, as it's
+possible I'm missing something. If my interpretation stands, then it's a
+relatively minor privacy leak, and an easy low-hanging fruit that can be
+patched without wide-spread network coordination.
+
+-- Laolu
+
+[1]: <A HREF="https://arxiv.org/abs/1910.13772">https://arxiv.org/abs/1910.13772</A>
+[2]: <A HREF="https://www.iacr.org/cryptodb/archive/2005/CRYPTO/1091/1091.pdf">https://www.iacr.org/cryptodb/archive/2005/CRYPTO/1091/1091.pdf</A>
+[3]: <A HREF="https://cypherpunks.ca/~iang/pubs/Sphinx_Oakland09.pdf">https://cypherpunks.ca/~iang/pubs/Sphinx_Oakland09.pdf</A>
+[4]:
+<A HREF="https://github.com/UCL-InfoSec/sphinx/blob/c05b7034eaffd8f98454e0619b0b1548a9fa0f42/SphinxClient.py#L67">https://github.com/UCL-InfoSec/sphinx/blob/c05b7034eaffd8f98454e0619b0b1548a9fa0f42/SphinxClient.py#L67</A>
+[5]: <A HREF="https://github.com/lightningnetwork/lightning-onion/pull/40">https://github.com/lightningnetwork/lightning-onion/pull/40</A>
+[6]: <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/697">https://github.com/lightningnetwork/lightning-rfc/pull/697</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191105/e776780f/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191105/e776780f/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002338.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+	<LI>Next message: <A HREF="002294.html">[Lightning-dev] HORNET via Circular Self-payment Routing in a	Decorrelation Payment Points+Scalar Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2288">[ date ]</a>
+              <a href="thread.html#2288">[ thread ]</a>
+              <a href="subject.html#2288">[ subject ]</a>
+              <a href="author.html#2288">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,236 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] More thoughts on NOINPUT safety
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3C20190313111050.qj3s6utpl2x34sam%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001894.html">
+   <LINK REL="Next"  HREF="001898.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] More thoughts on NOINPUT safety</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3C20190313111050.qj3s6utpl2x34sam%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] More thoughts on NOINPUT safety">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Mar 13 11:10:50 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001894.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+        <LI>Next message: <A HREF="001898.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1895">[ date ]</a>
+              <a href="thread.html#1895">[ thread ]</a>
+              <a href="subject.html#1895">[ subject ]</a>
+              <a href="author.html#1895">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Mar 13, 2019 at 06:41:47AM +0000, ZmnSCPxj via Lightning-dev wrote:
+&gt;<i> &gt; -   alternatively, we could require every script to have a valid signature
+</I>&gt;<i> &gt;     that commits to the input. In that case, you could do eltoo with a
+</I>&gt;<i> &gt;     script like either:
+</I>&gt;<i> &gt;     &lt;A&gt; CHECKSIGVERIFY &lt;B&gt; CHECKSIG
+</I>&gt;<i> &gt;     or &lt;P&gt; CHECKSIGVERIFY &lt;Q&gt; CHECKSIG
+</I>&gt;<i> &gt; where A is Alice's key and B is Bob's key, P is muSig(A,B) and Q is
+</I>&gt;<i> &gt; a key they both know the private key for. In the first case, Alice
+</I>&gt;<i> &gt; would give Bob a NOINPUT sig for the tx, and when Bob wanted to publish
+</I>&gt;<i> &gt; Bob would just do a SIGHASH_ALL sig with his own key. In the second,
+</I>&gt;<i> &gt; Alice and Bob would share partial NOINPUT sigs of the tx with P, and
+</I>&gt;<i> &gt; finish that when they wanted to publish.
+</I>&gt;<i> At my point of view, if a NONINPUT sig is restricted and cannot be
+</I>&gt;<i> used to spend an &quot;ordinary&quot; 2-of-2, this is output tagging regardless
+</I>&gt;<i> of exact mechanism.
+</I>
+With taproot, you could always do the 2-of-2 spend without revealing a
+script at all, let alone that it was meant to be NOINPUT capable. The
+setup I'm thinking of in this scenario is something like:
+
+  0) my key is A, your key is B, we want to setup an eltoo channel
+
+  1) post a funding tx to the blockchain, spending money to an address
+     P = muSig(A,B)
+
+  2) we cycle through a bunch of states from 0..N, with &quot;0&quot; being the
+     refund state we establish before publishing the funding tx to
+     the blockchain. each state essentially has two corresponding tx's,
+     and update tx and a settlement tx.
+
+  3) the update tx for state k spends to an output Qk which is a
+     taproot address Qk = P + H(P,Sk)*G where Sk is the eltoo ratchet
+     condition:
+        Sk = (5e8+k+1) CLTV A CHECKDLS_NOINPUT B CHECKDLS_NOINPUT_VERIFY
+
+     we establish two partial signatures for update state k, one which
+     is a partial signature spending the funding tx with key P and
+     SIGHASH_ALL, the other is a NOINPUT signature via A (for you) and
+     via B (for me) with locktime set to (k+5e8), so that we can spend
+     any earlier state's update tx's, but not itself or any later
+     state's update tx's.
+
+  4) for each state we have also have a settlement transaction,
+     Sk, which spends update tx k, to outputs corresponding to the state
+     of the channel, after a relative timelock delay.
+
+     we have two partial signatures for this transaction too, one with
+     SIGHASH_ALL assuming that we directly spent the funding tx with
+     update state k (so the input txid is known), via the key path with
+     key Qk; the other SIGHASH_NOINPUT via the Sk path. both partially
+     signed tx's have nSequence set to the required relative timelock
+     delay.
+
+  5) if you're using scriptless scripts to do HTLCs, you'll need to
+     allow for NOINPUT sigs when claiming funds as well (and update
+     the partial signatures for the non-NOINPUT cases if you want to
+     maximise privacy), which is a bit fiddly
+
+  6) when closing the channel the process is then:
+
+       - if you're in contact with the other party, negotiate a new
+         key path spend of the funding tx, publish it, and you're done.
+
+       - otherwise, if the funding tx hasn't been spent, post the latest
+         update tx you know about, using the &quot;spend the funding tx via
+	 key path&quot; partial signature
+
+       - otherwise, trace the children of the funding tx, so you can see
+         the most recent published state:
+	   - if that's newer than the latest state you know about, your
+	     info is out of date (restored from an old backup?), and you
+	     have to wait for your counterparty to post the settlement tx
+	   - if it's equal to the latest state you know about, wait
+	   - if it's older than the latest state, post the latest update
+	     tx (via the NOINPUT script path sig), and wait
+
+       - once the CSV delay for the latest update tx has expired, post
+	 the corresponding settlement tx (key path if the update tx
+	 spent the funding tx, NOINPUT if the update tx spent an earlier
+	 update tx)
+
+       - once the settlement tx is posted, claim your funds
+
+So the cases look like:
+
+   mutual close:
+     funding tx -&gt; claimed funds
+
+     -- only see one key via muSig, single signature, SIGHASH_ALL
+     -- if there are active HTLCs when closing the channel, and they
+        timeout, then the claiming tx will likely be one-in, one-out,
+	SIGHASH_ALL, with a locktime, which may be unusual enough to
+	indicate a lightning channel.
+
+   unilateral close, no cheating: 
+     funding tx -&gt; update N -&gt; settlement N -&gt; claimed funds
+
+     -- update N is probably SINGLE|ANYONECANPAY, so chain analysis
+        of accompanying inputs might reveal who closed the channel
+     -- settlement N has relative timelock
+     -- claimed funds may have timelocks if they claim active HTLCs via
+        the refund path
+     -- no NOINPUT signatures needed, and all signatures use the key path
+        so don't reveal any scripts
+
+   unilateral close, attempted cheating:
+     funding tx -&gt; update K -&gt; update N -&gt; settlement N -&gt; claimed funds
+
+     -- update K, update N are probably SINGLE|ANYONECANPAY, so chain
+        analysis might reveal the identity of both sides of the channel 
+     -- update N and settlement N both use NOINPUT signatures and
+        reveal CLTV script that looks like eltoo
+     -- update N has timelock set
+     -- settlement N has a relative timelock
+     -- claimed funds may have timelocks if they claim active HTLCs via
+        the refund path
+
+     Notes:
+      * cheating isn't 100% accurate: could be due to someone having to
+        restore from an old backup
+
+      * you could end up with:
+
+          funding tx -&gt; update K -&gt; update W -&gt; update N
+	             -&gt; settlement N -&gt; claimed funds
+
+	if someone restored from an old backup and posted K, a watchtower
+	had a newer but not current state W, and finally you posted
+	state N directly. with multiple watchtowers you might have more
+	intermediate states' update tx's posted. afaics it has similar
+	privacy results to the 2-update-tx case.
+
+&gt;<i> So the restriction to add a non-NOINPUT sig in addition to a NOINPUT sig is still output tagging, as a cooperative close would still reveal that the output is not a 2-of-2.
+</I>
+With the above setup, you don't discover that NOINPUT was possible unless it
+is actually needed because someone cheated.
+
+As long as you're using muSig key path spending for a cooperative close,
+you're not even revealing the output is 2-of-2, let alone a weird
+2-of-2 variant.
+
+&gt;<i> Ideally, historical data of whether onchain coin was used in Lightning or not should be revealed as little as possible.
+</I>&gt;<i> So in a cooperative close (which we hope, to be a common case), ideally the spend should look no different from an ordinary 2-of-2 spend.
+</I>
+With taproot, the goal is it shouldn't look different from an ordinary
+&quot;pay to public key&quot; spend, and I think that's pretty achievable.
+
+&gt;<i> Of course if the channel is published on Lightning, those who participated in Lightning at the time will learn of it, but at least the effort to remember this information is on those who want to remember this fact.
+</I>
+Well, presumaby lightning will continue to support private channels that
+don't get published, and the concern's definitely valid for them!
+
+&gt;<i> Now, this can be worked around by adding a &quot;kickoff&quot; transaction that spends the eltoo setup transaction.
+</I>&gt;<i> The eltoo setup transaction outputs to an ordinary 2-of-2.
+</I>&gt;<i> The kickoff outputs to an output that allows NOINPUT.
+</I>&gt;<i> Then the rest of the protocol anchors on top of the kickoff.
+</I>&gt;<i> [...]
+</I>
+I think this is possible too, but I think the scheme I describe above
+is superior: iit means calculating a few more signatures each update,
+but keeps more information off chain, which is better for privacy, and
+probably cheaper (unless you have very high-frequency channel updates?).
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001894.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+	<LI>Next message: <A HREF="001898.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1895">[ date ]</a>
+              <a href="thread.html#1895">[ thread ]</a>
+              <a href="subject.html#1895">[ subject ]</a>
+              <a href="author.html#1895">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

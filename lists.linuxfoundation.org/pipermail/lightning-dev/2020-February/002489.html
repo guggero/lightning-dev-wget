@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Decoy node_ids and short_channel_ids
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3C8BPW244PP5QYuS_R0pkSR_KnzRtKMfA87w-SS1LLQrePx3VZlV7gD6brp3zTBkSsvdXbXl-9jWCk1IoixaBy_hakC5anrCry4xL7GupXPME%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002488.html">
+   <LINK REL="Next"  HREF="002490.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Decoy node_ids and short_channel_ids</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3C8BPW244PP5QYuS_R0pkSR_KnzRtKMfA87w-SS1LLQrePx3VZlV7gD6brp3zTBkSsvdXbXl-9jWCk1IoixaBy_hakC5anrCry4xL7GupXPME%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Decoy node_ids and short_channel_ids">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Mon Feb  3 05:31:04 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002488.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+        <LI>Next message: <A HREF="002490.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2489">[ date ]</a>
+              <a href="thread.html#2489">[ thread ]</a>
+              <a href="subject.html#2489">[ subject ]</a>
+              <a href="author.html#2489">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Rusty,
+
+&gt;<i> Bastien TEINTURIER <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A> writes:
+</I>&gt;<i>
+</I>&gt;<i> &gt; We can easily get rid of (1.) by leveraging the `payment_secret`. The
+</I>&gt;<i> &gt; improved scheme is:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; -   Alice draws a random `decoy_key`
+</I>&gt;<i> &gt; -   Alice computes the corresponding `decoy_node_id = decoy_key * G`
+</I>&gt;<i> &gt; -   Alice draws a random `payment_secret`
+</I>&gt;<i> &gt; -   Alice computes `decoy_short_channel_id = H(payment_secret * decoy_key * bob_node_id) xor short_channel_id`
+</I>&gt;<i> &gt; -   Alice uses the `decoy_key` to sign the invoice
+</I>&gt;<i> &gt; -   Carol recovers `decoy_node_id` from the invoice signature
+</I>&gt;<i> &gt; -   Carol includes `P_I = payment_secret * decoy_node_id` in the onion
+</I>&gt;<i> &gt;     payload for Bob
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; -   Bob can compute `short_channel_id = H(bob_private_key * P_I) xor decoy_short_channel_id`
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; But I don't see how to get rid of (2.). If anyone has a clever idea on how
+</I>&gt;<i> &gt; to do that, I'd love to hear it!
+</I>&gt;<i>
+</I>&gt;<i> I really don't want a special marker on Carol; she needs to just pay
+</I>&gt;<i> like normal. Not just because it's simple, but because it means that
+</I>&gt;<i> Carol can use a custodial wallet without having to flag the payment as
+</I>&gt;<i> somehow special.
+</I>&gt;<i>
+</I>&gt;<i> AFAICT, having Bob assign scids is the only viable way to do this. The
+</I>&gt;<i> current proposal limits to one scid at a time, but it could be extended
+</I>&gt;<i> to allow multiple scids.
+</I>&gt;<i>
+</I>&gt;<i> (I'm seeking a clever way that Bob can assign them and trivially tell
+</I>&gt;<i> which ID is assigned to which peer, but I can't figure it out, so I
+</I>&gt;<i> guess Bob keeps a mapping and restricts each peer to 256 live scids?).
+</I>
+We can observe that short-channel-ids have a 24-bit blocknum, but it is exceedingly unlikely that for most blockchains, the genesis block will have a Lightning network channel.
+
+So we could reserve blocknum=0 to identify special SCIDs.
+
+The rest of the SCID could refer to the lowest 40 bits of the X-coord of the node ID that is the destination.
+We should remember that short channel IDs are used as a convenient way to refer to the next *node* and not the next channel in the onion routing (which is why in Adelaide 2018 we decided to make short channel IDs &quot;advisory&quot;, implementation that support multiple channels per peer can use any channel with that peer to forward, not just the specific SCID indicated in the onion).
+Now, 40 bits is not a lot, but we can observe that for almost all git repositories, 7 or 8 hex digits is usually enough to unambiguously identify a commit within the repository, even for git repositories with thousands of commits, and 8 hex digits is just 32 bits of identification.
+So it seems to me that Bob could just look up the 40 bit identifier to each of the nodes with unpublished channels with it, and this will work well up to Bob having a few thousand peers with unpublished channels.
+
+If we focus on Bitcoin specifically, we can observe as well that `when_lightning_became_cool` is well above 262144 (2^18 ) so we can steal 18 more bits from the blocknum, i.e. if none of the top 6 bits of blocknum are set (blocknum &lt; 262144), then the lower 58 bits of the blockid are the lowest 58 bits of the node ID of the next hop.
+Though obviously that is not as good for regtest and testnet, do note that, assuming a non-premined blockchain with a similar 100-block maturity for coinbases, we could still steal 6 bits (blocknum &lt; 64), since no Lightning channel can occur on the first 100 blocks anyway due to the maturity requirement (there *are* no coins that can be spent before then, so no Lightning channels can be created then).
+
+
+Admittedly, if somebody knows your node id, they need only 40 bits of work to grind a node id of their own whose last 40 bits matches yours, then connect to the same public node you are on.
+In that case, it becomes ambiguous for Bob which of the nodes it should send the last hop to, so it could just try them one by one (trying them in parallel risks Bob getting ripped off by an attacker who specifically generates multiple nodes with the same lower bits in the node ID).
+Or Bob could just reject future channels from nodes whose lower bits match that with something already channeled with it.
+
+
+Finally, in this context, this is intended to be used for nodes with unpublished channels.
+Of note is that the second-to-the-last node already knows the exact identity, timing, and amount of every payment to the last node anyway, because unpublished channels are not private.
+So in this particular case, the second-to-the-last node can actually just drop the payer onion, and replace it with its own onion to the final node.
+This is relevant if we ever want to hide the node id of the last node: Bob could provide a symmetric encryption key to all its peers with unpublished channels, which the peer can XOR with its own true node id and use the lowest 40 bits (or 46 bits or 58 bits) in the SCID.
+Then when Bob receives an onion whose next SCID has the top 24 or 18 or 6 bits set to 0, it can XOR the symmetric key to the lower bits and then determine the lowest bits of the node id of the last node, and it can then replace the outgoing onion with the corrected onion to that node.
+The last node cannot use the payment secret (invoice secret), but that is not going to protect against probe attacks from a public node to a completely unpublished node anyway.
+Also the last node cannot receive any data via this method (because the onion is replaced by Bob) but for simple pay-for-preimage applications this will work perfectly fine.
+
+
+It strikes me as well that a C-Lightning plugin can actually implement this due to `htlc_accepted` hook.
+
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002488.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+	<LI>Next message: <A HREF="002490.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2489">[ date ]</a>
+              <a href="thread.html#2489">[ thread ]</a>
+              <a href="subject.html#2489">[ subject ]</a>
+              <a href="author.html#2489">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] BOLT11 In the World of Scriptless Scripts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181105024718.o3vvqelkcp5a4afr%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001512.html">
+   <LINK REL="Next"  HREF="001498.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] BOLT11 In the World of Scriptless Scripts</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181105024718.o3vvqelkcp5a4afr%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] BOLT11 In the World of Scriptless Scripts">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Nov  5 02:47:18 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001512.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+        <LI>Next message: <A HREF="001498.html">[Lightning-dev] Proposal for rendez-vous routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1510">[ date ]</a>
+              <a href="thread.html#1510">[ thread ]</a>
+              <a href="subject.html#1510">[ subject ]</a>
+              <a href="author.html#1510">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Nov 04, 2018 at 08:04:20PM +1030, Rusty Russell wrote:
+&gt;<i> &gt;&gt; &gt;  - just send multiple payments with the same hash:
+</I>&gt;<i> &gt;&gt; &gt;     works with sha256
+</I>&gt;<i> &gt;&gt; &gt;     privacy not improved much (some intermediary nodes no longer know
+</I>&gt;<i> &gt;&gt; &gt;       full invoice value)
+</I>&gt;<i> &gt;&gt; &gt;     can claim partial payments as soon as they arrive
+</I>&gt;<i> &gt;&gt; &gt;     accepting any partial payment provides proof-of-payment
+</I>&gt;<i> &gt;&gt; Interestingly, if vendor takes part payment, rest can be stolen by
+</I>&gt;<i> &gt;&gt; intermediaries.
+</I>&gt;<i> &gt; Or you could just see a $5 bill, send $0.50 through, and wait to see
+</I>&gt;<i> &gt; if the take the partial payment immediately before even trying the
+</I>&gt;<i> &gt; remaining $4.50.
+</I>&gt;<i> Sure, that's true today, too?
+</I>
+Yeah, exactly. So to get correct behaviour vendors/payees need to check
+the HTLC amount matches what they expect already... They could just
+automatically pause instead of rejecting here to see if more payments
+come through in the next n seconds via (presumably) different paths,
+with no extra message bit required. (A bit in the invoice indicating
+you'll do this would probably be useful though)
+
+&gt;<i> &gt;  Vendor -&gt; *:        &quot;I sell widgets for 0.01 BTC, my pubkey is P&quot;
+</I>&gt;<i> &gt;  Customer -&gt; Vendor: &quot;I want to buy a widget&quot;
+</I>&gt;<i> &gt;  Vendor -&gt; Customer: &quot;Here's an R value&quot;
+</I>&gt;<i> &gt;  Customer: calculates S = R + H(P,R,&quot;send $me a widget at $address&quot;)*P
+</I>&gt;<i> &gt;  Customer -&gt; Vendor: &quot;here's 0.01 BTC for s corresponding to S, my
+</I>&gt;<i> &gt;                       details are R, $me, $address&quot;
+</I>&gt;<i> &gt;  Vendor: looks up r for R=r*G, calculates s = r + H(P,R,&quot;send $me a
+</I>&gt;<i> &gt;          widget at $address&quot;)*p, checks S=s*G
+</I>&gt;<i> &gt;  Vendor -&gt; Customer: &lt;accepts payment, revealing s&gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;  Customer -&gt; Court: reveals the invoice (&quot;send $me a widget...&quot;) and the
+</I>&gt;<i> &gt;                     signature by Vendor's pubkey P, (s,R)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I think the way to do secp256k1 AMP with that is that when sending
+</I>&gt;<i> &gt; through the payment is for the customer to send three payments to the
+</I>&gt;<i> &gt; Vendor conditional on preimages for A,B,C calculated as:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;    A = S + H(1,secret)*G
+</I>&gt;<i> &gt;    B = S + H(2,secret)*G
+</I>&gt;<i> &gt;    C = S + H(3,secret)*G
+</I>&gt;<i> Note: I prefer the construction H(&lt;secret&gt;,&lt;part-of-secret-in-that-payment&gt;)
+</I>&gt;<i> which doesn't require an explicit order.
+</I>
+Yes, you're quite right.
+
+&gt;<i> I'm not sure I see the benefit over just treating them independently,
+</I>&gt;<i> so I also think we should defer.
+</I>
+If you've got a path that merges, then goes for a few hops, you'd save
+on the fee_base_msat fees, and allow the merged hops to have smaller
+commitment transactions. Kinda neat, but the complexity in doing the
+onion stuff means it definitely makes sense to defer IMO.
+
+&gt;<i> &gt;&gt; [1] If we're not careful we're going to implement HORNET so we can pass
+</I>&gt;<i> &gt;&gt; arbitrary messages around, which means we want to start charging for
+</I>&gt;<i> &gt;&gt; them to prevent spam, which means we reopen the pre-payment debate, and
+</I>&gt;<i> &gt;&gt; need reliable error messages...
+</I>&gt;<i> &gt; Could leave the interactivity to the &quot;web store&quot; layer, eg have a BOLT
+</I>&gt;<i> &gt; 11 v1.1 &quot;offer&quot; include a url for the website where you go an enter your
+</I>&gt;<i> &gt; name and address and whatever other info they need, and get a personalised
+</I>&gt;<i> &gt; BOLT 11 v1.1 &quot;invoice&quot; back with payment-hash/nonce/signature/whatever?
+</I>&gt;<i> I think that's out-of-scope, and I generally dislike including a URL
+</I>&gt;<i> since it's an unsigned externality and in practice has horrible privacy
+</I>&gt;<i> properties.
+</I>
+Maybe... I'm not sure that it'll make sense to try to negotiate postage
+and handling fees over lightning, rather than over https, though?
+
+BTW, reviewing contract law terminology, I think the way lawyers would
+call it is:
+
+   &quot;invitation to treat&quot; -- advertising that you'll sell widgets for $x
+   &quot;offer&quot; -- I'll pay you $3x for delivery of 3 widgets to my address
+   &quot;acceptance&quot; -- you agree, take my $3x and give me a receipt
+   &quot;consideration&quot; -- you get my $3x, I get 3 widgets
+
+So it might be better to have the terms be &quot;advertisment&quot;, &quot;invoice&quot;,
+&quot;receipt&quot;, because the &quot;advertisement&quot; isn't quite an offer in
+contract-law terms. In any event, I think that would mean the BOLT-11
+terms and lightning payment process would map nicely into contract law
+101, which seems helpful.
+
+Oh! Post-Schnorr I think there's a good reason for the payee to
+include their own crypto key in the invoice; so you can generate an
+scriptless-script address for an on-chain fallback payment directly
+between the payer/payee that reveals proof-of-payment on acceptance
+(and allow refund on timeout via taproot I guess). At least, I think
+all that might be theoretically feasible.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001512.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+	<LI>Next message: <A HREF="001498.html">[Lightning-dev] Proposal for rendez-vous routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1510">[ date ]</a>
+              <a href="thread.html#1510">[ thread ]</a>
+              <a href="subject.html#1510">[ subject ]</a>
+              <a href="author.html#1510">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

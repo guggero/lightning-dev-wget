@@ -1,0 +1,302 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Dynamic Commitments: Upgrading Channels Without	On-Chain Transactions
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dynamic%20Commitments%3A%20Upgrading%20Channels%20Without%0A%09On-Chain%20Transactions&In-Reply-To=%3CCAO3Pvs8%3DnKufcwDFUo_EkmVWSUULoe60gxqO5%3D2YXVuUrT3U9g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002771.html">
+   <LINK REL="Next"  HREF="002764.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Dynamic Commitments: Upgrading Channels Without	On-Chain Transactions</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dynamic%20Commitments%3A%20Upgrading%20Channels%20Without%0A%09On-Chain%20Transactions&In-Reply-To=%3CCAO3Pvs8%3DnKufcwDFUo_EkmVWSUULoe60gxqO5%3D2YXVuUrT3U9g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Dynamic Commitments: Upgrading Channels Without	On-Chain Transactions">laolu32 at gmail.com
+       </A><BR>
+    <I>Tue Jul 21 01:18:19 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002771.html">[Lightning-dev] Collaborated stealing. What happens when the	final recipient discloses the pre-image
+</A></li>
+        <LI>Next message: <A HREF="002764.html">[Lightning-dev] Dynamic Commitments: Upgrading Channels Without On-Chain Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2763">[ date ]</a>
+              <a href="thread.html#2763">[ thread ]</a>
+              <a href="subject.html#2763">[ subject ]</a>
+              <a href="author.html#2763">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all,
+
+In this post, I'd like to share an early version of an extension to the spec
+and channel state machine that would allow for on-the-fly commitment
+_format/type_ changes. Notably, this would allow for us to _upgrade_
+commitment types without any on-chain activity, executed in a
+de-synchronized and distributed manner. The core realization these proposal
+is based on the fact that the funding output is the _only_ component of a
+channel that's actually set in stone (requires an on-chain transaction to
+modify).
+
+
+# Motivation
+
+(you can skip this section if you already know why something like this is
+important)
+
+First, some motivation. As y'all are likely aware, the current deployed
+commitment format has changed once so far: to introduce the
+`static_remote_key` variant which makes channels safer by sending the funds
+of the party that was force closed on to a plain pubkey w/o any extra tweaks
+or derivation. This makes channel recovery safer, as the party that may have
+lost data (or can't continue the channel), no longer needs to learn of a
+secret value sent to them by the other party to be able to claim their
+funds. However, as this new format was introduced sometime after the initial
+bootstrapping phase of the network, most channels in the wild today _are
+not_ using this safer format.  Transitioning _all_ the existing channels to
+this new format as is, would require closing them _all_, generating tens of
+thousands of on-chain transactions (to close, then re-open), not to mention
+chain fees.
+
+With dynamic commitments, users will be able to upgrade their _existing_
+channels to new safer types, without any new on-chain transactions!
+
+Anchor output based commitments represent another step forward in making
+channels safer as they allow users/software to no longer have to predict
+chain fees ahead of time, and also bump up the fee of a
+commitment/2nd-level-htlc-transaction, which is extremely important when it
+comes to timely on-chain resolution of HTLC contracts. This upgrade process
+(as touched on below) can either be manually triggered, or automatically
+triggered once the software updates and finds a new preferable default
+commitment format is available.
+
+As many of us are aware, the addition of schnorr and taproot to the Bitcoin
+protocol dramatically increases the design space for channels as a whole. It
+may take some time to explore this design space, particularly as entirely
+new channel/commitment formats [1] continue to be discovered. The roll out
+of dynamic commitments allows us to defer the concrete design of the future
+commitment formats, yet still benefit from the immediate improvement that
+comes with morphing the funding output to be a single-key (non-p2wsh, though
+the line starts to blur w/ taproot) output. With this new funding output
+format in place, users/software will then be able to update to the latest
+and greatest commitment format that starts to utilize all the new tools
+available (scriptless script based htlcs, etc) at a later date.
+
+Finally, the ability to update the commitment format itself will also allow
+us to re-parametrize portions of the channels which are currently set in
+stone. As an example, right now the # of max allowed outstanding HTLCs is
+set in stone once the channel has opened. With the ability to also swap out
+commitment _parameters_, we can start to experiment with flow-control like
+ideas such as limiting a new channel peer to only a handful of HTLC slots,
+which is then progressively increased based on &quot;good behavior&quot; (or the other
+way around as well). Beyond just updating the channel parameters, it's also
+possible to &quot;change the rules&quot; of a channel on the fly. An example of this
+variant would be creating a new psuedo-type that implements a fee policy
+other than &quot;the initiator pays all fees&quot;.
+
+
+# Protocol Changes
+
+With the motivation/background set up, let's dig into some potential ways
+the protocol can be modified to support this new meta-feature. As this
+change is more of a meta-change, AFAICT, the amount of protocol changes
+doesn't appear to be _too_ invasive ;). Most of the heavy lifting is done by
+the wondrous TLV message field extensions.
+
+## Explicit Channel Type Negotiation
+
+Right now in the protocol, as new channel types are introduced (static key,
+and now anchors) we add a new feature bit. If both nodes have the feature
+bit set, then that new channel type is to be used. Notice how this is an
+_implicit_ upgrade: there's no explicit signalling during the _funding_
+process that a new channel type is to be used. This works OK, if there's one
+major accepted &quot;official&quot; channel type, but not as new types are introduced
+for specific use cases or applications. The implicit negotiation also makes
+things a bit ambiguous at times. As an example, if both nodes have the
+`static_remote_key` _and_ anchor outputs feature bit set, which channel type
+should they open?
+
+To resolve this existing ambiguity in the channel type negotiation, we'll
+need to make the channel type used for funding _explicit_. Thankfully, we
+recently modified the message format to be forwarding looking in order to
+allow _TLV extensions_ to be added for all existing message types. A new
+`channel_type` (type #???) TLV would be added which makes the channel type
+used in funding explicit, with the existing feature bit advertisement system
+being kept in place.
+
+A draft of the changes in this area would be something like:
+
+  * `open_channel` and `accept_channel` gain a new `channel_type` TLV field.
+  * retroactively the OG commitment format is numbered as `channel_type=0`,
+    `static_remote_key`, as `channel_type=1`, and anchors as
+    `channel_type=2`
+  * if one receives an `open_channel`, or `accept_channel` message with an
+    unknown `channel_type`, they're to fail the funding flow
+  * nodes MUST NOT send an `open_channel` or `accept_channel` message with a
+    `channel_type` that isn't covered by their existing advertise feature
+    bits
+  * a mapping between feature bits and expected `channel_type` values would
+    then be added
+  * during funding negotiation, the _commitment_ type itself is parametrized
+    based on the `channel_type` value
+      * as we've all implemented `static_remote_key` commitments at this
+        point, I assume the necessary code-level abstractions are already
+        in-place
+
+## Commitment State Machine Changes
+
+With the changes described in the above section, we're now able to
+explicitly identify _which_ channel type we want to enter a funding flow
+for. As we add more types, there may not be a &quot;default&quot; type, so making this
+process explicit is important to future exploration and extensibility.  In
+this section, we'll introduce a series of small changes to the `commit_sig`,
+and `revoke_and_ack` messages which'll allow us to implement the &quot;dynamic&quot;
+portion of this proposal.
+
+Relying once again on the wondrous power of TLV message extensions we'll
+carry over the `channel_type` TLV (just the name, # may be diff since this
+is a diff message context) to the `commit_sig`, and `revoke_and_ack`
+messages. The following guidelines on inclusion and interpretation would
+then be applied:
+
+  * the `channel_type` specified on a given `commit_sig` message should be
+    the `channel_type` of the _new_ commitment being _created_
+  * when receiving a `commit_sig` with a `channel_type` that differs from
+    the `channel_type` of one's on revoked commitment:
+     * if the `channel_type` is unknown (or the `channel_type` transition
+       isn't allowed or defined), then the _p2p_ connection should be
+       aborted
+     * otherwise, using the `channel_type` as a parameter for commitment
+       transaction construction, a new commitment adhering to the rules of
+       the `channel_type` should be constructed
+  * the `channel_type` sent in the `revoke_and_ack` message should be the
+    `channel_type` of the commitment that's being _revoked_
+
+With the above new rules, let's say Alice and Bob upgrade to new versions of
+their LN software that support a new channel type `1`, while they're on
+channel type `0`. Either triggered automatically, or manually (by either
+side), the commitment flow would look something like:
+
+  1. sig_c_1   -&gt;
+  2.          &lt;- revoke_c_0
+  3.          &lt;- sig_c_1
+  4. revoke_c_0 -&gt;
+
+By exchanging 4 messages, both sides are able to upgrade to a new commitment
+format. However, one issue with the above flow is that it currently isn't
+allowed by the spec, since we disallow sending a `commit_sig` message that
+doesn't cover any updates. If we end up going with this route, then we'd
+have to relax that constraint to something like:
+
+  * an empty `commit_sig` message (one that covers no updates) is
+    disallowed, unless the `commit_sig` has a `channel_type`, `c_n` that
+    differs from the channel type of the prior commitment, `c_n-1`.
+
+It would then be up to _new protocol extension documents_ to define _how_ to
+construct those new channel types, and also any changes to the on-chain
+handling that are required by those channel types. Also certain transitions
+may be disallowed. As an example, implementations may want to prevent a user
+from going back to the non-static remote key channels from the
+`static_remote_key` format.
+
+In order to prepare for these changes, implementations need to be able to
+handle &quot;holding&quot; unrevoked commitments of heterogeneous types, as if either
+of them hit the chain, they'll need to be able to resolve all contracts
+properly.
+
+An alternative to attaching the `channel_type` message to the `commit_sig`
+and having _that_ kick off the commitment upgrade, we could instead possibly
+add a _new_ update message (like `update_fee`) to make the process more
+explicit. In either case, we may want to restrict things a bit by only
+allowing the initiator to trigger a commitment format update.
+
+## Further Channel Type Parameterization
+
+With the above protocol sketch, we're able to handle &quot;simple&quot; upgrades,
+where some/all of the parameters of the channel are hard coded and/or have
+been negotiated out of band. More complex channel types may require the
+exchange of additional keys or parameters which need to be known in order to
+reconstruct the _new_ commitment format and verify the new signature. This
+additional information can possibly be piggy-backed on the `commit_sig`
+message in the form of a _nested TLV_ type:
+
+  * a msg-local TLV type `channel_params` is added
+  * the value of this TLV type is a nested TLV blob, that contains all the
+    necessary fields and values needed to properly handle the channel switch
+    over
+
+Returning to the flow control example earlier in this post, the new limits
+for `max_allowed_htlcs`, can be included in this blob. More complex channel
+types could send information such as new keys to be used, or other
+parameters
+that govern how a commitment is to be constructed (like the size of the
+anchor outputs).
+
+# Conclusion
+
+Summarizing, in this post we've proposed a series of protocol modifications
+(with TLV fields doing most of the heavy lifting) that allows LN nodes to
+upgrade their commitments _without any on-chain_ transactions. Depending on
+the architecture of a node, new types may even be added/removed without
+actual downtime.
+
+The ability to upgrade commitments after the fact lessens the pressure of
+newer possibly experimental channel types to get all the details (and
+explore the rather large design space) correct up front. Once Taproot rolls
+around, we can simply update the funding output, roll that out, then
+continue to hash out the details on the possibly new channel type(s) that
+take advantage of all the new tools.
+
+Allowing channel types to be upgraded on the fly let's us update the network
+to the new _safer_ channel types in a de-synchronized, distributed manner
+that doesn't require any on-chain transactions! Dynamic commitments as a
+whole also creates another point of extensibility in the protocol so we can
+start to explore all the variants on channels as we know them that exist.
+
+I'm keen to gather feedback, as internally for `lnd` we've committed to
+exploring this direction so we can start to upgrade _all_ the existing
+lnd-involved channels to the new anchor commitment format, which is the
+safest format yet.
+
+[1]: <A HREF="https://eprint.iacr.org/2020/476">https://eprint.iacr.org/2020/476</A>
+
+-- Laolu
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200720/67ee7ab2/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200720/67ee7ab2/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002771.html">[Lightning-dev] Collaborated stealing. What happens when the	final recipient discloses the pre-image
+</A></li>
+	<LI>Next message: <A HREF="002764.html">[Lightning-dev] Dynamic Commitments: Upgrading Channels Without On-Chain Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2763">[ date ]</a>
+              <a href="thread.html#2763">[ thread ]</a>
+              <a href="subject.html#2763">[ subject ]</a>
+              <a href="author.html#2763">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

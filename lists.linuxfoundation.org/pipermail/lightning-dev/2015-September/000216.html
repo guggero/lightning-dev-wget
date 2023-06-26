@@ -1,0 +1,248 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Ionization Protocol: Flood Routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3C20150923054240.GA19652%40navy%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000211.html">
+   <LINK REL="Next"  HREF="000227.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Ionization Protocol: Flood Routing</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3C20150923054240.GA19652%40navy%3E"
+       TITLE="[Lightning-dev] Ionization Protocol: Flood Routing">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Sep 23 05:42:40 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000211.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+        <LI>Next message: <A HREF="000227.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#216">[ date ]</a>
+              <a href="thread.html#216">[ thread ]</a>
+              <a href="subject.html#216">[ subject ]</a>
+              <a href="author.html#216">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Sep 23, 2015 at 12:12:57PM +0930, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On Mon, Sep 21, 2015 at 11:46:13AM +0930, Rusty Russell wrote:
+</I>&gt;<i> &gt;&gt; We regularly choose a dozen &quot;beacon&quot; nodes at random (using proximity to
+</I>&gt;<i> &gt;&gt; the SHA of latest block hash or something).  Everyone propagates the
+</I>&gt;<i> &gt;&gt; cheapest route to &amp; from those nodes (which is pretty efficient, similar
+</I>&gt;<i> &gt;&gt; to your scheme).
+</I>&gt;<i> &gt; I think what you're implicitly assuming here is:
+</I>&gt;<i> &gt;  a) global p2p network of lightning nodes; at a minimum each node has
+</I>&gt;<i> &gt;     a connection to every node it has a channel open with
+</I>&gt;<i> &gt;  b) consensus protocol for choosing an ordering of potential beacons
+</I>&gt;<i> &gt;  c) potential beacons have to have committed to a beacon id prior to
+</I>&gt;<i> &gt;     ordering being chosen (with spam/flooding protection)
+</I>&gt;<i> &gt;  d) gossip protocol to announce potential beacons and compare against
+</I>&gt;<i> &gt;     ordering, keeping the top few in memory.
+</I>&gt;<i> &gt;  e) sharing routes to beacons with direct neighbours
+</I>
+&gt;<i> &gt;  f) distributed hash to store/lookup route recommendations, keyed by
+</I>&gt;<i> &gt;     beacon/endpoint
+</I>
+So this one's incorrect. I think instead you're assuming:
+
+ f) when asking for a payment to be made to you, you provide your
+    lightning public key, and a set of low-cost paths from the current
+    beacons to you. (ie, your &quot;address&quot; for payments includes full
+    routing and fee info)
+
+&gt;<i> &gt;  g) distributed hash to lookup fees for hops keyed by hop ends
+</I>
+When fees change, which path to a beacon is low cost will often change
+too, so this really doesn't do you any good.
+
+&gt;<i> &gt; Finally for (g), I don't think you want to store fees in the routes
+</I>&gt;<i> Well, propagating fee updates for (say) 1200 routes isn't too bad,
+</I>&gt;<i> as long as they're not changing too fast.
+</I>
+So forgetting the DHTs, then fee updates take effect via the
+dijkstra-routing-gossip protocol. I don't have any idea how well that
+would perform... If an average channel's fee updates U times per day,
+there are C channels, and N nodes, does that mean a background noise of
+O(log(N)*U*C) fee update traffic or something? (dividing by N to get the
+traffic an individual node sees)
+
+It does mean that the &quot;payment info&quot; has to be provided by the payee
+&quot;shortly&quot; before the transaction; otherwise the route and fee information
+would be out of date and the payment becomes &quot;likely&quot; to fail due to
+closed channels or raised fees.
+
+&gt;<i> &gt;&gt; There are some twisty details here:
+</I>&gt;<i> &gt;&gt; 1) How many beacon nodes?
+</I>&gt;<i> &gt;&gt;    12, and increase on a log scale with network size.  That size can
+</I>&gt;<i> &gt;&gt;    be derived from previous beacons.
+</I>&gt;<i> &gt; I think it's also something you could set per-node, like the
+</I>&gt;<i> &gt; minrelaytxfee.
+</I>&gt;<i> That doesn't make sense, since we need to agree on who is a beacon.
+</I>
+If you have the top 10 beacons and I have the top 14 beacons, we have
+the top 10 beacons in common. During the gossip phase, if either of us
+see someone in the top 10, we pass it along; I pass along a few more as
+well.
+
+&gt;<i> &gt;&gt; 2) How long between selection and a beacon becoming active?
+</I>&gt;<i> &gt;&gt;    10 blocks.  That gives time for others to connect to beacon node.
+</I>&gt;<i> &gt; Beacons can be &quot;active&quot; as soon as you can route through them, and that's
+</I>&gt;<i> &gt; just a DHT lookup to determine, and then a matter of comparing fees to
+</I>&gt;<i> &gt; what the old beacons give you. So I think no artificial delay is needed,
+</I>&gt;<i> &gt; and the real question is just when you expire your routes to/from the
+</I>&gt;<i> &gt; old beacons?
+</I>&gt;<i> No.  Beacons will get saturated fast unless they have a chance to
+</I>&gt;<i> prepare.  
+</I>
+Sure. I was thinking you have to volunteer to be a beacon, ie something
+like:
+
+  1) commit to node id (anchor transaction in blockchain)
+  2) commit to ordering (abs difference of node id versus 
+     sha of latest blockchain block with (depth % 2016 == 0))
+  3) volunteer to be a beacon (sign &quot;imma beacon! depth $n anchor
+     $txid&quot;)
+  4) gossip (including your signed volunteer statement) and hope you're
+     in the top 12
+
+Any preparation (opening new channels etc happens between (2) and (3)),
+transactions happen immediately after (4).
+
+If other nodes can &quot;force&quot; you to be a beacon, I think that causes
+problems anyway (maybe you just don't have the bandwidth to deal with
+a high transaction volume), so I think the &quot;volunteering&quot; step is needed.
+
+&gt;<i> In particular, the network will want to establish channels
+</I>&gt;<i> with new beacons, and beacons may well want to bring offline funds
+</I>&gt;<i> online to handle the anticipated capacity.
+</I>
+So... doesn't this provide a /really/ juicy target for hackers? Either
+of the &quot;let's steal funds&quot; variety, or of the &quot;let's find out as much
+info about every transaction as we can&quot; type?
+
+If you just have to hack 12 systems to observe/DoS 100% of lightning
+network transactions, that seems worrying to me. I think I'd want to avoid
+being a beacon in that case, just to avoid painting a target on my system.
+
+I'm not sure if it's a realistic attack model, but if you can observe:
+
+  Bob -&gt; Alice: pay me $20 to R (routes to current beacons: ...)
+
+and have control of the beacon Alice ends up using, then you can both
+observe that Alice is trying to make the payment (you see an HTLC with
+$20 and R), and prevent Alice from making the payment (you can just not
+forward any transactions involving R).
+
+Without beacons (but routing still being possible somehow!), Bob could
+anonymously post prices and R values in public; Alice could observe them
+anonymously without giving away that she was observing them, and Mallory
+could not prevent Alice from paying Bob, without controlling Alice or Bob,
+or a large proportion of the lightning network as a whole. Bob could be
+a dissident asking for donations in this scenario, eg.
+
+With beacons, Mallory could somewhat plausibly gain control of the beacons
+Bob is advertising, and then block any payments with those published
+R values from going through. This could happen by subpoena or national
+security letter rather than buffer overflow too.
+
+&gt;<i> &gt; Hmm. Counterproposal: no beacons or routing DHT, just fees by gossip
+</I>&gt;<i> &gt; protocol (or IRC channel as prototype hack). Everyone has a complete
+</I>&gt;<i> &gt; (but possibly slightly out of date) database of node-node (but not
+</I>&gt;<i> &gt; node-wallet) channel fees, and changes are propogated by gossip. Back
+</I>&gt;<i> &gt; of the envelope maths:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   everyone uses lightning ==&gt; 8B wallets (5B teens/adults, 3B businesses)
+</I>&gt;<i> &gt;   every wallet has ~4 channels ==&gt; 32B node-wallet channels
+</I>&gt;<i> &gt;   100k wallet channels per node on average ==&gt; 320k nodes
+</I>&gt;<i> Um, so each wallet isn't a node?
+</I>
+Err, yeah; I've been using those terms mutually exclusively, ie &quot;you're
+running a full node, or you're just a wallet, you're never both&quot;:
+
+13:47 &lt;rusty&gt; kanzure: Aside: Joseph has been avoiding the term hub in
+        favour of simply &quot;nodes&quot;.  I've been following suit, since I
+        think it directs thinking in the right non-centralized direction.
+13:47 &lt;kanzure&gt; but hub is more fun to pronounce
+13:47 &lt;kanzure&gt; bah fine i'll use node then
+13:48 &lt;rusty&gt; kanzure: Me too.  I have a bub, he likes to say hub.
+        But I'll just have to teach him....
+13:48 &lt;aj&gt; rusty: i feel like &quot;just spending/receiving money with as
+        little thought/effort as possible&quot; and &quot;being an active
+        participant&quot; needs different words... leaf node and node
+        don't really work for me
+13:48 &lt;kanzure&gt; &quot;wallet&quot;
+13:49 &lt;aj&gt; wallets and nodes? hmm
+
+ie, nodes do payment forwarding; wallets just spend/recieve. You'd use
+your phone as just a wallet, but you might run a node at home or in
+the cloud. Wallets still do the lightning protocol themselves, they just
+don't earn fees by forwarding payments.
+
+Aside: &quot;mesh network&quot; seems to be a much better description than
+hub-and-spoke... cf
+
+<A HREF="https://www.reddit.com/r/Bitcoin/comments/3lo8mb/serious_question_for_blockstreamcom_will_you_let/">https://www.reddit.com/r/Bitcoin/comments/3lo8mb/serious_question_for_blockstreamcom_will_you_let/</A>
+
+&gt;<i> That's a very different architecture,
+</I>
+I'm just using it as terminology (I think...).
+
+The only architectural implication is that I'm assuming &quot;most&quot; people
+(24999 out of 25000) don't end up doing routing. Given routing nodes
+have to be online with hot keys and thus risk being hacked and having
+their funds drained, I think that's fairly plausible?
+
+(Or going the other way; if you're making money running a node, I think
+it's pretty reasonable you'll try to serve on the order of 100k users
+-- much less than that and you'll be under utilising your hardware. But
+with only 8B potential customers, there's a limit on the number of nodes
+that can actually do that, as calculated above. I'm assuming economics
+somehow ends up enforcing that limit effectively)
+
+&gt;<i> which uses hosted wallets or something?  I don't think that's very
+</I>&gt;<i> interesting.
+</I>
+Not hosted wallets; more along the lines of SPV clients, where you're
+relying on the network to do most of the work (in this case working out
+a cheap route, rather than verifying txns)?
+
+Does that make it more interesting?
+
+Cheers,
+aj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000211.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+	<LI>Next message: <A HREF="000227.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#216">[ date ]</a>
+              <a href="thread.html#216">[ thread ]</a>
+              <a href="subject.html#216">[ subject ]</a>
+              <a href="author.html#216">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

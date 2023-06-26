@@ -1,0 +1,122 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Probing final receiver with refund timeout
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Probing%20final%20receiver%20with%20refund%20timeout&In-Reply-To=%3C87ziu0mu4t.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000484.html">
+   <LINK REL="Next"  HREF="000497.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Probing final receiver with refund timeout</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Probing%20final%20receiver%20with%20refund%20timeout&In-Reply-To=%3C87ziu0mu4t.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Probing final receiver with refund timeout">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Mar 15 01:01:38 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000484.html">[Lightning-dev] Probing final receiver with refund timeout
+</A></li>
+        <LI>Next message: <A HREF="000497.html">[Lightning-dev] Probing final receiver with refund timeout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#490">[ date ]</a>
+              <a href="thread.html#490">[ thread ]</a>
+              <a href="subject.html#490">[ subject ]</a>
+              <a href="author.html#490">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Mats Jerratsch &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">mats at blockchain.com</A>&gt; writes:
+&gt;&gt;<i> If A sends many HTLCs through B, B can simply plot what the timeouts
+</I>&gt;&gt;<i> are and know that A is likely originating the HTLCs rather than relaying
+</I>&gt;&gt;<i> them for someone else.
+</I>&gt;<i>
+</I>&gt;<i> Hm, right. If all payments that come from A have a timeout larger than
+</I>&gt;<i> some minimum value X, he is generating all of them and is just trying to
+</I>&gt;<i> randomize those. However, if he creates a payment with an initial refund
+</I>&gt;<i> value lower than X, the payment might not succeed, because the
+</I>&gt;<i> intermediate nodes deducted too much.
+</I>&gt;<i>
+</I>&gt;<i> However, if we take into account that the amount of nodes in the route
+</I>&gt;<i> is not a constant, and only known to the sender, this adds another
+</I>&gt;<i> degree of freedom to choose the initial value.
+</I>
+Good point. But we still lose on the receiving side; if you ever see a
+small timeout you know the next hop is the final one.
+
+I imagine we'll be spending some time getting more sophisticated with
+our value cloaking as attacks emerge, but I'm happy to start with
+something reasonable.
+
+&gt;&gt;&gt;<i> However, I am inclined to use those timestamps in the onion object, as
+</I>&gt;&gt;&gt;<i> the described attackvector still exists.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Doesn't including timestamps in the onion provide explicit information
+</I>&gt;&gt;<i> on the number of previous hops though?
+</I>&gt;<i>
+</I>&gt;<i> Not if they are randomized. The initial sender will choose a good
+</I>&gt;<i> starting value (see above), and deduct MIN_TIMEOUT * MIN_OVERLAY *
+</I>&gt;<i> RANDOM from it. Actually it doesn't provide any additional data, as that
+</I>&gt;<i> is the very same mechanism the intermediate hops come to that value.
+</I>
+OK, let me get the proposal straight:
+
+1.  Each node will publish its MIN_TIMEOUT (along
+    with its other info as per Option 2 in
+    <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-October/000262.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-October/000262.html</A> )
+
+2.  The payer sums the MIN_TIMEOUT to the payee, adds some random value
+    (keeping it under the max value allowed by protocol) to give the
+    initial HTLC timeout.
+
+3.  The payer puts the 'expected_timeout' in each layer of the onion, by
+    subtracting the last hops' MIN_TIMEOUT from the initial timeout.
+
+eg.  Say maximum allowed timeout is 20 * 12 hours, and route is:
+
+        A (12 hours) -&gt; B (6 hours) -&gt; C (6 hours) -&gt; D (4 hours)
+
+     Initial timeout has to be at least 12 + 6 + 6 + 4 == 28 hours, plus
+     some padding for transmission delays, say 29 hours.
+
+     It picks a random timeout between 29 and 240 hours, say now+100 hours,
+     and onion looks like:
+
+     [ A: now+100 [ B: now+88 [ C: now+82 [ D: now+76 ] ] ] ]
+
+Have I missed anything?
+
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000484.html">[Lightning-dev] Probing final receiver with refund timeout
+</A></li>
+	<LI>Next message: <A HREF="000497.html">[Lightning-dev] Probing final receiver with refund timeout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#490">[ date ]</a>
+              <a href="thread.html#490">[ thread ]</a>
+              <a href="subject.html#490">[ subject ]</a>
+              <a href="author.html#490">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,128 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Mitigations for loop attacks
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3C87in7lh6to.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001287.html">
+   <LINK REL="Next"  HREF="001290.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Mitigations for loop attacks</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3C87in7lh6to.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Mitigations for loop attacks">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri May 18 05:27:15 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001287.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+        <LI>Next message: <A HREF="001290.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1289">[ date ]</a>
+              <a href="thread.html#1289">[ thread ]</a>
+              <a href="subject.html#1289">[ subject ]</a>
+              <a href="author.html#1289">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; writes:
+&gt;&gt;&gt;<i> Please describe the below:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> 1.  Behavior if payment succeeds after T time.
+</I>&gt;&gt;&gt;<i> 2.  Behavior if payment fails after T time.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> It seems you only described &quot;Behavior if payment succeeds after T time&quot;.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Ah, sorry if I didn't make that clear. The reputation is increased in the case of successful payments by the fee collected. The reputation is decreased on the downstream peer proportional to time T regardless of whether the payment succeeds or fails. If a payment succeeds quickly, the increase should outweigh the decrease, but if the payment succeeds after a long time, the change in reputation may be net negative. If the payment fails, the upstream peer's reputation does not change and the downstream peer's reputation always decreases proportional to time T.
+</I>&gt;<i>
+</I>&gt;<i> Thank you.  So:
+</I>&gt;<i>
+</I>&gt;<i> 1.  If payment succeeds after T time, upstream reputation is increased by fee earned, downstream reputation is increased by fee earned, downstream reputation is decreased by T * reputation_loss_rate.
+</I>&gt;<i> 2.  If payment fails after T time, downstream reputation is decreased by T * reputation_loss_rate.
+</I>
+So, to be clear, there's no *financial* fee on failure, just reputation
+fee?
+
+Also, you talked about reputation_loss_rate as being a private per-node
+thing, and being an explicit thing in the HTLC.  I'm ignoring the
+former, and assuming the latter.
+
+OK, let's consider a 1000 satoshi HTLC, paying a 10ppm fee and with a
+1ppm-per-second reputation_loss_rate.
+
+If it succeeds in 1 second (measuring reputation in millisatoshi,
+because its cute):
+
+        reputation[source] += 10
+        reputation[destination] += 10 - 1
+
+If it succeeds in 10 seconds:
+
+        reputation[source] += 10
+        reputation[destination] += 10 - 10
+
+If it fails in 10 seconds:
+
+        reputation[destination] -= 10
+
+And if it falls onto the chain and fails after 144 blocks:
+
+        reputation[destination] -= 86400
+
+In this scheme, it seems that I can destroy N reputation points in 18
+nodes for cost N:
+
+        Mallory1 -&gt; Node1 -&gt; Node2 -&gt; ..... -&gt; Node18 -&gt; Mallory2
+                                                  \
+                                               Mallory3
+
+Mallory2 pays a crapload of fees to Node18 to pay Mallory3, getting a
+great reputation.  Then Mallory1 sends a payment to Mallory2, which
+takes a day to resolve.
+
+Of course, this is why you want ramped reputation_loss_rate, say 1ppm
+for Mallory1-&gt;Node1, 2ppm -&gt;Node2.... 19ppm for Mallory2.  That just
+means Mallory can destroy 9*N total reputation points, not 18*N.
+
+You can fix this by making it reputation_loss_rate exponential, but I
+don't think Node1 could ever get the 262144x reputation to make the
+payment in the first place.
+
+What am I missing?
+
+Thanks,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001287.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+	<LI>Next message: <A HREF="001290.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1289">[ date ]</a>
+              <a href="thread.html#1289">[ thread ]</a>
+              <a href="subject.html#1289">[ subject ]</a>
+              <a href="author.html#1289">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

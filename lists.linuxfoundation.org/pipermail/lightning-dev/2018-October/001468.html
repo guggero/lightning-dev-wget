@@ -1,0 +1,523 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Feedback please!
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3CCAFfwr8GCCSi8QFu1J-bHpbS%3DTTRNUaJT7RfEs-5qv6FvN%2BMb1Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001465.html">
+   <LINK REL="Next"  HREF="001472.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Feedback please!</H1>
+    <B>Conner Fromknecht</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3CCAFfwr8GCCSi8QFu1J-bHpbS%3DTTRNUaJT7RfEs-5qv6FvN%2BMb1Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Feedback please!">conner at lightning.engineering
+       </A><BR>
+    <I>Fri Oct 19 03:04:59 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001465.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+        <LI>Next message: <A HREF="001472.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1468">[ date ]</a>
+              <a href="thread.html#1468">[ thread ]</a>
+              <a href="subject.html#1468">[ subject ]</a>
+              <a href="author.html#1468">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good evening all,
+
+Thank you Rusty for starting us down this path :) and to ZmnSCPxj and Lisa
+for
+your thoughts. I think this narrows down the design space considerably!
+
+In light of this, and if I'm following along, it seems our hand is forced in
+splicing via a single on-chain transaction. In my book, this is preferable
+anyway. I'd much rather push complexity off-chain than having to do a
+mutli-stage splicing pipeline.
+
+&gt;<i> To add some context to this, if you start accepting HTLC's for the new
+</I>balance
+&gt;<i> after the parallel commitment is made, but before the re-anchor is buried,
+</I>&gt;<i> there's the potential for a race condition between a unilateral close (or
+</I>any
+&gt;<i> revoked commitment transaction) and the re-anchoring commitment
+</I>transaction,
+&gt;<i> that spends the 'pre-committed' UTXO of splicing in funds and the original
+</I>&gt;<i> funding transaction
+</I>
+Indeed, I'm not aware of any splicing mechanism that enables off-chain use
+of
+spliced-in funds before the new funding output confirms. Even in the async,
+single-txn case, the new funds cannot be spent until the new funding output
+confirms sufficiently.
+
+&gt;<i>From my POV, the desired properties of a splice are:
+</I> 1. non-blocking (asynchronous) usage of the channel
+ 2. single on-chain txn
+ 3. ability to RBF (have multiple pending splices)
+
+Of these, it seems we've solidified 1 and 2. I understand the desire to not
+tackle RBF on the first attempt given the additional complexity.  However, I
+do believe there are ways we can proceed in which our first attempt largely
+coincides with supporting it in the future.
+
+With that in mind, here are some thoughts on the proposals above.
+
+## RBF and Multiple Splices
+
+&gt;<i> 1. type: 132 (`commitment_signed`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`32`:`channel_id`]
+</I>&gt;<i>    * [`64`:`signature`]
+</I>&gt;<i>    * [`2`:`num_htlcs`]
+</I>&gt;<i>    * [`num_htlcs*64`:`htlc_signature`]
+</I>&gt;<i>    * [`num_htlcs*64`:`htlc_splice_signature`] (`option_splice`)
+</I>
+This will overflow the maximum message size of 65535 bytes for num_htlcs &gt;
+511.
+
+I would propose sending a distinct message, which references the
+`active_channel_id` and a `splice_channel_id` for the pending splice:
+
+1. type: XXX (`commitment_splice_signed`) (`option_splice`)
+2. data:
+   * [`32`:`active_channel_id`]
+   * [`32`:`splice_channel_id`]
+   * [`64`:`signature`]
+   * [`2`:`num_htlcs`]
+   * [`num_htlcs*64`:`htlc_signature`]
+
+This more directly addresses handling multiple pending splices, as well as
+preventing us from running into any size constraints. The purpose of
+including the `active_channel_id` would be to remote node locate the
+spliced channel, since it may not be populated indexes containing
+active channels. If we don't want to include this, the existing message
+can be used without modification.
+
+&gt;<i> We shouldn't allow more than one pending splice operation anyway, as
+</I>&gt;<i> stated in your proposal initially. We are already critically reliant on
+</I>our
+&gt;<i> transaction being confirmed on-chain, so I don't see this as much of an
+</I>&gt;<i> added issue.
+</I>
+IMO there's no reason to limit ourselves to one pending splice at the
+message
+level. I think it'd be an oversight to not to plan ahead with RBF in mind,
+given that funding transactions have gone unconfirmed precisely because of
+improperly chosen fee rates. Arguably, funding flow should be extended to
+support this as well.
+
+CPFP works, though it's more wasteful than resigning and I'd prefer only to
+do
+so out of necessity, rather than relying on it. CPFP is nice because it
+doesn't
+require interaction, though we are already assuming the other party to be
+online during the splice (unlike unilateral closes).
+
+Adding a splice-reject message/error code should be sufficient to allow
+implementations to signal that their local tolerance for number of pending
+splices has been reached. It's likely we'd all start with getting one splice
+working, but then the messages won't need to modified if we want to
+implement
+additional pending splices via RBF.
+
+A node that wants to RBF but receives a reject can then proceed with CPFP
+as a
+last resort.
+
+Are there any downsides I'm overlooking with this approach?
+
+&gt;<i> | Bit Position  | Name                      | Field
+</I>      |
+&gt;<i> | ------------- | ------------------------- |
+</I>-------------------------------- |
+&gt;<i> | 0             | `option_channel_htlc_max` | `htlc_maximum_msat`
+</I>      |
+&gt;<i> | 1             | `option_channel_moving`   | `moving_txid
+</I>     |
+&gt;<i>
+</I>&gt;<i> The `channel_update` gains the following field:
+</I>&gt;<i>     * [`32`: moving_txid`] (option_channel_moving)
+</I>
+Do we actually need to send the `moving_txid` via a channel update? I think
+it's
+enough for both parties to send `channel_update`s with the
+`option_channel_moving` bit set, and continue to keep the channel in our
+routing
+table.
+
+If we receive later receive two `channel_update`s whose `short_channel_id`s
+reference the spending transaction (and the node pubkeys are the same), we
+assume the splice was successful and that this channel has been subsumed. I
+think this works so long as the spending transaction doesn't contain
+multiple
+funding outputs, though I think the current proposal is fallible to this as
+well.
+
+To me, this proposal has the benefit of not bloating gossip bandwidth with
+an
+extra field that would need to parsed indefinitely, and gracefully
+supporting
+RBF down the road. Otherwise we'd need to gossip and store each potential
+txid.
+
+With regards to forwarding, both `short_channel_id`s would be accepted by
+the
+splicers for up to 100 blocks (after splice confirm?), at which point they
+can
+both forget the prior `short_channel_id`.
+
+## Shachain
+
+&gt;<i> I thought about restarting the revocation sequence, but it seems like
+</I>&gt;<i> that only saves a tiny amount since we only store log(N) entries.  We
+</I>&gt;<i> can drop old HTLC info post-splice though, and (after some delay for
+</I>&gt;<i> obscurity) tell watchtowers to drop old entries I think.
+</I>
+I agree the additional state isn't too burdensome, and that we would still
+be
+able to drop watchtower state after some delay as you mentioned.
+
+On one hand, it does seem like the opportune time to remove such state if
+desired.
+
+OTOH, it is _really_ nice from an atomicity perspective that the current
+channel and (potentially) N pending channels can be revoked using a single
+commitment secret and message. Doing so would mean we don't have to
+modify the `revoke_and_ack` or `channel_reestablish` messages. The receiver
+would just apply the commitment secrets/points to the current channel and
+any
+pending splices.
+
+## Misc
+
+&gt;<i> Any reason to now make the splicing_add_* messages allow one to add
+</I>several
+&gt;<i> inputs in a single message? Given &quot;acceptable&quot; constraints for how large
+</I>the
+&gt;<i> witness and pkScripts can be, we can easily enforce an upper limit on the
+</I>&gt;<i> number of inputs/outputs to add.
+</I>
+Yes, I prefer this simplification.
+
+&gt;<i> Additionally, as the size of the channel is either expanding or
+</I>contracting,
+&gt;<i> both sides should be allowed to modify things like the CSV param, reserve,
+</I>&gt;<i> max accepted htlc's, max htlc size, etc. Many of these parameters like the
+</I>&gt;<i> CSV value should scale with the size of the channel, not allowing these
+</I>&gt;<i> parameters to be re-negotiated could result in odd scenarios like still
+</I>&gt;<i> maintain a 1 week CSV when the channel size has dipped from 1 BTC to 100k
+</I>&gt;<i> satoshis.
+</I>
+Agreed!
+
+&gt;<i> These all seem marginal to me.  I think if we start hitting max values,
+</I>&gt;<i> we should discuss increasing them.
+</I>
+Doesn't this defeat the goal of firewalling funds against individual channel
+failures?
+
+&gt;&gt;&gt;<i> One thing that I think we should lift from the multiple funding output
+</I>&gt;&gt;&gt;<i> approach is the &quot;pre seating of inputs&quot;. This is cool as it would allow
+</I>&gt;&gt;&gt;<i> clients to generate addresses, that others could deposit to, and then
+</I>have
+&gt;&gt;&gt;<i> be spliced directly into the channel. Public derivation can be used,
+</I>along
+&gt;&gt;&gt;<i> with a script template to do it non-interactively, with the clients
+</I>picking
+&gt;&gt;&gt;<i> up these deposits, and initiating a splice in as needed.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> How about this restatement?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1.  Each channel has two public-key-derivation paths (BIP32) to create
+</I>onchain
+&gt;&gt;<i> addresses.  One for each side of the channel.
+</I>&gt;&gt;<i> 2.  The base of the above is actually a combined private-public keypair
+</I>of both
+&gt;&gt;<i> sides (e.g. created via MuSig or some other protocol).  Thus the
+</I>addresses
+&gt;&gt;<i> require cooperation of both parties to spend.
+</I>&gt;&gt;<i> 3.  When somebody sends to one of the onchain addresses in the path,
+</I>their
+&gt;&gt;<i> client detects this.
+</I>&gt;&gt;<i> 4.  The client updates the current transaction state, such that the new
+</I>commit
+&gt;&gt;<i> transaction has two inputs ( the original channel transaction and the
+</I>new UTXO).
+&gt;&gt;<i>
+</I>&gt;&gt;<i> The above seems unsafe without trust in the other peer, as, the other
+</I>peer can
+&gt;&gt;<i> simply refuse to create the new commit transaction.  Since the address
+</I>requires
+&gt;&gt;<i> both parties to spend, the money cannot be spent and there is no backoff
+</I>&gt;&gt;<i> transaction that can be used.  But maybe you can describe some mechanism
+</I>to
+&gt;&gt;<i> ensure this, if this is what is meant instead?
+</I>&gt;<i>
+</I>&gt;<i> This could easily be solved by making the destination address a Taproot
+</I>&gt;<i> address, which by default is just a 2-of-2, but in the uncooperative
+</I>&gt;<i> case it can reveal the script it commits to, which is just a timelocked
+</I>&gt;<i> refund that requires a single-sig. The only problem with this is that
+</I>&gt;<i> the refund would be non-interactive, and so the entirety of the funds,
+</I>&gt;<i> that may be from a third-party, need to be claimed by one endpoint,
+</I>&gt;<i> i.e., there is no splitting the funds in case of an uncollaborative
+</I>&gt;<i> refund. Not sure how important that is though, since I don't think
+</I>&gt;<i> third-party funds will come from unrelated parties, e.g., most of these
+</I>&gt;<i> funds will come from an on-chain wallet that is under the control of
+</I>&gt;<i> either parties so the refund should go back to that party anyway.
+</I>
+This can be accomplished similarly by having either (or both) party
+publishing a
+static address or publicly derivable address specific to the channel,
+derived
+from their HD seed.
+
+Arguably, the address should perhaps be global, so that it can outlive the
+lifetime of the channel, i.e. as soon as the first person deposits and a
+splice
+is initiated, is the address still valid for the new channel if new keys are
+used? Similarly, the channel could be closed and the funds locked until
+the timeout if the peer disappears.
+
+Regardless, both approaches can be made to have equivalent amounts of
+[non-]interactivity. However, the recipient isn't burdened in spending by
+1) interaction with the channel peer, or 2) an absolute timeout if 1 fails,
+giving the receiver more flexibility if they wish to not commit the received
+funds to a splice. It also benefits from smaller witness sizes, a larger
+anonymity set, etc.
+
+In general, using a 2-of-2+timeout to stage funds for splicing doesn't offer
+that much IMO. It seems the primary purpose is to prevent the funds from
+being
+double spent during the splice, but observe that this is still possible if
+the
+timeout matures, perhaps because the splice doesn't confirm in a timely
+manner.
+
+Acknowledging this, detecting double-spent inputs is still required for full
+correctness. By implementing it, either party is free to propose arbitrary
+inputs for a splice, which I believe reduces complexity in the long run.
+
+Splice out,
+Conner
+
+On Tue, Oct 16, 2018 at 10:00 PM ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Good morning lisa,
+</I>&gt;<i>
+</I>&gt;<i> This is a good observation.
+</I>&gt;<i>
+</I>&gt;<i> Before, I'd already considered the rationale, for why channels have a
+</I>&gt;<i> single 2-of-2 UTXO as funding output.  And it seems I should have
+</I>&gt;<i> considered this, prior to accepting the &quot;parallel&quot; construction as feasible.
+</I>&gt;<i>
+</I>&gt;<i> For sake of posterity, I leave the below writeup as a tangential to the
+</I>&gt;<i> design of splice (and to the design of Lightning having a single 2-of-2
+</I>&gt;<i> UTXOs):
+</I>&gt;<i>
+</I>&gt;<i> # 0-conf is Unsafe, Yet Lightning is Safe; Why?
+</I>&gt;<i>
+</I>&gt;<i> To accept a 0-conf transaction output, is known to be unsafe.
+</I>&gt;<i> Replace-by-fee is always a possibility, regardless of whether the
+</I>&gt;<i> transaction opts in to RBF or not: a rational miner will always accept the
+</I>&gt;<i> higher feerate, disregarding any &quot;opt-in&quot; flag that is set or not set on
+</I>&gt;<i> the transaction.  Thus we reject any advice that claims that 0-conf is
+</I>&gt;<i> tenable, even for tiny amounts.
+</I>&gt;<i>
+</I>&gt;<i> Yet when viewed solely in terms of transactions, Lightning protocol uses
+</I>&gt;<i> transactions that are not on any block (are kept offchain).  Since they are
+</I>&gt;<i> not in a block, they are indistinguishable from 0-conf transactions, which
+</I>&gt;<i> are accepted by the receiver, yet are also not on any block.  One might
+</I>&gt;<i> argue the distinction, that a &quot;real&quot; 0-conf transaction exists on some
+</I>&gt;<i> mempool somewhere, and thus has a chance to be on a block in the future,
+</I>&gt;<i> but mempools have no consensus, and the existence of a transaction on some
+</I>&gt;<i> mempool is not a safe assurance of it existing in the mempool of the next
+</I>&gt;<i> winning miner.
+</I>&gt;<i>
+</I>&gt;<i> So why is Lightning safe, when 0-conf transactions are in general not safe?
+</I>&gt;<i>
+</I>&gt;<i> Again, we should focus on why 0-conf transactions in general are not safe:
+</I>&gt;<i> transaction replacement.  Thus, 0-conf transactions can be made safe, if
+</I>&gt;<i> you are somehow able to ensure that replacement transactions cannot be made.
+</I>&gt;<i>
+</I>&gt;<i> For example, if you are part of an n-of-n federation that signs the
+</I>&gt;<i> transaction, you can always safely accept a 0-conf transaction from that
+</I>&gt;<i> federation paying only to you, because you can always veto any replacement
+</I>&gt;<i> (by simply refusing to sign) that is not in your interests.
+</I>&gt;<i>
+</I>&gt;<i> This is in fact how Lightning works: a 2-of-2 federation (the channel
+</I>&gt;<i> counterparties) are the signatories of the 0-conf transactions that are the
+</I>&gt;<i> commitment transactions of the Lightning protocol.  Replacement of the
+</I>&gt;<i> commitment transactions is strictly guided by the protocol; both sides have
+</I>&gt;<i> veto rights, since the source transaction output is 2-of-2.
+</I>&gt;<i>
+</I>&gt;<i> Thus, Lightning, though it uses 0-conf transactions, is safe, because it
+</I>&gt;<i> prevents the replacement of a 0-conf transaction without the receiver
+</I>&gt;<i> allowing it, by the simple expedient of including the receiver in the
+</I>&gt;<i> 2-of-2 multisig guarding its single funding TXO.
+</I>&gt;<i>
+</I>&gt;<i> ##  The Implications for Splice Proposals
+</I>&gt;<i>
+</I>&gt;<i> Some splice proposals involve creating the equivalent of multiple funding
+</I>&gt;<i> TXOs for a single channel.  Such constructions are unsafe-by-default on
+</I>&gt;<i> Poon-Dryja.
+</I>&gt;<i>
+</I>&gt;<i> In reality, every commitment transaction (or update transaction in
+</I>&gt;<i> Decker-Osuntokun-Russell) is replaceable by any other commitment (or
+</I>&gt;<i> update) transaction for that channel.  Under Poon-Dryja older transactions
+</I>&gt;<i> are revoked (and hence one side risks loss of their collateral) while under
+</I>&gt;<i> Decker-Osuntokun-Russell older transactions may be &quot;gainsaid&quot; (i.e. newer
+</I>&gt;<i> update transactions may be reanchored to consume the TXO of the older
+</I>&gt;<i> update transaction, thus preventing that update from truly being committed
+</I>&gt;<i> to).
+</I>&gt;<i>
+</I>&gt;<i> This is relevant since before a splice, the channel has a single funding
+</I>&gt;<i> TXO, while after the splice, the channel has multiple.
+</I>&gt;<i>
+</I>&gt;<i> In particular, a commitment (or update) transaction, that has multiple
+</I>&gt;<i> inputs (to consume the multiple funding TXOs), can be replaced with a
+</I>&gt;<i> commitment (or update) transaction that was created before the splice.
+</I>&gt;<i> Under Poon-Dryja, such a commitment transaction may be revoked, but this
+</I>&gt;<i> leaves the other funding TXOs unuseable.  Under Decker-Osuntokun-Russell,
+</I>&gt;<i> as long as the sequence number is preserved across the splice, it is
+</I>&gt;<i> possible for a later update transaction with multiple inputs to simply
+</I>&gt;<i> gainsay the old single-input update with the new multiple-input update
+</I>&gt;<i> transaction. (I suppose, that this is another advantage that
+</I>&gt;<i> Decker-Osuntokun-Russell has).
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Sent with ProtonMail &lt;<A HREF="https://protonmail.com">https://protonmail.com</A>&gt; Secure Email.
+</I>&gt;<i>
+</I>&gt;<i> &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+</I>&gt;<i> On Wednesday, October 17, 2018 9:09 AM, lisa neigut &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">niftynei at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;<i> To add some context to this, if you start accepting HTLC's for the new
+</I>&gt;<i> balance after the parallel commitment is made, but before the re-anchor is
+</I>&gt;<i> buried, there's the potential for a race condition between a unilateral
+</I>&gt;<i> close (or any revoked commitment transaction) and the re-anchoring
+</I>&gt;<i> commitment transaction, that spends the 'pre-committed' UTXO of splicing in
+</I>&gt;<i> funds and the original funding transaction.
+</I>&gt;<i>
+</I>&gt;<i> You can get around this by waiting until both the pre-commitment UTXO and
+</I>&gt;<i> the re-anchor have cleared a minimum depth before accepting HTLC's for the
+</I>&gt;<i> new balance totals, but that's twice as long of a wait as the first,
+</I>&gt;<i> synchronized re-commitment scheme that Rusty originally proposed.
+</I>&gt;<i>
+</I>&gt;<i> It also makes leaving the original funding transaction 'exposed' (ie
+</I>&gt;<i> Rene's version of parallel splice) untenable, as there's always the risk of
+</I>&gt;<i> an old state being published to consume that input. This foobars your
+</I>&gt;<i> current HTLC commitments.
+</I>&gt;<i>
+</I>&gt;<i> On Tue, Oct 16, 2018 at 3:31 PM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+</I>&gt;&gt;<i> &gt; If we're going to do side splice-in like this, I would use a very
+</I>&gt;&gt;<i> &gt; different protocol: the reason for this protocol was to treat splice-in
+</I>&gt;&gt;<i> &gt; and splice-out the same, and inline splice-in requires wait time.  Since
+</I>&gt;&gt;<i> &gt; splice-out doesn't, we don't need this at all.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; It would look much more like:
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; 1. Prepare any output with script of specific form. eg:
+</I>&gt;&gt;<i> &gt;         OP_DEPTH 3 OP_EQUAL OP_IF
+</I>&gt;&gt;<i> &gt;                 &lt;funding_pubkey1&gt; &lt;funding_pubkey2&gt; OP_CHECKMULTISIG
+</I>&gt;&gt;<i> &gt;         OP_ELSE
+</I>&gt;&gt;<i> &gt;                 &lt;blockheight&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+</I>&gt;&gt;<i> &gt;                 &lt;myrescue_pubkey&gt; OP_CHECKSIG
+</I>&gt;&gt;<i> &gt;         OP_ENDIF
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; 1. type: 40 (`splice_in`) (`option_splice`)
+</I>&gt;&gt;<i> &gt; 2. data:
+</I>&gt;&gt;<i> &gt;    * [`32`:`channel_id`]
+</I>&gt;&gt;<i> &gt;    * [`8`: `satoshis`]
+</I>&gt;&gt;<i> &gt;    * [`32`: `txid`]
+</I>&gt;&gt;<i> &gt;    * [`4`: `txoutnum`]
+</I>&gt;&gt;<i> &gt;    * [`4`: `blockheight`]
+</I>&gt;&gt;<i> &gt;    * [`33`: `myrescue_pubkey`]
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; 1. type: 137 (`update_splice_in_accept`) (`option_splice`)
+</I>&gt;&gt;<i> &gt;    data:
+</I>&gt;&gt;<i> &gt;    * [`32`:`channel_id`]
+</I>&gt;&gt;<i> &gt;    * [`32`: `txid`]
+</I>&gt;&gt;<i> &gt;    * [`4`: `txoutnum`]
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; 1. type: 138 (`update_splice_in_reject`) (`option_splice`)
+</I>&gt;&gt;<i> &gt;    data:
+</I>&gt;&gt;<i> &gt;    * [`32`:`channel_id`]
+</I>&gt;&gt;<i> &gt;    * [`32`: `txid`]
+</I>&gt;&gt;<i> &gt;    * [`2`:`len`]
+</I>&gt;&gt;<i> &gt;    * [`len`:`errorstr`]
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; The recipient of `splice_in` checks that it's happy with the
+</I>&gt;&gt;<i> &gt; `blockheight` (far enough in future).  Once it sees the tx referred to
+</I>&gt;&gt;<i> &gt; buried to its own `minimum_depth`, it checks output is what they
+</I>&gt;&gt;<i> &gt; claimed, then sends `update_splice_in_accept`; it's followed up
+</I>&gt;&gt;<i> &gt; `commitment_signed` like normal, but from this point onwards, all
+</I>&gt;&gt;<i> &gt; commitment txs signatures have one extra sig.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Lisa started asking pointed questions, and so I noticed that parallel
+</I>&gt;&gt;<i> splice doesn't work with Poon-Dryja channels.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The counterparty can spend the old funding txout with a revoked spend.
+</I>&gt;&gt;<i> Sure, I can take all the money from that, but what about the spliced
+</I>&gt;&gt;<i> input?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I came up with increasingly elaborate workarounds, but nothing stuck.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Back to Plan A...
+</I>&gt;&gt;<i> Rusty.
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181018/d57ce11c/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181018/d57ce11c/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001465.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+	<LI>Next message: <A HREF="001472.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1468">[ date ]</a>
+              <a href="thread.html#1468">[ thread ]</a>
+              <a href="subject.html#1468">[ subject ]</a>
+              <a href="author.html#1468">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

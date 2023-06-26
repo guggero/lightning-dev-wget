@@ -1,0 +1,407 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] An Alternative Onion-Routing Proposal
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Alternative%20Onion-Routing%20Proposal&In-Reply-To=%3CCAO3Pvs9kM1W2pM-qE59HeE2wXG-xg1QBRek1RueVqe%3D3LOAbiQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000383.html">
+   <LINK REL="Next"  HREF="000385.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] An Alternative Onion-Routing Proposal</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Alternative%20Onion-Routing%20Proposal&In-Reply-To=%3CCAO3Pvs9kM1W2pM-qE59HeE2wXG-xg1QBRek1RueVqe%3D3LOAbiQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] An Alternative Onion-Routing Proposal">laolu32 at gmail.com
+       </A><BR>
+    <I>Mon Dec 14 22:04:01 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000383.html">[Lightning-dev] GUI for Lightning Network?
+</A></li>
+        <LI>Next message: <A HREF="000385.html">[Lightning-dev] An Alternative Onion-Routing Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#384">[ date ]</a>
+              <a href="thread.html#384">[ thread ]</a>
+              <a href="subject.html#384">[ subject ]</a>
+              <a href="author.html#384">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all!!
+
+So I've been drafting up some schemes for the design of onion routing
+within the
+Lightning Network myself. Rather than create my own mixing format, and
+onion
+routing protocol, I've instead turned to some of the existing academic
+literature
+concerning the subject. I found two schemes, the first building upon the
+other, which seem to fit elegantly into our problem domain, directly solving
+many problems we've encountered along the way.
+
+The two schemes of interest are first Sphinx[1]: a compact mixing format,
+and
+HORNET[2][3], which leverages Sphinx to build a low-latency, high-bandwidth
+onion routing protocol.
+
+Alright, let's jump into and overview of both schemes!
+
+(heads up, this post is a bit long as it includes a brain dump of ideas
+I've
+been been floating around in my head for the past two months or so)
+
+First, I'll give a brief overview of Sphinx. I won't delve into the exact
+details of the protocol, instead I'll highlight the key insight that allows
+for
+*extremely* small mix-headers. If we assume a maximum diameter of 20 hops,
+and a
+16-byte MAC, then a full onion blob weighs in at only 705 bytes! This is
+considerably smaller (a 4X size reduction) than the 3840 bytes per
+onion-blob in
+current proposal. I recommend consulting the paper for the proper
+specifics.
+Additionally the paper includes a formal proof of security in the Universal
+Composability model[4], achieving each of the 4 properties outlined for a
+secure
+onion routing protocol in [5].
+
+(btw, don't dismiss figures 1 and 2 in the Sphinx paper. They may look
+strange,
+but finally grokking them resulted in a break through allowing me to finish
+my
+implementation)
+
+So, at this point, y'all may be wondering how Sphinx achieves such compact
+mix-headers. Well, Rather, than including a group element to perform DH
+with
+for *each* hop in the route, mix-headers in Sphinx only contain a single
+group
+element. This single group element is then deterministically re-randomized
+by
+each hop in the route, preparing the group element for the hop directly
+following it.
+
+Here's a brief sketch of the mechanism (covering only the DH aspects):
+
+Say Alice wants to route a payment to Bob (Y_b) over Lightning. Alice
+consults her
+routing/service table, and finds a route via Carol and Dave. Next, to
+create the
+mix-header, Alice grabs key-pairs for Carol (Y_c) and Dave (Y_d). She then
+generates
+an ephemeral DH key-pair (a_0 = g^x) then proceeds to derive a shared
+secret
+for each hop in the route. Using multiplicative notation, the DH derivation
+looks something like this (s = shared key, b = blinding factor):
+  * a_0 = g^x,       s_0 = (Y_c)^x,         b_0 = hash(a_0, s_0)
+  * a_1 = (a_0)^b_0, s_1 = (Y_d)^x*b_0,     b_1 = hash(a_1, s_1)
+  * a_2 = (a_1)^b_1, s_2 = (Y_b)^x*b_0*b_1, b_2 = hash(a_2, s_2)
+  ......... continued if more hops were in the route ..........
+
+Alice computes all the blinding factors and shared secrets up front,
+allowing
+her to create the mix-header for each hop using the derived hop shared
+secret
+to derive subsequent decryption and MAC keys. Each node receives a_{i}, and
+prepares a_{i+1} for the next hop by re-randomizing the group element using
+the
+blinding factor.
+
+The formula for computing the size of a mix-header for a given hop count,
+and
+security parameter is (ignoring the final message size):
+  * p + (2r + 2)s
+    * p = pub key size (in bytes, for DH each hop)
+    * r = max number of hops
+    * s = symmetric key size (in bytes)
+
+So, for 20 hops the size is computed as (with a symmetric key size of 16
+bytes):
+  * 33 + (2*20 + 2) * 16 = 705 bytes!
+
+445% smaller than the 3840 bytes of the current proposal.
+
+The original version of Sphinx was designed with anonymous mailing in mind.
+So the final mix-header to the destination node includes a final
+destination
+email-address (k-bits), and an Identifier (k-bits) used to generate reply
+messages back to the sender. If we remove these from the mix-net, we save
+2k-bits arriving at a new formula to compute the mix-header size:
+  * p + (2*r*s)
+
+So with 20 hops the size is reduced to:
+  * 33 + (2*20*16) = 673 bytes
+
+With this size reduction the, the base64 encoding of a mix-header for two
+hops
+can fit entirely into a tweet!
+  * 33 + (2*2*16) = 97 bytes
+
+However, it occurred to me that the final destination address may be useful
+in
+the context of a more hub-and-spoke-y network. In this scheme the payment
+would
+be routed to a &quot;shared node&quot;, who would then use the destination address to
+demultiplexing the payment to one of its connected links in a &quot;host:port&quot;
+fashion.
+
+Finally, Sphinx has built-in protection for replay attacks. Meaning an
+adversary
+is unable to force a node to process a previously processed mix-header. It
+achieves this protection by having all nodes remember every derived shard
+secret
+it has ever come across. However, within the paper, the extent of the past
+with
+which a node is to recall is unspecified, leading to potentially large
+storage
+overhead. However, it's worth noting that the paper recommends frequent key
+rotation, during which this table may be safely cleared. Additionally,
+nodes may
+also employ a decaying bloom-filter/hash-set [6] for use in-between key
+rotations to create an upper bound on the storage overhead.
+
+With that said, Sphinx is much more compact than the current proposal,
+carries
+a formal proof of security, and specifies replay protection.
+
+It was recently brought up in [7], that allowing nodes to use onion routing
+with
+Lightning as an end-to-end messaging interface. This is where HORNET comes
+in.
+One could use Sphinx's Single-Use-Reply-Blocks to allow the recipient to
+communicate with the sender after a dummy onion circuit has been set up.
+However, this introduces some performance considerations, due to Sphinx
+requiring
+each hop to perform 2 asymmetric crypto operations (shared secret
+derivation + group element blinding)
+before forwarding. HORNET gets around this performance issue by first using
+Sphinx
+to set up a duplex onion circuit between sender and receiver, which after
+set up,
+only requires nodes to compute purely symmetric crypto operations before
+forwarding.
+
+Continuing, both Sphinx and the current proposal only provide sender
+anonymity.
+Meaning that only the source maintains unlinkability, therefore it learns
+the
+destination's location. The addition of HORNET allows both side to retain
+full
+unlinkability. HORNET has a built-in, an optional rendezvous protocol,
+which is
+a bit similar to the way Hidden Services in TOR work.
+
+With that said, what follows is a brief high-level overview of the HORNET
+onion-routing
+protocol (focusing on the initial set up, instead of data transmission).
+
+Unlike Sphinx, which is essentially a &quot;fire-and-forget&quot; onion routing
+protocol
+from the view of the sender, HORNET requires a cumulative circuit
+round-trip
+as a set up phase before messaging can begin. Once completed, this set up
+phase
+creates a duplex onion circuit between the sender and destination, allowing
+a
+level of throughput approaching 93 Gb/s as reported experimentation section
+within
+the paper.
+
+The primary addition to Sphinx's mix-header format is something they've
+dubbed the
+Anonymous Header (AHDR). Instead of requiring each node in the mix-net to
+store
+per-session state (which would prohibit scale in large networks), all
+session-state
+is instead stored within the onion-packet itself. Therefore, each node only
+needs to
+maintain a local secret. A full AHDR contains contains a series of
+Forwarding
+Segments (FSes) for each hop, allowing them to decrypt the per-hop onion,
+revealing the next hop in the path. Each FS contains: the next hop in the
+route,
+a TTL value, and a derived shared secret. A full AHDR has the following
+format:
+  * (FS, MAC, Onion wrapped FSes)
+
+First, let's go over how a duplex onion circuit is achieved, maintaining
+sender
+unlinkability (once again, using multiplicative notation):
+  * Sender Set Up:
+    * The sender obtains the current keys for each hop in the path,
+constructing
+      a forward, and backwards path (the reverse of the forward path).
+    * The sender then generates a per-session ephemeral DH key-pair: (x,
+g^x)
+    * Using the Sphinx protocol described above, then sender then generates
+two
+      Sphinx mix-headers: one for the forwards path, and another for the
+backwards
+      path. At this point, the source has derived shared secrets for each
+node along
+      both paths.
+    * The message payload (SP) of the forward Sphinx mix-header (encrypted
+to the
+      destination), is the backwards Sphinx mix-header which allows the
+destination
+      to reply to the sender.
+    * The Sphinx mix-header (SHDR) is then extended with two additions:
+      * A empty list of FSes (P_fs), which each intermediate node can
+populate
+        without learning the total path length, nor their position within
+the
+        route.
+      * The Sphinx per-hop MAC is also extended over the HORNET Common
+Header
+        (CHDR): (packet type, hops, TTL)
+    * The sender then sends this set up packet to the first node in the
+route:
+      (CHDR, SHDR, SP, P_fsf)
+  * Intermediate Node Set Up:
+    * Upon receipt of the Sphinx packet, each node processes it as normal
+      (according to Sphinx): deriving the shared secret, recovering the
+next hop's
+      ID, and re-blinding the group element.
+    * Next, the node verifies the next-hop is correct, and that the packet
+      hasn't yet expired according to its TTL.
+    * In order to provide forward secrecy for the messaging phase,
+      the node then derives a new DH key-pair (y, g^y), and then derives a
+new
+      shared secret to be included within the FS: (a_i)^y
+    * Using it's local shared secret (SV_i), the node creates a FS that
+only it
+      can decrypt, adding this to the FS payload. This payload entry
+additionally
+      includes the new ephemeral DH-key pair (y, g^y), allowing the source
+to derive
+      the shared secret which will be used for the FS's MAC (and also when
+transmitting data).
+    * Finally the node re-assembles the packet (CHDR', SHDR', SP, P_fsf'),
+and
+      forwards it to the next hop.
+  * Destination Set Up:
+    * The destination initially processes the packet identically to the
+intermediate
+      nodes described above.
+    * It then decrypts the Sphinx payload, uncovering the backwards SHDR.
+The node
+      then creates a new payload each of the completed FSes in the payload.
+      destined to the source.
+    * At this point, the destination has no knowledge of any of the derived
+shared
+      secrets, other than the one it has derived with the source.
+    * Next, it creates a new FS list P_fsb, to collect FSes along the
+backwards path.
+    * Finally, it creates the backwards set up packet (CHDR, SHDR, SP_b,
+P_fsb), and
+      sends it to the first node on the backwards path.
+    * Each intermediate node then processes the backwards packet just as
+before.
+  * Data Transfer (brief overview, consult the paper for proper details)
+    * The source node then recovers the Sphinx payload SP_b, recovering the
+      forwarding segments for the forward (P_fsf) and backwards path (P_fsb)
+    * At this point, set up has been completed!
+    * The source node then constructs two initial AHDR's, one so it can
+send
+      messages to the destination via the circuit, and the other which will
+      allow the destination to reply to the source.
+    * After the first message from S -&gt; D, D obtains the backwards AHDR,
+      allowing it to reply without knowing the actual route.
+
+The, the following modifications are necessary to achieve sender-receiver
+unlinkability as described earlier. The modification to allow send-receiver
+unlinkability is relatively straight forward. It involves nested AHDRs.
+Lets
+say Alice wants to send a message (or a payment in our case) to Bob while
+maintaining
+full unlinkability. Bob will first need to select a rendezvous point (RP),
+let's call him Rodriguez. Bob then executes the set up protocol detailed
+above
+between himself and Rodriguez. As a result, Bob obtains a AHDR allowing
+Rodriguez
+to route messages (via some specified path) to Bob (R -&gt; B). Bob then
+publishes
+this AHDR_rb to some &quot;public bulletin board&quot;, or in the case that Alice has
+a
+hidden service set up, directly to Alice. Alice then obtains the AHDR_rb,
+routing as normal to Rodriguez, but then includes AHDR_rb, nested within
+the
+regular AHDR_ar (Alice -&gt; Bob). Once this mix-header reaches Bob, he
+recovers the
+nested AHDR, allowing him to complete the route to Bob. Additionally, its
+possible
+for Bob to specify several rendezvous points, allowing Alice to select the
+closest/cheapest route to her. As a side effect, the usage  of this nested
+AHDR
+doubles the bandwidth required for each node to forward along the path.
+
+With this duplex onion route set up (with or without the RP), Alice can
+send a
+message to Bob, asking for R (along with other payment details), then
+propagate
+HTLCs along the full path in order to pay Bob. In order to mitigate the
+potential
+DoS attacks introduced by adding a message layer for control signals, we
+can
+either introduce a payment system (as suggested in [8]), or a required
+Hashcash
+challenge (avoiding SHA-256, using either SHA-3 or BLAKE2). However, seeing
+as
+we'd like to maintain the responsiveness of the network, I'm personally
+leaning
+towards payments (if we do in fact deem in network messaging attractive).
+
+Okay, so that concludes my first post on the mailing list! So at this point
+y'all may be wondering where the implementation I mentioned above is?
+Well, so far I have a working implementation of Sphinx by itself, not yet
+integrating the aspects of HORNET, but, it's not yet publicly released.
+
+We (me+Tadge+Joseph) are planning on publicly releasing our in progress
+implementation of Lightning, sometime near the end of this month (December)
+:<i>).
+</I>
+1. <A HREF="http://www.cypherpunks.ca/~iang/pubs/Sphinx_Oakland09.pdf">http://www.cypherpunks.ca/~iang/pubs/Sphinx_Oakland09.pdf</A>
+2. <A HREF="http://arxiv.org/pdf/1507.05724v1.pdf">http://arxiv.org/pdf/1507.05724v1.pdf</A> (HORNET w/ forward secrecy)
+3. <A HREF="http://www.scion-architecture.net/pdf/2015-HORNET.pdf">http://www.scion-architecture.net/pdf/2015-HORNET.pdf</A>
+4. <A HREF="https://eprint.iacr.org/2000/067.pdf">https://eprint.iacr.org/2000/067.pdf</A>
+5. <A HREF="http://cs.brown.edu/~anna/papers/cl05-full.pdf">http://cs.brown.edu/~anna/papers/cl05-full.pdf</A>
+6. <A HREF="https://moderncrypto.org/mail-archive/messaging/2015/001906.html">https://moderncrypto.org/mail-archive/messaging/2015/001906.html</A>
+7.
+<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-December/000369.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-December/000369.html</A>
+8.
+<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-December/000371.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-December/000371.html</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20151214/996b3701/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20151214/996b3701/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000383.html">[Lightning-dev] GUI for Lightning Network?
+</A></li>
+	<LI>Next message: <A HREF="000385.html">[Lightning-dev] An Alternative Onion-Routing Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#384">[ date ]</a>
+              <a href="thread.html#384">[ thread ]</a>
+              <a href="subject.html#384">[ subject ]</a>
+              <a href="author.html#384">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

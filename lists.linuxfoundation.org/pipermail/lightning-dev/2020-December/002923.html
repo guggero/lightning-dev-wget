@@ -1,0 +1,409 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Covert channel recovery with Oblivious	Signatures
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%0A%09Signatures&In-Reply-To=%3CCAH5Bsr0i78_TNS-X4YZsVD-3%2BarB%2BeWECj06bg82jc3DLmbXKw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002922.html">
+   <LINK REL="Next"  HREF="002924.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Covert channel recovery with Oblivious	Signatures</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%0A%09Signatures&In-Reply-To=%3CCAH5Bsr0i78_TNS-X4YZsVD-3%2BarB%2BeWECj06bg82jc3DLmbXKw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Covert channel recovery with Oblivious	Signatures">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Fri Dec 18 00:24:31 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002922.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+        <LI>Next message: <A HREF="002924.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2923">[ date ]</a>
+              <a href="thread.html#2923">[ thread ]</a>
+              <a href="subject.html#2923">[ subject ]</a>
+              <a href="author.html#2923">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Dec 17, 2020 at 1:56 AM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+&gt;<i> A common occurrence is that hardware failure is not detected until when
+</I>the hardware is used, especially when used by casual users.
+&gt;<i>
+</I>&gt;<i> Consider the sequence of events:
+</I>&gt;<i>
+</I>&gt;<i> * Part of the storage device fails.
+</I>&gt;<i>   * Due to being a casual user, the user does not use state-of-the-art
+</I>checksumming filesystems like ZFS and does not monitor disk health by
+S.M.A.R.T.
+&gt;<i> * A high-onchain-fee condition exists.
+</I>&gt;<i> * The casual user attempts to send out a payment consisting of almost all
+</I>funds in their LN channels via several HTLCs on MPP or other multipath.
+&gt;<i> * Because of the activity generated, the filesystem assigns the LN
+</I>database to the failing part.
+&gt;<i> * Storage fails with most funds in outgoing HTLCs.
+</I>
+Note that this is fine if the payment goes through. Their counterparty will
+have to go on-chain to claim the payment (since your node is down due to
+data-loss) and then you claim whatever is left from your seed.
+The main risk here is for routing nodes which are hopefully only using this
+technique as a very poor last resort.
+If you actually manage to get online and try to restore before the on-chain
+settlement then just attaching outgoing HTLCs to the mutual close would be
+fine -- that way the peer can still claim the money from you if the payment
+goes through and you can get the refund if not.
+
+The same could apply to incoming HTLCs as long as you can reproduce your
+HTLC pre-image deterministically.
+
+PS good to hear you are a ZFS user too
+
+&gt;<i>
+</I>&gt;<i> Thus, merely activating the wallet and using HTLCs may result in a
+</I>*detectable* failure of the hardware (which was already failing before,
+just not noticed by the casual user).
+&gt;<i>
+</I>&gt;<i> On the other hand, we can consider this situation as having a complexity
+</I>penalty.
+&gt;<i>
+</I>&gt;<i> As someone who has seen a lot of storage devices slowly fail in unique
+</I>and interesting (and data-losing) ways, I am always going to assume that
+storage devices are going to fail at any time, including a few hours after
+installation.
+&gt;<i>
+</I>&gt;<i> It would be preferable if HTLCs and PTLCs are not gifted.
+</I>
+Yes I am convinced.
+
+&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Using static-key channels (i.e. channel keys are our node keys)
+</I>allows us to recover even the outgoing channel with outgoing HTLC that has
+been forgotten by the outgoing peer.
+&gt;<i> &gt;
+</I>&gt;<i> &gt; Right. I think this doesn't work with PTLCs though.
+</I>&gt;<i>
+</I>&gt;<i> Yes, loss of the adaptor signature means we cannot recover in this case.
+</I>
+Let's think about this again. There is no reason why the oblivious mutual
+close has to be the only thing the peer sends you upon connection. They can
+also send you the necessary signatures for each PTLC output on the mutual
+close because you can't do anything with this unless you choose to receive
+the mutual close signature. You verify these each time you connect without
+data loss so optimistically you should be able to recover both incoming and
+outgoing PTLCs
+
+&gt;<i> Right, that would work.
+</I>&gt;<i>
+</I>&gt;<i> How about just using a multiplicative tweak of your own privkey and the
+</I>pubkey of the other node (i.e. just use the &quot;raw&quot; ECDH point), that would
+work as 2-of-2 in 2p-ECDSA, and I believe (but do not know) should also be
+signable using MuSig/MuSig2 under taproot?
+
+I think multiplicative combination of keys does *not* work for Schnorr
+multisignatures.
+
+&gt;<i>
+</I>&gt;<i> &quot;Peer selling private information&quot; is always going to be an issue with
+</I>unpublished channels, and this seems to be an inherent issue with that
+model.
+&gt;<i>
+</I>&gt;<i> Note that due to the existence of proof-of-discrete-log-equivalence, a
+</I>node operator can *prove* to someone buying private information that a
+particular outpoint onchain is actually an unpublished channel.
+&gt;<i> If I have privkey `z` and you have pubkey `L`, I can show `z * G` (my
+</I>node pubkey), `L` (your &quot;unpublished&quot; (ha, ha) node pubkey), and `z * L`
+(our ECDH secret), plus a proof-of-discrete-log-equivalence that the `z` in
+`z * G` is the same `z` in `z * L`, in order to convice them of the ECDH
+secret.
+&gt;<i> I suspect part of the proof-of-discrete-log-equivalance can be gated as
+</I>well by a ZKCP on payment point+scalar the proof is provided only on
+payment.
+&gt;<i> The selling node operator does not even need to reveal `z`.
+</I>&gt;<i>
+</I>&gt;<i> As the ECDH secret is what tweaks the channel keys, that is enough to
+</I>convince any surveilling buyer.
+&gt;<i> Further, `z` is not revealed, and channel funds cannot be stolen by just
+</I>knowledge of the ECDH secret, thus protecting the interests of the selling
+forwarding node.
+&gt;<i>
+</I>&gt;<i> Now of course, I could just be making up `L` (i.e. LL could be a
+</I>sockpuppet of mine).
+&gt;<i> However, between these two choices:
+</I>&gt;<i>
+</I>&gt;<i> * I lock up a set number of millisatoshi in a Z + L channel where L is a
+</I>sockpuppet, and sell this fake information to surveillors.
+&gt;<i> * I lock up a set number of millisatoshi in a Z + L channel where L is a
+</I>genuine user node that thinks unpublished channels are private, and sell
+this genuine information to surveillors.
+&gt;<i>
+</I>&gt;<i> Which is more lucrative for me?
+</I>&gt;<i> The latter case would be more lucrative for me, as I not only earn from
+</I>selling your data to surveillors, I also earn routing fees.
+&gt;<i> The former case can only earn me selling fake data to surveillors, with
+</I>no opportunity to earn forwarding fees.
+
+Correct and interesting analysis. I agree that you don't want to
+accidentally opt in to having your peer have a way to cryptographically
+prove you have a channel with them.
+Except in the situation where you are already cryptographically proving to
+everyone you have a channel with them in the channel announcement.
+
+&gt;<i>
+</I>&gt;<i> &gt; A mitigation of this problem
+</I>&gt;<i> &gt; would be for users who want unpublished channels to turn the
+</I>&gt;<i> &gt; use-node-key-as-channel-key feature off for their keys in the channel
+</I>&gt;<i> &gt; so they would still be able to do a backup-free channel scan but the
+</I>&gt;<i> &gt; well-established node would lose the ability to do so.
+</I>&gt;<i>
+</I>&gt;<i> If the user has all channels unpublished, it is not (normally) gossiped.
+</I>&gt;<i> So the well-established node would not have the ability to recover *all*
+</I>channels by backup-free scans of published nodes in the first place, only
+those that are to published nodes.
+&gt;<i>
+</I>&gt;<i> Or do you refer to something else?
+</I>
+I was thinking about public nodes with un-announced channels.
+For completely private/unpublished nodes then I agree with your statement
+that there is no hope no matter how you compute the keys to recover
+automatically.
+
+&gt;<i>
+</I>&gt;<i> It might be easier for the &quot;client&quot; here to make up different node IDs
+</I>for each &quot;server&quot; it connects to, by e.g. hashing its base privkey with the
+server pubkey and using the hash as the privkey for its fake node ID with
+that server.
+&gt;<i>
+</I>
+Right. Something like this is what I was suggesting for public nodes who
+want to have unpublished channels that they want to be able to channel scan
+for but *do not want the other party* to be able to do so (to avoid
+concerns you made clear earlier).
+I think there's no strong reason to make up a new node id -- it can just be
+an option in open_channel  like &quot;use this key instead of my node id for
+everything in this channel&quot;.
+
+Cheers,
+
+LL
+
+
+
+On Thu, Dec 17, 2020 at 1:56 AM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning LL,
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt; &gt; -   What do you do if the channel state has HTLCs in flight? I don't
+</I>&gt;<i> know -- I guess you can just put them onto the settlement tx? That way it's
+</I>&gt;<i> possible the payment could still go through. Alternatively you could just
+</I>&gt;<i> gift the money to the party offering the recovery settlement.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Gifting the money is not a good option --- we allow HTLCs to be almost
+</I>&gt;<i> as high as the total channel value minus fees and reserve.
+</I>&gt;<i> &gt; &gt; Thus all the claimable value could potentially be in an outgoing HTLC.
+</I>&gt;<i> &gt; &gt; Worse, if our node is a forwarding node, it would be easy for a third
+</I>&gt;<i> party to arrange to have our funds in various HTLCs.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Hopefully this recovery system is used by people whose channels are in
+</I>&gt;<i> &gt; a HTLC free state 99.9999% of the time (and hopefully hardware
+</I>&gt;<i> &gt; failures do not somehow coincide with HTLCs!).
+</I>&gt;<i> &gt; As a user, it would be cool to be able to just lock up all my Bitcoin
+</I>&gt;<i> &gt; into channels with well-established lightning nodes. That way if fees
+</I>&gt;<i> &gt; go ballistic I can still move money around cheaply.
+</I>&gt;<i> &gt; One of the main concerns for this pattern of user behaviour is the
+</I>&gt;<i> &gt; recovery story I think. The first line of defence for routing nodes
+</I>&gt;<i> &gt; (people who are taking their role in LN seriously) has to be redundant
+</I>&gt;<i> &gt; data storage.
+</I>&gt;<i> &gt; This would be a poor last-resort solution for routing nodes.
+</I>&gt;<i>
+</I>&gt;<i> A common occurrence is that hardware failure is not detected until when
+</I>&gt;<i> the hardware is used, especially when used by casual users.
+</I>&gt;<i>
+</I>&gt;<i> Consider the sequence of events:
+</I>&gt;<i>
+</I>&gt;<i> * Part of the storage device fails.
+</I>&gt;<i>   * Due to being a casual user, the user does not use state-of-the-art
+</I>&gt;<i> checksumming filesystems like ZFS and does not monitor disk health by
+</I>&gt;<i> S.M.A.R.T.
+</I>&gt;<i> * A high-onchain-fee condition exists.
+</I>&gt;<i> * The casual user attempts to send out a payment consisting of almost all
+</I>&gt;<i> funds in their LN channels via several HTLCs on MPP or other multipath.
+</I>&gt;<i> * Because of the activity generated, the filesystem assigns the LN
+</I>&gt;<i> database to the failing part.
+</I>&gt;<i> * Storage fails with most funds in outgoing HTLCs.
+</I>&gt;<i>
+</I>&gt;<i> Thus, merely activating the wallet and using HTLCs may result in a
+</I>&gt;<i> *detectable* failure of the hardware (which was already failing before,
+</I>&gt;<i> just not noticed by the casual user).
+</I>&gt;<i>
+</I>&gt;<i> On the other hand, we can consider this situation as having a complexity
+</I>&gt;<i> penalty.
+</I>&gt;<i>
+</I>&gt;<i> As someone who has seen a lot of storage devices slowly fail in unique and
+</I>&gt;<i> interesting (and data-losing) ways, I am always going to assume that
+</I>&gt;<i> storage devices are going to fail at any time, including a few hours after
+</I>&gt;<i> installation.
+</I>&gt;<i>
+</I>&gt;<i> It would be preferable if HTLCs and PTLCs are not gifted.
+</I>&gt;<i> On the other hand, it might not be possible (as you note about PTLCs).
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Using static-key channels (i.e. channel keys are our node keys) allows
+</I>&gt;<i> us to recover even the outgoing channel with outgoing HTLC that has been
+</I>&gt;<i> forgotten by the outgoing peer.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Right. I think this doesn't work with PTLCs though.
+</I>&gt;<i>
+</I>&gt;<i> Yes, loss of the adaptor signature means we cannot recover in this case.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Using static-key channels does have slightly weaker privacy:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; -   Published nodes reveal all their channels with other published
+</I>&gt;<i> nodes on the blockchain.
+</I>&gt;<i> &gt; &gt;     -   While it is true that published nodes already reveal their
+</I>&gt;<i> channels with published nodes, they are currently only revealed on the LN
+</I>&gt;<i> gossip network, which is not archived; historical channels that are now
+</I>&gt;<i> closed are not informed to current surveillors.
+</I>&gt;<i> &gt; &gt;         -   On the other hand, all it takes is one &quot;LN wayback
+</I>&gt;<i> machine&quot; to record all LN gossip, which are self-attesting and include a
+</I>&gt;<i> signature from the node.
+</I>&gt;<i> &gt; &gt; -   Unpublished nodes risk revealing their channels with published
+</I>&gt;<i> nodes via the blockchain.
+</I>&gt;<i> &gt; &gt;     -   Invoices created by unpublished nodes currently reveal their
+</I>&gt;<i> public key.
+</I>&gt;<i> &gt; &gt;         Payers can then uncover all the channels of that node.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I don't think so? You need to know the private key of the node to
+</I>&gt;<i> &gt; discover its channels! The points actually used in the channels would
+</I>&gt;<i> &gt; be randomized with shared secret from Diffie-Hellman so are unlinkable
+</I>&gt;<i> &gt; to the public keys of the two nodes under decisional Diffie-Hellman
+</I>&gt;<i> &gt; assumption.
+</I>&gt;<i>
+</I>&gt;<i> Right, that would work.
+</I>&gt;<i>
+</I>&gt;<i> How about just using a multiplicative tweak of your own privkey and the
+</I>&gt;<i> pubkey of the other node (i.e. just use the &quot;raw&quot; ECDH point), that would
+</I>&gt;<i> work as 2-of-2 in 2p-ECDSA, and I believe (but do not know) should also be
+</I>&gt;<i> signable using MuSig/MuSig2 under taproot?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; There is more minor but still real concern of &quot;deniability&quot; of
+</I>&gt;<i> &gt; unpublished closed channels if a large node operator later becomes
+</I>&gt;<i> &gt; corrupted or coerced by a malicious actor. Since the node operator
+</I>&gt;<i> &gt; still knows their secret key (obviously) they can still do a scan
+</I>&gt;<i> &gt; (same as you would do in recovery) on the whole chain and find any
+</I>&gt;<i> &gt; past channels they had with any nodes.
+</I>&gt;<i>
+</I>&gt;<i> &quot;Peer selling private information&quot; is always going to be an issue with
+</I>&gt;<i> unpublished channels, and this seems to be an inherent issue with that
+</I>&gt;<i> model.
+</I>&gt;<i>
+</I>&gt;<i> Note that due to the existence of proof-of-discrete-log-equivalence, a
+</I>&gt;<i> node operator can *prove* to someone buying private information that a
+</I>&gt;<i> particular outpoint onchain is actually an unpublished channel.
+</I>&gt;<i> If I have privkey `z` and you have pubkey `L`, I can show `z * G` (my node
+</I>&gt;<i> pubkey), `L` (your &quot;unpublished&quot; (ha, ha) node pubkey), and `z * L` (our
+</I>&gt;<i> ECDH secret), plus a proof-of-discrete-log-equivalence that the `z` in `z *
+</I>&gt;<i> G` is the same `z` in `z * L`, in order to convice them of the ECDH secret.
+</I>&gt;<i> I suspect part of the proof-of-discrete-log-equivalance can be gated as
+</I>&gt;<i> well by a ZKCP on payment point+scalar the proof is provided only on
+</I>&gt;<i> payment.
+</I>&gt;<i> The selling node operator does not even need to reveal `z`.
+</I>&gt;<i>
+</I>&gt;<i> As the ECDH secret is what tweaks the channel keys, that is enough to
+</I>&gt;<i> convince any surveilling buyer.
+</I>&gt;<i> Further, `z` is not revealed, and channel funds cannot be stolen by just
+</I>&gt;<i> knowledge of the ECDH secret, thus protecting the interests of the selling
+</I>&gt;<i> forwarding node.
+</I>&gt;<i>
+</I>&gt;<i> Now of course, I could just be making up `L` (i.e. LL could be a
+</I>&gt;<i> sockpuppet of mine).
+</I>&gt;<i> However, between these two choices:
+</I>&gt;<i>
+</I>&gt;<i> * I lock up a set number of millisatoshi in a Z + L channel where L is a
+</I>&gt;<i> sockpuppet, and sell this fake information to surveillors.
+</I>&gt;<i> * I lock up a set number of millisatoshi in a Z + L channel where L is a
+</I>&gt;<i> genuine user node that thinks unpublished channels are private, and sell
+</I>&gt;<i> this genuine information to surveillors.
+</I>&gt;<i>
+</I>&gt;<i> Which is more lucrative for me?
+</I>&gt;<i> The latter case would be more lucrative for me, as I not only earn from
+</I>&gt;<i> selling your data to surveillors, I also earn routing fees.
+</I>&gt;<i> The former case can only earn me selling fake data to surveillors, with no
+</I>&gt;<i> opportunity to earn forwarding fees.
+</I>&gt;<i>
+</I>&gt;<i> &gt; A mitigation of this problem
+</I>&gt;<i> &gt; would be for users who want unpublished channels to turn the
+</I>&gt;<i> &gt; use-node-key-as-channel-key feature off for their keys in the channel
+</I>&gt;<i> &gt; so they would still be able to do a backup-free channel scan but the
+</I>&gt;<i> &gt; well-established node would lose the ability to do so.
+</I>&gt;<i>
+</I>&gt;<i> If the user has all channels unpublished, it is not (normally) gossiped.
+</I>&gt;<i> So the well-established node would not have the ability to recover *all*
+</I>&gt;<i> channels by backup-free scans of published nodes in the first place, only
+</I>&gt;<i> those that are to published nodes.
+</I>&gt;<i>
+</I>&gt;<i> Or do you refer to something else?
+</I>&gt;<i>
+</I>&gt;<i> It might be easier for the &quot;client&quot; here to make up different node IDs for
+</I>&gt;<i> each &quot;server&quot; it connects to, by e.g. hashing its base privkey with the
+</I>&gt;<i> server pubkey and using the hash as the privkey for its fake node ID with
+</I>&gt;<i> that server.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; This means that
+</I>&gt;<i> &gt; after the channel is closed there would be no way for the large node
+</I>&gt;<i> &gt; to find the channel again assuming they honestly delete the data.
+</I>&gt;<i>
+</I>&gt;<i> If forwarding nodes are expected to have storage redundancy, deletion of
+</I>&gt;<i> data could be difficult as well --- there may be lots of replicas of that
+</I>&gt;<i> data in various places (including obsolete replicas that the node operator
+</I>&gt;<i> might not particularly care about, being obsolete), and deletion might not
+</I>&gt;<i> catch them all.
+</I>&gt;<i> &quot;Honestly delete&quot; seems like a best-effort to me.
+</I>&gt;<i>
+</I>&gt;<i> On the other hand, if the model is that privacy is to be trusted to your
+</I>&gt;<i> peers, then this is no worse than unpublished channels, which has the same
+</I>&gt;<i> model.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201218/d47a1446/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201218/d47a1446/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002922.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+	<LI>Next message: <A HREF="002924.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2923">[ date ]</a>
+              <a href="thread.html#2923">[ thread ]</a>
+              <a href="subject.html#2923">[ subject ]</a>
+              <a href="author.html#2923">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

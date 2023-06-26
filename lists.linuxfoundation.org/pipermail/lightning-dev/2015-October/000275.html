@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] daemon/p2p protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20daemon/p2p%20protocol&In-Reply-To=%3C87k2qiy9z0.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000286.html">
+   <LINK REL="Next"  HREF="000287.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] daemon/p2p protocol</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20daemon/p2p%20protocol&In-Reply-To=%3C87k2qiy9z0.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] daemon/p2p protocol">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Oct 19 18:44:19 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000286.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+        <LI>Next message: <A HREF="000287.html">[Lightning-dev] [PATCH v3] daemon: encrypted communication (version	3)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#275">[ date ]</a>
+              <a href="thread.html#275">[ thread ]</a>
+              <a href="subject.html#275">[ subject ]</a>
+              <a href="author.html#275">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> Hey *,
+</I>&gt;<i>
+</I>&gt;<i> A few thoughts on the daemon/p2p protocol in slightly longer form than
+</I>&gt;<i> is feasible on IRC...
+</I>&gt;<i>
+</I>&gt;<i> # protobufs or capnp or flatbuffers or ...
+</I>&gt;<i>
+</I>&gt;<i> Currently lightning relies on protobuf's with union support, which
+</I>&gt;<i> requires a newer version of protobuf-c than is in Debian or Ubuntu.
+</I>&gt;<i> I've filed this as <A HREF="http://bugs.debian.org/801950">http://bugs.debian.org/801950</A> -- seems to be an
+</I>&gt;<i> easy fix.
+</I>&gt;<i>
+</I>&gt;<i> 11:43  * rusty looks at capnproto, is tempted to see what that would
+</I>&gt;<i>          look like compared to protobufs.
+</I>&gt;<i>
+</I>&gt;<i> capnp's canonical implementation is in C++ rather than C; the C version
+</I>&gt;<i> is serialisaion-only, which seems like it loses the fancy time-travel
+</I>&gt;<i> RPC feature? C and Python versions of capnp don't seem to be packaged
+</I>&gt;<i> for Debian. Not a show-stopper afaics, but I'm not seeing the benefit?
+</I>
+I like the capnproto design, and protobufsq v3 has already been introduced by
+Google to deprecate protobufs v2.
+
+However, bitcoin already uses protobufs for the payment protocol, and as
+your research reveals, it's more widely supported.
+
+&gt;<i> 11:44 &lt;rusty&gt; But it still doesn't have fixed-length fields, which is a
+</I>&gt;<i>               PITA.
+</I>&gt;<i>
+</I>&gt;<i> FWIW, I think that &quot;fixed-length fields&quot; is just a schema/IDL thing? ie
+</I>&gt;<i> the serialised format should still have a byte or two to specify format
+</I>&gt;<i> and length (because it's no big deal and slightly safer/saner when
+</I>&gt;<i> deserialising), but if it's not the correct value from the schema/.proto
+</I>&gt;<i> file, you get an error when you try to de/serialise.
+</I>
+You want the deserialization to do as much sanity checking as possible,
+*particularly* when it comes to lengths of things.  Working around this
+feature is YA footgun.
+
+&gt;<i> With protobufs, I think you could do this with custom field options:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://developers.google.com/protocol-buffers/docs/proto?hl=en#customoptions">https://developers.google.com/protocol-buffers/docs/proto?hl=en#customoptions</A> 
+</I>
+I use multiple values, which is even uglier but supported
+out-of-the-box.
+
+&gt;<i> # lightning public keys...
+</I>&gt;<i>
+</I>&gt;<i> I think there are (at least) three uses for public key crypto in lightning:
+</I>&gt;<i>
+</I>&gt;<i>   1) routing keys -- used for constructing the onion. the routing public
+</I>&gt;<i>      key is essentially the node's identity as far as lightning is
+</I>&gt;<i>      concerned and must be well known and associated with channels
+</I>&gt;<i>      and fees for routing to be possible. *However* a single lightning
+</I>&gt;<i>      instance might play host to multiple routing keys.  (This would be
+</I>&gt;<i>      less efficient for the network, but might be a win for privacy or
+</I>&gt;<i>      might be dictated by deployment reasons...)
+</I>
+Mats calls this &quot;nodepubkey&quot; and I've just been calling it &quot;nodeid&quot;.
+
+&gt;<i>   2) anchor keys -- used for spending the anchor transaction for a
+</I>&gt;<i>      channel and thus signing commitment transactions; only needs to be
+</I>&gt;<i>      known by the counterparty you're constructing a channel with; can
+</I>&gt;<i>      be different for every channel.
+</I>
+Yeah, Mats suggested nodes publish the proof from anchor key -&gt; routing
+key.
+
+&gt;<i>   3) p2p keys -- used for establishing a shared secret when talking to a
+</I>&gt;<i>      node, to avoid your p2p communications being available to someone
+</I>&gt;<i>      else (either a passive observer or a MITM). could be different for
+</I>&gt;<i>      every connection, or could just have one the lightning instance.
+</I>
+Indeed, current crypto handshake starts with this key exchange, then
+proves ownership of the routing key.
+
+&gt;<i> # p2p protocol...
+</I>&gt;<i>
+</I>&gt;<i> If Alice tries to connect to Bob, I think the current protocol (as of
+</I>&gt;<i> git commit gc7eaa4f, from daemon/cryptopkt.c) is:
+</I>&gt;<i>
+</I>&gt;<i>   Alice: &quot;Call me &lt;RichGirl57914&gt;.&quot;
+</I>&gt;<i>   Bob: &quot;Call me &lt;MoneyBags70623&gt;.&quot;
+</I>&gt;<i>
+</I>&gt;<i> Then, encrypted to key based on ECDH(RichGirl57914, MoneyBag70623):
+</I>&gt;<i>
+</I>&gt;<i>   Alice: &quot;RichGirl57914 is actually Alice, signed &lt;Alice&gt;&quot;
+</I>&gt;<i>   Bob: &quot;MoneyBags70623 is actually Bob, signed &lt;Bob&gt;&quot;
+</I>&gt;<i>
+</I>&gt;<i> This is secure against passive monitoring; and after the signatures are
+</I>&gt;<i> verified, it's also secure against MITM attacks.
+</I>&gt;<i>
+</I>&gt;<i> It seems like it has a couple of downsides though:
+</I>&gt;<i>
+</I>&gt;<i>  - if you're accepting incoming p2p connections, you'll reveal your node
+</I>&gt;<i>    id to anyone who asks
+</I>
+Yes, unless you wait for them to go first.  Of course, only one side can
+do this...
+
+&gt;<i>  - if the node you're connecting to is MITM'ed, you'll reveal your node
+</I>&gt;<i>    id before realising you're MITM'ed
+</I>&gt;<i>
+</I>&gt;<i>  - you can't run multiple node ids on a single connection
+</I>&gt;<i>
+</I>&gt;<i>  - Bob has to do crypto operations for every connection, leading to
+</I>&gt;<i>    potential DoS attacks
+</I>&gt;<i>
+</I>&gt;<i> I think treating the relationship between a network address (IPv4/IPv6
+</I>&gt;<i> addr and port, tor service) and the lightning network address as sensitive
+</I>&gt;<i> is valuable. Revealing a network address helps reveal physical identity,
+</I>&gt;<i> makes denial-of-service attacks straightforward, and gives a point of
+</I>&gt;<i> entry for targetted hacking to steal your money.
+</I>
+It would be possible to move to a different address once authenticated.
+But someone needs to run public nodes.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000286.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+	<LI>Next message: <A HREF="000287.html">[Lightning-dev] [PATCH v3] daemon: encrypted communication (version	3)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#275">[ date ]</a>
+              <a href="thread.html#275">[ thread ]</a>
+              <a href="subject.html#275">[ subject ]</a>
+              <a href="author.html#275">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

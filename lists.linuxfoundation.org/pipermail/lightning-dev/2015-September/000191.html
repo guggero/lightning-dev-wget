@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Onion routing design.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20routing%20design.&In-Reply-To=%3C8737ybi9fj.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000206.html">
+   <LINK REL="Next"  HREF="000193.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Onion routing design.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20routing%20design.&In-Reply-To=%3C8737ybi9fj.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Onion routing design.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Sep 18 23:39:44 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000206.html">[Lightning-dev] network topology and routing
+</A></li>
+        <LI>Next message: <A HREF="000193.html">[Lightning-dev] Onion routing design.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#191">[ date ]</a>
+              <a href="thread.html#191">[ thread ]</a>
+              <a href="subject.html#191">[ subject ]</a>
+              <a href="author.html#191">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all!
+
+        So, we've handwaved that we're going to have onion routing, so
+each node can only see the immediate neighbors.
+
+Here's my first attempt; please fix :)
+
+The format of a route looks like so:
+
+        required bytes route;
+
+A node decrypts that using its pubkey (probably some counter mode
+scheme, but that's for a different post!), expecting:
+
+        // Sum of this whole thing after decryption.
+        required sha256_hash sum = 1;
+
+        // Where to next?
+        oneof next {
+                // Actually, this is the last one
+                bool end = 2;
+                // Next lightning node.
+                pubkey lightning = 3;
+                // Other realms go here...
+        }
+        
+        // How much fee you can take (== all, if last node)
+        required int32 fee = 4;
+
+        // Remainder (route blob for next node).
+        required bytes route = 5;
+
+If the sum is wrong, the routing has failed (it's been corrupted or was
+malformed to start).
+
+Nodes create the route backwards, to calculate the size.  Then picks a
+total size randomly between 1024 and 4096, and pads to that size (at
+least 32 bytes of random padding).  Then walks backwards to wrap and
+encrypt it.
+
+This offers some protection from guessing the route length.
+
+Route Probing Attacks
+=====================
+Now, there's a weakness here: No MAC!  A nosy node can't corrupt the
+routing past the next hop, but it could replace it entirely (this is
+fundamental to the scheme of R values).  If it guesses the final
+destination right, the HTLC will succeed, otherwise it will fail, so it
+can use this to probe.
+
+One partial defence is to fail to allow two HTLCs with the same R value,
+forcing probe serialization.  Unfortunately that allows a simple way to
+probe back to the source, so we shouldn't do this!
+
+We may be able to do some probabalistic backoff of duplicate R values,
+such that you can't tell if I've received one before?  A more
+sophisticated probe sequence could get a probability though...
+
+I can't see a fix for this in general. :(
+
+Error Messages
+==============
+Another issue is that we should try not to leak information to passive
+observers on the route due to errors, so signing errors and using the
+'sum' field as a secret key seems sensible.  This means your padding in
+the original message needs to be &quot;random&quot; so 'sum' is random.
+
+Thoughts welcome!
+Rusty.
+PS.  As noted before, nodes can trivially correlate HTLCs by R value, so
+     onioning the routing only gets you so far...
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000206.html">[Lightning-dev] network topology and routing
+</A></li>
+	<LI>Next message: <A HREF="000193.html">[Lightning-dev] Onion routing design.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#191">[ date ]</a>
+              <a href="thread.html#191">[ thread ]</a>
+              <a href="subject.html#191">[ subject ]</a>
+              <a href="author.html#191">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

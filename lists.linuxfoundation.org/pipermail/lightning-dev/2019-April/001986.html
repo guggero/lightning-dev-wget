@@ -1,0 +1,290 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Payment Latency by Fast Forwards
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3ChnNy2MefvQNSrUrujuL7r0t4xGL3n7lCc9MZS4Sod36G5luigLIukgNLXMNLRHy3Kr3VKsgHXS9C4Gf5qJipHc36rsF56ix57uKyMaIf3oU%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001985.html">
+   <LINK REL="Next"  HREF="001987.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Payment Latency by Fast Forwards</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3ChnNy2MefvQNSrUrujuL7r0t4xGL3n7lCc9MZS4Sod36G5luigLIukgNLXMNLRHy3Kr3VKsgHXS9C4Gf5qJipHc36rsF56ix57uKyMaIf3oU%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Improving Payment Latency by Fast Forwards">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Apr 24 08:32:26 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001985.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="001987.html">[Lightning-dev] Ptarmigan mainnet release
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1986">[ date ]</a>
+              <a href="thread.html#1986">[ thread ]</a>
+              <a href="subject.html#1986">[ subject ]</a>
+              <a href="author.html#1986">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+Currently, the protocol for forwarding requires 1.5 round trips before the next node can safely forward the payment.
+This creates much greater latency for payments, and even with the current network at a nascent stage, payments can take entire seconds to complete.
+As the network grows and some nodes start becoming unable to store the entire routemap, remote route lookups are needed.
+Remote route lookups are likely to increase the route length, thus payment latency will increase even more.
+
+So, we should consider ways of improving payment latency, before the increasing LN size causes further increases in payment latency.
+Like all optimizations, it is likely that we will need to run as fast as we can, just to stay in one place, like the Red Queen.
+
+Slow Forwarding
+---------------
+
+The current protocol for a single forward looks like:
+
+      Alice                     Bob                     Carol
+        |                        |                        |
+        | ---update_add_htlc---&gt; |                        |
+        | --commitment_signed--&gt; |                        |
+        |                        |                        |
+        | &lt;-commitment_signed--- |                        |
+        | &lt;--revoke_and_ack----- |                        |
+        |                        |                        |
+        | ---revoke_and_ack----&gt; |                        |
+        |                        | ---update_add_htlc---&gt; |
+
+Bob cannot safely forward `update_add_htlc` immediately since there is no commitment transaction that contains the HTLC yet.
+Further, even when a new pair of commitment transactions is signed by Alice, two commitment transactions can still safely be put onchain, one of which does not contain the HTLC.
+Only when Alice and Bob have revoked their previous commitment transaction can Bob safely forward to Carol.
+
+The above concept is called &quot;irrevocably committed&quot; by the BOLT spec.
+
+To reach this &quot;irrevocably committed&quot; state, requires the above 1.5 round trips.
+If Alice and Bob are physically distant from each other, communication latency can be very large.
+
+Further, both Alice and Bob want to reduce bandwidth usage.
+This sometimes means that Alice and Bob will wait a short while before signing commitments and revoking previous ones, in order to keep the number of new signatures being passed around small.
+C-lightning, for example, defers signing a new commitment by 10ms after sending an update in case another forward on the same channel is requested.
+This causes additional latency on top of the communication latency.
+
+Poon-Dryja Outputs
+------------------
+
+Let me now digress, to investigate the outputs of a Poon-Dryja commitment transaction.
+
+There are at least two commitment transactions that are valid at any one time, one for each node in the channel.
+Each one is symmetrical, but different.
+Thus, there is the concepts below:
+
+1.  &quot;local&quot; commitment transaction, is the valid commitment transaction I am holding.
+2.  &quot;remote&quot; commitment transaction, is the valid commitment transaction my counterparty is holding.
+
+Each commitment transaction has at least two outputs (although one may be elided if too small or 0).
+Thus, each commitment transaction has these two outputs:
+
+1.  &quot;to-local&quot; output.
+    On the local commitment transaction, this is my &quot;main&quot; output.
+    On the remote commitment transaction, this is my counterparty &quot;main&quot; output.
+2.  &quot;to-remote&quot; output.
+    On the local commitment transaction, this is my counterparty &quot;main&quot; output.
+    On the remote commitment transaction, this is my &quot;main&quot; output.
+
+In the original Poon-Dryja formulation, the &quot;to-remote&quot; output pays directly to a P2WPKH.
+However, the &quot;to-local&quot; output is encumbered by a CSV, and is revocable.
+In the BOLT 1.0 spec, the SCRIPT is:
+
+    OP_IF
+        # Penalty transaction
+        &lt;revocationpubkey&gt;
+    OP_ELSE
+        `to_self_delay`
+        OP_CSV
+        OP_DROP
+        &lt;local_delayedpubkey&gt;
+    OP_ENDIF
+    OP_CHECKSIG
+
+Of note, is that the `revocationpubkey` is actually a combination of the local node revocation key, and a remote node key.
+It is like a 2-of-2 that cannot be signed cooperatively by both parties, but which the local node can give entirely to the remote node so that the remote node can sign by itself (revocation).
+It could have been implemented as a 2-of-2 multisignature, but the above formulation takes less block space.
+
+In the recent Lightning Developer Summit in 2018, it was decided that the &quot;to-remote&quot; output will also be encumbered by a CSV.
+I will propose in this writeup, that a modification of the above script be used in both &quot;to-local&quot; and &quot;to-remote&quot;.
+
+Fast Forwards
+=============
+
+Ideally, we would like to be able to say that an HTLC is &quot;irrevocably committed&quot; using only a single message from Alice to Bob.
+That way, communication latencies when forwarding payments can be reduced, which should improve payment speed over the network in general.
+
+I observe that one may consider any offchain system a specialization of an offchain transaction cut-through system.
+Thus, one may model changes to the offchain system state as the creation of some transactions, followed by a cut-through of those transactions into the new state.
+
+Thus, I propose that to-local outputs be encumbered with the script:
+
+    OP_IF
+        # Penalty transaction/Fast forward
+        &lt;local_revokepubkey&gt; OP_CHECKSIGVERIFY &lt;remote_penaltyclaimpubkey&gt;
+    OP_ELSE
+        `to_self_delay`
+        OP_CSV
+        OP_DROP
+        &lt;local_delayedpubkey&gt;
+    OP_ENDIF
+    OP_CHECKSIG
+
+Then, symmetrically, to-remote outputs are encumbered with the script:
+
+    OP_IF
+        # Penalty transaction/Fast forward
+        &lt;local_revokepubkey&gt; OP_CHECKSIGVERIFY &lt;remote_penaltyclaimpubkey&gt;
+    OP_ELSE
+        `to_self_delay`
+        OP_CSV
+        OP_DROP
+        &lt;remote_delayedpubkey&gt;
+    OP_ENDIF
+    OP_CHECKSIG
+
+When doing a `revoke_and_ack`, the sender gives the `local_revokeprivkey` to the remote side, who now knows both keys to the penalty branch and can now penalize the sender if the revoked commitment transaction is published.
+
+Then, we define a new message, `fastforward_add_htlc`.
+This creates a pair of transactions, the fast-forward HTLC transactions, on top of the latest commitment transactions of both nodes.
+For simplicity, they can be restricted to be sent only while one commitment transaction is valid on both sides and while no update is in-flight in the channel.
+(alternatively, a channel using fast-forwards might be restricted to *only* using fast-forwards, with updates of commitment transactions being in strong synchrony rather than the weak synchrony currently used)
+
+The local/remote fast-forward HTLC transaction spends the to-local/to-remote output of the commitment transaction.
+It spends the value of the HTLC being forward to the normal HTLC construction used in Lightning.
+The remaining change is placed into &quot;the same&quot; script that was spent (with pubkeys changed).
+This change output can now be considered the &quot;next&quot; main output (it is used to chain the next `fastforward_add_htlc` from that side).
+
+The `fastforward_add_htlc` includes the originating node signatures for both the local and remote fast-forward HTLC transactions.
+It also contains the signatures needed to support the revocable HTLC construction.
+
+For example, the local fast-forward HTLC transaction spends the to-local output of the local commitment.
+The sending node signs using the `local_revokepubkey` and includes this signature in the `fastforward_add_htlc` message.
+The remote fast-forward HTLC transaction spends the to-remote output of the remote commitment.
+The sending node signs using the `remote_penaltyclaimpubkey` and includes this signature in the `fastforward_add_htlc` message.
+
+The receiver of the message can now consider this HTLC to be irrevocably committed.
+This is because it can now spend the main output of the counterparty using the fast-forward HTLC transactions by providing the other missing signature.
+Further, the sender cannot revoke it since it cannot double-spend that transaction until after the CSV restriction.
+The CSV restriction is precisely how long the receiver can be offline before a successful theft can be performed, so it should not be an issue for the receiver.
+
+Thus, upon receipt of the `fastforward_add_htlc`, it is now possible for Bob to immediately begin forwarding the payment onward:
+
+      Alice                     Bob                     Carol
+        |                        |                        |
+        | -fastforward_add_htlc&gt; |                        |
+        |                        | -fastforward_add_htlc&gt; |
+
+(if Carol does not support fast forwards, Bob can send the old `update_add_htlc` instead.)
+Then, the next commitment transaction will &quot;cut-through&quot; any built up fast-forward HTLC transactions, collapsing the HTLC outputs to the commitment transactions.
+
+Unilateral Closes
+-----------------
+
+Unfortunately, unilateral closes mean that, if the counterparty is not paying attention, they will not be able to claim any HTLC added via `fastforward_add_htlc`.
+Now, the CSV setting one selects should reflect how long one feels their node can remain offline.
+And as long as we are able to come back online before the CSV is reached, we can apply any fast-forward HTLC transactions and claim the HTLCs that have dropped onchain.
+
+Of course, the real world has many ways to surprise our expectations.
+Thus, using fast-forwards implies higher risk for nodes that accept fast forwards and which then themselves forward immediately.
+
+
+Fast Failures
+=============
+
+Fast forwards are not enough: due to incomplete information, failures of individual payment routing attempts are common.
+The directive is to simply try and try again until the payment pushes through or no routes remain or too much time has been spent trying to route.
+
+Further, success is already fast: as soon as you receive `update_fulfill_htlc` you can immediately safely send `update_fulfill_htlc` to upstream without the commitment signing and revocation of previous commitment.
+
+However, failures via `update_fail_htlc` cannot be propagated immediately for a similar reason that payments via `update_add_htlc` cannot be propagated immediately: there exists a valid commitment that still has the HTLC by which the money can still be claimed onchain.
+
+I observe that the &quot;fast forward&quot; technique simply reuses the revocation path to root a new transaction.
+I also observe that the HTLC construction used by Lightning is revocable.
+
+Thus, since it is possible to revoke the HTLC construction used by Lightning, we can reuse the revocation path of an HTLC as the &quot;fast failure&quot; path, using the same technique we used in fast forward.
+Care must be taken to provide signatures for failing the HTLC itself, as well as the HTLC-success and HTLC-timeout transactions.
+
+The difference here is that failed HTLCs do not contribute back to the &quot;main&quot; output immediately.
+The transaction used to fail the HTLC is a simple one-input one-output transaction.
+Only when failure of the HTLCs has been put in a new commitment transaction can their value be reused for adding new HTLCs.
+
+For example, suppose we start with 3mBTC on my side of the channel.
+I offer two different HTLCs to you, of 1mBTC each, by two `fastforward_add_htlcs`.
+However, both of them fail.
+This leaves me with only 1mBTC on my main output, with two different 1mBTC outputs that have not been &quot;merged&quot; back into it yet.
+So I can no longer forward a 2mBTC HTLC, until we have resynchronized (signed new commitments and revoked) and combined the failed HTLC outputs back to my main output.
+
+Still, this removes the commitment transaction synchronization away from the critical path in the overall Lightning try-and-try-until-you-die routing algorithm, improving payment latency overall.
+Thus, this may be an acceptable tradeoff when considering payment latency.
+
+Fees
+====
+
+Oh no.
+
+Please do not ask about fees.
+
+In case of a unilateral close after a fast-forward or fast-fail, additional transactions need to be put onchain, beyond just the commitment transactions.
+These transactions need to pay for onchain fees.
+
+Thus, channels offering low-latency fast forwards need to charge higher offchain fees to offset the risk that they need to pay onchain fees.
+Further, channels offering low-latency fast forwards also need to offset the unilateral close risk with higher fees.
+
+Perhaps the two nodes on the channel can attest that they have low-latency fast forwards.
+However, merely because they claim it does not make it so.
+
+Nodes could make known-failing payments (generate a random payment hash, route through the &quot;fast forward&quot;-claiming channel, measure latency) to determine the truth of the fast forward.
+In fact, if nodes do this &quot;in the background&quot; continuously, they can map out which channels have good latency (regardless of the use of fast forward or not: two nodes located physically close to each other with low-latency internet connections may very well have good enough latency even without fast forwards).
+
+Fast Forwards on Decker-Russell-Osuntokun
+=========================================
+
+Decker-Russell-Osuntokun does not, in fact, need fast forwards, if we design the link-level protocol properly.
+
+Each &quot;add HTLC&quot; &quot;fulfill HTLC&quot; &quot;fail HTLC&quot; &quot;change fee&quot; update message includes the signature needed for the next update transaction and the next state transaction, that immediately has the new state.
+Then the peer should reply with the remaining signatures needed immediately.
+
+Upon receiving an &quot;add HTLC&quot;, one can now construct the full next update transaction/next state transaction, and the existence of this update transaction is enough to invalidate any previous update transaction.
+So it is safe to forward the &quot;add HTLC&quot; to the next hop immediately as soon as the node can update its local database.
+This is different from Poon-Dryja, where the existence of the next commitment transactions does not imply that the previous commitment transaction is revoked.
+
+Of course, there is now the issue of &quot;how do we handle when both nodes want to update at the same time and sent conflicting 'next update' messages?&quot;
+Perhaps it can be left as an exercise to the reader how to do this while not requiring any round trips in the critical path of forwarding, in the typical case.
+For instance, if one has sent an update but receives an update in return, coordinate with the counterparty, do not forward yet, and then figure out a common &quot;next&quot; update/state transaction that has both updates, then continue with forwarding the update you received.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001985.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="001987.html">[Lightning-dev] Ptarmigan mainnet release
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1986">[ date ]</a>
+              <a href="thread.html#1986">[ thread ]</a>
+              <a href="subject.html#1986">[ subject ]</a>
+              <a href="author.html#1986">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning over taproot with PTLCs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3C20211009135939.GC4108%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003282.html">
+   <LINK REL="Next"  HREF="003284.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning over taproot with PTLCs</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3C20211009135939.GC4108%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Lightning over taproot with PTLCs">aj at erisian.com.au
+       </A><BR>
+    <I>Sat Oct  9 13:59:39 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003282.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+        <LI>Next message: <A HREF="003284.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3283">[ date ]</a>
+              <a href="thread.html#3283">[ thread ]</a>
+              <a href="subject.html#3283">[ subject ]</a>
+              <a href="author.html#3283">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sat, Oct 09, 2021 at 12:21:03PM +0000, Jonas Nick wrote:
+&gt;<i> it seems like parts of this proposal rely on deterministic nonces in MuSig.
+</I>
+The &quot;deterministic&quot; nonces are combined with &quot;recoverable&quot; nonces via
+musig2, so I think that part is a red-herring?
+
+They're &quot;deterministic&quot; in the sense that the person who generated the
+nonce needs to be able to recover the secret/dlog for the nonce later,
+without having to store unique randomness for it. Thinking about it,
+I think you could make the &quot;deterministic&quot; nonce secrets be
+
+   H( private-key, msg, other-party's-nonce-pair, 1 )
+   H( private-key, msg, other-party's-nonce-pair, 2 )
+
+because you only need to recover the secret if the other party posts a
+sig for a revoked transaction, in which case you can lookup their nonce
+directly anyway. And you're choosing your &quot;deterministic&quot; nonce after
+knowing what their (&quot;revocable&quot;) nonce is, so can include it in the hash.
+
+As far as the revocable nonce goes, you should only be generating a
+single signature based on that, since that's used to finish things off
+and post the tx on chain.
+
+&gt;<i> Generally, this is insecure unless combined with heavy machinery that proves
+</I>&gt;<i> correctness of the nonce derivation in zero knowledge. If one signer uses
+</I>&gt;<i> deterministic nonces and another signer uses random nonces, then two signing
+</I>&gt;<i> sessions will have different challenge hashes which results in nonce reuse by
+</I>&gt;<i> the first signer [0]. Is there a countermeasure against this attack in the
+</I>&gt;<i> proposal? What are the inputs to the function that derive DA1, DA2? Is the
+</I>&gt;<i> assumption that a signer will not sign the same message more than once?
+</I>
+I had been thinking DA1,DA2 = f(seed,n) where n increases each round, but I
+think the above would work and be an improvement. ie:
+
+   Bob has a shachain based secret generator, producing secrets s_0 to
+   s_(2**48). If you've seen s_0 to s_n, you only need to keep O(log(n))
+   of those values to regenerate all of them.
+
+   Bob generates RB1_n and RB2_n as H(s_n, 1)*G and H(s_n, 2)*G and sends
+   those values to Alice.
+
+   Alice determines the message (ie, the transaction), and sets da1_n
+   and da2_n as H(A_priv, msg, RB1_n, RB2_n, 1) and H(A_priv, msg, RB1_n,
+   RB2_n, 2). She then calculates k=H(da1_n, da2_n, RB1_n, RB2_n), and
+   signs for her nonce which da1_n+k*da2_n, and sends da1_n*G and
+   da2_n*G and the partial signature to Bob.
+
+   Bob checks and records Alice's musig2 derivation and partial signature,
+   but does not sign himself.
+
+   _If_ Bob wants to close the channel and publish the tx, he completes
+   the signature by signing with nonce RB1_n + k*RB2_n.
+
+If you can convince Bob to close the channel repeatedly, using the
+same nonce pair, then he'll have problems -- but if you can do that,
+you can probably trick him into closing the channel with old state,
+which gives him the same problems by design... Or that's my take.
+
+&gt;<i> It may be worth pointing out that an adaptor signature scheme can not treat
+</I>&gt;<i> MuSig2 as a black box as indicated in the &quot;Adaptor Signatures&quot; section [1].
+</I>
+Hmm, you had me panicking that I'd been describing how to combine the
+two despite having decided it wasn't necessary to combine them... :)
+
+(I figured doing musig for k ptlcs for every update would get old fast --
+if you maxed the channel out with ~400 inflight ptlcs you'd be exchanging
+~800 nonces for every update. OTOH, I guess that's the only thing you'd
+be saving, and the cost is ~176 bytes of extra witness data per ptlc...
+Hmm...)
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003282.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+	<LI>Next message: <A HREF="003284.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3283">[ date ]</a>
+              <a href="thread.html#3283">[ thread ]</a>
+              <a href="subject.html#3283">[ subject ]</a>
+              <a href="author.html#3283">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

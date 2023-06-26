@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C874mdqmx2u.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000423.html">
+   <LINK REL="Next"  HREF="000433.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C874mdqmx2u.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Feb  3 00:55:37 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000423.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+        <LI>Next message: <A HREF="000433.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#425">[ date ]</a>
+              <a href="thread.html#425">[ thread ]</a>
+              <a href="subject.html#425">[ subject ]</a>
+              <a href="author.html#425">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>CJP &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">cjp at ultimatestunts.nl</A>&gt; writes:
+&gt;&gt;<i> &gt; * Message confirmation: this is done manually (instead of relying on
+</I>&gt;&gt;<i> &gt; TCP), so that a node knows which messages were received / need to be
+</I>&gt;&gt;<i> &gt; re-transmitted, even after a crash + restart.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I think the protocol itself needs to be robust against retransmissions.
+</I>&gt;&gt;<i> There's no way to know if the other side received your acknowledgement
+</I>&gt;&gt;<i> before a crash, so you will always need to handle duplication on
+</I>&gt;&gt;<i> re-establishment.
+</I>&gt;<i>
+</I>&gt;<i> Yes. Amiko Pay does that: It assigns a number to every message, and the
+</I>&gt;<i> receiving side can confirm &quot;I've received up to this number&quot;.
+</I>&gt;<i> Not-yet-confirmed messages will be retransmitted, and the receiving
+</I>&gt;<i> sides will ignore duplicates (except it will send a confirmation again,
+</I>&gt;<i> in case the previous confirmation was lost).
+</I>
+Yes, I think packet numbers make sense.  I encoded the packet length and
+order in one single value (ie. byte counter at the end of this packet),
+but it's too weird for too little gain IMHO.
+
+&gt;&gt;<i> &gt; * There is not only two-way communication between linked peers, but also
+</I>&gt;&gt;<i> &gt; between payer and payee. This is necessary for Amiko Pay's
+</I>&gt;&gt;<i> &gt; bi-directional routing, but also useful e.g. for transmitting meta-data
+</I>&gt;&gt;<i> &gt; that doesn't fit in a QR code. Amiko Pay transmits an arbitrary-contents
+</I>&gt;&gt;<i> &gt; &quot;receipt&quot; from payee to payer; in the future, this might be digitally
+</I>&gt;&gt;<i> &gt; signed by the payee, as a &quot;proof of transfer of ownership&quot; of
+</I>&gt;&gt;<i> &gt; non-cryptographic goods.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I agree.  There's room in the initial onion design for payer -&gt; payee
+</I>&gt;&gt;<i> messages, but we don't have a channel for responses.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I can't see an easy way to implement the payee --&gt; payer comms reliably:
+</I>&gt;&gt;<i> to be reliable it would have to be published on-chain in the commit tx.
+</I>&gt;&gt;<i> (Which we could do by constructing HTLCs such that they require a blob
+</I>&gt;&gt;<i> signed by the payee, but that's tracable ...).
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Mats and Laolu wanted to add an arbitrary comms protocol layer, but I
+</I>&gt;&gt;<i> think that's something we can defer.
+</I>&gt;<i>
+</I>&gt;<i> In Amiko Pay, payer &lt;-&gt; payee communication is done on a direct TCP
+</I>&gt;<i> stream between them. Note that this also reduces latency: once
+</I>&gt;<i> transaction locking reaches the payee, the payee knows (s)he's capable
+</I>&gt;<i> of claiming the money, and can tell the payer that the payment is
+</I>&gt;<i> completed. If reduced latency is in the interest of the payee, this is
+</I>&gt;<i> likely to happen.
+</I>
+I think for v1.0 of the protocol we'll be assuming such a channel for
+simplicity; that somehow the R hash and route is known by the payer.
+
+&gt;<i> On latency: what latency do you think is needed for different use cases,
+</I>&gt;<i> and what can we reach? Does this extra step really make a difference?
+</I>&gt;<i>
+</I>&gt;<i> My estimate is that we'll typically have 10 hops (&quot;six degrees of
+</I>&gt;<i> separation&quot; theory), and 100ms to transmit a message(*) over one hop.
+</I>...
+&gt;<i> (*) Not counting sending the confirmation back: a node that receives a
+</I>&gt;<i> message can immediately forward a message on the next hop; message
+</I>&gt;<i> confirmation on the receiving side can occur in parallel.
+</I>
+That's a good point; you can offer the next hop and abort if the prior
+hop fails to deliver a signature.  Nice, my estimates were double
+yours...
+
+&gt;<i> Without reserving, you need to traverse all hops once(**) (the locking
+</I>&gt;<i> operation) before payer(***)+payee know that the transaction has
+</I>&gt;<i> succeeded. Actual settlement on the channels happens afterwards, but is
+</I>&gt;<i> no longer critical for the latency as seen by payer+payee.
+</I>&gt;<i>
+</I>&gt;<i> With reserving, you need to traverse all hops three times(**), in the
+</I>&gt;<i> worst case that the meeting point is on one of the end points of the
+</I>&gt;<i> route: once for making the route and reserving funds, once for
+</I>&gt;<i> confirming that the route has been established and once for locking.
+</I>&gt;<i>
+</I>&gt;<i> So, instead of one second, a transaction might take three seconds. Is
+</I>&gt;<i> that a game changer? Maybe it is for e.g. public transport access gates,
+</I>&gt;<i> where passenger throughput is essential. But then, people could reduce
+</I>&gt;<i> latency a lot by having a direct channel with the public transport
+</I>&gt;<i> operator.
+</I>
+I worry that higher latency is a centralization pressure, and encourages
+people to sacrifice privacy.  I don't know where the threshold is,
+though, so currently I'm more nervous about complexity :)
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000423.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+	<LI>Next message: <A HREF="000433.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#425">[ date ]</a>
+              <a href="thread.html#425">[ thread ]</a>
+              <a href="subject.html#425">[ subject ]</a>
+              <a href="author.html#425">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

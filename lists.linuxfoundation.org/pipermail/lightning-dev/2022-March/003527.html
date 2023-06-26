@@ -1,0 +1,341 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Lightning gossip alternative
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20gossip%20alternative&In-Reply-To=%3CCAO3Pvs-zyq%2BtJE-d3ajD2Rt2OPahVALMiR-xF_03PAX3f69kvA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003529.html">
+   <LINK REL="Next"  HREF="003530.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Lightning gossip alternative</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20gossip%20alternative&In-Reply-To=%3CCAO3Pvs-zyq%2BtJE-d3ajD2Rt2OPahVALMiR-xF_03PAX3f69kvA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [RFC] Lightning gossip alternative">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Mar 23 01:38:40 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003529.html">[Lightning-dev] Taproot-aware Channel Announcements + Proof	Verification
+</A></li>
+        <LI>Next message: <A HREF="003530.html">[Lightning-dev] [RFC] Lightning gossip alternative
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3527">[ date ]</a>
+              <a href="thread.html#3527">[ thread ]</a>
+              <a href="subject.html#3527">[ subject ]</a>
+              <a href="author.html#3527">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty,
+
+&gt;<i> Timestamps are replaced with block heights.
+</I>
+This is a conceptually small change, but would actually make things like
+rate limiting updates for implementations easier and more uniform. A simple
+rule would be only allowing an update per block, which cuts down a lot on
+potential chatter traffic, but maybe it's _too_ restrictive? Based on my
+network observations, these days some many power user nodes more
+aggressively
+update their fee schedules in response to liquidity imbalances or as an
+attempt to incentive usage of some channels vs others.
+
+&gt;<i> 1. Nodes send out weekly node_announcement_v2, proving they own some
+</I>&gt;<i> UTXOs.
+</I>
+If a node doesn't send out this announcement, then will others start to
+ignore their &quot;channels&quot;?
+
+&gt;<i> 3. This uses UTXOs for anti-spam, but doesn't tie them to channels
+</I>&gt;<i> directly.
+</I>
+As I hinted a bit in prior discussion, and also my recent ML [1] post
+outlining a possible &quot;do most of the same things&quot; stop gap, this has the
+potentially undesirable effect of allowing parties on the network to utilize
+_existing_ outputs to advertise false channels and inflate the &quot;total
+network capacity&quot; metric. We'd effectively be moving away from &quot;Alice and
+Bob have N BTC of bound capacity between them to&quot;, &quot;Bob has N BTC he can use
+for signing these proofs&quot;.
+
+Also while we're at it, why not add a merkle proof here (independent of
+which direction we go with) which makes it possible for constrained/mobile
+nodes to more easily verify gossip data (could be an optional query flag).
+
+&gt;<i> FIXME: what about tapscripts?
+</I>
+Yeah, one side effect of moving to nodes advertising how much BTC they can
+sign w/ vs the _actual_ BTC they have in &quot;channels&quot;, is that to extend
+validation here, the verifiers would need to fully verify possible script
+path spends (assuming a scenario where a NUMs point is used as the internal
+key).
+
+&gt;<i> Legacy proofs are two signatures, similar to the existing
+</I>&gt;<i> channel_announcement.
+</I>
+Why not musig2? We'd be able to get away with just a single sig with this
+modified `node_announcement_v2` and if we go the `channel_announcement2`
+route, we'd be able to compress those 4 sigs into one.
+
+&gt;<i> - If two node_announcement_v2 claim the same UTXO, use the first seen,
+</I>&gt;<i> discard any others.
+</I>
+So then this would mean that nodes that _actually_ have a channel between
+them can't _individually_ claim the capacity?
+
+&gt;<i> - node_announcement_v2 are discarded after a week (1000 blocks).  - Nodes
+</I>&gt;<i> do not need to monitor existence of UTXOs after initial check (since they
+</I>&gt;<i> will automatically prune them after a week).
+</I>
+A side effect of this would be _continual_ gossip churn in order to keep
+channels alive. Today we do have the 2 week `channel_update` heart beat, but
+channel updates are relatively small compared to this `node_announcement_v2`
+message.
+
+&gt;<i> - The total proved utxo value (not counting any utxos which are spent) is
+</I>&gt;<i> multiplied by 10 to give the &quot;announcable_channel_capacity&quot; for that node.
+</I>
+I don't see how this is at all useful in practice. We'd end up with inflated
+numbers for the total node capacity, and path finding would be more
+difficult as it isn't clear exactly how large an HTLC I can send over the
+&quot;channel&quot;. Sure there's the existence of max_htlc, but in that case why add
+this &quot;leverage&quot; factor in the first place?
+
+&gt;<i> 1. type: 273 (`channel_update_v2`)
+</I>
+This seems to allow the advertisement of channels which aren't actually
+anchored in the chain, which I *think* is a cool thing to have? On the other
+hand, the graph at the _edge_ level would be far more dynamic than it is
+today (Bob can advertise an entirely distinct topology from one day to
+another). Would need to think about the implications here for path finding
+algorithms and nodes that want to maintain an update to date view of the
+network...
+
+&gt;<i> - `channel_id_and_claimant` is a 31-bit per-node channel_id which can be
+</I>&gt;<i> used in onion_messages, and a one bit stolen for the `claim` flag.
+</I>
+Where would this `channel_id` be derived from? FWIW, using this value in the
+onion means we get a form of pubkey based routing [3] depending on how these
+are derived.
+
+&gt;<i> This simplifies gossip, requiring only two messages instead of three,
+</I>&gt;<i> and reducing the UTXO validation requirements to per-node instead of
+</I>&gt;<i> per-channel.
+</I>
+I'm not sure this would actually _simplify_ gossip in practice, given that
+we'd be moving to a channel graph that isn't entirely based in the reality
+of what's routable, and would be far more dynamic than it is today.
+
+&gt;<i> We can use a convention that a channel_update_v2 with no `capacity` is a
+</I>&gt;<i> permanent close.
+</I>
+On the neutrino side, we tried to do something where if we see both channels
+be disabled, then we'd mark the channel as closed. But in practice if you're
+not syncing _every_ channel update every transmitted, then you'll end up
+actually missing them.
+
+&gt;<i> It also allows &quot;leasing&quot; of UTXOs: you could pay someone to sign their
+</I>&gt;<i> UTXO for your node_announcement, with some level of trust.
+</I>
+I'm not sure this is entirely a *good* thing, as the graph becomes more
+decoupled with the _actual_ on-chain relationships...
+
+-- Laolu
+
+[1]:
+<A HREF="003526.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/003526.html</A>
+[2]: <A HREF="https://github.com/lightning/bolts/pull/814">https://github.com/lightning/bolts/pull/814</A>
+
+
+On Tue, Feb 15, 2022 at 12:46 AM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at blockstream.com</A>&gt;
+wrote:
+
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i>         I've floated this idea before, but this is a more concrete
+</I>&gt;<i> proposal for a &quot;v2&quot; gossip protocol.
+</I>&gt;<i>
+</I>&gt;<i> It assumes x-only pubkeys (aka point32) and BIP-340 signatures, and uses
+</I>&gt;<i> modern TLVs for all optional or extensible fields.  Timestamps are
+</I>&gt;<i> replaced with block heights.
+</I>&gt;<i>
+</I>&gt;<i> 1. Nodes send out weekly node_announcement_v2, proving they own some
+</I>&gt;<i>    UTXOs.
+</I>&gt;<i> 2. This entitles them to broadcast channels, using channel_update_v2; a
+</I>&gt;<i>    channel_update_v2 from both peers means the channel exists.
+</I>&gt;<i> 3. This uses UTXOs for anti-spam, but doesn't tie them to channels
+</I>&gt;<i>    directly.
+</I>&gt;<i> 4. Future ZKP proofs are could be added.
+</I>&gt;<i>
+</I>&gt;<i> 1. type: 271 (`node_announcement_v2`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>     * [`bip340sig`:`signature`]
+</I>&gt;<i>     * [`point32`:`node_id`]
+</I>&gt;<i>     * [`u32`:`blockheight`]
+</I>&gt;<i>     * [`node_announcement_v2_tlvs`:`tlvs`]
+</I>&gt;<i>
+</I>&gt;<i> 1. `tlv_stream`: `node_announcement_v2_tlvs`
+</I>&gt;<i> 2. types:
+</I>&gt;<i>     1. type: 2 (`features`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*byte`:`featurebits`]
+</I>&gt;<i>     1. type: 3 (`chain_hash`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`chain_hash`:`chain`]
+</I>&gt;<i>     1. type: 4 (`taproot_utxo_proofs`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*taproot_utxo_proof`:`proofs`]
+</I>&gt;<i>     1. type: 6 (`legacy_utxo_proofs`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*legacy_utxo_proof`:`proofs`]
+</I>&gt;<i>     1. type: 127 (`ipv4_addresses`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*ipv4`:`addresses`]
+</I>&gt;<i>     1. type: 129 (`ipv6_addresses`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*ipv6`:`addresses`]
+</I>&gt;<i>     1. type: 131 (`torv3_addresses`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*torv3`:`addr`]
+</I>&gt;<i> # Maybe alias, color, etc?
+</I>&gt;<i>
+</I>&gt;<i> Taproot proofs are a signature of the v1 output over the `node_id`,
+</I>&gt;<i> `utxo` and `blockheight` with prefix &quot;lightingtaproot_utxo_proofsig&quot;
+</I>&gt;<i> (using the tagged signatures as per BOLT12). (FIXME: what about
+</I>&gt;<i> tapscripts?).
+</I>&gt;<i>
+</I>&gt;<i> Legacy proofs are two signatures, similar to the existing
+</I>&gt;<i> channel_announcement.
+</I>&gt;<i>
+</I>&gt;<i> 1. subtype: `taproot_utxo_proof`
+</I>&gt;<i> 2. data:
+</I>&gt;<i>     * [`short_channel_id`:`utxo`]
+</I>&gt;<i>     * [`signature`:`sig`]
+</I>&gt;<i>
+</I>&gt;<i> 1. subtype: `legacy_utxo_proof`
+</I>&gt;<i> 2. data:
+</I>&gt;<i>     * [`short_channel_id`:`utxo`]
+</I>&gt;<i>     * [`point`:`bitcoin_key_1`]
+</I>&gt;<i>     * [`point`:`bitcoin_key_2`]
+</I>&gt;<i>     * [`signature`:`sig_1`]
+</I>&gt;<i>     * [`signature`:`sig_2`]
+</I>&gt;<i>
+</I>&gt;<i> - node_announcement_v2 are discarded after a week (1000 blocks).
+</I>&gt;<i> - If two node_announcement_v2 claim the same UTXO, use the first seen,
+</I>&gt;<i>   discard any others.
+</I>&gt;<i> - Nodes do not need to monitor existence of UTXOs after initial check
+</I>&gt;<i> (since
+</I>&gt;<i>   they will automatically prune them after a week).
+</I>&gt;<i> - The total proved utxo value (not counting any utxos which are spent)
+</I>&gt;<i>   is multiplied by 10 to give the &quot;announcable_channel_capacity&quot; for that
+</I>&gt;<i> node.
+</I>&gt;<i>
+</I>&gt;<i> 1. type: 273 (`channel_update_v2`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>     * [`bip340sig`:`signature`]
+</I>&gt;<i>     * [`point32`:`local_node_id`]
+</I>&gt;<i>     * [`point32`:`remote_node_id`]
+</I>&gt;<i>     * [`u32`:`blockheight`]
+</I>&gt;<i>     * [`u32`:`channel_id_and_claimant`]
+</I>&gt;<i>     * [`channel_update_v2_tlvs`:`tlvs`]
+</I>&gt;<i>
+</I>&gt;<i> 1. `tlv_stream`: `channel_update_v2_tlvs`
+</I>&gt;<i> 2. types:
+</I>&gt;<i>     1. type: 2 (`features`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*byte`:`featurebits`]
+</I>&gt;<i>     1. type: 3 (`chain_hash`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`chain_hash`:`chain`]
+</I>&gt;<i>     1. type: 4 (`capacity`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`tu64`:`satoshis`]
+</I>&gt;<i>     1. type: 5 (`cost`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>        * [`u16`:`cltv_expiry_delta`]
+</I>&gt;<i>        * [`u32`:`fee_proportional_millionths`]
+</I>&gt;<i>        * [`tu32`:`fee_base_msat`]
+</I>&gt;<i>     1. type: 6 (`min_msat`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`tu64`:`min_htlc_sats`]
+</I>&gt;<i>
+</I>&gt;<i> - `channel_id_and_claimant` is a 31-bit per-node channel_id which can be
+</I>&gt;<i>   used in onion_messages, and a one bit stolen for the `claim` flag.
+</I>&gt;<i> - A channel is not considered to exist until both peers have sent a
+</I>&gt;<i>   channel_update_v2, at least one of which must set the `claim` flag.
+</I>&gt;<i> - If a node sets `claim`, the capacity of the channel is subtracted from
+</I>&gt;<i>   the remaining announcable_channel_capacity for that node (minimum
+</I>&gt;<i>   10,000 sats).
+</I>&gt;<i> - If there is insufficient total `announcable_channel_capacity` for a
+</I>&gt;<i>   node, it is used by the lower `channel_id`s first.
+</I>&gt;<i>
+</I>&gt;<i> Implications
+</I>&gt;<i> ------------
+</I>&gt;<i>
+</I>&gt;<i> This simplifies gossip, requiring only two messages instead of three,
+</I>&gt;<i> and reducing the UTXO validation requirements to per-node instead of
+</I>&gt;<i> per-channel.  We can use a convention that a channel_update_v2 with no
+</I>&gt;<i> `capacity` is a permanent close.
+</I>&gt;<i>
+</I>&gt;<i> We might want to add a taproot_utxo_delegated_proof where UTXOs can
+</I>&gt;<i> sign over to another key, so cold storage only needs to sign once, and
+</I>&gt;<i> the other key can sign weekly.
+</I>&gt;<i>
+</I>&gt;<i> It also allows &quot;leasing&quot; of UTXOs: you could pay someone to sign their
+</I>&gt;<i> UTXO for your node_announcement, with some level of trust.  They could
+</I>&gt;<i> spend the UTXO, which gives you a slow degredation as new nodes don't
+</I>&gt;<i> accept your channels but existing nodes don't check until it's due for a
+</I>&gt;<i> refresh).  Or they could sign one UTXO for multiple node_announcements,
+</I>&gt;<i> which is why preference is given to the first-seen.  But it's a weekly
+</I>&gt;<i> business so there's incentive for them not to.
+</I>&gt;<i>
+</I>&gt;<i> Between nodes there's the question of &quot;who claims this new channel?&quot;,
+</I>&gt;<i> which I didn't address here.  Opener claims is logical, but leaks
+</I>&gt;<i> information (though you could definitely pay for the peer to claim it).
+</I>&gt;<i> With dual-funding, it's more complex (some kind of proportional coinflip
+</I>&gt;<i> protocol is possible), but basically you can always wait for your peer,
+</I>&gt;<i> and if they don't set the claim bit you can.
+</I>&gt;<i>
+</I>&gt;<i> Cheers!
+</I>&gt;<i> Rusty.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220322/23c944d8/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220322/23c944d8/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003529.html">[Lightning-dev] Taproot-aware Channel Announcements + Proof	Verification
+</A></li>
+	<LI>Next message: <A HREF="003530.html">[Lightning-dev] [RFC] Lightning gossip alternative
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3527">[ date ]</a>
+              <a href="thread.html#3527">[ thread ]</a>
+              <a href="subject.html#3527">[ subject ]</a>
+              <a href="author.html#3527">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

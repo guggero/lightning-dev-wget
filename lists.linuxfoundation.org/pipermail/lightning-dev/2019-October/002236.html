@@ -1,0 +1,332 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Nodelets, a layer 3 proposal
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Nodelets%2C%20a%20layer%203%20proposal&In-Reply-To=%3C2dCfjw82Q3LvKhc8v1Z3LUErv6NiyvRvKG7c0LJDNgQXikn-cdLOW0pGcNFELsWSAlEyyeQxyguL81LTDvQh8mSGEyCoE2qyJAWfGhhGC1g%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002235.html">
+   <LINK REL="Next"  HREF="002237.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Nodelets, a layer 3 proposal</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Nodelets%2C%20a%20layer%203%20proposal&In-Reply-To=%3C2dCfjw82Q3LvKhc8v1Z3LUErv6NiyvRvKG7c0LJDNgQXikn-cdLOW0pGcNFELsWSAlEyyeQxyguL81LTDvQh8mSGEyCoE2qyJAWfGhhGC1g%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Nodelets, a layer 3 proposal">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Oct 20 14:00:58 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002235.html">[Lightning-dev] Atomic Secrets Exchange
+</A></li>
+        <LI>Next message: <A HREF="002237.html">[Lightning-dev] Rendez-vous on a Trampoline
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2236">[ date ]</a>
+              <a href="thread.html#2236">[ thread ]</a>
+              <a href="subject.html#2236">[ subject ]</a>
+              <a href="author.html#2236">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+As the Lightning Network grows, we should remember that pathfinding algorithms are, at best, O(n log n) (mildly superlinear) on the number of nodes in the map.
+To be more specific, the number of nodes scanned by e.g. Dijkstra will be b^d , where d is the route length and b is the &quot;branching factor&quot;, i.e. the number of candidate paths going out from each node, i.e. proportional to the number of channels that a node has.
+
+One method of handling large-scale public networks is to encourage the use of unpublished channels, to reduce the number of publicly-admitted nodes and channels that need to be scanned.
+However, unpublished channels have no incentive on-network, and can incentivize instead surveillance of users of unpublished channels.
+
+One observation from Channel Factories, is the consideration that part of the scaling benefit we can build on top of Bitcoin is the ability of multiple parties to share ownership of a single UTXO.
+Channel factories allow multiple channels to be rooted from a single UTXO, providing tremendous onchain scaling.
+However, if the channels within a factory are published, this increases the routemap size and further increases the effort needed for pathfinding algorithms.
+
+Thus in this writeup I propose Nodelets.
+Nodelets are share-owners of a single Lightning Node, combining the reduced routemap of unpublished channels with the raw onchain scaling of channel factories.
+By use of Schnorr MuSig, Nodelets can provide shared ownership of a Lightning node, allowing multiple users to be represented by a single Lightning node, while retaining non-custodiality, at the drawback of requiring full onlineness of all participants and leaking their financial activity to each other.
+
+Prerequisites
+=============
+
+The blockchain on which Nodelets can be implemented, must have these features:
+
+* Schnorr signatures.
+  This is needed in order to use MuSig to generate a single signature for the node that the nodelets are share-owners of.
+* `SIGHASH_NOINPUT` or similar feature.
+  This is needed in order to allow transactions to be created that spend a particular address of a particular value, without knowing what transaction will actually contain an output of that address and value.
+
+The Lightning Network also needs to switch to using Schnorr signatures for node announcements, channel announcements, and channel updates.
+
+Unpublished Channels
+====================
+
+Unpublished channels seek to reduce the routemap size (and thus prevent explosion of pathfinding effort) by reducing the number of channels, and reducing the number of public nodes (a node only exists on the public routemap if it has at least one published channel).
+
+However, unpublished channels have the following drawbacks:
+
+* Unpublished channels will earn less in routing fees, as nobody else will use them other than the unpublished node.
+* Activity on unpublished channels is **obviously** arising or terminating to the unpublished node, as no other node can possibly know of the channel.
+
+Further, let us consider what would happen if a public node allows an unpublished channel to be created between itself and an unpublished node.
+The public node can surveill every activity that occurs on the unpublished channel; the public node can generally assume with very high probability that the channel is used only by the counterparty and no one else, given that no on else knows of the channel.
+
+(while it is true that the channel is known by others who have received an invoice using that channel for routeboost, it should be noted, that it is only the receiving direction of that channel that is known; a node with only unpublished channels still cannot hide its activity among forwarding requests of others)
+
+Thus, the public node is in a position to log and potentially resell later the financial activity occurring on the channel.
+A node which refuses to do this loses opportunity to resell the information, earning less money.
+
+Further, if the public node has many public channels, it has an informational advantage over the unpublished node.
+The unpublished node reveals all its financial information over the channel to the public node, but the public node does not reveal any financial information to the unpublished node.
+
+* If the other node is unpublished, then the public node will never route a payment via the node, thus will never use the unpublished channel.
+  * The only time the public node will use the unpublished channel is if it directly paying the unpublished node.
+    But the payee cannot get information on which node is the source of a payment, a deliberate design decision to preserve privacy.
+* The public node can use its published channels to send and receive payments.
+  Due to the fact that those channels are published, its counterparties in the public network cannot be sure that the payment arises from / terminates in the public node.
+* Thus, the unpublished node surrenders all of its financial information occurring on the unpublished channel, while the counterparty public node does not give any financial information to anyone.
+
+Thus a basic assumption of unpublished channels is:
+
+* Anyone you form an unpublished channel with, is being tr\*sted to not monitor and resell your offchain financial activity occurring on that channel.
+
+Channel Factories
+=================
+
+Channel factories utilize an n-of-n UTXO that is then split into multiple 2-of-2 channels.
+The splitting transaction is placed inside a multiparty update mechanism, such as Decker-Wattenhofer or Decker-Russell-Osuntokun.
+
+There is a minor drawback to the existing multiparty update mechanisms:
+
+* HTLCs transported across any channel directly or indirectly rooted from a Decker-Wattenhofer or Decker-Russell-Osuntokun need to have lock times larger than the CSV security parameter of the Decker-Wattenhofer / Decker-Russell-Osuntokun construction.
+  * In particular, if a payment is put in a hodl invoice, any HTLCs pending on channels inside or using Decker-Wattenhofer / Decker-Russell-Osuntokun need to be closed, by the CSV number of blocks, before the HTLC times out.
+    This is in contrast with Poon-Dryja mechanism, where channel closure of a hedl invoice can be deferred to just 1 block before the HTLC times out.
+
+However, channel factories provide tremendous scaling benefits, thus we are generally willing to accept the above drawback.
+By use of channel factories, we can (eventually) scale even further using Lightning, as many people can effectively share ownership of a single UTXO.
+
+Further, channel factories allow for graceful degradation.
+Since channel factories require many participants, the probability of one participant being offline is much higher than with 2-participant channels.
+If one participant is offline, this prevents channel factories from reorganizing the channels.
+However, any payments moving through the channels inside the factory can still push through, on channels where the offline participant is not involved in.
+
+Thus, we can say that channel factories have the property:
+
+* Channel factories degrade gracefully when a participant is offline.
+
+Nodelets
+========
+
+A Nodelet is a share-owner of a Lightning Network node.
+
+This means that the onchain and offchain funds of the LN node are the total funds of all nodelets composing the node.
+As a basic consideration, the node public key (the &quot;node id&quot;) is the n-of-n MuSig of all nodelets composing the node.
+
+All funds owned by the node are publicly seen as a single owner, but is really a MuSig of the nodelet public keys.
+
+In the below, we have a MuSig(A,B,C) node composed of A, B, and C, nodelets.
+
+Transport ECDH
+--------------
+
+Part of the BOLT 8 transport protocol is an ECDH between a node id and the remote node ephemeral public key.
+
+If a node composed of nodelets `A`, `B`, and `C` uses the `MuSig(A,B,C)` of the node, the public key of the node is:
+
+    MuSig(A, B, C) = h(A | B | C | A) * A + h(A | B | C | B) * B + h(A | B | C | C) * C
+
+The corresponding private key (given `a * G = A` et al.) is:
+
+    h(A | B | C | A) * a + h(A | B | C | B) * b + h(A | B | C | C) * c
+
+Thus, the ECDH with the remote ephemeral public key `E` is the private key of our node, times the public key `E`:
+
+    (h(A | B | C | A) * a + h(A | B | C | B) * b + h(A | B | C | C) * c) * E
+    == h(A | B | C | A) * a * E + h(A | B | C | B) * b * E + h(A | B | C | C) * c * E
+
+Each of the nodelets can then individually compute their `h(A | B | C | A) * a * E`, then provide the product to the other nodelets, without revealing their own private keys.
+The sum of these products is then the above ECDH between the aggregated node, and the remote ephemeral key.
+
+The same operation can be done with the ECDH between the remote node id and the node ephemeral key.
+The nodelets simply perform MuSig on their own ephemeral keys.
+
+A concern arises in that it is possible one or more of the nodelets does not perform the multiplication properly.
+In such a case, establishment of the BOLT 8 transport fails and the remote node disconnects.
+In case of multiple such events, the other nodelets may very well destroy the node and unilaterally redeem their funds onchain.
+
+Revocation
+----------
+
+Under Poon-Dryja, each update requires the generation of a revocation secret.
+The secret needs to be revealed to the channel counterparty in order to progress the state.
+
+However, revocation means that nodes composed of nodelets cannot safely use Poon-Dryja.
+
+* Suppose there exists a node composed of multiple nodelets.
+* Secretly, one of the nodelets (the *rogue nodelet*) starts up a full Lightning node and initiates a channel with the MuSig-composed node.
+* The nodelets sign the revocable commitment transactions of both itself and the counterparty.
+* The new Lightning node sends out its value elsewhere on the network.
+  This revokes older commitments include the original one.
+* The rogue nodelet knows the initial revocable commitment transaction and publishes it.
+* The new Lightning node (really owned by the rogue nodelet) revokes the published transaction.
+
+Thus, nodelets cannot use Poon-Dryja channels at all.
+
+Instead, we can simply use the newer Decker-Russell-Osuntokun construction for all channels.
+This has the advantage that the completed signature of the next state transaction serves as a sufficient revocation of every older state transaction, and revocation shenanigans are reduced.
+
+Funding Channels
+----------------
+
+Suppose we have a node composed of three nodelets A, B, and C.
+Now suppose nodelets A and B own some onchain funds and want to create a channel between the MuSig(A,B,C) node and another node, Z.
+For purpose of example, let us suppose that both A and B want to put 5 mBTC each to form a 10mBTC channel.
+
+Part of the funding process involves exchanging signatures between the node MuSig(A,B,C) and Z for the initial commitment transactions (the initial update and settlement transactions under Decker-Russell-Osuntokun).
+
+Between the nodelets A, B, and C, before creating the signature for the initial commitment transactions, the nodelets must first create a transaction which spends the MuSig(A,B,C) output.
+These nodelet-settlement transactions spend from the initial commitment transactions, the output that will return the value to the funder.
+It then splits up this value to two outputs, 5 mBTC to A and 5 mBTC to B.
+Then all nodelets first sign the nodelet-settlement transaction, before signing the initial commitment transaction that is sent in `funding_created`.
+
+After the channel is established, MuSig(A,B,C) not only tracks how the fund is split between MuSig(A,B,C) and Z, but also how the MuSig(A,B,C) is split between A, B, and C.
+
+Accepting Channels
+------------------
+
+Suppose another node, Y, wants to make a 10mBTC channel to MuSig(A,B,C).
+For this case, MuSig(A,B,C) simply contacts its component nodelets A, B, and C to generate the signature needed for the `funding_signed` message.
+
+Noteworthy is that Y itself may itself in reality be a MuSig(U, V, W,X), but MuSig(A,B,C) need not be aware of this fact.
+
+Forwarding HTLCs
+----------------
+
+Now that MuSig(A,B,C) has an incoming channel from Y and an outgoing channel to Z, and both channels are (of course) published, it is now possible to forward payments via Y-to-MuSig(A,B,C)-to-Z.
+
+Suppose MuSig(A,B,C) receives an incoming 2mBTC HTLC for forwarding from Y, going to Z.
+The question now is how will the incoming HTLC be distributed among A, B, and C?
+
+Fortunately, the aggregate node is able to decode the onion packet as soon as it is sent.
+It can determine the next channel even before the incoming HTLC is irrevocably committed.
+
+The next channel from MuSig(A,B,C)-to-Z only contains funds of A and B (5mBTC) each.
+Thus, the incoming HTLC should only be claimable by A and B.
+A and B can assure this by building a claim transaction spending the 2mBTC HTLC output on both versions of the commitment transaction (remote and local) and splitting it up to A-only and B-only outputs of 1mBTC each.
+Then, before A and B sign the new version of the commitment transaction, they will demand that C provide the partial signature for this claim transaction before providing the partial signatures for the commitment transaction.
+`SIGHASH_NOINPUT` will let the nodelets reduce the communication overhead (they can reuse the signatures for the claim transactions even as new commitment transactions are made), but is not strictly necessary.
+
+In effect, the MuSig(A,B,C) node needs to &quot;pre-reserve&quot; some capacity in the MuSig(A,B,C)-to-Z channel.
+Then later, when the incoming HTLC becomes irrevocably committed, it then uses the funds of A and B (5mBTC each) to form an outgoing 2mBTC HTLC.
+
+Creating Invoices
+-----------------
+
+Suppose C wants to receive 3mBTC.
+C simply needs to generate an invoice by itself, with a preimage only C knows, but using MuSig(A,B,C) as the node receiving the payment.
+C would then ask the other nodelets to sign the invoice, in order to create an invoice signed by MuSig(A,B,C)
+
+C wants to leak as little information about the invoice contents as possible.
+Fortunately, we can use `h` key of invoice to store the hash of the invoice description, to prevent A and B from learning the invoice description.
+However, this has the drawback that there is no standard way to provide the invoice description behind an `h` invoice key.
+
+An issue here is that the node, as an aggregate, is provably liable to the payment, once the proof-of-payment is released.
+However, since the node is in fact an aggregate, there must be some way to track back that C was the actual payee, and that A and B were simply cooperating nodelets.
+This can be done by having C also sign the invoice using only its own private key.
+This signature is insufficient by itself for the invoice (as the invoice points to MuSig(A,B,C) as being the one paid, thus requiring the signature of MuSig(A,B,C)).
+However, A and B can reveal this later to show that the invoice is actually a liability accepted only by C in exchange for payment of the invoice.
+
+Thus, the procedure is:
+
+1.  C generates the invoice with `h` for description.
+2.  C provides the invoice and a signature using only C for this invoice to A and B.
+3.  A, B, and C perform a MuSig signing of the entire invoice and provides the completed signature to C.
+4.  C provides the MuSig(A,B,C)-signed invoice to the payer, as well as the description of the liability C is taking on (e.g. &quot;pay 500,000 BTC onchain to Daniel Kleiman&quot;).
+
+Receiving Funds
+---------------
+
+Now that C has an invoice, it will want to receive funds using that invoice.
+Now until the invoice is paid, no other nodelet other than C knows the preimage.
+However, both A and B know that C knows the preimage to the payment hash.
+
+Thus, on receive of an onion route that terminates at the MuSig(A, B, C) node, both A and B generate a transaction which claims the incoming HTLC and gives it solely to C.
+A and B then initiate signing that transaction.
+Once C acquires the signature and the transaction, it is possible for C to claim the funds even if it has to enforce it onchain.
+At that point, C can safely provide the preimage to the other nodelets, as well as the `update_fulfill_htlc` to the counterparty of the channel.
+
+
+Comparing Nodelets to Unpublished Channels and Channel Factories
+================================================================
+
+As claimed earlier, nodelets combine the map size reduction of unpublished channels with the raw scaling of channel factories.
+
+Channel factories containing published channels, in particular, will increase the branching factor experienced by pathfinding algorithms.
+Thus, we expect that the deployment of channel factories will increase the size of the public routemap.
+
+Nodelets vs Unpublished Channels
+--------------------------------
+
+Nodelets having share-ownership of a node leak part of their financial information to each other.
+Specifically, the timing and amount of transactions is learned by the other nodelets.
+
+This is similar to the situation where multiple nodes only have unpublished channels, and happen to make channels to the same public node.
+In addition, the number of nodes seen on the public routemap is also the same.
+
+Differences are:
+
+* With nodelets, there is no additional party that is not one of the unpublished nodes / nodelets.
+  * Nodelets have &quot;symmetrical&quot; information: their payment timings and amounts are known, but they also learn that of others.
+    * This symmetry might not be useful: &quot;the only winning move is not to play&quot; (i.e. do not make a transaction, just listen in on others).
+* With unpublished nodes, one of the unpublished nodes / nodelets going offline does not disable the public node.
+* Nodelets require less funds locked in channels, with fewer channels (and corresponding reduced blockchain footprint).
+  * Public node channels have to also exist separately from the funds of the unpublished nodes, in order to forward.
+  * With nodelets, the nodelet funds back the channels of the MuSig node directly.
+
+Nodelets vs Channel Factories
+-----------------------------
+
+Channel factories and Nodelets have similar scaling improvement: they let 3 or more owners put funds in a single UTXO and still transact using the funds in that UTXO over the Lightning Network.
+
+Differences are:
+
+* Nodelet-owned channels have a single `nSequence` constraint imposed by the Decker-Russell-Osuntokun mechanism, while channel factories have two `nSequence` constraints:
+  * At the channel factory layer.
+  * At the channel layer.
+    * This `nSequence` constraint could be removed by using Poon-Dryja update mechanism at the channel layer instead of another Decker-Russell-Osuntokun.
+* Channel factories have mildly more onchain footprint on uncooperative closes, due to the increased number of update mechanisms.
+* Channel factories increase the number of channels on the network and increase pathfinding effort, while nodelets reduce the number of nodes.
+
+
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002235.html">[Lightning-dev] Atomic Secrets Exchange
+</A></li>
+	<LI>Next message: <A HREF="002237.html">[Lightning-dev] Rendez-vous on a Trampoline
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2236">[ date ]</a>
+              <a href="thread.html#2236">[ thread ]</a>
+              <a href="subject.html#2236">[ subject ]</a>
+              <a href="author.html#2236">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

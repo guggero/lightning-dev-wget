@@ -1,0 +1,280 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2021-41591/%20CVE-2021-41592%20/%0A%20CVE-2021-41593%20%22Dust%20HTLC%20Exposure%20Considered%20Harmful%22&In-Reply-To=%3CCALZpt%2BH1fH-G8Q5T2teZxYYWJRxMzeee6unuHACU3dSf1hMZag%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003277.html">
+   <LINK REL="Next"  HREF="003258.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2021-41591/%20CVE-2021-41592%20/%0A%20CVE-2021-41593%20%22Dust%20HTLC%20Exposure%20Considered%20Harmful%22&In-Reply-To=%3CCALZpt%2BH1fH-G8Q5T2teZxYYWJRxMzeee6unuHACU3dSf1hMZag%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;">antoine.riard at gmail.com
+       </A><BR>
+    <I>Mon Oct  4 15:09:28 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003277.html">[Lightning-dev] [bitcoin-dev]  Removing the Dust Limit
+</A></li>
+        <LI>Next message: <A HREF="003258.html">[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592	/ CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3257">[ date ]</a>
+              <a href="thread.html#3257">[ thread ]</a>
+              <a href="subject.html#3257">[ subject ]</a>
+              <a href="author.html#3257">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+I'm writing a report to disclose specification-level vulnerabilities
+affecting the Lightning implementations.
+
+The vulnerabilities are expected to be patched in:
+* Eclair: v0.6.2+ (CVE-2021-41591)
+* LND: v0.13.3+ (CVE-2021-41592)
+* LDK: v0.0.102 (not released as production software yet)
+
+The vulnerabilities are also affecting c-lightning (CVE-2021-41593).
+
+Those vulnerabilities can be exploited in a wide range of attacks, going
+from fee blackmailing of node operators, burning liquidity of your
+competing LSPs or even stealing your counterparty channel balance if you
+avail mining capabilities. Exercise of the vulnerability revealed that a
+majority of the balance funds can be at loss.
+
+Credit to Eugene Siegel (Crypt-iQ) for reporting the trimmed-to-dust
+exploitation and multiple insights about attacks.
+
+Thanks to Bastien Teinturier and Matt Corallo for numerous contributions
+about mitigations development.
+
+# Problem
+
+The current BOLT specification only requires Alice's `dust_limit_satoshis`
+(applied on Alice's commitment) to be under Alice's
+`channel_reserve_satoshis` (applied on Bob). As those 2 parameters are
+selectable by Alice, she can inflate the dust limit until reaching the
+implementation-defined max value (e.g LND: 20% of chan capacity, LDK: 100%
+of chan capacity).
+
+Any in-flight incoming HTLC under Alice's dust limit will be converted as
+miner fees on Alice's commitment. This HTLC is deducted from Bob's balance
+and as such they're still owned by Bob, until resolution (i.e a RAA
+removing the HTLC from Alice's commitment). This limitation only applies
+per-HTLC. No implementation enforces a limit on the sum of in-flight HTLCs
+burned as fees. Therefore, Alice is free to inflict a substantial loss to
+Bob funds by publishing her commitment on-chain.
+
+In-flight outgoing HTLC are also committed as fees on Bob's commitment if
+they're under Bob's threshold. Alice can also exploit from this angle by
+circular routing HTLCs until reaching Bob's
+`max_htlc_value_in_flight_msat`. Alice withholds HTLCs resolution until Bob
+goes on-chain to timeout an offered HTLC or claim an accepted HTLC.
+
+Dust HTLC processing can be also exploited at `update_fee` reception.
+
+As the BOLT3's fees computation encompasses the negotiated feerate from
+`update_fee` for the 2nd-stage HTLC fees to decide if the HTLC must be
+trimmed, the amount of balance at risk is a function of current mempool
+feerates.
+
+The maximum of funds at risk on a counterparty commitment is:
+
+counterparty's `max_accepted_htlcs` * (`htlc_success_tx_kw` * opener's
+`feerate_per_kw` + counterparty's `dust_limit_satoshis`) + holder's
+`max_accepted_htlcs` * (`htlc_timeout_tx_kw` * opener's `feerate_per_kw` +
+counterparty's `dust_limit_satoshis`)
+
+If the opener is also the attacker, the negotiated feerate can be
+manipulated beyond the &quot;honest&quot; mempool feerates only upper bounded
+implementation-defined value (before fixes, LDK: 2 * high-feerate of our
+fee-estimator). If the opener is the victim, the negotiated feerate is
+still a safety concern in case of spontaneous mempool spikes.
+
+Note, `anchors_zero_htlc_fee` channels are not affected by the feerate
+inflation as the trimmed-to-dust fee computation mechanism for 2nd-stage
+HTLC is removed. They're still at risk of the sum of the HTLCs under the
+dust limit being maliciously burned.
+
+# Solution
+
+A first mitigation is to verify the counterparty's announced
+`dust_limit_satoshis` at channel opening (`open_channel`/`accept_channel`)
+reception and reject if it's estimated too large (see #894)
+
+For LDK, we choose the value of 660 satoshis as it's beyond the highest
+dust threshold enforced by Bitcoin Core (p2pkh: 546) with a margin of
+safety. Propagation of Lightning time-sensitive transactions shouldn't be
+affected.
+
+A second mitigation is to define a new configurable limit
+`max_dust_htlc_exposure` and apply this one at incoming and outgoing of
+HTLC.
+
+For LDK, we choose the value of 5 000 000 milli-satoshis as we gauged this
+value as a substantial loss for our class of users. Setting this too low
+may prevent the sending or receipt of low-value HTLCs on high-traffic
+nodes. A node operator should fine-tune this value in function of what
+qualifies as an acceptable loss.
+
+We would like to ensure that the node isn't suddenly exposed to
+significantly more trimmed balance if the feerate increases when we have
+several HTLCs pending which are near the dust limit.
+
+To achieve this goal, we introduce a new `dust_buffer_feerate` defined as
+the maximum of either 2530 sats per kWU or 125% of the current
+`feerate_per_kw` (implementation-defined values).
+
+Then, upon an incoming HTLC, if the HTLC's `amount_msat` is inferior to the
+counterparty's `dust_limit_satoshis` plus the HTLC-timeout fee at the
+`dust_buffer_feerate`. If the `amount_msat` plus the
+`dust_balance_on_counterparty_tx` is superior to `max_dust_htlc_exposure`,
+the HTLC should be failed once it's committed.
+
+Upon an outgoing HTLC, if the HTLC's `amount_msat` is inferior to the
+counterparty's `dust_limit_satoshis`  plus the HTLC-success fee at the
+`dust_buffer_feerate`. If the `amount_msat` plus the
+`dust_balance_on_counterparty_tx` is superior to `max_dust_htlc_exposure`,
+the HTLC should not be sent and fail without forwarding.
+
+The check symmetry must also be applied on holder commitment transactions.
+See PR #919 for more details.
+
+A last mitigation is ensuring that at `update_fee` reception, the pending
+`dust_balance` at the new proposed feerate isn't superior to
+`max_dust_htlc_exposure_msat`.
+
+# Background
+
+The dust limit is a base layer policy stopping the relay of a transaction
+if one of its outputs is under a given threshold. The goal of this policy
+is to prevent the pollution of the UTXO set with low-value outputs and as
+such increase the amount of work done by full-nodes.
+
+Lightning commitment transactions should be able to propagate at any point
+during the channel lifetime to unilaterally enforce on-chain a balance. A
+Lightning commitment transaction with one of its outputs below the dust
+limit would fail to relay and thus jeopardizes funds safety.
+
+To prevent this, BOLT2 requires counterparties to announce a
+`dust_limit_satoshis` during channel opening (at
+`open_channel`/`accept_channel` exchange). This `dust_limit_satoshis` must
+be under the same party's `channel_reserve_satoshis`. This value is static
+for the channel lifetime.
+
+During commitment signatures exchange, each counterparty's limit is applied
+on each counterparty's commitment (e.g A's `dust_limit_satoshis` is applied
+on A's commitment, though both A and B have to generate and sign the
+transaction). An output below this limit is trimmed to fees and won't
+materialize on the commitment.
+
+The specification didn't require that the `open_channel`/`accept_channel`
+receiver verify that the announced `dust_limit_satoshis` isn't too large.
+
+The specification didn't require that the sum of the dust HTLC committed as
+fees was verified against an upper bound.
+
+# Discovery
+
+Vulnerabilities around our dust HTLC processing have been known for years
+by some LN developers/researchers.
+
+During Q1 2019, private discussions on the Rust-Lightning-side (LDK before
+marketing rebranding) about potential safety risks around dust HTLC
+processing.
+
+In November 2019, Rusty Russell (c-lightning) opened an issue against the
+specification mentioning the lack of check of counterparty's dust limit
+(#696).
+
+In May 2020, I published a high-level attack scenario &quot;Miners Dust
+Inflation attacks on Lightning Network&quot;, leveraging this lack.
+
+In February 2021, I did a test of the first vulnerability against LND
+software and successfully burnt the majority of the targeted node balance
+in fees. As it sounds to me like a check missing in the specification, I
+notified CL/LND/Eclair/LDK maintainers. Mitigations started to be developed
+on the LDK-side.
+
+In July 2021, in the context of `option_dusty_htlcs_uncounted` discussions,
+Eugene Spiegel (LND) reported on how to exploit the trimmed-to-dust
+mechanism at `update_fee` reception. Discussions followed on the best way
+to mitigate this new vector.
+
+During August 2021, mitigations were developed and released on the
+LDK-side. vulnerabilities were disclosed to other Lightning projects (Muun
+wallet, Electrum). From the LDK-side, a public disclosure date was proposed.
+
+Still during August 2021, the Bitcoin Core dust limit was actively
+discussed on the mailing list. Changes of this dust limit would have
+affected the ongoing development of the mitigations.
+
+While this report highlights the lack of well-defined communication process
+across Lightning teams,  developers from 3 different implementations have
+actively participated in the vulnerabilities diagnostic and mitigations
+development of those long-standing specification issues affecting the whole
+Lightning ecosystem.
+
+All mistakes and opinions are my own and please verify any information
+reported.
+
+# Timeline
+
+* 2021-04-19: Working exploit of the vulnerability against LND,
+CL/LND/Eclair/LDK maintainers notified
+* 2021-07-21: Finding by Eugene Siegel on how to exploit the
+trimmed-to-dust mechanism at `update_fee` reception
+* 2021-08-11: BOLT PR #894 opened by Bastien Teinturier, covering the lack
+of verification of counterparty per-HTLC `dust_limit_satoshis`
+* 2021-08-16: Mitigations developed in LDK, communication of a public
+disclosure date
+* 2021-08-26: Notification to Muun wallet, non-affected
+* 2021-08-27: Notification to Electrum wallet
+* 2021-10-04: Full Disclosure of CVEs
+* 2021-10-04: Submit BOLT PR #919 covering the remaining vulnerabilities
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211004/9af032f2/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211004/9af032f2/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003277.html">[Lightning-dev] [bitcoin-dev]  Removing the Dust Limit
+</A></li>
+	<LI>Next message: <A HREF="003258.html">[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592	/ CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3257">[ date ]</a>
+              <a href="thread.html#3257">[ thread ]</a>
+              <a href="subject.html#3257">[ subject ]</a>
+              <a href="author.html#3257">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

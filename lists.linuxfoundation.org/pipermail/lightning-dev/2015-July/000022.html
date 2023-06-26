@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Anchor (funding) transactions without	segregated witness
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Anchor%20%28funding%29%20transactions%20without%0A%09segregated%20witness&In-Reply-To=%3C874mlgebx8.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000056.html">
+   <LINK REL="Next"  HREF="000028.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Anchor (funding) transactions without	segregated witness</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Anchor%20%28funding%29%20transactions%20without%0A%09segregated%20witness&In-Reply-To=%3C874mlgebx8.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [RFC] Anchor (funding) transactions without	segregated witness">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Jul  7 06:09:39 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000056.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+        <LI>Next message: <A HREF="000028.html">[Lightning-dev] [RFC] Anchor (funding) transactions without segregated witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22">[ date ]</a>
+              <a href="thread.html#22">[ thread ]</a>
+              <a href="subject.html#22">[ subject ]</a>
+              <a href="author.html#22">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+        <A HREF="http://ozlabs.org/~rusty/diagrams/dual-anchor.svg">http://ozlabs.org/~rusty/diagrams/dual-anchor.svg</A>
+
+        Since I posted my first design of HTLC yesterday, and noted that
+it doesn't seem to require new sighash modes, I went back and revisited
+my discarded ideas for establishing an anchor without new sighash modes.
+If we can do that (and my HTLC design stands up), then lightning network
+only needs OP_CHECKSEQUENCEVERIFY and OP_CHECKLOCKTIMEVERIFY, which are
+fairly low-albedo soft forks.
+
+        To recap: the draft paper and current code trade signatures on
+the first commitment transaction before signing the anchor transaction.
+That way you are sure to have a way to get your funds back before you
+put them into the anchor.  (The paper uses the term funding transaction;
+I prefer anchor).
+
+        This can't be done in normal bitcoin, as you don't know the TXID
+of the anchor until after its inputs are signed, so you can't sign the
+commitment transaction without knowing the txid of the anchor.  It works
+in Elements Alpha because they have segregated witness; the txid of the
+anchor doesn't hash the input scripts.  It could work in bitcoin with a
+softfork of a new CHECKSIG2 which has new signature modes, but there's
+not even a BIP for that, and there are so many things that could be done
+there that it's likely to be long delayed.
+
+        So, how can we solve this?  Well, we can have two anchors
+instead of one.  I put my inputs into my anchor, you put your inputs
+into yours: each one requires both our signatures to spend.  The
+commitment tx has two inputs, one for each.
+
+        We can trade anchor txids, so we can both sign the commitment
+tx.  But now one of could withhold our anchor, leaving us with an
+unusable commitment tx and stuck output from an anchor.  We need a way
+to get the funds back in that &quot;abort&quot; case.
+
+        Thus we add an intermediary transaction (called &quot;Escape&quot;
+transactions) which spends the 2 of 2 anchor output, but can be spent
+either by 2 of 2 (ie. the commitment tx), OR back to the anchor owner
+after a delay (using OP_CHECKSEQUENCEVERIFY).
+
+        The order is as follows:
+
+1) We both trade anchor txids and amounts.
+2) We both trade signatures for the escape transactions, so either one
+   can broadcast them.
+3) Now we are sure to be able to recover our funds, we each broadcast
+   our anchor txs.
+4) If the other side broadcasts their escape transaction, abort and
+   broadcast our escape transaction.  After the timeout, we can spend
+   it.
+5) If the other side doesn't broadcast their anchor tx, abort and
+   broadcast our escape transaction.
+6) Otherwise, when the anchor txs reach the required depth, we exchange
+   signatures for the commitment transaction.
+7) If the other side broadcasts either escape transaction, broadcast
+   the other escape transaction and the commitment tx as normal (this is
+   a unilateral close) before they can reclaim their anchor funds.
+
+I think this works, and doesn't add any new requirements; you now need
+to watch out for escape txs being broadcast instead of commitment txs.
+
+The downside is that there are 3 extra transactions involved; 1 extra
+for the channel open, and 2 for the channel close.
+
+Feedback, optimizations, horrible holes?
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000056.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+	<LI>Next message: <A HREF="000028.html">[Lightning-dev] [RFC] Anchor (funding) transactions without segregated witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#22">[ date ]</a>
+              <a href="thread.html#22">[ thread ]</a>
+              <a href="subject.html#22">[ subject ]</a>
+              <a href="author.html#22">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

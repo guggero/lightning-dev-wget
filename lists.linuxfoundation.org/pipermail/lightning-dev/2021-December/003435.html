@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PTLCs early draft specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3OwWpdSX1RGMHK6vHAO7bNW65qmTZRBH%3DXUKh%3DGf9EUdg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003434.html">
+   <LINK REL="Next"  HREF="003383.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PTLCs early draft specification</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3OwWpdSX1RGMHK6vHAO7bNW65qmTZRBH%3DXUKh%3DGf9EUdg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] PTLCs early draft specification">bastien at acinq.fr
+       </A><BR>
+    <I>Wed Dec 22 08:02:23 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003434.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+        <LI>Next message: <A HREF="003383.html">[Lightning-dev] Take 2: Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3435">[ date ]</a>
+              <a href="thread.html#3435">[ thread ]</a>
+              <a href="subject.html#3435">[ subject ]</a>
+              <a href="author.html#3435">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey AJ,
+
+Right, I was probably confused between local/remote, especially when
+we're talking about our anchor in the remote commitment (should it be
+called local anchor, which is from our point of view, or remote?).
+
+Let's call them Alice and Bob, and Bob is publishing a commitment.
+Correct me if I'm wrong there, what you're suggesting is that:
+
+* Bob's anchor on Bob's commitment can be spent with revkey
+* Alice's anchor on Bob's commitment can be spent with Alice's pubkey
+
+This does ensure that each participant is able to claim their anchor in
+the latest commitment, and Alice is able to claim both anchors in any of
+Bob's outdated commitments.
+
+But I think it defeats the `OP_16 OP_CHECKSEQUENCEVERIFY` script branch.
+We have that branch to allow anyone to spend anchor outputs *after* the
+commitment is confirmed, to avoid keeping them around in the utxo set
+forever. However, the trick is that the internal pubkey must be set to
+something that is publicly revealed when the channel closes. Now that we
+put the revkey in internal pubkeys everywhere instead of script branches,
+that revkey is *not* revealed when channels close with the latest commit.
+So it would prevent people from using that script branch to clean up the
+utxo set...
+
+I have currently used &lt;local_delayedpubkey&gt; and &lt;remote_pubkey&gt; because
+they're revealed whenever main outputs are claimed, but there is probably
+a smarter solution (maybe one that would let us use revkey here as you
+suggest), this will be worth thinking about a bit more.
+
+Thanks,
+Bastien
+
+Le mar. 21 d&#233;c. 2021 &#224; 17:04, Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; a &#233;crit :
+
+&gt;<i> On Tue, Dec 21, 2021 at 04:25:41PM +0100, Bastien TEINTURIER wrote:
+</I>&gt;<i> &gt; The reason we have &quot;toxic waste&quot; with HTLCs is because we commit to the
+</I>&gt;<i> &gt; payment_hash directly inside the transaction scripts, so we need to
+</I>&gt;<i> &gt; remember all the payment_hash we've seen to be able to recreate the
+</I>&gt;<i> &gt; scripts (and spend the outputs, even if they are revoked).
+</I>&gt;<i>
+</I>&gt;<i> I think &quot;toxic waste&quot; refers to having old data around that, if used,
+</I>&gt;<i> could cause you to lose all the funds in your channel -- that's why it's
+</I>&gt;<i> toxic. This is more just regular landfill :)
+</I>&gt;<i>
+</I>&gt;<i> &gt; *_anchor: dust, who cares -- might be better if local_anchor used key =
+</I>&gt;<i> &gt; &gt; revkey
+</I>&gt;<i> &gt; I don't think we can use revkey,
+</I>&gt;<i>
+</I>&gt;<i> musig(revkey, remote_key)
+</I>&gt;<i>   --&gt; allows them to spend after you've revealed the secret for revkey
+</I>&gt;<i>       you can never spend because you'll never know the secret for
+</I>&gt;<i>       remote_key
+</I>&gt;<i>
+</I>&gt;<i> but if you just say:
+</I>&gt;<i>
+</I>&gt;<i> (revkey)
+</I>&gt;<i>
+</I>&gt;<i> then you can spend (because you know revkey) immediately (because it's
+</I>&gt;<i> an anchor output, so intended to be immediately spent) or they can spend
+</I>&gt;<i> if it's an obsolete commitment and you've revealed the revkey secret.
+</I>&gt;<i>
+</I>&gt;<i> &gt; this would prevent us from bumping the
+</I>&gt;<i> &gt; current remote commitment if it appears on-chain (because we don't know
+</I>&gt;<i> &gt; the private revkey yet if this is the latest commitment). Usually the
+</I>&gt;<i> &gt; remote peer should bump it, but if they don't, we may want to bump it
+</I>&gt;<i> &gt; ourselves instead of publishing our own commitment (where our main
+</I>&gt;<i> &gt; output has a long CSV).
+</I>&gt;<i>
+</I>&gt;<i> If we're going to bump someone else's commitment, we'll use the
+</I>&gt;<i> remote_anchor they provided, not the local_anchor, so I think this is
+</I>&gt;<i> fine (as long as I haven't gotten local/remote confused somewhere along
+</I>&gt;<i> the way).
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> aj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211222/84da9f4a/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211222/84da9f4a/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003434.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+	<LI>Next message: <A HREF="003383.html">[Lightning-dev] Take 2: Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3435">[ date ]</a>
+              <a href="thread.html#3435">[ thread ]</a>
+              <a href="subject.html#3435">[ subject ]</a>
+              <a href="author.html#3435">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,109 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Payment%20Point%20Feature%20Family%20%28MultiSig%2C%20DLC%2C%0A%09Escrow%2C%20...%29&In-Reply-To=%3CZm0PzY9C77rwp9R7iaKyCpmL-rUd1a7hYPm_8gt7waI_JtW-LeuvppNYe_YeZ3W3l-34OlKF6aM6bIDT0oAy0O8B6vS_npCXqegKuOGmNsU%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002214.html">
+   <LINK REL="Next"  HREF="002216.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Payment%20Point%20Feature%20Family%20%28MultiSig%2C%20DLC%2C%0A%09Escrow%2C%20...%29&In-Reply-To=%3CZm0PzY9C77rwp9R7iaKyCpmL-rUd1a7hYPm_8gt7waI_JtW-LeuvppNYe_YeZ3W3l-34OlKF6aM6bIDT0oAy0O8B6vS_npCXqegKuOGmNsU%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Oct 10 15:15:30 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002214.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)
+</A></li>
+        <LI>Next message: <A HREF="002216.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2215">[ date ]</a>
+              <a href="thread.html#2215">[ thread ]</a>
+              <a href="subject.html#2215">[ subject ]</a>
+              <a href="author.html#2215">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list, and Nadav,
+
+
+&gt;<i>     I would also like to point out the below assumption, which underlies Bass Amplifier (&quot;multipath payments&quot;, &quot;base AMP&quot;) and its claim to atomicity:
+</I>&gt;<i>
+</I>&gt;<i> -   If we agree that my secret `s` is worth `m` millisatoshi, then I (as a perfectly rational economic agent) will not claim any payments conditional on my revelation of `s` that sum up to less than `m` millisatoshi: I will only claim all of them when I can get multiple payments conditional on my revelation of `s` that sum up to `m` millisatoshi or more.
+</I>&gt;<i>     -   I now call this &quot;economically-rational atomicity&quot;, and describe also them mildly here: <A HREF="../2018-March/001109.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-March/001109.html</A>
+</I>&gt;<i>
+</I>&gt;<i>         The above is exactly the behavior we want E to perform: only if it receives both requests to reveal its secret `e` behind `E`, will it actually reveal the secret.
+</I>&gt;<i>         In our case, we turn the requests to E into partial payments of a single invoice (though of course, the payment from S to E would be in the asset that S wants rather than in Bitcoin).
+</I>&gt;<i>         E would not like to &quot;sell short&quot; its secret `e` for less than the price of its service, thus if E is economically rational, it would only claim payments (and reveal `e`) once all incoming payments sum up to the price of its service.
+</I>
+Right right, except an economically-rational actor will also accept a *single* payment that exceeds the price `m` miilisatoshi.
+Meaning anyone can then subvert the behavior of the barrier escrow E.
+For example, as soon as the exchange X is able to get the incoming premium payment conditional on release of the secret behind `X + E`, the exchange can simply directly send the entire payment asked by the escrow E for the secret behind `e` and claim the premium without actually performing the swap and forwarding to `S`.
+
+Fortunately, <A HREF="../2018-March/001109.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-March/001109.html</A> also notes that it is possible to upgrade the High AMP with economically-rational security to a High AMP with computationally-intractable security.
+The sketch given in that link is different, but we can use a conversion that utilizes points and scalars in much the same way as Nadav suggests as part of the framework.
+
+That is, we can create a High AMP with the following rules for the receiver:
+
+* If the receiver knows a secret `e` behind a point `E`, payment is demanded in exchange for the secret `e + z` behind a point `E + Z` instead.
+  * The receiver is informed what `E` is being talked about, in some TLV to the receiver, as well as the point `Z`.
+* Every branch of the multipath also includes, in some TLV, a secret `z[i]`.
+  * `sum[i=1..n](z[i]) == z`, i.e. the sum of all the branch secrets is the secret `z` behind the point `Z`.
+* Thus, only once the receiver acquires all branches as incoming payments, will it be able to reconstruct the secret `z` and thereby claim its payment (and incidentally reveal `e + z`; if the ultimate payer then knows `z` it is able to acquire `e` as proof-of-payment).
+
+So let us reconsider the protocol:
+
+* B, S, and X generate additional keypairs `b2, B2`, `s2, S2`, and `x2, X2` respectively and give the public keys to buyer B.
+* B generates `Z` from `B2 + S2 + X2`.
+* B sends the premium payment to X, in exchange for revelation of the secret behind `X + E + Z`.
+* X sends the request to the barrier escrow E to reveal the secret behind `E + Z`, also providing its share of the secret behind `Z`, `x2`.
+* B sends the payment to be swapped to the other asset to X, in exchange for revelation of the secret behind `S + E + Z`.
+* X swaps the asset and forwards to S, in exchange for the revelation of the secret behind `S + E + Z`.
+* S sends the request to the barrier escrow E to reveal the secret behind `E + Z`, also providing its share of the secret behind `Z`, `s2`.
+* B sends the request to the barrier escrow E to reveal the secret behind `E + Z`, also providing its share of the secret behind `Z`, `b2`.
+* E reconstructs `z` from `b2 + s2 + x2`, then reveals `e + z` to claim all the escrow service sub-payments.
+* X learns `e + z` and is able to reveal `x + e + z` to claim the premium.
+* S learns `e + z` and is able to reveal `s + e + z` to claim the premium.
+* B learns `e + z`, `x + e + z`, and `s + e + z`, and is able to recover proof-of-payment for the premium as `(x + e + z) - (e + z)`, and proof-of-payment for the actual service or product as `(s + e + z) - (e + z)`.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002214.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)
+</A></li>
+	<LI>Next message: <A HREF="002216.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2215">[ date ]</a>
+              <a href="thread.html#2215">[ thread ]</a>
+              <a href="subject.html#2215">[ subject ]</a>
+              <a href="author.html#2215">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

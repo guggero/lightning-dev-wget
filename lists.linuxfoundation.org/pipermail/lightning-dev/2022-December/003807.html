@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%22Updates%20Overflow%22%20Attacks%20against%20Two-Party%0A%20Eltoo%20%3F&In-Reply-To=%3CY5llsgvFBFBfU2lg%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003805.html">
+   <LINK REL="Next"  HREF="003801.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%22Updates%20Overflow%22%20Attacks%20against%20Two-Party%0A%20Eltoo%20%3F&In-Reply-To=%3CY5llsgvFBFBfU2lg%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Dec 14 05:57:06 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003805.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+        <LI>Next message: <A HREF="003801.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3807">[ date ]</a>
+              <a href="thread.html#3807">[ thread ]</a>
+              <a href="subject.html#3807">[ subject ]</a>
+              <a href="author.html#3807">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Dec 13, 2022 at 08:22:55PM -0500, Antoine Riard wrote:
+&gt;<i> &gt;  prior to (1): UA.k (k &lt;= n) -- However this allows Bob to immediately
+</I>&gt;<i> &gt;  broadcast one of either CA.n or RA.n, and will then have ~150 blocks
+</I>&gt;<i> &gt;  to claim the HTLC before its timeout
+</I>&gt;<i> From my understanding, with two party eltoo w/punihsment, UA.k has a
+</I>&gt;<i> tapscript path with &quot;1 CHECKSIGVERIFY k&lt;n CLTV&quot;, where the internal pubkey
+</I>&gt;<i> substituted is &quot;musig(A,B)/1. Mallory should receive Bob's signature for
+</I>&gt;<i> UA.k, though also UA.k+1, UA.k+2, UAk+3, until k=n.
+</I>
+Yes, Mallory can be assumed to be able to generate signatures for UA.0
+through UA.n. They all spend the funding transaction (only) though,
+so she can only choose one of them, which I called UA.k above.
+
+More particular, I'm imagining scriptPubKeys something like:
+
+  F: taproot(AB)
+
+  UA.n: taproot(AB/1, &quot;IF CODESEP &lt;n&gt; CLTV DROP ENDIF OP_1 CHECKSIG&quot;)
+  WB.n: taproot(AB/1, &quot;IF CODESEP &lt;n&gt; CLTV DROP ENDIF OP_1 CHECKSIG&quot;)
+
+  UB.n: taproot(AB/2, &quot;IF CODESEP &lt;n&gt; CLTV DROP ENDIF OP_1 CHECKSIG&quot;)
+  WA.n: taproot(AB/2, &quot;IF CODESEP &lt;n&gt; CLTV DROP ENDIF OP_1 CHECKSIG&quot;)
+
+where AB=musig(A,B) and AB/1 and AB/2 are unhardened HD subkeys of AB.
+(The outputs of SA/RA/CA and SB/RB/CB are the balances and active HTLCs)
+
+Then I think the following setup works to allow each transaction to only
+spend from the transactions that it's supposed to:
+
+  UA.n have ALL or SINGLE|ANYONECANPAY signatures spending F with key
+    AB.
+
+  CA.n/WA.n have ANYPREVOUTANYSCRIPT signatures with codesep_pos=2
+    against AB/2, with locktime set to n
+
+  RA.n has an ANYPREVOUTANYSCRIPT signature with codesep_pos=2
+    against AB/2, with locktime set to n-1
+
+  SA.n has an ANYPREVOUT signature with codesep_pos=FFFFFFFF
+    against AB/1, with nSequence enforcing to_self_delay
+
+B's signatures are similar, swapping AB/2 and AB/1.
+
+(In order to do the fast forward stuff via scriptless scripts, you also
+need F to have an &quot;A CHECKSIGVERIFY B CHECKSIG&quot; tapscript path as well,
+and there's probably other things I've glossed over)
+
+&gt;<i> Or is this a tapscript only existing for the dual-funding case ? I think
+</I>&gt;<i> this a bit unclear from the gist construction, how Mallory is restrained to
+</I>&gt;<i> use the tapscript path on UA.k, with UA.k+1 as she should be in possession
+</I>&gt;<i> of Bob's signature for this state.
+</I>
+You lock Mallory into using a particular signature with a particular
+script template by only using the key for that signature within that
+script template, and you lock them into using a particular path through
+that script via use of OP_CODESEPARATOR.
+
+&gt;<i> While update transaction 1 could spend update transaction 0 immediately,
+</I>&gt;<i> there is no reliable knowledge by U*.1 transaction broadcaster of the state
+</I>&gt;<i> of the network mempools.
+</I>
+That doesn't need to be true; we can easily have lightning nodes
+gossip mempool state for channel closes by pattern matching on the
+close transaction, including offering &quot;catchup&quot; info for nodes that
+were offline, even if that isn't something we do for regular mempool
+transactions.
+
+I don't really think getting into the weeds on that now is very productive
+though; it's still an open question whether we can get eltoo working in
+a laboratory environment, let alone in the wild.
+
+&gt;<i> While I think this solution of eltoo nodes quickly replacing any state K
+</I>&gt;<i> previous to the latest state N, there is no guarantee the latest state K
+</I>&gt;<i> doesn't offer a higher feerate than state N, making it more attractive to
+</I>&gt;<i> the miners.
+</I>
+I think there's really two situations here: one is where miners are
+just running friendly mempool software that tries to do right by the
+network, in which case &quot;always update to the newest state, even if the
+fee rate goes down&quot; is probably workable; the other is where miners want
+to profit maximise on every single block and will run MEV software; in
+which case all we need is for the final state to be relayed -- provided
+its at a reasonable feerate, the MEV miner will include it on top of the
+high-fee paying chain of earlier states, even if that would mean it has
+&quot;too many&quot; in-mempool descendants.
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003805.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+	<LI>Next message: <A HREF="003801.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3807">[ date ]</a>
+              <a href="thread.html#3807">[ thread ]</a>
+              <a href="subject.html#3807">[ subject ]</a>
+              <a href="author.html#3807">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

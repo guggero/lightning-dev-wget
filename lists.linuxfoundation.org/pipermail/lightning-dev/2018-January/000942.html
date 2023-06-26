@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fee disentanglement for 1.1 spec?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fee%20disentanglement%20for%201.1%20spec%3F&In-Reply-To=%3Ca120f49a-fdde-4cb3-bcc4-b8ea5728ba81%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000935.html">
+   <LINK REL="Next"  HREF="000938.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fee disentanglement for 1.1 spec?</H1>
+    <B>Johan Tor&#229;s Halseth</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fee%20disentanglement%20for%201.1%20spec%3F&In-Reply-To=%3Ca120f49a-fdde-4cb3-bcc4-b8ea5728ba81%40gmail.com%3E"
+       TITLE="[Lightning-dev] Fee disentanglement for 1.1 spec?">johanth at gmail.com
+       </A><BR>
+    <I>Tue Jan 16 23:37:11 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000935.html">[Lightning-dev] Fee disentanglement for 1.1 spec?
+</A></li>
+        <LI>Next message: <A HREF="000938.html">[Lightning-dev] negative fees for HTLC relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#942">[ date ]</a>
+              <a href="thread.html#942">[ thread ]</a>
+              <a href="subject.html#942">[ subject ]</a>
+              <a href="author.html#942">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty,
+This is something I&#8217;ve been thinking a bit about, as I&#8217;ve stumbled into some of the edge cases you mention. Just to get on the same page: does the other side (non-funder) pay any fees in the current implementation? [1] suggests that the funder pays everything atm (on both sides&#8217; commitment), so I reckon you are talking about dual-funder from here on.
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#fee-payment">https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#fee-payment</A>
+Problem#1 If we can make each side pay the fee for the HTLCs they are adding (on both commitments!), in addition to your suggestion of having them set fees independently, we get a nice bonus: Any update Alice makes, can only decrease *her* balance, not Bob&#8217;s. She can add HTLCs (she must pay HTLC+fee), do a fee update (potentially increasing the fees she must pay), or settle/fail HTLCs (can not decrease her balance). This is in contrast to the current spec, where an added HTLC can make Bob pay the fee (if he&#8217;s funder), and a fee update can make Bob not afford the new fee (the race you mentioned).
+I think this will work without the check (2) you mention, since if Alice sends a fee update, then it will apply only to her HTLCs, and as mentioned can only decrease her balance. It doesn&#8217;t matter if Bob adds `max_accepted_htlcs` at the same time, since those fees will then be subtracted from his balance, and is not affected by the fee update.
+This would make a lot of the edge cases go away, and would make it a lot easier to verify that a node is not violating its channel reserve. Let me know if I&#8217;m missing something.
+- Johan
+
+On Tue, Jan 16, 2018 at 0:55, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+Hi all,
+
+Wanted to post some thinking on this for everyone to mull over,
+though I know we're all busy.
+
+Your consideration and feedback gratefully accepted!
+
+Problem #1
+==========
+For simplicity, one side (funder) sets fees, but other side
+needs to check they're sufficient, and not insanely high (as *they* end
+up paying for HTLC txs). If they disagree, they close channel; this
+happens a fair bit on testnet, for example, and will be worse with
+different backends (eg. different bitcoind versions, or btcd, etc).
+
+Solution
+--------
+Have both sides set fees independently. I specify what fees my
+commitment tx and HTLC txs will have, you do the same. This works in
+well with dual-funder proposals.
+
+Implementation:
+--------------
+c-lightning did something similar pre-spec. The way it works is both
+sides set an initial fee in `open_channel`: this is the only point at
+which the counterparty checks it's reasonable.
+
+You send an `update_fee` message like now, but it has no effect on the
+other side: it's applied to *you* when they 'revoke_and_ack', like any
+other change.
+
+You disallow any `update_fee` which the other side could not afford with
+(1) all their current HTLCs, AND (2) the `max_accepted_htlcs` from you.
+That covers the race where one side sets fees and the other adds a heap
+of HTLCs and the two cross over.
+
+Also disallow any new HTLCs you can't pay fees for (given same
+worst-case calculation as above), and if the one side can't afford fees,
+pull from its reserve and other side as necessary (this can only happen
+during initial phase, and is the same logic as now).
+
+
+Problem #2
+==========
+Predicting the future is hard. Today's sufficient fee may be a gross
+overpayment or insufficient tomorrow.
+
+Solution
+--------
+Allow multiple simultaneous fee levels.
+
+Implementation:
+---------------
+This means multiple signatures in each `commitment_signed` message,
+which is more work and more storage. But since our nSequence is &lt;
+0xFFFFFFFE anyway, all transactions are RBF-ready except
+closing_transaction. We might want to change that; we already allow
+re-negotiation of closing tx by reconnecting anyway.
+_______________________________________________
+Lightning-dev mailing list
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180117/bebe4a64/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180117/bebe4a64/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000935.html">[Lightning-dev] Fee disentanglement for 1.1 spec?
+</A></li>
+	<LI>Next message: <A HREF="000938.html">[Lightning-dev] negative fees for HTLC relay
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#942">[ date ]</a>
+              <a href="thread.html#942">[ thread ]</a>
+              <a href="subject.html#942">[ subject ]</a>
+              <a href="author.html#942">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

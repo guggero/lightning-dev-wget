@@ -1,0 +1,578 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Dual Funding Proposal
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dual%20Funding%20Proposal&In-Reply-To=%3C87ftvje0f4.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001699.html">
+   <LINK REL="Next"  HREF="001702.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Dual Funding Proposal</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dual%20Funding%20Proposal&In-Reply-To=%3C87ftvje0f4.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Dual Funding Proposal">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Nov 30 02:58:39 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001699.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+        <LI>Next message: <A HREF="001702.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1700">[ date ]</a>
+              <a href="thread.html#1700">[ thread ]</a>
+              <a href="subject.html#1700">[ subject ]</a>
+              <a href="author.html#1700">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>lisa neigut &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">niftynei at gmail.com</A>&gt; writes:
+&gt;<i> Hello fellow Lightning devs!
+</I>&gt;<i>
+</I>&gt;<i> What follows is a draft for the new dual funding flow. Note that the
+</I>&gt;<i> `option_will_fund_for_food` specification has been omitted for this draft.
+</I>
+Hi!
+
+Wow, my mailer really mangled this!  I've liberally demangled below
+as I quote.
+
+The proposal is great, but intense, so I've bikeshedded the language.
+My only objection is that I'd love to simplify RBF.
+
+&gt;<i> ===== Proposal
+</I>&gt;<i>
+</I>&gt;<i> Create a new channel open protocol set (v2), with three new message types:
+</I>&gt;<i> `funding_puts2`, `commitment_signed2`, and `funding_signed2`, plus two for
+</I>&gt;<i> negotiating RBF, `init_rbf` and `accept_rbf`.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Quick overview of the message exchange for v2:
+</I>&gt;<i>
+</I>&gt;<i>    +----+                              +----+
+</I>&gt;<i>    |    |--(1)---  open_channel2  ----&gt;|    |
+</I>&gt;<i>    |    |&lt;-(2)--  accept_channel2  ----|    |
+</I>&gt;<i>    |    |                              |    |
+</I>&gt;<i>    |    |--(3)--  funding_puts2  -----&gt;|    |
+</I>&gt;<i>    |    |&lt;-(4)--  funding_puts2  ----- |    |
+</I>&gt;<i>    |    |                              |    |
+</I>&gt;<i>    |    |--(5)-- commitment_signed2 --&gt;|    |
+</I>&gt;<i>    |    |&lt;-(6)-- commitment_signed2 ---|    |
+</I>&gt;<i>    | A  |                              |  B |
+</I>&gt;<i>    |    |--(7)--- funding_signed2 ----&gt;|    |
+</I>&gt;<i>    |    |&lt;-(8)--- funding_signed2 -----|    |
+</I>&gt;<i>    |    |                              |    |
+</I>&gt;<i>    |    |--(a)--- init_rbf -----------&gt;|    |
+</I>&gt;<i>    |    |&lt;-(b)--- accept_rbf ----------|    |
+</I>&gt;<i>    |    |                              |    |
+</I>&gt;<i>    |    |--(9)--- funding_locked2 ----&gt;|    |
+</I>&gt;<i>    |    |&lt;-(10)---funding_locked2 -----|    |
+</I>&gt;<i>    +----+                              +----+
+</I>&gt;<i>   where node A is the &#8216;initiator&#8217; and node B is the &#8216;dual-funder&#8217;
+</I>
+We currently use the terms funder and fundee, which are now
+inaccurate ofc.  Perhaps 'opener' and 'accepter' are not great english,
+but they map to the messages well?
+
+&gt;<i> Willingness to use v2 is flagged in init via `option_dual_fund`.
+</I>&gt;<i> `init`
+</I>&gt;<i>
+</I>&gt;<i> local channel feature flag, `option_dual_fund`
+</I>&gt;<i>
+</I>&gt;<i> == Channel establishment with dual_funding
+</I>&gt;<i>
+</I>&gt;<i> ____`open_channel2`:
+</I>&gt;<i> [32:chain_hash]
+</I>&gt;<i> &#8230; // unchanged
+</I>&gt;<i> [1:channel_flags]
+</I>&gt;<i> [?: options_tlv]
+</I>
+Always prefix variable fields by length, even this one.  Otherwise
+we can never extend, and you never know...
+
+   [2:tlv_len]
+   [tlv_len:opening_tlv]
+
+I think we can remove `funding_satoshis` here; we'll know when they add
+their inputs, so it's redundant.
+
+Another subtle point is the feerate_per_kw field; in the old scheme it
+applied to the first commitment tx, but here it applies to both the
+first commitment tx and the funding tx itself (unless
+option_simplified_commitment, though roasbeef has suggested further
+splitting that option, in which case we'll want another fee field here).
+
+&gt;<i> options_tlv:
+</I>
+Let's call this `opening_tlv` since there are other TLVs coming?
+
+&gt;<i>    1.
+</I>&gt;<i>    Type: 1 `option_upfront_shutdown_script`
+</I>&gt;<i>    1.
+</I>&gt;<i>
+</I>&gt;<i>       [2:len]
+</I>&gt;<i>       2.
+</I>&gt;<i>
+</I>&gt;<i>       Value: `shutdown_scriptpubkey`
+</I>&gt;<i> If nodes have negotiated `option_dual_fund`
+</I>&gt;<i> The sending node:
+</I>&gt;<i>    -
+</I>&gt;<i>    MAY begin channel establishment using `open_channel2`
+</I>
+ - MUST NOT send `open_channel`.
+
+&gt;<i> Otherwise the receiving node:
+</I>&gt;<i>    -
+</I>&gt;<i>    MUST return an error.
+</I>
+This is a requirement for receiving `open_channel`  IIUC?
+
+ie.
+
+The receiving node MUST fail the channel if:
+   ...
+   - `option_dual_fund` has been negotiated.
+
+
+&gt;<i> ____ `accept_channel2`:
+</I>&gt;<i>
+</I>&gt;<i> [32:temporary_channel_id]
+</I>&gt;<i> &#8230;  // unchanged
+</I>&gt;<i> [33:first_per_commitment_point]
+</I>&gt;<i> [?: options_tlv]
+</I>&gt;<i>
+</I>
+If we call this `opening_tlv` we can just reuse the definition from
+before.
+
+&gt;<i> ____`funding_puts2`
+</I>
+We can probably drop the 2 here and call it, um.. `funding_compose`?
+(Thanks thesaurus.com).  I get where you're going with 'puts, but it
+took me a while :)
+
+&gt;<i> This message exchanges the input and output information necessary to
+</I>&gt;<i> compose the funding transaction.
+</I>&gt;<i>
+</I>&gt;<i> [32:temporary_channel_id]
+</I>&gt;<i> [`2`:`num_inputs`]
+</I>&gt;<i> [`num_inputs*input_info`]
+</I>&gt;<i> [`2`:`num_outputs`]
+</I>&gt;<i> [`num_outputs`*ouput_info`]
+</I>
+typo: output_info
+
+&gt;<i> 1. subtype: `input_info`
+</I>&gt;<i> 2. data:
+</I>&gt;<i>  * [`8`:`satoshis`]
+</I>&gt;<i>  * [`32`:`prevtxid`]
+</I>&gt;<i>  * [`4`:`prevtxoutnum`]
+</I>&gt;<i>  * [`2`:`scriptlen`]
+</I>&gt;<i>  * [`scriptlen`:`script`]
+</I>&gt;<i>  * [`2`:`max_extra_witness_len`]
+</I>&gt;<i>  * [`2`:`wscriptlen`]
+</I>&gt;<i>  * [`wscriptlen`:`wscript`]
+</I>&gt;<i>
+</I>&gt;<i> 1. subtype: `output_info`
+</I>&gt;<i> 2. data:
+</I>&gt;<i>  * [`8`:`satoshis`]
+</I>&gt;<i>  * [`2`:`scriptlen`]
+</I>&gt;<i>  * [`scriptlen`:`script`]
+</I>&gt;<i>
+</I>&gt;<i> Requirements:
+</I>&gt;<i>
+</I>&gt;<i> The sending node:
+</I>&gt;<i>
+</I>&gt;<i>    - MUST ensure each `input_info` refers to an existing UTXO
+</I>&gt;<i>    - MUST ensure the `output_info`.`script` is a standard script
+</I>&gt;<i>    - MUST NOT spend any UTXOs specified in funding_puts2 until/unless the
+</I>&gt;<i>      channel establishment has failed
+</I>
+
+&gt;<i> If is the initiator (A):
+</I>&gt;<i> - MUST NOT send an empty message  (`num_inputs` + `num_outputs` = 0)
+</I>&gt;<i>
+</I>&gt;<i>      If is the dual-funder (B):
+</I>&gt;<i>    -
+</I>&gt;<i>    consider the `put_limit` the total number of `num_inputs` plus
+</I>&gt;<i>    `num_outputs` from `funding_puts2`, with minimum 2.
+</I>&gt;<i>    -
+</I>&gt;<i>    MUST NOT send a number of `input_data` and/or `output_data` which
+</I>&gt;<i>    exceeds the `put_limit`
+</I>
+Side note: I wonder if we should relax this limit when we talk about
+`option_will_fund_for_food`?
+
+&gt;<i>    -
+</I>&gt;<i>    MAY send an empty message
+</I>
+Be explicit? MAY offer zero `num_inputs` and `num_outputs`.  That's not
+quite an empty message...
+
+&gt;<i> The receiving node:
+</I>&gt;<i>
+</I>&gt;<i>   If is the initiator (A):
+</I>&gt;<i>
+</I>&gt;<i>    -
+</I>&gt;<i>    MUST fail the channel if the `num_inputs` plus `num_outputs` is greater
+</I>&gt;<i>    than the `put_limit`
+</I>
+How about MAY?  It's a protection thing, but less to change when we
+option_will_fund_for_food.  Unless we set the `put_limit` to min (4) or
+something in that case?
+
+Oh, it needs to check max_extra_witness_len is reasonable too, since
+that will affect the fees.  Each signature adds 74, and pubkey adds 34,
+so I think MUST BE less than 500 is perfectly reasonable (for both
+reader and writer).
+
+&gt;<i> If has not yet sent a `fund_puts2` for this channel establishment
+</I>&gt;<i>     - SHOULD send their `fund_puts2` message
+</I>&gt;<i>
+</I>&gt;<i> Otherwise
+</I>&gt;<i>    - SHOULD send `commitment_signed2`
+</I>
+Perhaps add '- MUST use the sent and received `input_info` and
+`output_info` to create the funding transaction, using
+`max_extra_witness_len` for each `input_info` and `feerate_per_kw` from
+`open_channel2`.'
+
+Side note: we need to define max_extra_witness_len as the total
+marshalled length of the extra witness data which will be supplied
+(ie. sizeof(varint) + sizeof(data) for each one).
+
+&gt;<i> Rationale:
+</I>&gt;<i>
+</I>&gt;<i> Each node must have a complete set of the transaction inputs/outputs, to
+</I>&gt;<i> derive the funding transaction hash.
+</I>&gt;<i>
+</I>&gt;<i> There is a dual_funding protocol that only requires one side to send their
+</I>&gt;<i> witness data and inputs. This is more efficient, however it results in
+</I>&gt;<i> asymmetry between the nodes, where one is revealing their UTXOs before the
+</I>&gt;<i> funding transaction is committed.. We mitigate this asymmetry by asking the
+</I>&gt;<i> initiator (A) to send their set of inputs before the dual-funder (B) does.
+</I>&gt;<i>
+</I>&gt;<i> NB: This is reusing the input/output structures from the Splicing proposal,
+</I>&gt;<i> but with a more generalized name.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ____`commitment_signed2`
+</I>
+I just realized that `commitment_signed` is the name of the message we
+use during HTLC / fee updates.  But since the message is identical to
+this one in both form and purpose, I think we can reuse it here.
+
+&gt;<i> This message exchanges the counterparty&#8217;s signature for the first
+</I>&gt;<i> commitment transaction, so it can broadcast the funding transaction knowing
+</I>&gt;<i> that funds can be redeemed.
+</I>&gt;<i>
+</I>&gt;<i> [32: `channel_id`]
+</I>&gt;<i> [`64`: commitment_signature`]
+</I>&gt;<i>
+</I>&gt;<i> Requirements:
+</I>&gt;<i>
+</I>&gt;<i> The sending node:
+</I>&gt;<i>
+</I>&gt;<i>    - MUST derive the `channel_id` from the funding transaction&#8217;s id
+</I>&gt;<i>    - MUST set signature to the valid signature, using its funding_pubkey for
+</I>&gt;<i>    the initial commitment transaction, as defined in BOLT #3
+</I>
+This is good.
+
+&gt;<i>
+</I>&gt;<i>   If it has not received a `funding_puts2`
+</I>&gt;<i>
+</I>&gt;<i>    -
+</I>&gt;<i>
+</I>&gt;<i>    MUST NOT send their `commitment_signature`
+</I>
+This is implied by the requirement that they generate the funding
+transaction.  For better or worse, we don't usually spell out
+requirements not to send things out of order.
+
+&gt;<i> The receiving node:
+</I>&gt;<i>
+</I>&gt;<i>    - MUST verify the commitment signature is valid for the funding
+</I>&gt;<i>    transaction -&gt; commitment transaction that it has derived independently
+</I>&gt;<i>
+</I>&gt;<i>      If this signature is invalid it
+</I>&gt;<i>
+</I>&gt;<i>    -   MUST fail the channel
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>   If it has not sent a `commitment_signed2` message
+</I>&gt;<i>
+</I>&gt;<i>    -  MUST send their `commitment_signed2` message
+</I>&gt;<i>
+</I>&gt;<i>    If this is in a flow initiated from `init_rbf`:
+</I>&gt;<i>    -
+</I>
+Perhaps be explicit here: 'If this commitment_signed2 was in response to
+an `init_rbf` message:'?
+
+&gt;<i>    MUST save the temporary_channel_id until the channel funding transaction
+</I>&gt;<i>    has been locked (this is the channel id of the currently broadcast
+</I>&gt;<i>    transaction)
+</I>
+Confused by this, see commentry down later.
+
+&gt;<i> Rationale:
+</I>&gt;<i>
+</I>&gt;<i> In the previous channel establishment protocol, we were able to compress
+</I>&gt;<i> the commitment signature exchange into `funding_created`/`funding_signed`.
+</I>&gt;<i> With dual funding, we need interaction to build the funding transaction --
+</I>&gt;<i> commitment sig exchange is now a separate step.
+</I>
+&gt;<i> ___`funding_signed2`
+</I>&gt;<i>
+</I>&gt;<i> This message exchanges the witness data for the inputs that were originally
+</I>&gt;<i> sent in the `funding_puts2` message.
+</I>&gt;<i>
+</I>&gt;<i> [`32`:`channel_id`]
+</I>&gt;<i> [`2`:`num_witnesses`]
+</I>&gt;<i> [`num_witnesses*witness_stack`]
+</I>&gt;<i>
+</I>&gt;<i> Requirements:
+</I>&gt;<i>
+</I>&gt;<i> The sending node:
+</I>&gt;<i>     - MUST remember the details of this funding transaction
+</I>
+     - MUST send one `witness_stack` for each `output_info`
+       it sent in `funding_puts2`.
+
+&gt;<i>    - MUST NOT send a `witness_stack` whose length exceeds the corresponding
+</I>&gt;<i> `max_extra_witness_len`
+</I>&gt;<i>
+</I>&gt;<i>     If they have NOT received a valid `commitment_signed2` message
+</I>&gt;<i>    - MUST not send their `funding_signed2` message
+</I>
+Redundant, but so vital I agree it needs to be stated.
+
+&gt;<i> The receiving node:
+</I>&gt;<i>
+</I>&gt;<i>    - SHOULD check that the number of witnesses sent matches the number of
+</I>&gt;<i>    inputs
+</I>
+&quot;SHOULD check&quot; is a spec anti-pattern :)
+
+    if `num_witnesses` does not equal `num_inputs` received in
+    `funding_puts2`:
+        - MUST fail the channel.
+
+&gt;<i> If a `witness_stack` length exceeds the corresponding
+</I>&gt;<i> `max_extra_witness_len`:
+</I>&gt;<i>
+</I>&gt;<i>    -
+</I>&gt;<i>
+</I>&gt;<i>      MAY error.
+</I>
+MUST?
+
+&gt;<i>    If is the `initiator` (A):
+</I>&gt;<i>
+</I>&gt;<i>    -
+</I>&gt;<i>
+</I>&gt;<i>    SHOULD apply `witness` to the funding transaction and broadcast the
+</I>&gt;<i>    result.
+</I>
+Since this is symmetrical, you can drop &quot;if it is the `initiator`&quot;?
+
+&gt;<i> Rationale:
+</I>&gt;<i>
+</I>&gt;<i> Exchanging witness data allows either side to broadcast the funding
+</I>&gt;<i> transaction. It also maintains the information symmetry between the nodes.
+</I>&gt;<i>
+</I>&gt;<i> ___`funding_locked2`
+</I>&gt;<i>
+</I>&gt;<i> // same as v1
+</I>&gt;<i>
+</I>&gt;<i> Requirements:
+</I>&gt;<i>
+</I>&gt;<i> A dual-funding node (B):
+</I>&gt;<i>
+</I>&gt;<i>    -
+</I>&gt;<i>
+</I>&gt;<i>    SHOULD broadcast their funding transaction if it does not see the
+</I>&gt;<i>    transaction broadcast after a reasonable timeout.
+</I>
+Let's just reuse `funding_locked` maybe?
+
+Not sure why this should wait for broadcast?
+
+&gt;<i> == RBF for Channel Establishment v2
+</I>&gt;<i>
+</I>&gt;<i> _____`init_rbf`
+</I>&gt;<i>
+</I>&gt;<i> This message is sent by the initiator, after the funding transaction has
+</I>&gt;<i> been broadcast but before the `funding_locked2` has been exchanged.
+</I>&gt;<i>
+</I>&gt;<i> [32: `channel_id`]
+</I>&gt;<i> [8: funding_satoshis]
+</I>&gt;<i> [8:dust_limit_satoshis]
+</I>&gt;<i> [8:channel_reserve_satoshis]
+</I>&gt;<i> [4: feerate_per_kw]
+</I>&gt;<i> [`2`:`num_inputs`]
+</I>&gt;<i> [`num_inputs*input_info`]
+</I>&gt;<i> [`2`:`num_outputs`]
+</I>&gt;<i> [`num_outputs`*ouput_info`]
+</I>
+Typo again :)
+
+&gt;<i> Requirements
+</I>&gt;<i>
+</I>&gt;<i> The sending node:
+</I>&gt;<i>    - MUST be the initiator (A)
+</I>&gt;<i>    - MAY update the amount, fee rate, dust limit, or channel reserve for the
+</I>&gt;<i>    channel
+</I>
+ - MAY send init_rbf if it considers the most recent funding tx unlikely
+   to be confirmed in reasonable time.
+ - MUST set `feerate_per_kw` larger than the most recent funding tx.
+
+Do we really want to negotiate everything again?  It seems like the
+funder should be able to maybe add *new* inputs and outputs (though TBH
+I think that's going to be unusual enough that we could omit it), but
+doing a wholesale replacement means we have to be careful that the all
+RBFs end up having at least one input in common.  Yech.
+
+&gt;<i> The receiving node:
+</I>&gt;<i>
+</I>&gt;<i>    - MAY reject (error) the RBF request if:
+</I>&gt;<i>    -
+</I>&gt;<i>
+</I>&gt;<i>       the fee rate, dust, or channel reserve is unreasonable
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>    MUST reject (error) the RBF request if:
+</I>&gt;<i>    -
+</I>&gt;<i>
+</I>&gt;<i>       the `fee_rate` is less than the rate that was originally proposed
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       the `funding_satoshis` amount is less than the previous negotiated
+</I>&gt;<i>       `push_mast`
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       It considers the `feerate_per_kw` too small for timely processing or
+</I>&gt;<i>       unreasonable
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       the `dust_limit_satoshis` is greater than the
+</I>&gt;<i>       `channel_reserve_satoshis`
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       the initiator&#8217;s amount for the initial commitment transaction is not
+</I>&gt;<i>       sufficient for full fee payment
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       the `inputs`.`satoshis` does not sum to the `funding_satoshis`
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       the `funding_satoshis` is insufficient to create the transaction at
+</I>&gt;<i>       the new `fee_rate`
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       there is no overlap in the proposed inputs and the original input set
+</I>&gt;<i>       included in the currently published funding transaction
+</I>
+More subtly, there must be a common subset of inputs between every two
+funding txs.
+
+&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>       they have already received or sent a `funding_locked2` message
+</I>&gt;<i>       -
+</I>&gt;<i>
+</I>&gt;<i>    If there are no errors or unreasonable demands:
+</I>&gt;<i>    -
+</I>&gt;<i>
+</I>&gt;<i>       SHOULD send an `accept_rbf`
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Rationale:
+</I>&gt;<i>
+</I>&gt;<i> Once an `init_rbf` has been accepted by the dual-funding node, the message
+</I>&gt;<i> flow returns to `commitment_signed2` and proceeds as above, with the
+</I>&gt;<i> exception that the `temporary_channel_id` remains as the `channel_id` for
+</I>&gt;<i> the currently published but unmined transaction.
+</I>
+By this stage, we are no longer using temporary_channel_id though.
+
+But it's an excellent point I had missed.  The channel_id changes on
+each renegotiation.  We could either switch channel_id *after*
+each accept_rbf, or keep the original channel_id until funding_locked2 (in
+which case it should have a &quot;final_channel_id&quot; field, to make sure we're
+talking about the same funding tx).
+
+Since we have to handle the &quot;oops, old one got in!&quot; it might be weird to
+see `funding_locked2` with an old txid.  Perhaps we stick with the
+original channel_id until then, and flip *after* funding_locked2 is sent
+and received.
+
+And yeah, no `update_fee`, `announcement_signatures` until that
+funding_locked2 exchange is complete, so we don't get those with an
+unsettled channel_id.
+
+&gt;<i> The channel id that becomes fixed for this node will be determined by the
+</I>&gt;<i> `funding_locked2` message.
+</I>&gt;<i>
+</I>&gt;<i> ___`accept_rbf`
+</I>&gt;<i>
+</I>&gt;<i> This message accepts an RBF request, and renegotiates a dual-funder&#8217;s
+</I>&gt;<i> funds, dust limit, and channel reserve, and sends the dual-funder&#8217;s updated
+</I>&gt;<i> puts.
+</I>
+I would make this an empty message, simply an ack.  And note that
+the channel_id after this is that of the RBFed tx.
+
+The question then becomes what do we do about reconnection.  I suggest:
+
+opener: if we haven't sent funding_signed, consider it cancelled.  If
+   we've received funding_signed, it's obviously locked in.  If we sent
+   and didn't received, re-xmit.
+
+accepter: must remember rbf if we sent commitment_signed2.  If we
+   received funding_signed it's locked in.  If we receive an init_rbf,
+   drop the one we remembered.  If we receive funding_signed, continue.
+
+We still need to address the funding_tx construction; BIP69-style seems
+like an unnecessary information leak here.  A 128-bit seed in
+open_channel2 could be added, with sorting by SHA(seed | &lt;marshal of
+input&gt; | &lt;marshal of witness&gt;) and SHA(seed | &lt;marshal of output&gt;)?
+
+Phew!
+Rusty.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001699.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+	<LI>Next message: <A HREF="001702.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1700">[ date ]</a>
+              <a href="thread.html#1700">[ thread ]</a>
+              <a href="subject.html#1700">[ subject ]</a>
+              <a href="author.html#1700">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

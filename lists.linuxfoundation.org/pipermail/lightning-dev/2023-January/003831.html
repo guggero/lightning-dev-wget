@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Async payments proof-of-payment: a wishlist for researchers
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Async%20payments%20proof-of-payment%3A%20a%20wishlist%20for%0A%20researchers&In-Reply-To=%3CY9HRjPv24KMndFaV%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003830.html">
+   <LINK REL="Next"  HREF="003822.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Async payments proof-of-payment: a wishlist for researchers</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Async%20payments%20proof-of-payment%3A%20a%20wishlist%20for%0A%20researchers&In-Reply-To=%3CY9HRjPv24KMndFaV%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Async payments proof-of-payment: a wishlist for researchers">aj at erisian.com.au
+       </A><BR>
+    <I>Thu Jan 26 01:04:12 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003830.html">[Lightning-dev] Async payments proof-of-payment: a wishlist for	researchers
+</A></li>
+        <LI>Next message: <A HREF="003822.html">[Lightning-dev] Reputation Credentials renaming and iteration: the Staking Credentials architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3831">[ date ]</a>
+              <a href="thread.html#3831">[ thread ]</a>
+              <a href="subject.html#3831">[ subject ]</a>
+              <a href="author.html#3831">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Jan 10, 2023 at 07:41:09PM +0000, vwallace via Lightning-dev wrote:
+&gt;<i> The open research question relates to how the sender will get an invoice from the receiver, given that they are offline at sending-time.
+</I>
+Assuming the overall process is:
+
+ * Alice sends a payment to Bob, who has provided a reusable address
+   AddrBob
+ * Bob is offline at the time the payment is sent, but his semi-trusted
+   LSP Larry is online
+ * Alice is willing/able to do bidirectional communication with Larry
+ * The payment does not complete until Bob is online (at which point
+   Alice may be offline)
+
+I think in this case you want to aim for the receipt to be a BIP340
+signature of the message &quot;Alice has paid me $50 -- signed Bob&quot;.
+
+Given Bob's public signature nonce, R, Alice (and Larry) can calculate
+S = R + H(R,P,m)*P (m is the receipt message, P is Bob's public key),
+and then Alice can send a PTLC conditional on revealing the log of S, ie
+s where s*G=S; and at that point (s, R) is a valid signature by Bob of a
+message confirming payment to Bob, which then serves as the final receipt.
+
+However for this to work, Alice needs to discover &quot;R&quot; while Bob is
+offline. I think this is only doable if Bob pre-generates a set of
+nonces and shares the public part with Larry, who can then share them
+with potential payers.  I think to avoid attacks via Wagner's algorithm,
+you probably need to do a similar setup as musig2 does, ie share (R1,R2)
+pairs, and calculate R = H(P,R1,R2,m)*R1+R2.
+
+So a setup like:
+
+  Alice gets AddrBob. Decodes Bob's pubkey, Larry's pubkey, and the
+  route to Larry.
+
+  Alice -&gt; Larry: &quot;Hi, I want to send Bob $50, and get a receipt&quot;
+  Larry -&gt; Alice: &quot;The nonce for that will be R&quot;
+  Alice: calculates m = &quot;Hash(&quot;Alice paid Bob $50&quot;), S = R+H(R,P,m)*P
+  Alice -&gt; Larry(for Bob): PTLC[$50, S]
+
+  Larry -&gt; Bob: PTLC[$50, S]
+                Alice wants to pay you $50, using nonce pair #12345
+  Bob: verifies nonce #12345 has not been previously used, calculates R,
+       calculates m, calculates s, and checks that s*G = S, checks
+       there's a $50 PTLC conditional on S waiting for confirmation.
+  Bob -&gt; Alice: claims $50 from PTLC by revealing s
+
+  Alice: receives s; (R,s) serves as Bob's signature confirming payment
+
+seems plausible?
+
+Every &quot;S&quot; here commits to a value chosen by the sender (ie, their
+&quot;identity&quot;), so there's no way for Larry to get two different payers
+to use the same S. Using the same nonce twice will just mean Bob has to
+reject the payment (and find a new LSP).
+
+It may make sense to require Alice to make a micropayment to Larry in
+order to claim a nonce. You'd want a standard template for &quot;m&quot; so that
+it's easy to generate and parse consistently, of course.
+
+I think you could even have separate LSPs if you wanted: one to issue
+nonces while you're offline, and the other to actually hold onto incoming
+PTLCs while you're offline.
+
+FWIW, some previous discussion, which didn't focus on offline recipients:
+
+<A HREF="../2018-February/001034.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/001034.html</A>
+
+<A HREF="../2018-November/001490.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/001490.html</A>
+
+Cheers,
+aj
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003830.html">[Lightning-dev] Async payments proof-of-payment: a wishlist for	researchers
+</A></li>
+	<LI>Next message: <A HREF="003822.html">[Lightning-dev] Reputation Credentials renaming and iteration: the Staking Credentials architecture
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3831">[ date ]</a>
+              <a href="thread.html#3831">[ thread ]</a>
+              <a href="subject.html#3831">[ subject ]</a>
+              <a href="author.html#3831">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,386 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DRAFT: interactive tx construction protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P2Ju6QY_-i9fsLukodydsaSXvz5urSreaKgkEFTm7B-5Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002468.html">
+   <LINK REL="Next"  HREF="002470.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DRAFT: interactive tx construction protocol</H1>
+    <B>lisa neigut</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P2Ju6QY_-i9fsLukodydsaSXvz5urSreaKgkEFTm7B-5Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] DRAFT: interactive tx construction protocol">niftynei at gmail.com
+       </A><BR>
+    <I>Tue Jan 28 01:51:28 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002468.html">[Lightning-dev] Not revealing the channel capacity during	opening of channel in lightning network
+</A></li>
+        <LI>Next message: <A HREF="002470.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2466">[ date ]</a>
+              <a href="thread.html#2466">[ thread ]</a>
+              <a href="subject.html#2466">[ subject ]</a>
+              <a href="author.html#2466">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Some of the feedback I received from the check-in for the dual-funding
+proposal this past Monday was along the lines that we look at simplifying
+for breaking it into smaller, more manageable chunks.
+
+The biggest piece of the dual-funding protocol update is definitely the
+move from a single peer constructing a transaction to two participants.
+We're also going to likely want to reuse this portion of the protocol for
+batched closings and splicing. To that extent, it seemed useful to
+highlight it in a separate email.
+
+This is a change from the existing proposal in the dual-funding PR #524
+&lt;<A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/524">https://github.com/lightningnetwork/lightning-rfc/pull/524</A>&gt; -- it allows
+for the removal of inputs and outputs.
+
+The set of messages are as follows.
+
+
+Note that the 'initiation' of this protocol will be different depending on
+the case of the transaction (open, close or splice):
+
+1. type:   440 `tx_add_input`
+
+2. data:
+
+    * [`32*byte`:`channel_identifier`]
+
+    * [`u64`:`sats`]
+
+    * [`sha256`:`prevtx_txid`]
+
+    * [`u32`:`prevtx_vout`]
+
+    * [`u16`:`prevtx_scriptpubkey_len`]
+
+    * [`prevtx_scriptpubkey_len*byte`:`prevtx_scriptpubkey`]
+
+    * [`u16`:`max_witness_len`]
+
+    * [`u16`:`scriptlen`]
+
+    * [`scriptlen*byte`:`script`]
+
+    * [`byte`:`signal_rbf`]
+
+1. type: 442 `tx_add_output`
+
+2. data:
+
+    * [`32*byte`:`channel_identifier`]
+
+    * [`u64`:`sats`]
+
+    * [`u16`:`scriptlen`]
+
+    * [`scriptlen*byte`:`script`]
+
+1. type: 444 `tx_remove_input`
+
+2. data:
+
+    * [`32*byte`:`channel_identifier`]
+
+    * [`sha256`:`prevtx_txid`]
+
+    * [`u32`:`prevtx_vout`]
+
+1. type: 446 `tx_remove_output`
+
+2. data:
+
+    * [`32*byte`:`channel_identifier`]
+
+    * [`u64`:`sats`]
+
+    * [`u16`:`scriptlen`]
+
+    * [`scriptlen*byte`:`script`]
+
+1. type: 448 `tx_complete`
+
+2. data:
+
+    * [`32*byte`:`channel_identifier`]
+
+    * [`u16`:`num_inputs`]
+
+    * [`u16`:`num_outputs`]
+
+1. type:  448 `tx_sigs`
+
+2. data:
+
+    * [`channel_id`:`channel_identifier`]
+
+    * [`u16`:`num_witnesses`]
+
+    * [`num_witnesses*witness_stack`:`witness_stack`]
+
+1. subtype: `witness_stack`
+
+2. data:
+
+    * [`sha256`:`prevtx_txid`]
+
+    * [`u32`:`prevtx_vout`]
+
+    * [`u16`:`num_input_witness`]
+
+    * [`num_input_witness*witness_element`:`witness_element`]
+
+1. subtype: `witness_element`
+
+2. data:
+
+    * [`u16`:`len`]
+
+    * [`len*byte`:`witness`]
+
+
+
+## General Notes
+
+- Validity of inputs/outputs is not checked until both peers have sent
+consecutive `tx_complete`  messages.
+
+- Duplicate inputs or outputs is a protocol error.
+
+- Feerate is set by the initiator, or in the case of a closing transaction,
+negotiated before the transaction construction is initiated.
+
+- Every peer pays fees for the inputs + outputs they contribute, plus
+enough to cover the maximum estimate of their witnesses. Overpayment of
+fees is permissible.
+
+- Initiator is responsible for contributing the output/input in question,
+i.e. the
+
+  funding output in the case of an opening, or the funding input in the
+case of a close.
+
+  (This means that the opener will pay for the opening output). In the case
+of a splice,
+
+  the initiator of the splice pays for the funding tx's inclusion as an
+input and the
+
+  new 'funding tx' output.
+
+- Any contributor may signal that their input is RBF'able. The nSequence
+for this input should be set to 0xFEFF FFFF, 0xFFFFFFFF otherwise.
+
+- The initiating peer is understood to be paying the fee for the shared
+transaction fields (nVersion [4], segwit marker + flag [2], input + output
+counts [2-18], witness count [1-9], nLocktime [4]; total [13-40bytes])
+
+- Inputs MUST be segwit compatible (PW* or P2SH-PW*)
+
+- All output scripts must be standard
+
+- nLocktime is always set to 0x00000000.
+
+- The `num_inputs` and `num_outputs` in `tx_complete` is a count of that
+peer&#8217;s final input and output contributions, net any removals.
+
+- Either peer may add or remove inputs and outputs until both peers have
+successfully
+
+  exchanged a `tx_complete` message in succession.
+
+- Either peer may only add or remove their own input or output.
+
+- In the case that a `tx_complete` agreement cannot be reached, either peer
+may
+
+  fail the channel or open protocol (whatever is reasonable for the
+particular case)
+
+  - In the case of a splice, this would be a soft error (channel returns to
+normal operation until
+
+    otherwise failed or closed.)
+
+  - In the case of an open, this would be a failure to open the channel.
+
+  - In the case of a close, a failed collaborative close would result in an
+error and a unilateral close.
+
+### Considering the Simple Open case (2 parties)
+
+- Both peers signal `opt_dual_fund`
+
+- Opener initiates a channel open with `open_channel2` message, indicating
+the feerate for the opening transaction
+
+- Accepter signals acceptance of channel open as proposed, including
+proposed feerate, via `accept_channel2`
+
+- Opener sends `tx_add_output`, with the funding output for the sum of both
+peer&#8217;s funding_amount
+
+- Opener sends `tx_add_input` for each input the wish to add to the funding
+transaction
+
+- Opener sends `tx_add_output` for their change
+
+- Opener sends `tx_complete`
+
+- Accepter sends `tx_add_input` for each input they wish to add to the
+funding transaction
+
+- Accepter sends `tx_add_output` for their change.
+
+- Accepter sends `tx_complete`
+
+- Opener sends `tx_complete`
+
+- Opener and accepter exchange commitment signatures; etc.
+
+### Considering the Splice case:
+
+- Both peers signal `opt_splice_ok`
+
+- One peer initiates a splice, also signaling the feerate for the
+transaction. Exact protocol unspecified herein.
+
+- Initiator sends `tx_add_input` with the original funding output
+
+- Initiator sends `tx_add_output` with the new, post-splice funding output
+
+- Initiator sends `tx_add_input/output` as needed to add all desired inputs
++ outputs
+
+- Initiator sends `tx_complete`
+
+- Peer sends `tx_add_input/output` as needed to add all desired inputs +
+outputs
+
+- Initiator sends `tx_complete`
+
+- Peer sends `tx_complete`
+
+- Initiator + peer exchange commitment signatures, etc.
+
+### Considering the Close case:
+
+- Both peers signal `opt_collaborative_close` in their `node_announcement`.
+
+- A peer initiates a close sending a `shutdown`, as per usual.
+
+- A feerate is negotiated. Out of band for this particular portion of the
+protocol.
+
+-The closing initiator (peer which first sent `shutdown`), sends
+`tx_add_input` to spend the funding output and `tx_add_output` to add their
+output for the channel closure.
+
+- The peer responds with `tx_add_output`, adding their output to the close
+transaction.
+
+- If `option_upfront_shutdown_script` is flagged but no such output with a
+value at or within a reasonable feerate gap of the peer's funding output is
+present, then the peer must fail the channel.
+
+
+## Updating a collaborative transaction with RBF:
+
+- If any input is flagged as RBF&#8217;able, then the transaction is considered
+eligible for RBF
+
+- RBF can be initiated by either party, and serves as an initiation for
+another round of transaction composition, as outlined above.
+
+- Note that this section has been cribbed and re-purposed from the original
+RBF proposal for splicing, see
+<A HREF="../2018-November/001621.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/001621.html</A>
+
+1. type: 45 (`init_rbf`) (`option_collaborative_rbf`)
+
+2. data:
+
+   * [`32`:`channel_id`]
+
+   * [`4`:`fee_step`]
+
+Each `fee_step` adds 1/4 (rounded down) to the initial
+
+transaction feerate. eg. if the initial feerate was 512 satoshis per
+kiloweight, `fee_step` 1
+
+is  512 + 512 / 4 = 640, `fee_step` 2 is 640 + 640 / 4 = 800.
+
+The sender:
+
+  - MUST set `fee_step` greater than zero and greater than any prior
+`fee_step`.
+
+The recipient:
+
+  - if the new fee exceeds the sender's current balance minus reserve
+
+    after it is applied to the splice transaction:
+
+    - MUST error.
+
+
+
+NOTES:
+
+1. 1/4 is a reasonable minimal RBF, but as each one requires more
+
+   tracking by the recipient, serves to limit the number you can create.
+
+2. Rule 4 of BIP125 requires a feerate increase to at least surpass the
+minimum transaction relay setting. Ratcheting by 25% should satisfy this
+requirement
+
+3. An additional rule will be added to the checks of an RBF transaction
+that it must include at least one identical, replaceable input as the
+original transaction.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200127/ca2e504d/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200127/ca2e504d/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002468.html">[Lightning-dev] Not revealing the channel capacity during	opening of channel in lightning network
+</A></li>
+	<LI>Next message: <A HREF="002470.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2466">[ date ]</a>
+              <a href="thread.html#2466">[ thread ]</a>
+              <a href="subject.html#2466">[ subject ]</a>
+              <a href="author.html#2466">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning over taproot with PTLCs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3C20211012030821.GA6074%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003291.html">
+   <LINK REL="Next"  HREF="003306.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning over taproot with PTLCs</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3C20211012030821.GA6074%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Lightning over taproot with PTLCs">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Oct 12 03:08:21 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003291.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+        <LI>Next message: <A HREF="003306.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3293">[ date ]</a>
+              <a href="thread.html#3293">[ thread ]</a>
+              <a href="subject.html#3293">[ subject ]</a>
+              <a href="author.html#3293">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Oct 11, 2021 at 09:23:19PM +1100, Lloyd Fournier wrote:
+&gt;<i> On Mon, 11 Oct 2021 at 17:30, Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; wrote:
+</I>&gt;<i>     I don't think the layering here quite works: if Alice forwarded a payment
+</I>&gt;<i>     to Bob, with timeout T, then the only way she can be sure that she can
+</I>&gt;<i>     either reclaim the funds or know the preimage by time T is to close the
+</I>&gt;<i>     channel on-chain at time T-to_self_delay.
+</I>&gt;<i> This problem may not be as bad as it seems.
+</I>
+Maybe you can break it down a little bit further. Consider *three*
+delays:
+
+ 1) refund delay: how long you have before a payment attempt starts
+    getting refunded
+
+ 2) channel recovery delay: how long you have to recover from node
+    failure to prevent an old state being committed to, potentially losing
+    your entire channel balance
+
+ 3) payment recovery delay: how long you have to recover from node
+    failure to prevent losing funds due to a forwarded payment (eg,
+    Carol claimed the payment, while Alice claimed the refund, leaving
+    Bob out of pocket)
+
+(Note that if you allow payments up to the total channel balance, there's
+not really any meaningful distinction between (2) and (3), at least in
+the worst case)
+
+With layered transactions, (2) and (3) are different -- if Bob's node
+fails near the timeout, then both Alice and Carol drop to the blockchain,
+and Carol knows the preimage, Bob may have as little as the channel
+&quot;delay&quot; parameter to extract the preimage from Carol's layered commitment
+tx to be able to post a layered commitment on top of Alice's unilateral
+close to avoid being out of pocket.
+
+(Note that that's a worst case -- Carol would normally reveal the preimage
+onchain earlier than just before the timeout, giving Bob more time to
+recover his node and claim the funds from Alice)
+
+If you're willing to accept that &quot;worst case&quot; happening more often, I
+think you could then retain the low latency forwarding, by having the
+transaction structure be:
+
+commitment tx
+  input:
+     funding tx
+  outputs:
+     Alice's balance
+     (others)
+
+low-latency inflight tx:
+  input:
+    Alice's balance
+  output:
+    (1) or (2)
+    Alice's remaining balance
+
+Bob claim:
+  input:
+    (1) [&lt;payment-recovery-delay&gt; CSV bob CHECKSIG]
+  output:
+    [&lt;bob-revoke&gt; checksigverify &lt;alice&gt; checksig
+     ifdup notif &lt;channel-recovery-delay&gt; csv endif]
+
+Too-slow:
+  input:
+    (2) [&lt;payment-timeout&gt; CLTV alice CHECKSIG]
+  output:
+    Alice
+
+The idea being:
+
+ * Alice sends the low-latency inflight tx which Bob then forwards
+   immediately.
+
+ * Bob then tries to update the base channel state with Alice, so both
+   sides have a commitment to the new payment, and the low-latency
+   inflight tx is voided (since it's based on a revoked channel state)
+   If this succeeds, everything is fine as usual.
+
+ * If Alice is unavailable to confirm that update, Bob closes the
+   channel prior to (payment-timeout - payment-recover-delay), and posts
+   &quot;Bob claim&quot;. After an additional pyment recovery delay (and prior
+   to payment-timeout) Bob posts Bob claim, ensuring that the only way
+   Alice can claim the funds is if he had posted a revoked state.
+
+ * In this case, Alice has at least one payment-recovery-delay period
+   prior to the payment-timeout to notice the transaction onchain and
+   recover the preimage.
+
+ * If Bob posted the low-latency inflight tx later than
+   (payment-timeout - payment-recovery-delay) then Alice will have
+   payment-recovery-delay time to notice and post the &quot;too-slow&quot; tx and
+   claim the funds via the timeout path.
+
+ * If Bob posted a revoked state, Alice can also claim the funds via
+   Bob claim, provided she notices within the channel-recovery-delay
+
+That only allows one low-latency payment to be inflight though, which I'm
+not sure is that interesting... It's also kinda complicated, and doesn't
+cover both the low-latency and offline cases, which is disappointing...
+
+Cheers,
+aj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003291.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+	<LI>Next message: <A HREF="003306.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3293">[ date ]</a>
+              <a href="thread.html#3293">[ thread ]</a>
+              <a href="subject.html#3293">[ subject ]</a>
+              <a href="author.html#3293">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

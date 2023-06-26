@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] eltoo Trustless WatchTowers
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%20Trustless%20WatchTowers&In-Reply-To=%3Cw1mlIX0GpFZ9Pf4YVsNxfQwRwpRIroPzL_4J5wBrfnVRl4oK2EVicKPCAZ_QKU5G6MgYLIGDGkxSwqNDTedbM0byyEU8nNjaL5MdMxW3Ul4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001264.html">
+   <LINK REL="Next"  HREF="001241.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] eltoo Trustless WatchTowers</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%20Trustless%20WatchTowers&In-Reply-To=%3Cw1mlIX0GpFZ9Pf4YVsNxfQwRwpRIroPzL_4J5wBrfnVRl4oK2EVicKPCAZ_QKU5G6MgYLIGDGkxSwqNDTedbM0byyEU8nNjaL5MdMxW3Ul4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] eltoo Trustless WatchTowers">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu May 10 04:10:49 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001264.html">[Lightning-dev] eltoo Trustless WatchTowers
+</A></li>
+        <LI>Next message: <A HREF="001241.html">[Lightning-dev] Receiving via unpublished channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1267">[ date ]</a>
+              <a href="thread.html#1267">[ thread ]</a>
+              <a href="subject.html#1267">[ subject ]</a>
+              <a href="author.html#1267">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Laolu,
+
+&gt;&gt;<i> However, this has the drawback that each update of a single channel will
+</I>&gt;&gt;<i> generate a `(txid[:16], blob)` pair that has the same `txid[:16]` key,
+</I>&gt;&gt;<i> letting the WatchTower correlate the timing and number of updates of each of
+</I>&gt;&gt;<i> your channels.
+</I>&gt;<i>
+</I>&gt;<i> On the other hand, going with the &quot;swap this blob&quot; approach is much, much
+</I>&gt;<i> more scalable as each client of the watchtower only consumes a bounded
+</I>&gt;<i> (could say constant) amount of space. If you pad out the blob to the max
+</I>&gt;<i> size accounting for HTLC limits (which further obfuscates the details of the
+</I>&gt;<i> update), then watchtowers can easily plan out the storage requirements as a
+</I>&gt;<i> function of the number of open clients.
+</I>
+It would also mean that WatchTowers would need to identify their clients, a further privacy leak.  This is because if the WatchTower simply allows &quot;swap this blob&quot;, the attacker can identify the WatchTowers the victim uses, and they know which txid they will use to attack.  They can then give a &quot;swap this blob&quot; with a blob that cannot be decrypted to a valid blob, disabling the WatchTower.
+
+Perhaps it could be made to work if the WatchTower demands a public key + signature.  If this is the first time the `txid[:16]` is used, then the WatchTower accepts the public key.  For future times (i.e. replacement requests) the WatchTower checks the signature and public key of the replacement vs the public key of the first time, and only accepts if the public key matches and the signature is verified for the public key.  But this can still be attacked: prior to signing the transaction, the attacker determines the txid that will be monitored by the WatchTower, and before sending the signature to the victim to start the channel, the attacker gives a `(txid[:16], blob)` with invalid blob to the WatchTower.  The victim receives the signatures, then creates the proper blob for the first state, and then gives the valid blob to the WatchTower --- who rejects it, because an existing blob from the attacker is already reserved to the attacker public key.
+
+This can be prevented if the WatchTower knows a stable identity (possibly pseudonymous) of the victim and attacker.  See: <A HREF="../2018-April/001203.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-April/001203.html</A> for my ruminations on this topic.  In that post, the WatchTower charges for each `(txid[:16], blob)` pair it stores and monitors, and will store multiple pairs with the same `txid[:16]` key if they are from different tickets.  Charging for the service reduces DoS attacks, and storing multiple pairs with the same key prevents key-reservation attacks like the above I described.  It also lets the service be used completely anonymously, without even a pseudonymous public key.  The ticket scheme lets the WatchTower correlate updates coming from a single ticket, but this is limited since each ticket purchased has a finite number of uses.
+
+An enhancement to the above would be to restructure things so that WatchTowers sell ticketbooks of multiple tickets.  Each ticket is valid for storing one `(txid[:16], blob)` pair, and WatchTowers will store multiple `(txid[:16], blob)` pairs with the same txid.  Then the WatchTower can operate as Chaumian bank on the tickets they sell, so that clients in theory can swap tickets from the same WatchTower with each other to decorrelate uses of tickets within a ticketbook.
+
+&gt;<i> In order to mitigate the timing leaks, clients don't need to _immediately_
+</I>&gt;<i> update their blob. Instead, they can add a level of randomization via a
+</I>&gt;<i> timer drawn from a particular distribution. The downside of this is that
+</I>&gt;<i> there's a window of opportunity wherein a new state is at play, yet the
+</I>&gt;<i> watch tower hasn't yet been updated. Even with asymmetric commitments, one
+</I>&gt;<i> would still want to introduce such randomization in order to de-correlate
+</I>&gt;<i> their updates (and also batch several updates into a single message).
+</I>&gt;<i>
+</I>&gt;&gt;<i> It seems desirable to at least retain the property that the WatchTower
+</I>&gt;&gt;<i> cannot correlate our updates to our channels.
+</I>&gt;<i>
+</I>&gt;<i> Is the scalability tradeoff worth it though?
+</I>
+I think not.
+
+&gt;&gt;<i> since only the latest update transaction is valid
+</I>&gt;<i>
+</I>&gt;<i> All update transactions are valid, just some are more valid than others ;)
+</I>
+Haha, yes.
+
+&gt;&gt;<i> Under Poon-Dryja, if I have watching service contracts from several
+</I>&gt;&gt;<i> WatchTowers, when I get another revocation, I can distribute the revocation
+</I>&gt;&gt;<i> data to a subset of all my serving WatchTowers; under
+</I>&gt;&gt;<i> Decker-Russell-Osuntokun I would have to contact all of them to give the
+</I>&gt;&gt;<i> latest update transaction.
+</I>&gt;<i>
+</I>&gt;<i> Not necessarily. Due to the nature of the update transactions, several
+</I>&gt;<i> watchtowers could even progressively advance the update transaction towards
+</I>&gt;<i> the final most up to date state. Your constraint of &quot;i need to update them
+</I>&gt;<i> all each time&quot; seems arbitrary and isn't inherent to either of the schemes.
+</I>
+You are right and this is my mistake.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180510/f0a38387/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180510/f0a38387/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001264.html">[Lightning-dev] eltoo Trustless WatchTowers
+</A></li>
+	<LI>Next message: <A HREF="001241.html">[Lightning-dev] Receiving via unpublished channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1267">[ date ]</a>
+              <a href="thread.html#1267">[ thread ]</a>
+              <a href="subject.html#1267">[ subject ]</a>
+              <a href="author.html#1267">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

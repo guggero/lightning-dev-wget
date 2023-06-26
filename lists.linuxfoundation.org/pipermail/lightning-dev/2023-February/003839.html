@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Taro: A Taproot Asset Representation Overlay
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Taro%3A%20A%20Taproot%20Asset%20Representation%20Overlay&In-Reply-To=%3CY%2BDa6fGOd6PPq7JT%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003840.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Taro: A Taproot Asset Representation Overlay</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Taro%3A%20A%20Taproot%20Asset%20Representation%20Overlay&In-Reply-To=%3CY%2BDa6fGOd6PPq7JT%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Taro: A Taproot Asset Representation Overlay">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Feb  6 10:48:09 UTC 2023</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003840.html">[Lightning-dev] Jamming Mitigation Call Summary - 02/06
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3839">[ date ]</a>
+              <a href="thread.html#3839">[ thread ]</a>
+              <a href="subject.html#3839">[ subject ]</a>
+              <a href="author.html#3839">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Apr 11, 2022 at 02:59:16PM -0400, Olaoluwa Osuntokun wrote:
+
+Thread necromancy, but hey.
+
+&gt;<i> &gt; anything about Taro or the way you plan to implement support for
+</I>&gt;<i> &gt; transferring fungible assets via asset-aware LN endpoints[1] will address
+</I>&gt;<i> &gt; the &quot;free call option&quot; problem, which I think was first discussed on this
+</I>&gt;<i> &gt; list by Corn&#233; Plooy[2] and was later extended by ZmnSCPxj[3], with Tamas
+</I>&gt;<i> &gt; Blummer[4] providing the following summary
+</I>&gt;<i> 
+</I>&gt;<i> I agree w/ Tamas' quote there in that the problem doesn't exist for
+</I>&gt;<i> transfers using the same asset. Consider a case of Alice sending to Bob,
+</I>&gt;<i> with both of them using a hypothetical asset, USD-beef: if the final/last
+</I>&gt;<i> hop withholds the HTLC, then they risk Bob not accepting the HTLC either due
+</I>&gt;<i> to the payment timing out, or exchange rate fluctuations resulting in an
+</I>&gt;<i> insufficient amount delivered to the destination (Bob wanted 10 USD-beef,
+</I>&gt;<i> but the bound BTC in the onion route is only now 9 USD-beef), in either case
+</I>&gt;<i> the payment would be cancelled.
+</I>
+I don't think this defense actually works. If you have:
+
+ Alice -&gt; Bob -&gt; Carol -&gt; Dave -&gt; Elizabeth
+
+with Alice/Bob and Dave/Elizabeth having USD channels, but
+Bob/Carol and Carol/Dave being BTC channels, then Dave has
+a reasonable opportunity to cheat:
+
+ - he can be pretty confident that Elizabeth is the final recipient
+   (since USD is meant to be at the edges, and this is a BTC to USD
+   conversion)
+
+ - he knows the expected USD value of the payment to Elizabeth
+
+ - he knows what the on-chain timeout of the USD payment to Elizabeth
+   will be, because he shares the channel, so can likely be confident
+   Elizabeth won't cancel the tx as long as he forwards it to her by then
+
+ - he can hold up the outbound USD payment while holding onto the
+   inbound BTC payment, only forwarding the payment on to Elizabeth if
+   the price of BTC stays the same or increases.
+
+I'm not an expert, but I tried a Black Scholes calculator with an
+estimate for Bitcoin's volatility, and it suggests that the fair price
+of an option like that that lasts an hour is about 0.3% of the par value
+(ie, for a $1000 payment, the ability to hold up the BTC/USD conversion
+for an hour and only do it when it's profitable, is worth about $3). That
+seems substantial compared to normal lightning fee rates, which I think
+are often in the 0.01% to 0.1% range?
+
+(Note that this way of analysing the free option problem means it's
+only an issue when the two assets have high volatility -- if they're
+sufficiently correlated, like USDT and USDC, or perhaps even USD and EUR,
+then the value of the free option is minimised, perhaps to the point
+where it's not worth trying to exploit)
+
+Bob may have a similar ability to interfere with the payment, but is
+much more constrained: he probably doesn't know Elizabeth's timeout;
+and if he's making a profit because the price of BTC has gone down,
+then Dave is likely to cancel the transaction rather than forwarding it
+to Elizabeth, since he'd be making a lock when converting the BTC amount
+to its pre-drop USD value. However, if there wasn't a followup conversion
+back from BTC to USD, and Bill was willing to guess at the final timeout
+of the payment, he could still make a profit from delaying payments.
+(Though it's also less harmful here: only the Alice/Bob funds are being
+held up indefinitely, not the funds from random channels)
+
+I think maybe a better approach might be:
+
+ Alice -&gt; Bob -BTC-&gt; Carol -BTC-&gt; Elizabeth -BTC-&gt; Dave -USD-&gt; Elizabeth
+
+That is, Alice sends $100 to Bob who forwards 0.004 BTC (or whatever) to
+Carol and then Elizabeth; then, before accepting the payment, Elizabeth
+extends the path with a BTC/USD exchange with Dave via a short loop. If
+Dave doesn't immediately forward the USD to Elizabeth, she can cancel
+the transaction, refunding Carol all the way back to Alice, even while
+waiting for Dave. She doesn't need to be concerned that Dave could
+claim funds from her, as all the transfers are conditional on a secret
+only Elizabeth knows, and that she has not yet revealed. If Dave tries
+exploiting the free option, Elizabeth can see he doesn't reliably finish
+the loop quickly, and try finding another, better, exchange.
+
+That approach also means Alice doesn't need to know what Elizabeth's
+currency preference is; she's just sending BTC, so she only needs to
+know about the exchange rate between BTC and her own currency, which
+seems like it means there's one less thing that could go wrong.
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003840.html">[Lightning-dev] Jamming Mitigation Call Summary - 02/06
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3839">[ date ]</a>
+              <a href="thread.html#3839">[ thread ]</a>
+              <a href="subject.html#3839">[ subject ]</a>
+              <a href="author.html#3839">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

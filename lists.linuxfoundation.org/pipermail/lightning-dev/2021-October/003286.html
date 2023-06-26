@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning over taproot with PTLCs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3CCAH5Bsr0byFg4C8rOHdz01_adHBH28Q1QuaVG9n69XEdYMutgWA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003284.html">
+   <LINK REL="Next"  HREF="003294.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning over taproot with PTLCs</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20over%20taproot%20with%20PTLCs&In-Reply-To=%3CCAH5Bsr0byFg4C8rOHdz01_adHBH28Q1QuaVG9n69XEdYMutgWA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Lightning over taproot with PTLCs">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Mon Oct 11 06:05:05 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003284.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+        <LI>Next message: <A HREF="003294.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3286">[ date ]</a>
+              <a href="thread.html#3286">[ thread ]</a>
+              <a href="subject.html#3286">[ subject ]</a>
+              <a href="author.html#3286">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey aj,
+
+This is awesome work. My line of research on &quot;witness asymmetric channels&quot;
+essentially ended up in a dead end because I couldn't see how they were
+much better than naive PTLC lightning. The idea I really liked from it was
+&quot;revocable signatures&quot;. I hoped someone would eventually figure out what to
+do with them. Looks like you've done that!
+
+I also didn't make the connection to how revocable signatures actually
+solves the constant size storage problem. I knew it could make the protocol
+in &quot;generalized payment channels&quot; [1] only require constant size which was
+the target of the idea but I hadn't considered that lightning already
+suffers from this problem so it can be applied more generally.
+
+The other big breakthrough you made is showing how you can do concurrent
+non-interactive payment forwarding by using a refined version of Z's fast
+forward idea. In my mind the most practical way to make FF work on
+Poon-Dryja channels was to do it asymmetrically [3] but this meant that if
+a payment was sent the other way you'd have to do a 3 phase commit first.
+With your idea as long as you have balance to spare in your balance output
+you can always forward a payment in one message. A nice speed boost for
+busy routing nodes.
+
+### Scorched earth punishment
+
+Another thing that I'd like to mention is that using revocable signatures
+enables scorched earth punishments [2]. The key you reveal when you post a
+revoked state does not have to be limited to your channel -- it could be
+used in multiple channels allowing the wronged party to take coins from all
+their channels with the perpetrator. Furthermore, a lightning service
+provider that offers channels with the same channel key to all their
+customers is putting up all their coins in all their existing channels as
+their good behaviour bond rather than just the coins they have in the
+channels they have with you.
+
+For many users this will be sufficient to go without a &quot;watchtower&quot; to do
+punishments for them. They know if the LSP takes their coins with a revoked
+state whenever they come back online they can punish the LSP by revealing
+their static channel key to everyone. They can even do this weeks or months
+after the theft assuming the LSP is still operating with the same key.
+
+Some people feel this idea is too spicy but I prefer it to introducing a
+trusted third party for people that cannot be online all the time.
+
+[1] <A HREF="https://eprint.iacr.org/2020/476.pdf">https://eprint.iacr.org/2020/476.pdf</A>
+[2]
+<A HREF="https://github.com/LLFourn/witness-asymmetric-channel#scorched-earth-punishments">https://github.com/LLFourn/witness-asymmetric-channel#scorched-earth-punishments</A>
+[3]
+<A HREF="../2021-June/003045.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-June/003045.html</A>
+
+Some queries below:
+
+On Sat, 9 Oct 2021 at 12:12, Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; wrote:
+
+&gt;<i>
+</I>&gt;<i> We will use &quot;i&quot; to represent the number of times a given inflight
+</I>&gt;<i> transaction has been updated for the nth update to the balance
+</I>&gt;<i> transaction.
+</I>&gt;<i>
+</I>&gt;<i> At any time Alice can update the inflight transaction spending her balance
+</I>&gt;<i> to transfer funds towards Bob, either by updating the balances directly,
+</I>&gt;<i> or adding a htlc/ptlc entry to conditionally transfer funds to Bob. (And
+</I>&gt;<i> conversely for Bob)
+</I>&gt;<i>
+</I>&gt;<i> We will define RP=musig(A/2/n/i, RB2(n,i)).
+</I>&gt;<i>
+</I>&gt;<i> The inflight transaction spending Alice's balance can have multiple
+</I>&gt;<i> types of outputs:
+</I>&gt;<i>
+</I>&gt;<i>  * Alice's remaining balance: pays directly to A/2/n/i
+</I>&gt;<i>
+</I>&gt;<i>  * Bob's remaining balances: pays to RP/2 with script path
+</I>&gt;<i>    &quot;&lt;B/2/n/i&gt; CHECKSIGVERIFY &lt;D&gt; CSV&quot;
+</I>&gt;<i>
+</I>&gt;<i>  * An htlc paying to Bob: pays to RP/2/k with script paths:
+</I>&gt;<i>    + &quot;LENGTH 32 EQUALVERIFY HASH160 &lt;X&gt; EQUALVERIFY &lt;B/2/n/i/k&gt;
+</I>&gt;<i> CHECKSIGVERIFY &lt;A/2/n/i/k&gt; CHECKSIG&quot;
+</I>&gt;<i>    + &quot;&lt;A/2/n/i/k/1&gt; CHECKSIGVERIFY &lt;T&gt; CLTV&quot;
+</I>&gt;<i>
+</I>&gt;<i>  * A ptlc paying to Bob: pays to RP/2/k with script paths:
+</I>&gt;<i>    + &quot;&lt;B/2/n/i/k&gt; CHECKSIG NOTIF &lt;T&gt; CLTV DROP ENDIF &lt;A/2/n/i/k&gt; CHECKSIG&quot;
+</I>&gt;<i>
+</I>&gt;<i> Any outputs that would be zero or dust are not included.
+</I>&gt;<i>
+</I>&gt;<i> Note that we number each currently inflight transaction by &quot;k&quot;,
+</I>&gt;<i> starting at 0. The same htlc/ptlc may have a different value for k
+</I>&gt;<i> between different inflight transactions.
+</I>&gt;<i>
+</I>
+Can you expand on why &quot;k&quot; is needed in addition to &quot;n&quot; and &quot;i&quot;. k sounds
+like the same thing as i to me.
+
+Also what does RP/2/k notation imply given the definition of RP you gave
+above?
+
+
+&gt;<i>  * if the inflight transaction contains a ptlc output, then if Alice
+</I>&gt;<i>    has not retained the old ptlc details (the point and the timeout)
+</I>&gt;<i>    she will not trivially be able to reconstruct the script path,
+</I>&gt;<i>    which includes the timeout. However, presuming the timeout was
+</I>&gt;<i>    within 5000 blocks, then the only possible timeouts are the inflight
+</I>&gt;<i>    tx's nlocktime+i with 0&lt;i&lt;=5000, and she will only need to calculate
+</I>&gt;<i>    5000*k cases and match the corresponding scriptPubKeys to exhaustively
+</I>&gt;<i>    enumerate every possible ptlc output, which should take under a minute,
+</I>&gt;<i>    and be easily achievable. In addition, if Bob attempts to claim the
+</I>&gt;<i>    funds, he will reveal the script path, and Alice will be either able
+</I>&gt;<i>    to claim the inflight output directly or the layered output.
+</I>&gt;<i>
+</I>
+What about just doing a scriptless PTLC to avoid this (just CSV input of
+presigned tx)? The cost is pre-sharing more nonces per PTLC message.
+
+This does not support option_static_remotekey, but compensates for that
+&gt;<i> by allowing balances to be recovered with only the channel setup data
+</I>&gt;<i> even if all revocation data is lost.
+</I>&gt;<i>
+</I>
+This is rather big drawback but is this really the case? Can't &quot;in-flight&quot;
+transactions send the balance of the remote party to their unencumbered
+static remote key? Since there is no &quot;in-flight&quot; transaction just after you
+create a new balance tx you can just sign a &quot;good will&quot; in-flight tx
+whenever you create a new balance tx that sends all the coins to your
+static key. Of course, your counterparty has no incentive to broadcast this
+when they close the channel but we can just specify that as part of the
+protocol you broadcast this anyway (even if it gives you nothing). It's no
+skin off their back.
+Ok so what about the fee for the &quot;good will&quot; tx? Well let's say it is a
+special case and just pays for itself with a reasonable fee. The &quot;good
+will&quot; tx is low time preference and can be CPFP easily if you haven't lost
+your state. If you have lost your state then this is much better than
+nothing.
+
+Cheers,
+
+LL
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211011/a619e4b8/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211011/a619e4b8/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003284.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+	<LI>Next message: <A HREF="003294.html">[Lightning-dev] Lightning over taproot with PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3286">[ date ]</a>
+              <a href="thread.html#3286">[ thread ]</a>
+              <a href="subject.html#3286">[ subject ]</a>
+              <a href="author.html#3286">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Algorithm For Channel Fee Settings
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Algorithm%20For%20Channel%20Fee%20Settings&In-Reply-To=%3Cd4XNgf03c6R0OebJWVpnDuiDJQJXUVPtWI3Ly7e4qsKjotni1HwZW9YLQYM_EeUv8JiY8x6BL0XNS3MytJ5N-IWGKEhBWtYVQE4x3Ok2Utg%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003170.html">
+   <LINK REL="Next"  HREF="003172.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Algorithm For Channel Fee Settings</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Algorithm%20For%20Channel%20Fee%20Settings&In-Reply-To=%3Cd4XNgf03c6R0OebJWVpnDuiDJQJXUVPtWI3Ly7e4qsKjotni1HwZW9YLQYM_EeUv8JiY8x6BL0XNS3MytJ5N-IWGKEhBWtYVQE4x3Ok2Utg%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Algorithm For Channel Fee Settings">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sat Aug 14 12:35:25 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003170.html">[Lightning-dev] Turbo channels spec?
+</A></li>
+        <LI>Next message: <A HREF="003172.html">[Lightning-dev] Zero Fee Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3171">[ date ]</a>
+              <a href="thread.html#3171">[ thread ]</a>
+              <a href="subject.html#3171">[ subject ]</a>
+              <a href="author.html#3171">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+As use of Lightning grows, we should consider delegating more and more tasks to programs.
+Classically, decisions on *where* to make channels have been given to &quot;autopilot&quot; programs, for example.
+However, there remain other tasks that would still appreciate delegation to a policy pre-encoded into a program.
+
+This frees up higher-level sentience from network-level concerns.
+Then, higher-level sentience can decide on higher-level concerns, such as how much money to put in a Lightning node, how to safely replicate channel state, and preparing plans to recover in case of disaster (long downtime, channel state storage failure, and so on).
+
+One such task would be setting channel fees for forwarding nodes (which all nodes should be, unpublished channels delenda est).
+This write-up presents this problem and invites others to consider the problem of creating a heuristic that allows channel fee settings to be left to a program.
+
+Price Theory
+============
+
+The algorithm I will present here is based on the theory that there is a single global maxima for price, where the earnings for a particular price point, per unit time, is highest.
+
+The logic is that as the price increases, fewer payments get routed over that channel, and thus even though you earn more per payment, you end up getting fewer payments.
+Conversely, as the price decreases, there are more payments, but because the price you impose is lower, you earn less per payment.
+
+The above assumption seems sound to me, given what we know about payment pathfinding algorithms (since we implemented them).
+Most such algorithms have a bias towards shorter paths, where &quot;shorter&quot; is generally defined (at least partially) as having lower fees.
+Thus, we expect that, all other things being fixed (channel topology, channel sizes, etc.), if we lower the price on a channel (i.e. lower its channel fees) we will get more forwarding requests via that channel.
+And if we raise the price on the channel, we will get fewer forwarding requests via that channel.
+
+It is actually immaterial for this assumption exactly *what* the relationship is between price and number of forwards as long as it is true that pricier = fewer forwards.
+Whether or not this relationship is linear, quadratic, exponential, has an asymptote, whatever, as long as higher prices imply fewer payments, we can assume that there is a global maxima for the price.
+
+For example, suppose there is a linear relationship.
+At price of 1, we get 10 payments for a particular unit of time, at price of 2 we get 9 payments, and so on until at price of 10 we get 1 payment._
+Then the maximum earnings is achieved at price of 5 per payment (times 6 payments) or price of 6 per payment (times 5 payments).
+
+IF the relationship is nonlinear, then it is not so straightforward, but in any case, there is still some price setting that is optimal.
+At a price of 0 you earn nothing no matter how many free riders forward over your node.
+On the higher end, there is some price that is so high that nobody will route through you and you also earn nothing (and raising the price higher will not change this result).
+
+Thus, there (should) exist some middle ground where the price is such that it earns you the most amount of fees per unit time.
+The question is how to find it!
+
+Sampling
+========
+
+Given the assumption that there exists some global maxima, obviously a simple solution like Hill Climbing would work.
+
+The next issue is that mathematical optimization techniques (like Hill Climbing) need to somehow query the &quot;function&quot; that is being optimized.
+In our case, the function is &quot;fees earned per unit time&quot;.
+We do not know exactly how this function looks like, and it is quite possible that, given each node has a more-or-less &quot;unique&quot; position on the network, the function would vary for each channel of each node.
+
+Thus, our only real hope is to *actually* set our fees to whatever the algorithm is querying, then take some time to measure the *actual* earnings in a certain specific amount of time, and *then* return the result to the algorithm.
+
+Worse, the topology of the network changes all the time, thus the actual function being optimized is also changing over time!
+Hill Climbing works well here since it is an anytime algorithm, meaning it can be interrupted at any time and it will return *some* result which, if not optimal, is at least statistically better than a random dart-throw.
+A change in the topology is effectively an &quot;interruption&quot; of whatever optimization algorithm we use, since any partial results it has may be invalidated due to the topology change.
+
+In particular, if we are the only public node to a particular receiver, then we have a monopoly on payments going to that node.
+If another node opens a channel to that receiver, however, suddenly our maxima changes (probably lower) and our optimization algorithm then needs to adapt to the new situation.
+Others closing channels may change the optima as well, towards higher prices.
+And so on.
+
+Finally, by getting *actual* data from the real world, rather than an idealized model of it, we also bring in the possibility of noise.
+The earned fees during a particular time when we &quot;evaluate the function&quot; on behalf of the optimization algorithm may not be due to our particular channel fees, but rather due to, say, a sale at a local coffee shop.
+
+Hill Climbing helps against such noisiness, as it can &quot;backtrack&quot; in case of a burst of noise.
+Of course, this assumes that noise is &quot;bursty&quot;, but if the noise is not bursty then it might then be argued to become less &quot;noise&quot; and more &quot;signal&quot; (maybe?).
+
+Thus, my concrete proposal for a channel fee setting program is to use a Hill Climbing algorithm, with evaluation of the function being, say, a few days of sampling actual data from the node channel fee.
+Over time, the feerate that is sampled by this Hill Climbing algorithm will end up as approximations of the true optimal price level.
+
+Hill Climbing may not be the most efficient way to optimize.
+However, its anytime property makes it robust against topology changes (and we expect LN topology to change continuously) and the algorithm itself is simple enough to implement, so it seems a reasonable starting point.
+
+Start Point
+===========
+
+Hill Climbing is not magical.
+
+While it can modify an existing start point, and eventually discover the optima, it has to have *some* start point that it will modify.
+
+Naively, it seems to me that the heuristic &quot;imitate what others are doing&quot; seems reasonable.
+Even if others have absolutely no idea what they hell they are doing, imitating them at least gets you &quot;neck-and-neck&quot; with them in anything competitive.
+Consider that if you were to start by throwing a dart to some random price point, you have a chance of starting off worse than the competition , and reasonable prices may be a very narrow part of the search space, so the random dart throw may have very low probability of a reasonable price.
+
+As a concrete proposal, I would suggest:
+
+* Suppose you want to initialize a Hill Climbing algorithm for all your channels to a peer A.
+* Look at all the *other* peers of peer A and look at their LN feerates towards the peer A.
+* Get the **weighted median** of all the other peers of peer A.
+  * Use the channel size of that node to the peer A as weight.
+* Use the weighted median as the initial starting point for the Hill Climbing algorithm.
+
+Why weighted median?
+
+* Median is more robust against outliers.
+  * For example, someone who knows you are using Hill Climbing might decide to break your algo by creating a channel with ridiculous feerates, in order to manipulate the mean.
+    With median, that channel is only one data point, and the manipulator needs to make many such channels.
+* Weighting by channel size makes attempts at manipulating your algorithm costly, by requiring manipulators to tie up funds into a channel with ridiculous (and probably very unlucrative) feerates.
+
+CLBOSS
+======
+
+CLBOSS implements a variant of the above since release 0.11B.
+There is even a test of the implementation, which uses a simple model for price theory.
+
+However, there are substantial differences to the above described algorithm:
+
+* In reality, there are two variables that are input to your fee earnings: base fee and proportional fee.
+  * CLBOSS uses a multiplier on *both* base and proportional fee instead of optimizing both variables as separate axes of a Hill Climibing model.
+* The above proposal suggests the weighted-median-of-competitor-feerates as a *starting point*.
+  * CLBOSS uses a single-dimensional multiplier (as mentioned above) that multiplies the *current* weighted median.
+* CLBOSS also includes another algorithm, passive rebalancing, which affects the feerates.
+  * Basically, CLBOSS changes the feerates according to the level of funds we have in a channel.
+  * If we own almost all funds in the channel, we drastically lower the fees we charge.
+  * If we own almost none of the funds in the channel, we drastically increase we charge.
+
+Conclusion
+==========
+
+In principle, a truly sapient being would still defeat any pre-sentient algorithm.
+For example, the sapient being can take the output of a pre-sentient algorithm, take a long time to pour over it and study the entire problem, and make a single change that improves on the output of the pre-sentiant algorithm.
+At the worst case, the sapient being can discover that no improvement is possible, and simply outputs the result of the pre-sentient algorithm as its own output, as-is.
+
+However, the power of humanity increases as more decisions can be left to policies and similar pre-sentient algorithms.
+This allows humanity to utilize its limited willpower and lifespan towards *other* decisions that pre-sentient algorithms cannot handle.
+
+An example I like to bring out here is compilers.
+In the past, a good assembler programmer could beat the best compilers hands down.
+Eventually, it became common for an assembler programmer to look at the compiler output, look over it, and make small microoptimizations that improved over the compiler output.
+Eventually, such work became less economically justifiable, as compilers have improved such that the probability of a sapient assembler programmer discovering an unutilized optimization has drastically lowered.
+
+Even if in the future, humanity is replaced by much more rational beings, the same relationship between general sapience and pre-sentient algorithms should still hold.
+Thus, it seems to me that moving this decision to a pre-sentient algorithm and freeing up higher-order sapience to other concerns may still be beneficial.
+
+(Just to be clear, I am not trying to overthrow the human race yet.)
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003170.html">[Lightning-dev] Turbo channels spec?
+</A></li>
+	<LI>Next message: <A HREF="003172.html">[Lightning-dev] Zero Fee Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3171">[ date ]</a>
+              <a href="thread.html#3171">[ thread ]</a>
+              <a href="subject.html#3171">[ subject ]</a>
+              <a href="author.html#3171">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

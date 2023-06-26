@@ -1,0 +1,235 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Testing%20a%20Flare-like%20routing%20implementation%20on%0A%202500%20AWS%20nodes&In-Reply-To=%3CCAL3Hpbd2q7_Jxu7dbmUhzg-Sy6vjDd%3D0K%2B7BnYRSiPSAjDqWUQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000614.html">
+   <LINK REL="Next"  HREF="000616.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes</H1>
+    <B>Fabrice Drouin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Testing%20a%20Flare-like%20routing%20implementation%20on%0A%202500%20AWS%20nodes&In-Reply-To=%3CCAL3Hpbd2q7_Jxu7dbmUhzg-Sy6vjDd%3D0K%2B7BnYRSiPSAjDqWUQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes">fabrice.drouin at acinq.fr
+       </A><BR>
+    <I>Tue Sep 20 13:07:14 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000614.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500	AWS nodes
+</A></li>
+        <LI>Next message: <A HREF="000616.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#615">[ date ]</a>
+              <a href="thread.html#615">[ thread ]</a>
+              <a href="subject.html#615">[ subject ]</a>
+              <a href="author.html#615">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Edit: our link to the Flare white paper should be
+[1] <A HREF="http://bitfury.com/content/5-white-papers-research/whitepaper_flare_an_approach_to_routing_in_lightning_network_7_7_2016.pdf">http://bitfury.com/content/5-white-papers-research/whitepaper_flare_an_approach_to_routing_in_lightning_network_7_7_2016.pdf</A>
+
+Fabrice
+
+On 18 September 2016 at 14:58, Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt; wrote:
+&gt;<i> TLDR: It kind of works (there is a 80+% chance of finding a route to any
+</I>&gt;<i> other node in ~500ms).
+</I>&gt;<i>
+</I>&gt;<i> Hello guys,
+</I>&gt;<i>
+</I>&gt;<i> Flare[1] is a routing protocol for the Lightning Network which combines
+</I>&gt;<i> local neighborhood maps and paths to remote beacons. It is really
+</I>&gt;<i> interesting and the simulations are promising, so we wanted to give it a try
+</I>&gt;<i> and actually implement it in Eclair. We ended up with a close variant [2],
+</I>&gt;<i> and tested it on 2500 nodes on AWS.
+</I>&gt;<i>
+</I>&gt;<i> The main difference between our implementation and the original paper is in
+</I>&gt;<i> the way nodes communicate with each other. In the paper, an assumption is
+</I>&gt;<i> made that &quot;there exists a way for any two nodes in LN to communicate with
+</I>&gt;<i> each other, perhaps with some prior setup (such as a distributed hashtable
+</I>&gt;<i> overlay maintained among LN nodes that would store mapping of node
+</I>&gt;<i> identifiers to their current IP addresses)&quot;. In our implementation there is
+</I>&gt;<i> no DHT: inter-nodes communication only occurs on existing open channels, and
+</I>&gt;<i> all routing-related messages are onion-encrypted and routed themselves, just
+</I>&gt;<i> like htlc messages. So a node can't talk directly to a node it doesn't
+</I>&gt;<i> already have a route to. This certainly has a cost but it should also
+</I>&gt;<i> improves privacy, and overall we think that using a DHT isn't necessary.
+</I>&gt;<i> Also, making the assumption that a node is reachable from the outside is
+</I>&gt;<i> rather strong, particularly for mobile/light wallets. Whereas by
+</I>&gt;<i> communicating over channels, a node can actively participate to the global
+</I>&gt;<i> routing as soon as it has more than two channels.
+</I>&gt;<i>
+</I>&gt;<i> The neighbor discovery/beacons selection is pretty similar to what's in the
+</I>&gt;<i> paper, but a little bit simplified :
+</I>&gt;<i> - nodes don't ack table update messages (it is probably not needed since it
+</I>&gt;<i> occurs between adjacent nodes and any disconnection will be noticed)
+</I>&gt;<i> - nodes don't tell other nodes that they have been chosen as beacon (there
+</I>&gt;<i> is no beacon_set message). A given node knows it is a candidate because it
+</I>&gt;<i> received a beacon_req message, but it won't know if it was eventually
+</I>&gt;<i> selected.
+</I>&gt;<i>
+</I>&gt;<i> We only focused on static ranking (finding a route formed of open channels
+</I>&gt;<i> between two given nodes), so it is very possible (probable?) that a route is
+</I>&gt;<i> not actually usable because the channels are not balanced. Basically we made
+</I>&gt;<i> the assumption that the network graph is undirected, which is not true and
+</I>&gt;<i> is a pretty strong assumption.
+</I>&gt;<i>
+</I>&gt;<i> The route selection has also been simplified. Whereas Flare proposed a 3
+</I>&gt;<i> steps process:
+</I>&gt;<i> (a) sender uses its own routing table
+</I>&gt;<i> (b) sender requests receiver's table and uses a combination of the two
+</I>&gt;<i> tables
+</I>&gt;<i> (c) sender iterates over nodes it knows that are close to the receiver, and
+</I>&gt;<i> request their tables
+</I>&gt;<i> in our test we only did (b), which is a strong tradeoff. It means that the
+</I>&gt;<i> time allowed to find a route is short and predictable, but it is very
+</I>&gt;<i> suboptimal in terms of probability of finding a route.
+</I>&gt;<i>
+</I>&gt;<i> Below are the results of a few tests we ran on AWS. The procedure was as
+</I>&gt;<i> follows:
+</I>&gt;<i> 1) start a certain number of m1.medium instances with standard linux AMI
+</I>&gt;<i> 2) after startup the instances run an init script that d/l oracle jdk and
+</I>&gt;<i> our jar, then run the jar
+</I>&gt;<i> 3) from a control server, we link nodes to each other following a given
+</I>&gt;<i> graph using json-rpc commands
+</I>&gt;<i> 4) wait a few minutes for the gossip to calm down (it can be pretty intense
+</I>&gt;<i> with radius=3 [3] and our implementation is not optimized)
+</I>&gt;<i> 5) pick 1000 random routes (random sender, random receiver), and for each
+</I>&gt;<i> route using json-rpc we (a) asks the receiver for a &quot;payment request&quot; (H +
+</I>&gt;<i> routing_table) and then (b) asks the sender to find a route for this payment
+</I>&gt;<i> request (without actually making a payment).
+</I>&gt;<i> 6) collect stats
+</I>&gt;<i>
+</I>&gt;<i> Caveats:
+</I>&gt;<i> - nodes are connected all at once (step 3) above), and don't periodically
+</I>&gt;<i> reconcile their own routing table with that of their neighbors
+</I>&gt;<i> (neighbor_reset in the paper). This leads to nodes not knowing all the nodes
+</I>&gt;<i> in their radius, and probably has a significant negative impact on results;
+</I>&gt;<i> we figured this out afterwards :-s
+</I>&gt;<i> - there is no &quot;proof of channels&quot; (nodes are not lying to each other about
+</I>&gt;<i> existing channels)
+</I>&gt;<i> - onion messages are not actually encrypted (although channel communications
+</I>&gt;<i> are)
+</I>&gt;<i> - it is a &quot;LAN&quot; setup so things wouldn't be that smooth in reality (although
+</I>&gt;<i> we are testing static routes so it doesn't actually matter that much)
+</I>&gt;<i> - smallworld graphs may seem a little bit optimistic in terms of actual
+</I>&gt;<i> network topology
+</I>&gt;<i> - ...
+</I>&gt;<i>
+</I>&gt;<i> Parameters and results (probability of finding a route to any given node):
+</I>&gt;<i> test nodes   r    beacon_count     graph      result  t_avg
+</I>&gt;<i>   A  1000    2    10            sw1000_6_02     87%
+</I>&gt;<i>   B  2000    2    10            sw2000_6_02     76%    305ms
+</I>&gt;<i>   C  2500    2    10            sw2500_4_01    ~20%
+</I>&gt;<i>   D  2500    3    10            sw2500_4_01     43%    377ms
+</I>&gt;<i>   E  2500    3    10            sw2500_6_02     83%    532ms
+</I>&gt;<i> Note: a swX_Y_0Z graph is a smallworld graph generated using the Watts and
+</I>&gt;<i> Strogatz model with n=X, k=Y and beta=0.Z
+</I>&gt;<i>
+</I>&gt;<i> Network size (known nodes):
+</I>&gt;<i> test adjacent  all
+</I>&gt;<i>   A
+</I>&gt;<i>   B    6.8    62.3
+</I>&gt;<i>   C
+</I>&gt;<i>   D    4.0    58.8
+</I>&gt;<i>   E    6.0    97.0
+</I>&gt;<i> Note: expected values for column 'all' should be D=4^3=64+ and E=6^3=216+,
+</I>&gt;<i> see caveat above. The good thing is that a radius=2 might actually be
+</I>&gt;<i> enough, just like the paper says!
+</I>&gt;<i>
+</I>&gt;<i> Beacons:
+</I>&gt;<i> test dist_avg dist_max dist_var
+</I>&gt;<i>   A
+</I>&gt;<i>   B    7.4      39      29.4
+</I>&gt;<i>   C
+</I>&gt;<i>   D    9.2      96      79.5
+</I>&gt;<i>   E    8.1      45      36.0
+</I>&gt;<i>
+</I>&gt;<i> Route lengths:
+</I>&gt;<i> test  len_avg len_max len_var
+</I>&gt;<i>   A     5.4    26.0     3.3
+</I>&gt;<i>   B     6.2    30.0     6.2
+</I>&gt;<i>   C
+</I>&gt;<i>   D    17.9    74.0   109.5
+</I>&gt;<i>   E     7.3    28.0     5.6
+</I>&gt;<i>
+</I>&gt;<i> Response time (this includes sender requesting the receiver's routing table
+</I>&gt;<i> and running a dijkstra):
+</I>&gt;<i> test  t_avg   t_max
+</I>&gt;<i>   A
+</I>&gt;<i>   B   305ms   5158ms
+</I>&gt;<i>   C
+</I>&gt;<i>   D   377ms   7809ms
+</I>&gt;<i>   E   532ms   5128ms
+</I>&gt;<i> Note: High max times are probably related to the use of poor-performance
+</I>&gt;<i> instances that sometimes behave erratically (unfortunately we don't have the
+</I>&gt;<i> variance).
+</I>&gt;<i>
+</I>&gt;<i> In conclusion, we show that our modified version of Flare actually works on
+</I>&gt;<i> a decent size network. Because of the bug mentioned in the caveats, the
+</I>&gt;<i> value of the radius parameter should be taken with caution. One of the main
+</I>&gt;<i> concerns for us is the fact that the graph is in fact directed and that at
+</I>&gt;<i> creation channels are actually one-way. This might make finding route very
+</I>&gt;<i> difficult at bootstrapping.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> Pierre
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> [1]
+</I>&gt;<i> <A HREF="http://bitfury.com/content/5-white-papers-research/bitfury_whitepaper_shared_send_untangling_in_bitcoin_8_24_2016.pdf">http://bitfury.com/content/5-white-papers-research/bitfury_whitepaper_shared_send_untangling_in_bitcoin_8_24_2016.pdf</A>
+</I>&gt;<i> [2]
+</I>&gt;<i> <A HREF="https://github.com/ACINQ/eclair/blob/wip-flare/eclair-node/src/main/scala/fr/acinq/eclair/router/FlareRouter.scala">https://github.com/ACINQ/eclair/blob/wip-flare/eclair-node/src/main/scala/fr/acinq/eclair/router/FlareRouter.scala</A>
+</I>&gt;<i> [3] <A HREF="https://s3-eu-west-1.amazonaws.com/acinq/public/network_out.PNG">https://s3-eu-west-1.amazonaws.com/acinq/public/network_out.PNG</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>
+
+
+-- 
+ACINQ SAS, Si&#232;ge Social 10 rue de Penthi&#232;vre 75008 PARIS.
+Capital 51 437 Euros, 804 203 792 RCS Paris &#8211; APE 6202A &#8211; SIRET 804
+203 792 00010 &#8211; TVA FR 34 804203792.
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000614.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500	AWS nodes
+</A></li>
+	<LI>Next message: <A HREF="000616.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#615">[ date ]</a>
+              <a href="thread.html#615">[ thread ]</a>
+              <a href="subject.html#615">[ subject ]</a>
+              <a href="author.html#615">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,263 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal: Bundled payments
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Bundled%20payments&In-Reply-To=%3CCkXfCVbqomjuOdkJcsctSe5hD4lRXKMGfmJYjTRQZO6rpoFC4oEtWfcPuBqUWp7dfqvnRJ7uM-oDYJ5QWPChWMgRw0e6esbGkuqGNz94g6M%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003992.html">
+   <LINK REL="Next"  HREF="003985.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal: Bundled payments</H1>
+    <B>SomberNight</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Bundled%20payments&In-Reply-To=%3CCkXfCVbqomjuOdkJcsctSe5hD4lRXKMGfmJYjTRQZO6rpoFC4oEtWfcPuBqUWp7dfqvnRJ7uM-oDYJ5QWPChWMgRw0e6esbGkuqGNz94g6M%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Proposal: Bundled payments">somber.night at protonmail.com
+       </A><BR>
+    <I>Tue Jun 20 16:49:05 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003992.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+        <LI>Next message: <A HREF="003985.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3990">[ date ]</a>
+              <a href="thread.html#3990">[ thread ]</a>
+              <a href="subject.html#3990">[ subject ]</a>
+              <a href="author.html#3990">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Thomas, Bastien, and list,
+
+One point I would like to stress for this idea, is that there are potentially three different entities at play in these payments.
+This might not be obvious at first glance especially for the submarine swap example, where people expect just two entities: the user (&quot;customer&quot;) and the server (&quot;swap provider&quot;). Bastien already hinted at this, but I just want to make it very explicit that this is a (or perhaps *the*) use case here.
+
+&gt;<i> First of all, I'd like to highlight something that may not be obvious
+</I>&gt;<i> from your email, and is actually pretty important: your proposal
+</I>&gt;<i> requires *senders* to be aware that the payment will lead to a channel
+</I>&gt;<i> creation (or a splice) on the *receiver* end. In particular, it requires
+</I>&gt;<i> all existing software used by senders to be updated.
+</I>
+In particular, for the submarine swap scenario, consider Alice, a new user with a freshly installed wallet, who generates an invoice as they want to receive some money onchain; and Bob, who wants to pay that invoice via Lightning. There are three entities: Alice, a swap service provider (server), and Bob. Only Alice knows about the swap server being there.
+Alice needs client-side logic for doing a swap; and Bob needs to implement Thomas' proposal (or equivalent), i.e. parsing an invoice that can convey two payment hashes and one corresponding amount each, one pair being used as a &quot;prepayment&quot;.
+
+Using a swap service, Bob could pay Alice, so that Bob pays on Lightning, and Alice receives onchain:
+- Alice generates a preimage and calculates its hash RHASH1, for the actual (&quot;large&quot;) amount1 Alice wants to receive
+- Alice contacts the swap server via e.g. HTTP, providing RHASH1 and amount1
+- the swap server generates another preimages and its hash RHASH2, for the small prepayment amount2
+- the swap server generates a lightning invoice, and puts (RHASH1, amount1) and (RHASH2, amount2) in it, and sends it back to Alice
+- Alice checks the lightning invoice, e.g. verifies that it includes the expected amounts and RHASH1
+- Alice now gives the invoice to Bob, using some side-channel, as typical
+- Bob does not need to know that the nodeid signing the ln invoice does not belong to Alice, etc
+- Bob sees that the invoice contains two payment hashes and amounts, and sends HTLCs to cover both
+- the HTLCs arrive at the swap server, who holds them and waits until it sees HTLCs with enough offered money for both the prepayment (RHASH2) and the main payment (RHASH1)
+- the server has the preimage for RHASH2 (but not RHASH1), so it now fulfills the HTLCs for the prepayment
+- the server creates a swap funding tx onchain paying to a locking script redeemable by the preimage of RHASH1 - the mining fees for this and the service fee has already been paid by the fulfilled HTLCs for RHASH2
+- Alice sees the swap funding tx onchain, and waits until it gets mined. Alice also validates that it is the expected script, and the timeout for the refund path is not too short, etc.
+- Alice broadcasts a claim tx spending the funding tx output using the preimage for RHASH1
+- the server fulfills the still pending HTLCs for RHASH1 using this preimage
+
+Note that Bob is a simple lightning wallet, with the only added assumption that his wallet is able to parse/pay this new type of LN invoice that contains two hashes. All the security checks and swap logic is only implemented on Alice's side. A clear drawback though is that Bob, paying lightning, expects the payment to go through fast, but will end up waiting for onchain txs getting mined (which he does not know or need to know about).
+
+Also note that instead of this special bolt11 invoice (or maybe bolt12 offer), Alice could create a bip21 URI instead, containing both an onchain address and the lightning invoice. This way, Alice would still receive onchain, but now Bob has the choice of either paying onchain or via lightning.
+
+---
+
+Besides swaps, the other clear use case is JIT channels. Analogous to the above swap example, Alice could negotiate with the service provider to have a JIT channel opened to her, and the HTLC forwarded using that. Alice can wait for the channel funding to be mined before releasing the preimage for the main payment (RHASH1) by fulfilling the HTLC offchain.
+
+Bob is completely agnostic to what happens between the service provider and Alice. The only thing visible is the long time it takes for the HTLC to get fulfilled. (though if Alice opted-in not to wait for confirmations and trust the server, the delay could be removed)
+
+If Alice waits for confirmations, in both the swap and the JIT channel scenarios, the server is only trusted with the prepayment amount.
+
+Regards,
+ghost43 / SomberNight
+
+
+
+------- Original Message -------
+On Thursday, June 15th, 2023 at 09:01, Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; wrote:
+
+
+&gt;<i> Hi Thomas,
+</I>&gt;<i> 
+</I>&gt;<i> First of all, I'd like to highlight something that may not be obvious
+</I>&gt;<i> from your email, and is actually pretty important: your proposal
+</I>&gt;<i> requires *senders* to be aware that the payment will lead to a channel
+</I>&gt;<i> creation (or a splice) on the *receiver* end. In particular, it requires
+</I>&gt;<i> all existing software used by senders to be updated. For this reason, I
+</I>&gt;<i> think extending Bolt 12 (which requires new sender code anyway) makes
+</I>&gt;<i> more sense than updating Bolt 11.
+</I>&gt;<i> 
+</I>&gt;<i> I see only three strategies to provide JIT liquidity (by opening a new
+</I>&gt;<i> channel or making a splice, I'll only use the open channel case below
+</I>&gt;<i> for simplicity):
+</I>&gt;<i> 
+</I>&gt;<i> 1. Ask receiver for the preimage and a fee, then open a channel and
+</I>&gt;<i> push the HTLC amount minus the fee
+</I>&gt;<i> 2. Open a channel, then forward the HTLC amount minus a fee
+</I>&gt;<i> 3. Pre-pay fee, then open a channel and forward the whole HTLC amount
+</I>&gt;<i> on that channel
+</I>&gt;<i> 
+</I>&gt;<i> What is currently deployed on the network is 1) and 2), while you're
+</I>&gt;<i> proposing 3). Both 1) and 2) have the advantages that the sender doesn't
+</I>&gt;<i> need to be aware that JIT liquidity is happening, and doesn't need to do
+</I>&gt;<i> anything special for that payment, which is the main reason those
+</I>&gt;<i> strategies were chosen.
+</I>&gt;<i> 
+</I>&gt;<i> If all you're concerned about is trust and regulation, solution 2) works
+</I>&gt;<i> fine as long as the mempool isn't empty: if the user doesn't release the
+</I>&gt;<i> preimage after you've opened the channel, you should just blacklist that
+</I>&gt;<i> channel, reject payments made to it, and double-spend it whenever you
+</I>&gt;<i> have another on-chain transaction to make (and use 1 sat/byte for JIT
+</I>&gt;<i> liquidity transactions). Even if the mempool is empty, if your LSP has
+</I>&gt;<i> transactions to make at every block, it's likely that it will succeed
+</I>&gt;<i> at double-spending the faulty channel, and thus won't lose anything.
+</I>&gt;<i> 
+</I>&gt;<i> But I agree that this only works when coupled with 0-conf. If we're not
+</I>&gt;<i> using 0-conf anymore, pre-paying fees would make more sense. But we will
+</I>&gt;<i> likely keep on using 0-conf at least until Bolt 12 is deployed, so it
+</I>&gt;<i> seems more reasonable to include this new feature in Bolt 12 rather than
+</I>&gt;<i> Bolt 11, since all implementations are actively working on this?
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Bastien
+</I>&gt;<i> 
+</I>&gt;<i> Le jeu. 15 juin 2023 &#224; 10:52, Thomas Voegtlin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">thomasv at electrum.org</A>&gt; a &#233;crit :
+</I>&gt;<i> 
+</I>&gt;<i> &gt; Hello Matt,
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I think it is not too late to add a new feature to BOLT-11. In any
+</I>&gt;<i> &gt; case, the belief that BOLT-11 is ossified should not be a reason to
+</I>&gt;<i> &gt; make interactive something that fundamentally does not require more
+</I>&gt;<i> &gt; interactivity than what BOLT-11 already offers. Technical decisions
+</I>&gt;<i> &gt; should be dictated by technical needs, and I am a minimalist when it
+</I>&gt;<i> &gt; comes to adding new messages to protocols.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I believe that two major implementations have an incentive to support
+</I>&gt;<i> &gt; this proposal (although I cannot speak for them):
+</I>&gt;<i> &gt; - Lightning Labs could potentially offer their Loop service to
+</I>&gt;<i> &gt; non-LND users.
+</I>&gt;<i> &gt; - ACINQ would be able to open channels to Phoenix users without
+</I>&gt;<i> &gt; requesting the preimage first. This would put them on the safe side
+</I>&gt;<i> &gt; of the upcoming MICA regulation; I cannot emphasize enough how
+</I>&gt;<i> &gt; important that is.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; In addition, you could certainly decide to support that feature in
+</I>&gt;<i> &gt; LDK, and I can speak for Electrum :-)
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; It is the first time I suggest a change to the Lightning protocol, and
+</I>&gt;<i> &gt; what I am proposing is really a tiny change. All we need is a new
+</I>&gt;<i> &gt; invoice feature, that describes the prepayment of a fee using a
+</I>&gt;<i> &gt; different preimage. This feature does not need to be set on all
+</I>&gt;<i> &gt; invoices, and it could be made optional during a transition period.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Here is how that feature could possibly made optional:
+</I>&gt;<i> &gt; - a new feature bit is defined, BUNDLE_PREPAYMENT
+</I>&gt;<i> &gt; - two extra fields are defined: prepayment_amount, prepayment_hash
+</I>&gt;<i> &gt; - if the sender does not support BUNDLE_PREPAYMENT and the feature is
+</I>&gt;<i> &gt; optional, it ignores the new fields
+</I>&gt;<i> &gt; - if the sender support BUNDLE_PREPAYMENT:
+</I>&gt;<i> &gt; - sender sends (amount - prepayment_amount) with payment_hash
+</I>&gt;<i> &gt; - sender sends prepayment_amount with prepayment_hash
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; The decision to make this feature required or optional remains with
+</I>&gt;<i> &gt; the service provider. I can see how submarine swap providers who are
+</I>&gt;<i> &gt; already exposed to the mining fee griefing attack could decide to make
+</I>&gt;<i> &gt; it optional for a transition period.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; cheers,
+</I>&gt;<i> &gt; Thomas
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Regarding your question (a) about the distinction between splice-out
+</I>&gt;<i> &gt; and submarine swaps: Submarine swaps make it possible to add receiving
+</I>&gt;<i> &gt; capacity to a channel.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; On 14.06.23 19:28, Matt Corallo wrote:
+</I>&gt;<i> &gt; &gt; I think the ship has probably sailed on getting any kind of new interoperable change in to BOLT-11.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; We already can't get amount-less BOLT-11 invoices broadly supported, rolling out yet another new incompatible version of BOLT-11 and expecting the entire ecosystem to support it doesn't seem all that likely.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; If we're working towards specifying some &quot;standard&quot; way of doing swaps, (a) I'd be curious to understand why the need isn't obviated by splice-out, and (b) why it shouldn't be built on OMs so you can do it more privately.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Matt
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; On 6/13/23 1:10&#8239;AM, Thomas Voegtlin wrote:
+</I>&gt;<i> &gt; &gt;&gt; Good morning list,
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; I would like to propose an extension to BOLT-11, where an invoice can contain two bundled payments, with distinct preimages and amounts.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; The use case is for services that require the prepayment of a mining fee in order for a non-custodian exchange to take place:
+</I>&gt;<i> &gt; &gt;&gt; - Submarine swaps
+</I>&gt;<i> &gt; &gt;&gt; - JIT channels
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; In both cases, the service provider receives a HTLC for which they do not have the preimage, have to send funds on-chain (to the channel or submarine swap funding address), and wait for the client to reveal the preimage when they claim the payment. Because there is no guarantee that the client will actually claim the payment, the service providers need to ask prepayment of mining fees.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; In the case of submarine swaps, services that use dedicated client software, such as Loop by Lightning Labs, can ask for a prepayment, because their software can handle it (this is called &quot;no show penalty&quot; on the Loop website). However, competitors who do require a dedicated wallet, not such as the Boltz exchange, cannot do that. Their website shows an invoice to the user, whose wallet that is agnostic about the swap, and it would be unpractical for them to show two invoices to be paid simultaneously. This creates a situation where Boltz is vulnerable to DoS attacks, where the attacker forces them to pay on-chain fees.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; In the case of JIT channels, providers who want to protect themselves against this mining fee attack need to ask the preimage of the main payment before they open the channel. I believe this is what Phoenix does (although their pay-to-open service is not open-source, so I cannot really check). The issue is that a service that asks for the preimage first becomes custodian. From a legal perspective, it does not matter whether they open the channel immediately after receiving the preimage, the ordering of events makes their service custodian. In Europe, such a service will fall within the European MICA regulation. Competitors who refuse to offer custodian services, such as Electrum, are excluded from that game.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; In order to solve that, it would be beneficial to bundle the prepayment and the main payment in the same BOLT-11 invoice.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; The semantics of bundled payments is as follows:
+</I>&gt;<i> &gt; &gt;&gt; - 1. the BOLT-11 invoice contains two preimages and two amounts: prepayment and main payment.
+</I>&gt;<i> &gt; &gt;&gt; - 2. the receiver should wait until all the HTLCs of both payments have arrived, before they fulfill the HTLCs of the pre-payment. If the main payment does not arrive, they should fail the pre-payment with a MPP timeout.
+</I>&gt;<i> &gt; &gt;&gt; - 3. once the HTLCs of both payments have arrived, the receiver fulfills the HTLCs of the prepayment, and they broadcast their on-chain transaction. Note that the main payment can still fail if the sender never reveal the preimage of the main payment.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; Of course, nothing in my proposal prevents the service provider from stealing the pre-payment, but that is already the case today.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; I believe this proposal would level the field in terms of competition between lightning service providers. Currently, you need to use a dedicated client in order to use Loop, and competitors who do not have an established user base running a dedicated client are exposed to the mining fee attack. I also believe that ACINQ would benefit from this, because it would make it possible for them to make their pay-to-open service fully non-custodian. My understanding is that in its current form, the 'pay-to-open' service used by Phoenix will fall into the scope of the European MICA regulation, which they should consider as a serious issue.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; Finally, I believe that such a change should be implemented in BOLT-11, and not using BOLT-12 or onion messages. Indeed, my proposal does not require the exchange of new messages. Some of the initial feedback I received was that this is a use case for BOLT-12 or OM, but I think that this is making things unnecessarily complicated. We should not add new messages when things can be done in a non-interactive way.
+</I>&gt;<i> &gt; &gt;&gt;
+</I>&gt;<i> &gt; &gt;&gt; Cheers,
+</I>&gt;<i> &gt; &gt;&gt; ThomasV
+</I>&gt;<i> &gt; &gt;&gt; _______________________________________________
+</I>&gt;<i> &gt; &gt;&gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; &gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; &gt;&gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; --
+</I>&gt;<i> &gt; Electrum Technologies GmbH / Paul-Lincke-Ufer 8d / 10999 Berlin / Germany
+</I>&gt;<i> &gt; Sitz, Registergericht: Berlin, Amtsgericht Charlottenburg, HRB 164636
+</I>&gt;<i> &gt; Gesch&#228;ftsf&#252;hrer: Thomas Voegtlin
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003992.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+	<LI>Next message: <A HREF="003985.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3990">[ date ]</a>
+              <a href="thread.html#3990">[ thread ]</a>
+              <a href="subject.html#3990">[ subject ]</a>
+              <a href="author.html#3990">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

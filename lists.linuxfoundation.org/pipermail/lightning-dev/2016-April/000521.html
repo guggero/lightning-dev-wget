@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fwd: Re:  Routing &amp; Beacons
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fwd%3A%20Re%3A%20%20Routing%20%26%20Beacons&In-Reply-To=%3C87oa8x5hdu.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000519.html">
+   <LINK REL="Next"  HREF="000520.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fwd: Re:  Routing &amp; Beacons</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fwd%3A%20Re%3A%20%20Routing%20%26%20Beacons&In-Reply-To=%3C87oa8x5hdu.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Fwd: Re:  Routing &amp; Beacons">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Apr 26 00:43:41 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000519.html">[Lightning-dev] Fwd: Re:  Routing &amp; Beacons
+</A></li>
+        <LI>Next message: <A HREF="000520.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#521">[ date ]</a>
+              <a href="thread.html#521">[ thread ]</a>
+              <a href="subject.html#521">[ subject ]</a>
+              <a href="author.html#521">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>laurentmt &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laurentmt145 at gmail.com</A>&gt; writes:
+&gt;<i> Hi Rusty,
+</I>&gt;<i>
+</I>&gt;<i> If I'm correct, it means that on a given period all payments go through
+</I>&gt;<i> the selected beacons nodes ?
+</I>
+To a first approximation, yes (obviously, if the route would go in and
+out the same channel, it can be eliminated, but that's statistically
+unlikely for a well-connected beacon).
+
+BTW, the literature seems to use the term &quot;landmarks&quot;, so I'm trying to stop
+saying &quot;beacons&quot; :)
+
+&gt;<i> I ask this because some protocols like the pulse protocol are also based
+</I>&gt;<i> on beacons to update the routing tables but they don't require that all
+</I>&gt;<i> &quot;messages&quot; go through the beacons. &quot;Messages&quot; go through the first
+</I>&gt;<i> common ancestor of source and target in the spanning tree associated to
+</I>&gt;<i> the selected beacon.
+</I>&gt;<i>
+</I>&gt;<i> The main drawback with this approach is that the source doesn't know the
+</I>&gt;<i> route beforehand... The main advantage is that it puts less &quot;pressure&quot;
+</I>&gt;<i> on the beacons.
+</I>
+Yes, I'd really like something better, but the beacon/landmark idea is
+simple, enables a one-pass communication for the route (here's a QR code
+on how to reach me from N landmarks), and doesn't require the receiver
+to know the buyer's location.
+
+&gt;<i> Another question: have you already decided on an update strategy for the
+</I>&gt;<i> routing tables?
+</I>
+No, I haven't.  Thoughts welcome :)
+
+&gt;<i> As I understand the problem, there's 2 variables which determine the
+</I>&gt;<i> best route:
+</I>&gt;<i>
+</I>&gt;<i> - capacity of channels at time t (max number of bitcoins I can transfer
+</I>&gt;<i> through a given channel). It determines if a route can be used to
+</I>&gt;<i> transfer the amount.
+</I>&gt;<i>
+</I>&gt;<i> - fees charged by nodes. It determines the best route.
+</I>&gt;<i>
+</I>&gt;<i> Capacity is likely the most dynamic of the two variables. Do you
+</I>&gt;<i> consider capacity as an information stored in the routing tables (but it
+</I>&gt;<i> may be very challenging to keep tables up to date) or is it checked &quot;in
+</I>&gt;<i> live&quot; when the payment is propagated ?
+</I>
+My base assumption is that payments are generally smaller than channel
+capacity, i.e. micropayments.  Also, the route map itself is fairly
+static, and in fact could be fully known to a node: the pricing
+information is dynamic and needs careful thought.
+
+You want a payment to Just Work most of the time; getting routefails and
+forcing retries should be unusual.
+
+My current idea (beyond a prototype where every node chats on IRC
+indicating their current routes and prices) is that:
+
+1) Prices are indicated as base + per-satoshi cost.
+2) Nodes are ratelimited on their pricing updates (say, once every 30
+   seconds, perhaps with some burst capacity).
+
+I'm also considering that price changes phase in over time, indicating
+how they change over time from some base (eg. &quot;increase by .01 satoshi
+every second from X until Y&quot;).  My concern is that slight price changes
+may cause massive changes in terms of traffic (once a parallel route
+becomes cheaper), so that makes sense.  Some ratelimiting is definitely
+necessary because competition may well cause such route-flap.
+
+And note that base+per-satoshi means &quot;best route&quot; selection depends on
+the value you're sending, so a handful of nominal values are probably
+required (so there may be different &quot;best routes&quot; for each one).
+
+There's also the question of how to handle false advertising.  Ideally,
+you should be able to broadcast the response from a node which refuses
+to route your payment.  That gets a little complicated with onioning: it
+would have to sign the hash of the onion, HTLC and the routefail
+message, which would be checked by the previous node and encrypted,
+onioned all the way back to the source.  If one node signs a invalid
+message, that can be broadcast and the node blacklisted.  The sender can
+reveal the onion at that point and the decode key, and show that the
+node refused to route.  It can then be temporarily blacklisted.
+
+Sorry if this raises more questions than answers!
+
+Cheers,
+Rusty.
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000519.html">[Lightning-dev] Fwd: Re:  Routing &amp; Beacons
+</A></li>
+	<LI>Next message: <A HREF="000520.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#521">[ date ]</a>
+              <a href="thread.html#521">[ thread ]</a>
+              <a href="subject.html#521">[ subject ]</a>
+              <a href="author.html#521">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

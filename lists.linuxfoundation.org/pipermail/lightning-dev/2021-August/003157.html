@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Removing the Dust Limit
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Removing%20the%20Dust%20Limit&In-Reply-To=%3CCALZpt%2BG0CRitWLwUTA%2B7NnnZWNNrsEmFTMW3VmFSQ%3DvzXZOQGA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003155.html">
+   <LINK REL="Next"  HREF="003158.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Removing the Dust Limit</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Removing%20the%20Dust%20Limit&In-Reply-To=%3CCALZpt%2BG0CRitWLwUTA%2B7NnnZWNNrsEmFTMW3VmFSQ%3DvzXZOQGA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Removing the Dust Limit">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Aug 10 22:37:48 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003155.html">[Lightning-dev] Removing the Dust Limit
+</A></li>
+        <LI>Next message: <A HREF="003158.html">[Lightning-dev] [bitcoin-dev]  Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3157">[ date ]</a>
+              <a href="thread.html#3157">[ thread ]</a>
+              <a href="subject.html#3157">[ subject ]</a>
+              <a href="author.html#3157">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>  As developers, we have no
+</I>control over prevailing feerates, so this is a problem LN needs to deal
+with regardless of Bitcoin Core's dust limit.
+
+Right, as of today, we're going to trim-to-dust any commitment output of
+which the value is inferior to the transaction owner's
+`dust_limit_satoshis` plus the HTLC-claim (either success/timeout) fee at
+the agreed on feerate. So the feerate is the most significant variable in
+defining what's a LN *uneconomical output*.
+
+IMO this approach presents annoying limitations. First, you still need to
+come with an agreement among channel operators on the mempools feerate.
+Such agreement might be problematic to find, as on one side you would like
+to let your counterparty free to pick up a feerate gauged as efficient for
+the confirmation of their transactions but at the same time not too high to
+burn to fees your low-values HTLCs that *your* fee-estimator judged as sane
+to claim.
+
+Secondly, the trim-to-dust evaluation doesn't correctly match the lifetime
+of the HTLC. A HTLC might be considered as dust at block 100, at which
+mempools are full. Though its expiration only occurs at block 200, at which
+mempools are empty and this HTLC is fine to claim again. I think this
+inaccuracy will even become worse with a wider deployment of long-lived
+routed packets over LN, such as DLCs or hodl invoices.
+
+All this to say, if for those reasons LN devs remove feerate negotiation
+from the trim-to-dust definition to a static feerate, it would likely put a
+higher pressure on the full-nodes operators, as the number of uneconomical
+outputs might increase.
+
+(From a LN viewpoint, I would say we're trying to solve a price discovery
+issue, namely the cost to write on the UTXO set, in a distributed system,
+where any deviation from the &quot;honest&quot; price means you trust more your LN
+counterparty)
+
+&gt;<i> They could also use trustless probabalistic payments, which have been
+</I>discussed in the context of LN for handling the problem of payments too
+small to be represented onchain since early 2016:
+<A HREF="https://docs.google.com/presentation/d/1G4xchDGcO37DJ2lPC_XYyZIUkJc2khnLrCaZXgvDN0U/edit?pref=2&amp;pli=1#slide=id.g85f425098">https://docs.google.com/presentation/d/1G4xchDGcO37DJ2lPC_XYyZIUkJc2khnLrCaZXgvDN0U/edit?pref=2&amp;pli=1#slide=id.g85f425098</A>
+
+Thanks to bringing to the surface probabilistic payments, yes that's a
+worthy alternative approach for low-value payments to keep in mind.
+
+Le mar. 10 ao&#251;t 2021 &#224; 02:15, David A. Harding &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">dave at dtrt.org</A>&gt; a &#233;crit :
+
+&gt;<i> On Mon, Aug 09, 2021 at 09:22:28AM -0400, Antoine Riard wrote:
+</I>&gt;<i> &gt; I'm pretty conservative about increasing the standard dust limit in any
+</I>&gt;<i> &gt; way. This would convert a higher percentage of LN channels capacity into
+</I>&gt;<i> &gt; dust, which is coming with a lowering of funds safety [0].
+</I>&gt;<i>
+</I>&gt;<i> I think that reasoning is incomplete.  There are two related things here:
+</I>&gt;<i>
+</I>&gt;<i> - **Uneconomical outputs:** outputs that would cost more to spend than
+</I>&gt;<i>   the value they contain.
+</I>&gt;<i>
+</I>&gt;<i> - **Dust limit:** an output amount below which Bitcoin Core (and other
+</I>&gt;<i>   nodes) will not relay the transaction containing that output.
+</I>&gt;<i>
+</I>&gt;<i> Although raising the dust limit can have the effect you describe,
+</I>&gt;<i> increases in the minimum necessary feerate to get a transaction
+</I>&gt;<i> confirmed in an appropriate amount of time also &quot;converts a higher
+</I>&gt;<i> percentage of LN channel capacity into dust&quot;.  As developers, we have no
+</I>&gt;<i> control over prevailing feerates, so this is a problem LN needs to deal
+</I>&gt;<i> with regardless of Bitcoin Core's dust limit.
+</I>&gt;<i>
+</I>&gt;<i> (Related to your linked thread, that seems to be about the risk of
+</I>&gt;<i> &quot;burning funds&quot; by paying them to a miner who may be a party to the
+</I>&gt;<i> attack.  There's plenty of other alternative ways to burn funds that can
+</I>&gt;<i> change the risk profile.)
+</I>&gt;<i>
+</I>&gt;<i> &gt; the standard dust limit [...] introduces a trust vector
+</I>&gt;<i>
+</I>&gt;<i> My point above is that any trust vector is introduced not by the dust
+</I>&gt;<i> limit but by the economics of outputs being worth less than they cost to
+</I>&gt;<i> spend.
+</I>&gt;<i>
+</I>&gt;<i> &gt; LN node operators might be willingly to compensate this &quot;dust&quot; trust
+</I>&gt;<i> vector
+</I>&gt;<i> &gt; by relying on side-trust model
+</I>&gt;<i>
+</I>&gt;<i> They could also use trustless probabalistic payments, which have been
+</I>&gt;<i> discussed in the context of LN for handling the problem of payments too
+</I>&gt;<i> small to be represented onchain since early 2016:
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://docs.google.com/presentation/d/1G4xchDGcO37DJ2lPC_XYyZIUkJc2khnLrCaZXgvDN0U/edit?pref=2&amp;pli=1#slide=id.g85f425098_0_178">https://docs.google.com/presentation/d/1G4xchDGcO37DJ2lPC_XYyZIUkJc2khnLrCaZXgvDN0U/edit?pref=2&amp;pli=1#slide=id.g85f425098_0_178</A>
+</I>&gt;<i>
+</I>&gt;<i> (Probabalistic payments were discussed in the general context of Bitcoin
+</I>&gt;<i> well before LN was proposed, and Elements even includes an opcode for
+</I>&gt;<i> creating them.)
+</I>&gt;<i>
+</I>&gt;<i> &gt; smarter engineering such as utreexo on the base-layer side
+</I>&gt;<i>
+</I>&gt;<i> Utreexo doesn't solve this problem.  Many nodes (such as miners) will
+</I>&gt;<i> still want to store the full UTXO set and access it quickly,  Utreexo
+</I>&gt;<i> proofs will grow in size with UTXO set size (though, at best, only
+</I>&gt;<i> log(n)), so full node operators will still not want their bandwidth
+</I>&gt;<i> wasted by people who create UTXOs they have no reason to spend.
+</I>&gt;<i>
+</I>&gt;<i> &gt; I think the status quo is good enough for now
+</I>&gt;<i>
+</I>&gt;<i> I agree.
+</I>&gt;<i>
+</I>&gt;<i> -Dave
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210810/c82980c2/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210810/c82980c2/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003155.html">[Lightning-dev] Removing the Dust Limit
+</A></li>
+	<LI>Next message: <A HREF="003158.html">[Lightning-dev] [bitcoin-dev]  Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3157">[ date ]</a>
+              <a href="thread.html#3157">[ thread ]</a>
+              <a href="subject.html#3157">[ subject ]</a>
+              <a href="author.html#3157">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

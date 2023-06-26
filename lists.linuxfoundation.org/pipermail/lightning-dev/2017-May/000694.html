@@ -1,0 +1,227 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Lightning payment format
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20payment%20format&In-Reply-To=%3C8760hhfd61.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000691.html">
+   <LINK REL="Next"  HREF="000695.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Lightning payment format</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20payment%20format&In-Reply-To=%3C8760hhfd61.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [RFC] Lightning payment format">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu May  4 04:39:50 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000691.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+        <LI>Next message: <A HREF="000695.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#694">[ date ]</a>
+              <a href="thread.html#694">[ thread ]</a>
+              <a href="subject.html#694">[ subject ]</a>
+              <a href="author.html#694">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Fabrice Drouin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">fabrice.drouin at acinq.fr</A>&gt; writes:
+&gt;<i> Hi Rusty,
+</I>&gt;<i>
+</I>&gt;<i> Payment requests should also include a timestamp and an expiry date (they
+</I>&gt;<i> could be optional tagged items but I think it makes more sense to make them
+</I>&gt;<i> mandatory)
+</I>
+Excellent point.  Provability definitely requires a timestamp, but the
+duration could be optional.
+
+Here's the patch I just pushed:
+
+Subject: Add timestamp and (optional) expiry.
+
+We take advantage of the variable length encoding for the expiry timestamp,
+and 32 bits for the offer time (wake me in 2106 to update the spec).
+
+I chose a reasonable default expiry of 1 hour; the intention is that
+the software should warn if this expiry approaches.
+
+Suggested-by: Fabrice Drouin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">fabrice.drouin at acinq.fr</A>&gt;
+Signed-off-by: Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+
+diff --git a/README.md b/README.md
+index 3039333..6da4150 100644
+--- a/README.md
++++ b/README.md
+@@ -11,6 +11,7 @@ Human readable part:
+ 
+ And data part:
+ 1. Version: 0 (5 bits)
++1. UTC timestamp in seconds-since-Unix-epoch (32 bits)
+ 1. Payment hash (256 bits)
+ 1. Zero or more tagged parts.
+ 1. Signature (bitcoin-style, of SHA256(SHA256(), plus recovery byte) of above. (520 bits)
+@@ -25,6 +26,7 @@ Currently defined tagged parts are:
+ 1. h: description of purpose of payment (SHA256).  This is used to commit
+    to an associated description which is too long to fit, such as may
+    be contained in a web page.
++1. x: expiry time in seconds. Default is 3600 (1 hour) if not specified.
+ 1. f: fallback onchain-address.  20 bytes == p2pkh.  21 bytes == p2wpkh, 33 bytes == p2wsh.
+ 1. r: extra routing information.  This should be appended to the route
+       to allow routing to non-public nodes; there may be more
+diff --git a/examples.sh b/examples.sh
+index 78c2be8..f526223 100755
+--- a/examples.sh
++++ b/examples.sh
+@@ -11,8 +11,8 @@ echo &quot;# Please send 10 satoshi using rhash $RHASH to me @$PUBKEY&quot;
+ ./lightning-address.py encode 10000 $RHASH $PRIVKEY
+ echo
+ 
+-echo &quot;# Please send \$3 for a cup of coffee to the same peer&quot;
+-./lightning-address.py encode --description='1 cup coffee' $((3 * 100000000000 / $CONVERSION_RATE)) $RHASH $PRIVKEY
++echo &quot;# Please send \$3 for a cup of coffee to the same peer, within 1 minute&quot;
++./lightning-address.py encode --description='1 cup coffee' $((3 * 100000000000 / $CONVERSION_RATE)) --expires=60 $RHASH $PRIVKEY
+ echo
+ 
+ echo &quot;# Now send \$24 for an entire list of things (hashed)&quot;
+diff --git a/lightning-address.py b/lightning-address.py
+index c43d020..7b72314 100755
+--- a/lightning-address.py
++++ b/lightning-address.py
+@@ -3,6 +3,7 @@ import argparse
+ import hashlib
+ import re
+ import sys
++import time
+ # Try 'pip3 install secp256k1'
+ import secp256k1
+ 
+@@ -138,9 +139,24 @@ def u32list(val):
+     assert val &lt; (1 &lt;&lt; 32)
+     return bytearray([(val &gt;&gt; 24) &amp; 0xff, (val &gt;&gt; 16) &amp; 0xff, (val &gt;&gt; 8) &amp; 0xff, val &amp; 0xff])
+ 
++# Represent big-endian number with as many bytes as it takes.
++def varlist(val):
++    b = bytearray()
++    while val != 0:
++        b.append(val &amp; 0xFF)
++        val = val // 256
++    b.reverse()
++    return b
++
+ def from_u32list(l):
+     return (l[0] &lt;&lt; 24) + (l[1] &lt;&lt; 16) + (l[2] &lt;&lt; 8) + l[3]
+ 
++def from_varlist(l):
++    total = 0
++    for v in l:
++        total = total * 256 + v
++    return total
++
+ def tagged(char, l):
+     bits=convertbits(l, 8, 5)
+     assert len(bits) &lt; (1 &lt;&lt; 10)
+@@ -169,9 +185,12 @@ def lnencode(options):
+     
+     hrp = 'ln' + options.currency + amount
+     
+-    # version + paymenthash
+-    data = [0] + convertbits(bytearray.fromhex(options.paymenthash), 8, 5)
++    # version + timestamp + paymenthash
++    now = int(time.time())
++    assert len(u32list(now) + bytearray.fromhex(options.paymenthash)) == 4 + 32
++    data = [0] + convertbits(u32list(now) + bytearray.fromhex(options.paymenthash), 8, 5)
+     
++
+     for r in options.route:
+         pubkey,channel,fee,cltv = r.split('/')
+         route = bytearray.fromhex(pubkey) + bytearray.fromhex(channel) + u32list(int(fee)) + u32list(int(cltv))
+@@ -183,7 +202,10 @@ def lnencode(options):
+     
+     if options.description:
+         data = data + tagged('d', [ord(c) for c in options.description])
+-    
++
++    if options.expires:
++        data = data + tagged('x', varlist(options.expires))
++        
+     if options.description_hashed:
+         data = data + tagged('h', hashlib.sha256(options.description_hashed.encode('utf-8')).digest())
+ 
+@@ -239,14 +261,16 @@ def lndecode(options):
+     if options.rate:
+         print(&quot;(Conversion: {})&quot;.format(amount / 10**11 * float(options.rate)))
+ 
+-    # 32 bytes turns into 52 bytes when base32 encoded.
+-    if len(data) &lt; 52:
+-        sys.exit(&quot;Not long enough to contain payment hash&quot;)
++    # 4 + 32 bytes turns into 58 bytes when base32 encoded.
++    if len(data) &lt; 58:
++        sys.exit(&quot;Not long enough to contain timestamp and payment hash&quot;)
+ 
+-    decoded = convertbits(data[:52], 5, 8, False)
+-    data = data[52:]
+-    assert len(decoded) == 32
+-    print(&quot;Payment hash: {}&quot;.format(bytearray(decoded).hex()))
++    decoded = convertbits(data[:58], 5, 8, False)
++    data = data[58:]
++    assert len(decoded) == 4 + 32
++    tstamp = from_u32list(decoded[0:4])
++    print(&quot;Timestamp: {} ({})&quot;.format(tstamp, time.ctime(tstamp)))
++    print(&quot;Payment hash: {}&quot;.format(bytearray(decoded[4:]).hex()))
+ 
+     while len(data) &gt; 0:
+         tag,tagdata,data = pull_tagged(data)
+@@ -265,6 +289,8 @@ def lndecode(options):
+             print(&quot;Description: {}&quot;.format(''.join(chr(c) for c in tagdata)))
+         elif tag == 'h':
+             print(&quot;Description hash: {}&quot;.format(bytearray(tagdata).hex()))
++        elif tag == 'x':
++            print(&quot;Expiry (seconds): {}&quot;.format(from_varlist(tagdata)))
+         else:
+             print(&quot;UNKNOWN TAG {}: {}&quot;.format(tag, bytearray(tagdata).hex()))
+ 
+@@ -286,6 +312,8 @@ parser_enc.add_argument('--description',
+                         help='What is being purchased')
+ parser_enc.add_argument('--description-hashed',
+                         help='What is being purchased (for hashing)')
++parser_enc.add_argument('--expires', type=int,
++                        help='Seconds before offer expires')
+ parser_enc.add_argument('amount', type=int, help='Amount in millisatoshi')
+ parser_enc.add_argument('paymenthash', help='Payment hash (in hex)')
+ parser_enc.add_argument('privkey', help='Private key (in hex)')
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000691.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+	<LI>Next message: <A HREF="000695.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#694">[ date ]</a>
+              <a href="thread.html#694">[ thread ]</a>
+              <a href="subject.html#694">[ subject ]</a>
+              <a href="author.html#694">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

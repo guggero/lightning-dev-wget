@@ -1,0 +1,1074 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [PATCH v3] daemon: encrypted communication (version	3)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%20v3%5D%20daemon%3A%20encrypted%20communication%20%28version%0A%093%29&In-Reply-To=%3C87twpibc7m.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000275.html">
+   <LINK REL="Next"  HREF="000294.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [PATCH v3] daemon: encrypted communication (version	3)</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%20v3%5D%20daemon%3A%20encrypted%20communication%20%28version%0A%093%29&In-Reply-To=%3C87twpibc7m.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [PATCH v3] daemon: encrypted communication (version	3)">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Oct 23 01:33:33 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000275.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+        <LI>Next message: <A HREF="000294.html">[Lightning-dev] [PATCH v3] daemon: encrypted communication (version 3)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#287">[ date ]</a>
+              <a href="thread.html#287">[ thread ]</a>
+              <a href="subject.html#287">[ subject ]</a>
+              <a href="author.html#287">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>OK, once I started trying to send data, I refined this a little so
+we always send protobufs after the initial session key.
+
+Feedback gratefully accepted!
+
+Thanks,
+Rusty.
+--
+After useful feedback from Anthony Towns and Mats Jerratsch (of
+thunder.network fame), this is the third version of inter-node crypto.
+
+1) First, each side sends a 33-byte session pubkey.  This is a
+   bitcoin-style compressed EC key, unique for each session.
+  
+2) ECDH is used to derive a shared secret.  From this we generate
+   the following transmission encoding parameters for each side:
+   Session AES-128 key: SHA256(shared-secret || my-sessionpubkey || 0)
+   Session HMAC key: SHA256(shared-secret || my-sessionpubkey || 1)
+   IV for AES: SHA256(shared-secret || my-sessionpubkey || 2)
+
+3) All packets from then on are encrypted of form:
+	/* HMAC, covering totlen and data */
+	struct sha256 hmac;
+	/* Total data transmitted (including this). */
+	le64 totlen;
+	/* Encrypted contents, rounded up to 16 byte boundary. */
+	u8 data[];
+
+4) The first packet is an Authenticate protobuf, containing this node's
+   pubkey, and a bitcoin-style EC signature of the other side's session
+   pubkey.
+
+5) Unknown protobuf fields are handled in the protocol as follows
+   (including in the initial Authenticate packet):
+
+   1) Odd numbered fields are optional, and backwards compatible.
+   2) Even numbered fields are required; abort if you get one.
+
+Currently both sides just send an error packet &quot;hello&quot; after the
+handshake, and make sure they receive the same.
+
+Signed-off-by: Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+
+diff --git a/daemon/Makefile b/daemon/Makefile
+index 699cdc9..dfdcc0f 100644
+--- a/daemon/Makefile
++++ b/daemon/Makefile
+@@ -14,6 +14,7 @@ DAEMON_LIB_SRC :=				\
+ DAEMON_LIB_OBJS := $(DAEMON_LIB_SRC:.c=.o)
+ 
+ DAEMON_SRC :=					\
++	daemon/cryptopkt.c			\
+ 	daemon/dns.c				\
+ 	daemon/jsonrpc.c			\
+ 	daemon/lightningd.c			\
+@@ -31,6 +32,7 @@ DAEMON_JSMN_HEADERS := daemon/jsmn/jsmn.h
+ 
+ DAEMON_HEADERS :=				\
+ 	daemon/configdir.h			\
++	daemon/cryptopkt.h			\
+ 	daemon/dns.h				\
+ 	daemon/json.h				\
+ 	daemon/jsonrpc.h			\
+diff --git a/daemon/cryptopkt.c b/daemon/cryptopkt.c
+new file mode 100644
+index 0000000..0667d6d
+--- /dev/null
++++ b/daemon/cryptopkt.c
+@@ -0,0 +1,511 @@
++#include &quot;bitcoin/shadouble.h&quot;
++#include &quot;bitcoin/signature.h&quot;
++#include &quot;cryptopkt.h&quot;
++#include &quot;lightning.pb-c.h&quot;
++#include &quot;lightningd.h&quot;
++#include &quot;log.h&quot;
++#include &quot;peer.h&quot;
++#include &quot;protobuf_convert.h&quot;
++#include &quot;secrets.h&quot;
++#include &lt;ccan/build_assert/build_assert.h&gt;
++#include &lt;ccan/crypto/sha256/sha256.h&gt;
++#include &lt;ccan/endian/endian.h&gt;
++#include &lt;ccan/io/io_plan.h&gt;
++#include &lt;ccan/mem/mem.h&gt;
++#include &lt;ccan/short_types/short_types.h&gt;
++#include &lt;inttypes.h&gt;
++#include &lt;openssl/aes.h&gt;
++#include &lt;openssl/evp.h&gt;
++#include &lt;openssl/hmac.h&gt;
++#include &lt;openssl/rand.h&gt;
++#include &lt;secp256k1.h&gt;
++#include &lt;secp256k1_ecdh.h&gt;
++
++#define MAX_PKT_LEN (1024 * 1024)
++
++#define ROUNDUP(x,a) (((x) + ((a)-1)) &amp; ~((a)-1))
++
++struct crypto_pkt {
++	/* HMAC */
++	struct sha256 hmac;
++	/* Total length transmitted. */
++	le64 totlen;
++	/* ... contents... */
++	u8 data[];
++};
++
++/* Temporary structure for negotiation (peer-&gt;io_data-&gt;neg) */
++struct key_negotiate {
++	/* Our session secret key. */
++	u8 seckey[32];
++
++	/* Our pubkey, their pubkey. */
++	u8 our_sessionpubkey[33], their_sessionpubkey[33];
++
++	/* Callback once it's all done. */
++	struct io_plan *(*cb)(struct io_conn *, struct peer *);
++};
++
++/* ARM loves to add padding to structs; be paranoid! */ 
++#define SESSION_PROOF_BASE_SIZE (64 + 33)
++
++#define ENCKEY_SEED 0
++#define HMACKEY_SEED 1
++#define IV_SEED 2
++
++struct enckey {
++	struct sha256 k;
++};
++
++struct hmackey {
++	struct sha256 k;
++};
++
++struct iv {
++	unsigned char iv[AES_BLOCK_SIZE];
++};
++
++static void sha_with_seed(const unsigned char secret[32],
++			  const unsigned char serial_pubkey[33],
++			  unsigned char seed,
++			  struct sha256 *res)
++{
++	struct sha256_ctx ctx;
++
++	sha256_init(&amp;ctx);
++	sha256_update(&amp;ctx, memcheck(secret, 32), 32);
++	sha256_update(&amp;ctx, memcheck(serial_pubkey, 33), 33);
++	sha256_u8(&amp;ctx, seed);
++	sha256_done(&amp;ctx, res);
++}
++
++static struct enckey enckey_from_secret(const unsigned char secret[32],
++					const unsigned char serial_pubkey[33])
++{
++	struct enckey enckey;
++	sha_with_seed(secret, serial_pubkey, ENCKEY_SEED, &amp;enckey.k);
++	return enckey;
++}
++
++static struct hmackey hmackey_from_secret(const unsigned char secret[32],
++					  const unsigned char serial_pubkey[33])
++{
++	struct hmackey hmackey;
++	sha_with_seed(secret, serial_pubkey, HMACKEY_SEED, &amp;hmackey.k);
++	return hmackey;
++}
++
++static struct iv iv_from_secret(const unsigned char secret[32],
++				const unsigned char serial_pubkey[33])
++{
++	struct sha256 sha;
++	struct iv iv;
++
++	sha_with_seed(secret, serial_pubkey, IV_SEED, &amp;sha);
++	memcpy(iv.iv, sha.u.u8, sizeof(iv.iv));
++	return iv;
++}
++
++struct dir_state {
++	u64 totlen;
++	struct hmackey hmackey;
++	EVP_CIPHER_CTX evpctx;
++
++	/* Current packet. */
++	struct crypto_pkt *cpkt;
++};
++
++static bool setup_crypto(struct dir_state *dir,
++			 u8 shared_secret[32], u8 serial_pubkey[33])
++{
++	struct iv iv;
++	struct enckey enckey;
++
++	dir-&gt;totlen = 0;	
++	dir-&gt;hmackey = hmackey_from_secret(shared_secret, serial_pubkey);
++	dir-&gt;cpkt = NULL;
++	
++	iv = iv_from_secret(shared_secret, serial_pubkey);
++	enckey = enckey_from_secret(shared_secret, serial_pubkey);
++
++	return EVP_EncryptInit(&amp;dir-&gt;evpctx, EVP_aes_128_ctr(),
++			       memcheck(enckey.k.u.u8, sizeof(enckey.k)),
++			       memcheck(iv.iv, sizeof(iv.iv))) == 1;
++}
++
++struct io_data {
++	/* Stuff we need to keep around to talk to peer. */
++	struct dir_state in, out;
++
++	/* Header we're currently reading. */
++	size_t len_in;
++	struct crypto_pkt hdr_in;
++
++	/* For negotiation phase. */
++	struct key_negotiate *neg;
++};
++
++static void *proto_tal_alloc(void *allocator_data, size_t size)
++{
++	return tal_arr(allocator_data, char, size);
++}
++
++static void proto_tal_free(void *allocator_data, void *pointer)
++{
++	tal_free(pointer);
++}
++
++static Pkt *decrypt_pkt(struct peer *peer, struct crypto_pkt *cpkt,
++			size_t data_len)
++{
++	size_t full_len;
++	struct sha256 hmac;
++	int outlen;
++	struct io_data *iod = peer-&gt;io_data;
++	struct ProtobufCAllocator prototal;
++	Pkt *ret;
++
++	full_len = ROUNDUP(data_len, AES_BLOCK_SIZE);
++
++	HMAC(EVP_sha256(), iod-&gt;in.hmackey.k.u.u8, sizeof(iod-&gt;in.hmackey),
++	     (unsigned char *)&amp;cpkt-&gt;totlen, sizeof(cpkt-&gt;totlen) + full_len,
++	     hmac.u.u8, NULL);
++
++	if (CRYPTO_memcmp(&amp;hmac, &amp;cpkt-&gt;hmac, sizeof(hmac)) != 0) {
++		log_unusual(peer-&gt;log, &quot;Packet has bad HMAC&quot;);
++		return NULL;
++	}
++
++	/* FIXME: Assumes we can decrypt in place! */
++	EVP_DecryptUpdate(&amp;iod-&gt;in.evpctx, cpkt-&gt;data, &amp;outlen,
++			  memcheck(cpkt-&gt;data, full_len), full_len);
++	assert(outlen == full_len);
++
++	/* De-protobuf it. */
++	prototal.alloc = proto_tal_alloc;
++	prototal.free = proto_tal_free;
++	prototal.allocator_data = tal(iod, char);
++
++	ret = pkt__unpack(&amp;prototal, data_len, cpkt-&gt;data);
++	if (!ret)
++		tal_free(prototal.allocator_data);
++	else
++		/* Make sure packet owns contents */
++		tal_steal(ret, prototal.allocator_data);
++	return ret;
++}
++
++static struct crypto_pkt *encrypt_pkt(struct peer *peer,
++				      const Pkt *pkt,
++				      size_t *total_len)
++{
++	static unsigned char zeroes[AES_BLOCK_SIZE-1];
++	struct crypto_pkt *cpkt;
++	unsigned char *dout;
++	size_t len, full_len;
++	int outlen;
++	struct io_data *iod = peer-&gt;io_data;
++
++	len = pkt__get_packed_size(pkt);
++	full_len = ROUNDUP(len, AES_BLOCK_SIZE);
++	*total_len = sizeof(*cpkt) + full_len;
++
++	cpkt = (struct crypto_pkt *)tal_arr(peer, char, *total_len);
++	iod-&gt;out.totlen += len;
++	cpkt-&gt;totlen = cpu_to_le64(iod-&gt;out.totlen);
++	
++	dout = cpkt-&gt;data;
++	/* FIXME: Assumes we can encrypt in place! */
++	pkt__pack(pkt, dout);
++	EVP_EncryptUpdate(&amp;iod-&gt;out.evpctx, dout, &amp;outlen,
++			  memcheck(dout, len), len);
++	dout += outlen;
++
++	/* Now encrypt tail, padding with zeroes if necessary. */
++	EVP_EncryptUpdate(&amp;iod-&gt;out.evpctx, dout, &amp;outlen, zeroes,
++			  full_len - len);
++	assert(dout + outlen == cpkt-&gt;data + full_len);
++
++	HMAC(EVP_sha256(), iod-&gt;out.hmackey.k.u.u8, sizeof(iod-&gt;out.hmackey),
++	     (unsigned char *)&amp;cpkt-&gt;totlen, sizeof(cpkt-&gt;totlen) + full_len,
++	     cpkt-&gt;hmac.u.u8, NULL);
++
++	return cpkt;
++}
++
++static int do_read_packet(int fd, struct io_plan_arg *arg)
++{
++	struct peer *peer = arg-&gt;u1.vp;
++	struct io_data *iod = peer-&gt;io_data;
++	u64 max;
++	size_t data_off, data_len;
++	int ret;
++
++	/* Still reading header? */
++	if (iod-&gt;len_in &lt; sizeof(iod-&gt;hdr_in)) {
++		ret = read(fd, (char *)&amp;iod-&gt;hdr_in + iod-&gt;len_in,
++			   sizeof(iod-&gt;hdr_in) - iod-&gt;len_in);
++		if (ret &lt;= 0)
++			return -1;
++		iod-&gt;len_in += ret;
++		/* We don't ever send empty packets, so don't check for
++		 * that here. */
++		return 0;
++	}
++
++	max = ROUNDUP(le64_to_cpu(iod-&gt;hdr_in.totlen) - iod-&gt;in.totlen,
++		      AES_BLOCK_SIZE);
++
++	if (iod-&gt;len_in == sizeof(iod-&gt;hdr_in)) {
++		/* FIXME: Handle re-xmit. */
++		if (le64_to_cpu(iod-&gt;hdr_in.totlen) &lt; iod-&gt;in.totlen) {
++			log_unusual(peer-&gt;log,
++				    &quot;Packet went backwards: %&quot;PRIu64
++				    &quot; -&gt; %&quot;PRIu64,
++				    iod-&gt;in.totlen,
++				    le64_to_cpu(iod-&gt;hdr_in.totlen));
++			return -1;
++		}
++		if (le64_to_cpu(iod-&gt;hdr_in.totlen)
++		    &gt; iod-&gt;in.totlen + MAX_PKT_LEN) {
++			log_unusual(peer-&gt;log,
++				    &quot;Packet overlength: %&quot;PRIu64&quot; -&gt; %&quot;PRIu64,
++				    iod-&gt;in.totlen,
++				    le64_to_cpu(iod-&gt;hdr_in.totlen));
++			return -1;
++		}
++		iod-&gt;in.cpkt = (struct crypto_pkt *)
++			tal_arr(iod, u8, sizeof(struct crypto_pkt) + max);
++		memcpy(iod-&gt;in.cpkt, &amp;iod-&gt;hdr_in, sizeof(iod-&gt;hdr_in));
++	}
++
++	data_off = iod-&gt;len_in - sizeof(struct crypto_pkt);
++	ret = read(fd, iod-&gt;in.cpkt-&gt;data + data_off, max - data_off);
++	if (ret &lt;= 0)
++		return -1;
++
++	iod-&gt;len_in += ret;
++	if (iod-&gt;len_in &lt;= max)
++		return 0;
++
++	/* Can't overflow len arg: packet can't be more than MAX_PKT_LEN */
++	data_len = le64_to_cpu(iod-&gt;hdr_in.totlen) - iod-&gt;in.totlen;
++	peer-&gt;inpkt = decrypt_pkt(peer, iod-&gt;in.cpkt, data_len);
++	iod-&gt;in.cpkt = tal_free(iod-&gt;in.cpkt);
++
++	if (!peer-&gt;inpkt)
++		return -1;
++	iod-&gt;in.totlen += data_len;
++	return 1;
++}
++
++struct io_plan *peer_read_packet(struct io_conn *conn,
++				 struct peer *peer,
++				 struct io_plan *(*cb)(struct io_conn *,
++						       struct peer *))
++{
++	struct io_plan_arg *arg = io_plan_arg(conn, IO_IN);
++
++	peer-&gt;io_data-&gt;len_in = 0;
++	arg-&gt;u1.vp = peer;
++	return io_set_plan(conn, IO_IN, do_read_packet,
++			   (struct io_plan *(*)(struct io_conn *, void *))cb,
++			   peer);
++}
++
++/* Caller must free data! */
++struct io_plan *peer_write_packet(struct io_conn *conn,
++				  struct peer *peer,
++				  const Pkt *pkt,
++				  struct io_plan *(*next)(struct io_conn *,
++							  struct peer *))
++{
++	struct io_data *iod = peer-&gt;io_data;
++	size_t totlen;
++
++	/* We free previous packet here, rather than doing indirection
++	 * via io_write */
++	tal_free(iod-&gt;out.cpkt);
++	iod-&gt;out.cpkt = encrypt_pkt(peer, pkt, &amp;totlen);
++	return io_write(conn, iod-&gt;out.cpkt, totlen, next, peer);
++}
++
++static void *pkt_unwrap(struct peer *peer, Pkt__PktCase which)
++{
++	size_t i;
++	const ProtobufCMessage *base;
++
++	if (peer-&gt;inpkt-&gt;pkt_case != which) {
++		log_unusual(peer-&gt;log, &quot;Expected %u, got %u&quot;,
++			    which, peer-&gt;inpkt-&gt;pkt_case);
++		return NULL;
++	}
++
++	/* It's a union, and each member starts with base.  Pick one */
++	base = &amp;peer-&gt;inpkt-&gt;error-&gt;base;
++
++	/* Look for unknown fields.  Remember, &quot;It's OK to be odd!&quot; */
++	for (i = 0; i &lt; base-&gt;n_unknown_fields; i++) {
++		log_debug(peer-&gt;log, &quot;Unknown field in %u: %u&quot;,
++			  which, base-&gt;unknown_fields[i].tag);
++			/* Odd is OK */
++			if (base-&gt;unknown_fields[i].tag &amp; 1)
++				continue;
++			log_unusual(peer-&gt;log, &quot;Unknown field %u in %u&quot;,
++				    base-&gt;unknown_fields[i].tag, which);
++			return NULL;
++	}
++	return peer-&gt;inpkt-&gt;error;
++}
++
++static struct io_plan *check_proof(struct io_conn *conn, struct peer *peer)
++{
++	struct key_negotiate *neg = peer-&gt;io_data-&gt;neg;
++	struct sha256_double sha;
++	struct signature sig;
++	struct io_plan *(*cb)(struct io_conn *, struct peer *);
++	struct pubkey id;
++	Authenticate *auth;
++
++	auth = pkt_unwrap(peer, PKT__PKT_AUTH);
++	if (!auth)
++		return io_close(conn);
++
++	if (!proto_to_signature(auth-&gt;session_sig, &amp;sig)) {
++		log_unusual(peer-&gt;log, &quot;Invalid auth signature&quot;);
++		return io_close(conn);
++	}
++
++	if (!proto_to_pubkey(auth-&gt;node_id, &amp;id)) {
++		log_unusual(peer-&gt;log, &quot;Invalid auth id&quot;);
++		return io_close(conn);
++	}
++
++	/* Signature covers *our* session key. */
++	sha256_double(&amp;sha,
++		      neg-&gt;our_sessionpubkey, sizeof(neg-&gt;our_sessionpubkey));
++
++	if (!check_signed_hash(&amp;sha, &amp;sig, &amp;id)) {
++		log_unusual(peer-&gt;log, &quot;Bad auth signature&quot;);
++		return io_close(conn);
++	}
++
++	tal_free(auth);
++
++	/* All complete, return to caller. */
++	cb = neg-&gt;cb;
++	peer-&gt;io_data-&gt;neg = tal_free(neg);
++	return cb(conn, peer);
++}
++
++static struct io_plan *receive_proof(struct io_conn *conn, struct peer *peer)
++{
++	return peer_read_packet(conn, peer, check_proof);
++}
++
++/* Steals w onto the returned Pkt */
++static Pkt *pkt_wrap(const tal_t *ctx, void *w, Pkt__PktCase pkt_case)
++{
++	Pkt *pkt = tal(ctx, Pkt);
++	pkt__init(pkt);
++	pkt-&gt;pkt_case = pkt_case;
++	/* Union, so any will do */
++	pkt-&gt;error = tal_steal(pkt, w);
++	return pkt;
++}
++
++static Pkt *authenticate_pkt(const tal_t *ctx,
++			     const struct pubkey *node_id,
++			     const struct signature *sig)
++{
++	Authenticate *auth = tal(ctx, Authenticate);
++	authenticate__init(auth);
++	auth-&gt;node_id = pubkey_to_proto(auth, node_id);
++	auth-&gt;session_sig = signature_to_proto(auth, sig);
++	return pkt_wrap(ctx, auth, PKT__PKT_AUTH);
++}
++
++static struct io_plan *keys_exchanged(struct io_conn *conn, struct peer *peer)
++{
++	u8 shared_secret[32];
++	struct pubkey sessionkey;
++	struct signature sig;
++	struct key_negotiate *neg = peer-&gt;io_data-&gt;neg;
++	Pkt *auth;
++
++	if (!pubkey_from_der(neg-&gt;their_sessionpubkey,
++			     sizeof(neg-&gt;their_sessionpubkey),
++			     &amp;sessionkey)) {
++		/* FIXME: Dump key in this case. */
++		log_unusual(peer-&gt;log, &quot;Bad sessionkey&quot;);
++		return io_close(conn);
++	}
++
++	/* Derive shared secret. */
++	if (!secp256k1_ecdh(peer-&gt;state-&gt;secpctx, shared_secret,
++			    &amp;sessionkey.pubkey, neg-&gt;seckey)) {
++		log_unusual(peer-&gt;log, &quot;Bad ECDH&quot;);
++		return io_close(conn);
++	}
++
++	/* Each side combines with their OWN session key to SENDING crypto. */
++	if (!setup_crypto(&amp;peer-&gt;io_data-&gt;in, shared_secret,
++			  neg-&gt;their_sessionpubkey)
++	    || !setup_crypto(&amp;peer-&gt;io_data-&gt;out, shared_secret,
++			     neg-&gt;our_sessionpubkey)) {
++		log_unusual(peer-&gt;log, &quot;Failed setup_crypto()&quot;);
++		return io_close(conn);
++	}
++
++	/* Now sign their session key to prove who we are. */
++	privkey_sign(peer, neg-&gt;their_sessionpubkey,
++		     sizeof(neg-&gt;their_sessionpubkey), &amp;sig);
++
++	/* FIXME: Free auth afterwards. */
++	auth = authenticate_pkt(peer, &amp;peer-&gt;state-&gt;id, &amp;sig);
++	return peer_write_packet(conn, peer, auth, receive_proof);
++}
++
++static struct io_plan *session_key_receive(struct io_conn *conn,
++					   struct peer *peer)
++{
++	struct key_negotiate *neg = peer-&gt;io_data-&gt;neg;
++	/* Now read their key. */
++	return io_read(conn, neg-&gt;their_sessionpubkey,
++		       sizeof(neg-&gt;their_sessionpubkey), keys_exchanged, peer);
++}
++
++static void gen_sessionkey(secp256k1_context *ctx,
++			   u8 seckey[32],
++			   secp256k1_pubkey *pubkey)
++{
++	do {
++		if (RAND_bytes(seckey, 32) != 1)
++			fatal(&quot;Could not get random bytes for sessionkey&quot;);
++	} while (!secp256k1_ec_pubkey_create(ctx, pubkey, seckey));
++}
++
++struct io_plan *peer_crypto_setup(struct io_conn *conn, struct peer *peer,
++				  struct io_plan *(*cb)(struct io_conn *,
++							struct peer *))
++{
++	size_t outputlen;
++	secp256k1_pubkey sessionkey;
++	struct key_negotiate *neg;
++
++	peer-&gt;io_data = tal(peer, struct io_data);
++
++	/* We store negotiation state here. */
++	neg = peer-&gt;io_data-&gt;neg = tal(peer-&gt;io_data, struct key_negotiate);
++	neg-&gt;cb = cb;
++
++	gen_sessionkey(peer-&gt;state-&gt;secpctx, neg-&gt;seckey, &amp;sessionkey);
++
++	secp256k1_ec_pubkey_serialize(peer-&gt;state-&gt;secpctx,
++				      neg-&gt;our_sessionpubkey, &amp;outputlen,
++				      &amp;sessionkey,
++				      SECP256K1_EC_COMPRESSED);
++	assert(outputlen == sizeof(neg-&gt;our_sessionpubkey));
++	return io_write(conn, neg-&gt;our_sessionpubkey, outputlen,
++			session_key_receive, peer);
++}
+diff --git a/daemon/cryptopkt.h b/daemon/cryptopkt.h
+new file mode 100644
+index 0000000..06c6167
+--- /dev/null
++++ b/daemon/cryptopkt.h
+@@ -0,0 +1,26 @@
++#ifndef LIGHTNING_DAEMON_CRYPTOPKT_H
++#define LIGHTNING_DAEMON_CRYPTOPKT_H
++#include &quot;config.h&quot;
++#include &quot;lightning.pb-c.h&quot;
++#include &lt;ccan/io/io.h&gt;
++
++struct peer;
++
++struct io_plan *peer_crypto_setup(struct io_conn *conn,
++				  struct peer *peer,
++				  struct io_plan *(*cb)(struct io_conn *,
++							struct peer *));
++
++/* Reads packet into peer-&gt;inpkt/peer-&gt;inpkt_len */
++struct io_plan *peer_read_packet(struct io_conn *conn,
++				 struct peer *peer,
++				 struct io_plan *(*cb)(struct io_conn *,
++						       struct peer *));
++
++struct io_plan *peer_write_packet(struct io_conn *conn,
++				  struct peer *peer,
++				  const Pkt *pkt,
++				  struct io_plan *(*next)(struct io_conn *,
++							  struct peer *));
++
++#endif /* LIGHTNING_DAEMON_CRYPTOPKT_H */
+diff --git a/daemon/peer.c b/daemon/peer.c
+index 5f578ee..ed4fcda 100644
+--- a/daemon/peer.c
++++ b/daemon/peer.c
+@@ -1,3 +1,4 @@
++#include &quot;cryptopkt.h&quot;
+ #include &quot;dns.h&quot;
+ #include &quot;jsonrpc.h&quot;
+ #include &quot;lightningd.h&quot;
+@@ -14,6 +15,33 @@
+ #include &lt;sys/socket.h&gt;
+ #include &lt;sys/types.h&gt;
+ 
++/* Send and receive (encrypted) hello message. */
++static struct io_plan *peer_test_check(struct io_conn *conn, struct peer *peer)
++{
++	if (peer-&gt;inpkt-&gt;pkt_case != PKT__PKT_ERROR)
++		fatal(&quot;Bad packet type %u&quot;, peer-&gt;inpkt-&gt;pkt_case);
++	if (!peer-&gt;inpkt-&gt;error-&gt;problem
++	    || strcmp(peer-&gt;inpkt-&gt;error-&gt;problem, &quot;hello&quot;) != 0)
++		fatal(&quot;Bad packet '%.6s'&quot;, peer-&gt;inpkt-&gt;error-&gt;problem);
++	log_info(peer-&gt;log, &quot;Successful hello!&quot;);
++	return io_close(conn);
++}
++
++static struct io_plan *peer_test_read(struct io_conn *conn, struct peer *peer)
++{
++	return peer_read_packet(conn, peer, peer_test_check);
++}
++
++static struct io_plan *peer_test(struct io_conn *conn, struct peer *peer)
++{
++	Error err = ERROR__INIT;
++	Pkt pkt = PKT__INIT;
++	pkt.pkt_case = PKT__PKT_ERROR;
++	pkt.error = &amp;err;
++	err.problem = &quot;hello&quot;;
++	return peer_write_packet(conn, peer, &amp;pkt, peer_test_read);
++}
++
+ static void destroy_peer(struct peer *peer)
+ {
+ 	list_del_from(&amp;peer-&gt;state-&gt;peers, &amp;peer-&gt;list);
+@@ -32,6 +60,7 @@ static struct peer *new_peer(struct lightningd_state *state,
+ 	peer-&gt;state = state;
+ 	peer-&gt;addr.type = addr_type;
+ 	peer-&gt;addr.protocol = addr_protocol;
++	peer-&gt;io_data = NULL;
+ 
+ 	/* FIXME: Attach IO logging for this peer. */
+ 	tal_add_destructor(peer, destroy_peer);
+@@ -63,7 +92,7 @@ struct io_plan *peer_connected_out(struct io_conn *conn,
+ 		return io_close(conn);
+ 	}
+ 	log_info(peer-&gt;log, &quot;Connected out to %s:%s&quot;, name, port);
+-	return io_write(conn, &quot;Hello!&quot;, 6, io_close_cb, NULL);
++	return peer_crypto_setup(conn, peer, peer_test);
+ }
+ 
+ static struct io_plan *peer_connected_in(struct io_conn *conn,
+@@ -73,8 +102,9 @@ static struct io_plan *peer_connected_in(struct io_conn *conn,
+ 				     &quot;in&quot;);
+ 	if (!peer)
+ 		return io_close(conn);
+-	
+-	return io_write(conn, &quot;Hello!&quot;, 6, io_close_cb, NULL);
++
++	log_info(peer-&gt;log, &quot;Peer connected in&quot;);
++	return peer_crypto_setup(conn, peer, peer_test);
+ }
+ 
+ static int make_listen_fd(struct lightningd_state *state,
+diff --git a/daemon/peer.h b/daemon/peer.h
+index 50cea69..c39f943 100644
+--- a/daemon/peer.h
++++ b/daemon/peer.h
+@@ -1,6 +1,7 @@
+ #ifndef LIGHTNING_DAEMON_PEER_H
+ #define LIGHTNING_DAEMON_PEER_H
+ #include &quot;config.h&quot;
++#include &quot;lightning.pb-c.h&quot;
+ #include &quot;netaddr.h&quot;
+ #include &lt;ccan/list/list.h&gt;
+ 
+@@ -14,6 +15,12 @@ struct peer {
+ 	/* The other end's address. */
+ 	struct netaddr addr;
+ 
++	/* Current received packet. */
++	Pkt *inpkt;
++	
++	/* Current ongoing packetflow */
++	struct io_data *io_data;
++	
+ 	/* What happened. */
+ 	struct log *log;
+ };
+diff --git a/lightning.pb-c.c b/lightning.pb-c.c
+index 5dde94f..62777aa 100644
+--- a/lightning.pb-c.c
++++ b/lightning.pb-c.c
+@@ -222,6 +222,49 @@ void   funding__free_unpacked
+   assert(message-&gt;base.descriptor == &amp;funding__descriptor);
+   protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
+ }
++void   authenticate__init
++                     (Authenticate         *message)
++{
++  static Authenticate init_value = AUTHENTICATE__INIT;
++  *message = init_value;
++}
++size_t authenticate__get_packed_size
++                     (const Authenticate *message)
++{
++  assert(message-&gt;base.descriptor == &amp;authenticate__descriptor);
++  return protobuf_c_message_get_packed_size ((const ProtobufCMessage*)(message));
++}
++size_t authenticate__pack
++                     (const Authenticate *message,
++                      uint8_t       *out)
++{
++  assert(message-&gt;base.descriptor == &amp;authenticate__descriptor);
++  return protobuf_c_message_pack ((const ProtobufCMessage*)message, out);
++}
++size_t authenticate__pack_to_buffer
++                     (const Authenticate *message,
++                      ProtobufCBuffer *buffer)
++{
++  assert(message-&gt;base.descriptor == &amp;authenticate__descriptor);
++  return protobuf_c_message_pack_to_buffer ((const ProtobufCMessage*)message, buffer);
++}
++Authenticate *
++       authenticate__unpack
++                     (ProtobufCAllocator  *allocator,
++                      size_t               len,
++                      const uint8_t       *data)
++{
++  return (Authenticate *)
++     protobuf_c_message_unpack (&amp;authenticate__descriptor,
++                                allocator, len, data);
++}
++void   authenticate__free_unpacked
++                     (Authenticate *message,
++                      ProtobufCAllocator *allocator)
++{
++  assert(message-&gt;base.descriptor == &amp;authenticate__descriptor);
++  protobuf_c_message_free_unpacked ((ProtobufCMessage*)message, allocator);
++}
+ void   open_channel__init
+                      (OpenChannel         *message)
+ {
+@@ -1344,6 +1387,57 @@ const ProtobufCMessageDescriptor funding__descriptor =
+   (ProtobufCMessageInit) funding__init,
+   NULL,NULL,NULL    /* reserved[123] */
+ };
++static const ProtobufCFieldDescriptor authenticate__field_descriptors[2] =
++{
++  {
++    &quot;node_id&quot;,
++    1,
++    PROTOBUF_C_LABEL_REQUIRED,
++    PROTOBUF_C_TYPE_MESSAGE,
++    0,   /* quantifier_offset */
++    offsetof(Authenticate, node_id),
++    &amp;bitcoin_pubkey__descriptor,
++    NULL,
++    0,             /* flags */
++    0,NULL,NULL    /* reserved1,reserved2, etc */
++  },
++  {
++    &quot;session_sig&quot;,
++    2,
++    PROTOBUF_C_LABEL_REQUIRED,
++    PROTOBUF_C_TYPE_MESSAGE,
++    0,   /* quantifier_offset */
++    offsetof(Authenticate, session_sig),
++    &amp;signature__descriptor,
++    NULL,
++    0,             /* flags */
++    0,NULL,NULL    /* reserved1,reserved2, etc */
++  },
++};
++static const unsigned authenticate__field_indices_by_name[] = {
++  0,   /* field[0] = node_id */
++  1,   /* field[1] = session_sig */
++};
++static const ProtobufCIntRange authenticate__number_ranges[1 + 1] =
++{
++  { 1, 0 },
++  { 0, 2 }
++};
++const ProtobufCMessageDescriptor authenticate__descriptor =
++{
++  PROTOBUF_C__MESSAGE_DESCRIPTOR_MAGIC,
++  &quot;authenticate&quot;,
++  &quot;Authenticate&quot;,
++  &quot;Authenticate&quot;,
++  &quot;&quot;,
++  sizeof(Authenticate),
++  2,
++  authenticate__field_descriptors,
++  authenticate__field_indices_by_name,
++  1,  authenticate__number_ranges,
++  (ProtobufCMessageInit) authenticate__init,
++  NULL,NULL,NULL    /* reserved[123] */
++};
+ static const ProtobufCEnumValue open_channel__anchor_offer__enum_values_by_number[2] =
+ {
+   { &quot;WILL_CREATE_ANCHOR&quot;, &quot;OPEN_CHANNEL__ANCHOR_OFFER__WILL_CREATE_ANCHOR&quot;, 1 },
+@@ -2259,7 +2353,7 @@ const ProtobufCMessageDescriptor error__descriptor =
+   (ProtobufCMessageInit) error__init,
+   NULL,NULL,NULL    /* reserved[123] */
+ };
+-static const ProtobufCFieldDescriptor pkt__field_descriptors[17] =
++static const ProtobufCFieldDescriptor pkt__field_descriptors[18] =
+ {
+   {
+     &quot;update&quot;,
+@@ -2465,8 +2559,21 @@ static const ProtobufCFieldDescriptor pkt__field_descriptors[17] =
+     0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
+     0,NULL,NULL    /* reserved1,reserved2, etc */
+   },
++  {
++    &quot;auth&quot;,
++    50,
++    PROTOBUF_C_LABEL_OPTIONAL,
++    PROTOBUF_C_TYPE_MESSAGE,
++    offsetof(Pkt, pkt_case),
++    offsetof(Pkt, auth),
++    &amp;authenticate__descriptor,
++    NULL,
++    0 | PROTOBUF_C_FIELD_FLAG_ONEOF,             /* flags */
++    0,NULL,NULL    /* reserved1,reserved2, etc */
++  },
+ };
+ static const unsigned pkt__field_indices_by_name[] = {
++  17,   /* field[17] = auth */
+   13,   /* field[13] = close */
+   15,   /* field[15] = close_ack */
+   14,   /* field[14] = close_complete */
+@@ -2485,13 +2592,14 @@ static const unsigned pkt__field_indices_by_name[] = {
+   3,   /* field[3] = update_signature */
+   7,   /* field[7] = update_timedout_htlc */
+ };
+-static const ProtobufCIntRange pkt__number_ranges[4 + 1] =
++static const ProtobufCIntRange pkt__number_ranges[5 + 1] =
+ {
+   { 1, 0 },
+   { 20, 9 },
+   { 30, 13 },
+   { 40, 16 },
+-  { 0, 17 }
++  { 50, 17 },
++  { 0, 18 }
+ };
+ const ProtobufCMessageDescriptor pkt__descriptor =
+ {
+@@ -2501,10 +2609,10 @@ const ProtobufCMessageDescriptor pkt__descriptor =
+   &quot;Pkt&quot;,
+   &quot;&quot;,
+   sizeof(Pkt),
+-  17,
++  18,
+   pkt__field_descriptors,
+   pkt__field_indices_by_name,
+-  4,  pkt__number_ranges,
++  5,  pkt__number_ranges,
+   (ProtobufCMessageInit) pkt__init,
+   NULL,NULL,NULL    /* reserved[123] */
+ };
+diff --git a/lightning.pb-c.h b/lightning.pb-c.h
+index 26219cc..4178a1e 100644
+--- a/lightning.pb-c.h
++++ b/lightning.pb-c.h
+@@ -20,6 +20,7 @@ typedef struct _Signature Signature;
+ typedef struct _Locktime Locktime;
+ typedef struct _BitcoinPubkey BitcoinPubkey;
+ typedef struct _Funding Funding;
++typedef struct _Authenticate Authenticate;
+ typedef struct _OpenChannel OpenChannel;
+ typedef struct _OpenAnchor OpenAnchor;
+ typedef struct _OpenCommitSig OpenCommitSig;
+@@ -150,6 +151,26 @@ struct  _Funding
+ /*
+  * Set channel params.
+  */
++struct  _Authenticate
++{
++  ProtobufCMessage base;
++  /*
++   * Which node this is.
++   */
++  BitcoinPubkey *node_id;
++  /*
++   * Signature of your session key. * 
++   */
++  Signature *session_sig;
++};
++#define AUTHENTICATE__INIT \
++ { PROTOBUF_C_MESSAGE_INIT (&amp;authenticate__descriptor) \
++    , NULL, NULL }
++
++
++/*
++ * Set channel params.
++ */
+ struct  _OpenChannel
+ {
+   ProtobufCMessage base;
+@@ -500,6 +521,7 @@ struct  _Error
+ 
+ typedef enum {
+   PKT__PKT__NOT_SET = 0,
++  PKT__PKT_AUTH = 50,
+   PKT__PKT_OPEN = 20,
+   PKT__PKT_OPEN_ANCHOR = 21,
+   PKT__PKT_OPEN_COMMIT_SIG = 22,
+@@ -528,6 +550,10 @@ struct  _Pkt
+   Pkt__PktCase pkt_case;
+   union {
+     /*
++     * Start of connection
++     */
++    Authenticate *auth;
++    /*
+      * Opening
+      */
+     OpenChannel *open;
+@@ -658,6 +684,25 @@ Funding *
+ void   funding__free_unpacked
+                      (Funding *message,
+                       ProtobufCAllocator *allocator);
++/* Authenticate methods */
++void   authenticate__init
++                     (Authenticate         *message);
++size_t authenticate__get_packed_size
++                     (const Authenticate   *message);
++size_t authenticate__pack
++                     (const Authenticate   *message,
++                      uint8_t             *out);
++size_t authenticate__pack_to_buffer
++                     (const Authenticate   *message,
++                      ProtobufCBuffer     *buffer);
++Authenticate *
++       authenticate__unpack
++                     (ProtobufCAllocator  *allocator,
++                      size_t               len,
++                      const uint8_t       *data);
++void   authenticate__free_unpacked
++                     (Authenticate *message,
++                      ProtobufCAllocator *allocator);
+ /* OpenChannel methods */
+ void   open_channel__init
+                      (OpenChannel         *message);
+@@ -1017,6 +1062,9 @@ typedef void (*BitcoinPubkey_Closure)
+ typedef void (*Funding_Closure)
+                  (const Funding *message,
+                   void *closure_data);
++typedef void (*Authenticate_Closure)
++                 (const Authenticate *message,
++                  void *closure_data);
+ typedef void (*OpenChannel_Closure)
+                  (const OpenChannel *message,
+                   void *closure_data);
+@@ -1082,6 +1130,7 @@ extern const ProtobufCMessageDescriptor signature__descriptor;
+ extern const ProtobufCMessageDescriptor locktime__descriptor;
+ extern const ProtobufCMessageDescriptor bitcoin_pubkey__descriptor;
+ extern const ProtobufCMessageDescriptor funding__descriptor;
++extern const ProtobufCMessageDescriptor authenticate__descriptor;
+ extern const ProtobufCMessageDescriptor open_channel__descriptor;
+ extern const ProtobufCEnumDescriptor    open_channel__anchor_offer__descriptor;
+ extern const ProtobufCMessageDescriptor open_anchor__descriptor;
+diff --git a/lightning.proto b/lightning.proto
+index 5f0eb03..0c1fcdd 100644
+--- a/lightning.proto
++++ b/lightning.proto
+@@ -52,6 +52,14 @@ message funding {
+ //
+ 
+ // Set channel params.
++message authenticate {
++  // Which node this is.
++  required bitcoin_pubkey node_id = 1;
++  // Signature of your session key. */
++  required signature session_sig = 2;
++};
++
++// Set channel params.
+ message open_channel {
+   // Relative locktime for outputs going to us.
+   required locktime delay = 1;
+@@ -205,6 +213,8 @@ message error {
+ // This is the union which defines all of them
+ message pkt {
+   oneof pkt {
++    // Start of connection
++    authenticate auth = 50;
+     // Opening
+     open_channel open = 20;
+     open_anchor open_anchor = 21;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000275.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+	<LI>Next message: <A HREF="000294.html">[Lightning-dev] [PATCH v3] daemon: encrypted communication (version 3)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#287">[ date ]</a>
+              <a href="thread.html#287">[ thread ]</a>
+              <a href="subject.html#287">[ subject ]</a>
+              <a href="author.html#287">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

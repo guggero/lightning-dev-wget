@@ -1,0 +1,276 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fee Ratecards (your gateway to negativity)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fee%20Ratecards%20%28your%20gateway%20to%20negativity%29&In-Reply-To=%3CCAM1a7P3osYtvr2%2BeCDkQ%3DwwtD8NTF9-jDvX31ij7YY5HfJs4QQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003680.html">
+   <LINK REL="Next"  HREF="003687.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fee Ratecards (your gateway to negativity)</H1>
+    <B>lisa neigut</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fee%20Ratecards%20%28your%20gateway%20to%20negativity%29&In-Reply-To=%3CCAM1a7P3osYtvr2%2BeCDkQ%3DwwtD8NTF9-jDvX31ij7YY5HfJs4QQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Fee Ratecards (your gateway to negativity)">niftynei at gmail.com
+       </A><BR>
+    <I>Tue Sep 13 21:15:21 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003680.html">[Lightning-dev] Inbound channel routing fees
+</A></li>
+        <LI>Next message: <A HREF="003687.html">[Lightning-dev] Fee Ratecards (your gateway to negativity)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3685">[ date ]</a>
+              <a href="thread.html#3685">[ thread ]</a>
+              <a href="subject.html#3685">[ subject ]</a>
+              <a href="author.html#3685">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+I've been talking about them for a bit[^1], now[^2], but here's a more
+formal proposal for fee ratecards.
+
+Spec PR + implementation to come.
+
+## What is a fee ratecard?
+
+A ratecard is a set of four values, positive or negative, that price different
+bands of available liquidity for a channel.
+
+A ratecard replaces the current `fee_proportional_millionths` and
+`fee_base_msat` currently used to calculate the owed fees for
+forwarding a payment on the
+lightning network.
+
+Instead, with ratecards, a channel operator may specify four different
+rates for a channel's liquidity, that will automatically be updated
+depending on the current channel capacity. The four capacity bands are fixed
+at 0-25%, 26-50%, 51-75%, and 76-100%.
+
+Currently, all payments are priced equally. Fee ratecards update this such that
+payments can be priced differently, depending on the current available
+capacity in a channel. This allows node operators to dynamically price
+their liquidity, without needing to continually issue gossip updates as
+the balance changes (which may leak payment flow timing).
+
+## Spec Changes + Implementation Notes
+
+To the `channel_update` gossip message, we add a TLV with one defined
+type, `ratecard`. The ratecard contains 4 16-bit signed integers, one
+for each quarter of channel capacity. (0-25, 26-50, 51-75, 76-100%).
+
+```
+1. `tlv_stream`: `channel_update_tlvs`
+2. types:
+    1. type: 1 (`ratecard`)
+    2. data:
+        * [`s16`:`fee_basis_0_25`]
+        * [`s16`:`fee_basis_26_50`]
+        * [`s16`:`fee_basis_51_75`]
+        * [`s16`:`fee_basis_76_100`]
+```
+
+If a node is advertising a `ratecard` in their `channel_update` for
+that channel, a routing node SHOULD pick the rate to pay based on
+their current guess of the channel's capacity as well as priority for
+the payment.
+
+If a payment is high priority, it is recommended to pay at the highest feeband,
+to ensure delivery (if possible).
+
+On payment failure, the response is the same (you return a copy of the
+`channel_update` in the onion). You MAY give an additional hint as to
+what the current
+acceptable feerate is for a payment.
+
+If the feerate card entry is set, the rates there take precedence over the
+`fee_base_msat` and the `fee_proportional_millionths`.
+
+The `feerate` card effectively removes the ability to set a `fee_base_msat`.
+
+To minimize payment routing failure, it is recommended to set the
+`fee_proportional_millionths` to the same rate as the highest `ratecard`
+rate. (Most likely the `ratecard`.`fee_basis_0_25`).
+
+Note that `ratecards` unit is in basis points, not millionths. As basis points
+are 1/10,000, they're 100x less than the same value expressed as millionths.
+
+- A `basis_point` value of 5 is a fee of 5msat on a 10k msat payment.
+- A `fee_proportional_millionths` of 500 is a fee of 5msat on a 10k
+msat payment.
+
+The current expected price for sats to be pushed to the other side of the
+channel is to be priced by the lowest ratecard capacity band that that payment
+will push the balance into.
+
+For example, if a payment moves 50k through a 100k channel which is currently
+at a total available capacity of 75k sats (which means it'll move the capacity
+from 75k to 25k), that payment will be expected to pay a rate equal to the
+0-25% band, as it'll push the available capacity into the 0-25% range.
+
+Using this rule, HTLCs consuming significant portions of a channel's
+total capacity are more likely to pay higher fees.
+
+### Motivation and Rationale
+At the last in-person spec meeting, it was noted that channel capacity is
+often of variable value depending on the amount of capacity currently
+available in that channel.
+
+It was also noted that we'd like to allow node operators to experiment
+with negative fees.
+
+You can't easily allow for negative feerates with our current gossip messages,
+as it would give gossip an economic value which may have an adverse impact
+on the ability of nodes to stay up to date with the current lightning channel
+topology; it also stands to greatly increase the volume of gossip
+updates issued by any one node, which should scale with payment volume,
+as nodes update their gossip to change their current fees on any one channel.
+
+Note that some nodes already automatically update their channel fees based on
+the available capacity in a channel; fee ratecards should be a more succinct
+way for node operators to express more fine grained prices of their existing
+capacity, with a much reduced bandwidth burden.
+
+### Feerate Cards, Frequently Asked Questions
+
+#### Why four evenly spaced buckets? Why not X function?
+
+1. Expressibility
+	Fees are calculated by the node creating the route for a payment, using
+	parameters set by the channel node operator. These paramters must be
+	communicated via gossip to every node, and then used as inputs to the
+	routing function.
+
+	Parameters need to be uniform and well understood such that
+	routing algorithm designers can make efficient use of them.
+	
+	Four buckets is wide enough such that payment should
+	be able to find/pick a current channel capacity with good
+	probability, yet hopefully expressive enough for routing
+	operators to be able to price their available liquidity
+	with sufficient granularity.
+
+	Four evenly spaced buckets also make it much easier to
+	reason about information leakage (binary search).
+
+2. Predictability for payment success.
+	Feerate cards don't introduce any new risk to payment failure,
+	as the current fee rates of a channel may currently differ
+	from a node's gossip information.
+
+	Rather, feerate cards offer a way for your routing algorithm
+	to dynamically decide on what level of capacity it estimates
+	the channel to be at, and its tolerance for failures.
+
+
+#### Won't this leak my channel balance?
+
+At most, feerate buckets reduce the total number of payment attempts
+required to find an exact channel balance by 2.
+
+It does, however, provide a much lower 'cost of capital' mechanism
+for discovering which band of payment is likely to succeed.
+
+Currently, to discover if a 100k channel has capacity for a 75k sat payment,
+you'd need 75k sats of available liquidity in the node leading up to
+that channel (or 25k in the opposite direction) from your probe node, in
+order to discover if that bucket is available.
+
+This ties up available liquidity along the entire probe route.
+
+With feerate cards, you could do a 1k sat payment at each feerate card
+fee band, and discover the approximate bucket without tying up
+as much of your own own outband capital.
+
+This makes probing more feasible for any node that wants to make a payment,
+while reducing the capital tied up to discern the same amount of information.
+
+#### More data in the channel_update message! Just what we need, more gossip.
+
+It's anticipated that feerate cards will greatly reduce the number of
+`channel_update`s issued by a node, by allowing node operators to dynamically
+price their liquidity by available capacity via a single, static
+`channel_update`.
+
+This should reduce or remove the need to rebroadcast a `channel_update` when a
+channel's capacity changes.
+
+
+#### How do negative fees work?
+
+Astute readers may notice that the proposed feerate card bands can be expressed
+as negative numbers. This allows node operators to price the liquidity
+available in their channel at a discount.
+
+Here's a good way to think about the impact a negative fee will
+have on your channel balances.
+
+A feerate of 5 basis points means that, in order to push 10k sats from
+one of your channel balances to the peer, another of yours must push
+you 10,005 sats. This means you always need more inbound than outbound
+in order to route a payment (unless you're using zero fees, in which case
+you'd need an equal amount).
+
+Negative fees reverse this. At -5 basis points, you'd only need to receive 9,995
+on an inbound channel to cause you to push out 10k sats. This allows you
+to reallocate your inbound capacity at a slight discount to the party
+who's responsible for moving the capital.
+
+#### What happened to payment base fees?
+
+They're going away (they do not work with negative rates).
+Hopefully ratecards will give you enough expressivity to figure out
+good rates for your channel capacity without them.
+
+
+### Credits
+
+This proposal is a marriage of Clara Shikleman's push to start thinking
+about negative fees, and ZmnSCPxj's comments on the variability of
+value of a channel's liquidity based on current capacity.
+
+
+~niftynei
+
+[^1]: [Slides on liquidity +
+lightning](<A HREF="https://docs.google.com/presentation/d/1gK5_JvDl6aR8EqEKIxfdIHMR2vNIgHUS5tydP2kB_gA/edit?usp=sharing">https://docs.google.com/presentation/d/1gK5_JvDl6aR8EqEKIxfdIHMR2vNIgHUS5tydP2kB_gA/edit?usp=sharing</A>)
+[^2]: [Presentation of slides at btcpp in
+Austin](<A HREF="https://www.youtube.com/watch?v=voEbAeS_B5w">https://www.youtube.com/watch?v=voEbAeS_B5w</A>)
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220913/4d5cd38e/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220913/4d5cd38e/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003680.html">[Lightning-dev] Inbound channel routing fees
+</A></li>
+	<LI>Next message: <A HREF="003687.html">[Lightning-dev] Fee Ratecards (your gateway to negativity)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3685">[ date ]</a>
+              <a href="thread.html#3685">[ thread ]</a>
+              <a href="subject.html#3685">[ subject ]</a>
+              <a href="author.html#3685">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

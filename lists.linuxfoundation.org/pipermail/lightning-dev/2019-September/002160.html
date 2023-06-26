@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Revocations and Watchtowers
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Revocations%20and%20Watchtowers&In-Reply-To=%3Cz3MOfhwlnvTlPfKDgkzl-ERMUg_dojyk8fQOXdePVDu5S1h_DqR34GGtpTstLjaUl3JZKocZnV6ttAc9a-KINS6WTihXkpAg2sBr3Ixo3QM%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002158.html">
+   <LINK REL="Next"  HREF="002161.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Revocations and Watchtowers</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Revocations%20and%20Watchtowers&In-Reply-To=%3Cz3MOfhwlnvTlPfKDgkzl-ERMUg_dojyk8fQOXdePVDu5S1h_DqR34GGtpTstLjaUl3JZKocZnV6ttAc9a-KINS6WTihXkpAg2sBr3Ixo3QM%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Revocations and Watchtowers">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Sep 19 14:54:56 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002158.html">[Lightning-dev] Revocations and Watchtowers
+</A></li>
+        <LI>Next message: <A HREF="002161.html">[Lightning-dev] (no subject)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2160">[ date ]</a>
+              <a href="thread.html#2160">[ thread ]</a>
+              <a href="subject.html#2160">[ subject ]</a>
+              <a href="author.html#2160">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Christian,
+
+
+&gt;<i> Even with shachain the storage requirements for the nodes (not the
+</I>&gt;<i> watchtowers) are far from being constant either: since any old state,
+</I>&gt;<i> including anything that we built on top of it (HTLCs), so we need to
+</I>&gt;<i> keep information around to react to those as well (preimages that cannot
+</I>&gt;<i> be subsumed in a shachain since the HTLC preimage is chosen by many
+</I>&gt;<i> remote senders).
+</I>
+Ah, right.
+I forgot these.
+
+More specifically, even though the HTLC outputs are revocable with only knowledge of the revocation key, the SCRIPT itself needs to be provided in full, including the payment hashes.
+
+&gt;<i> When it comes to eltoo, just reusing the same watchtower protocol that
+</I>&gt;<i> we designed for LN-penalty, with unidentified blobs, randomly inserted
+</I>&gt;<i> by anyone, and encrypted with the commitment transaction is likely too
+</I>&gt;<i> simplistic, and results in the O(n) requirement you mentioned. My
+</I>&gt;<i> proposal would be to establish an authenticated session with a
+</I>&gt;<i> watchtower, e.g., by signing all encrypted updates using a session key,
+</I>&gt;<i> and the watchtower only replacing updates that match the session. An
+</I>&gt;<i> attacker could not replace my updates I stashed with the watchtower
+</I>&gt;<i> since it cannot hijack my session. This means that the watchtower can be
+</I>&gt;<i> certain that it can discard old states, but still have the correct
+</I>&gt;<i> reaction stashed when it needs it.
+</I>&gt;<i>
+</I>&gt;<i> Notice that this is already what the lnd watchtower protocol pretty much
+</I>&gt;<i> does, and it is likely that we'd like a session anyway in order to pay
+</I>&gt;<i> the watchtower for its service. I think it's unrealistic to expect
+</I>&gt;<i> altruistic watchtowers storing encrypted blobs for some random people
+</I>&gt;<i> out there in eternity, without getting compensation for it. To hide the
+</I>&gt;<i> activity and timing of our channels we could simply open multiple
+</I>&gt;<i> sessions with the watchtower, or spread them across multiple watchtowers.
+</I>
+It seems that even with multiple sessions with a single watchtower, if the watchtower assumes you are not under direct attack (a reasonable assumption), it would still get all the information on all activity on a channel.
+
+Spreading across multiple watchtowers assumes other watchtowers are somehow not sybils of an existing Big Brother watchtower.
+
+&gt;<i> I'd even go further and just add the channel outpoint (or should I call
+</I>&gt;<i> it &quot;contract outpoint&quot;?) to the update in cleartext so that the
+</I>&gt;<i> watchtower can prune states for closed channels. We can still spread the
+</I>&gt;<i> states across multiple watchtowers to hide update rate and timing. So
+</I>&gt;<i> this effectively gets us to a O(1) storage space for watchtowers in
+</I>&gt;<i> eltoo.
+</I>
+Would this not mean revealing funding outpoints for unpublished channels as well, at least to the watchtower?
+
+It seems to me there is significantly more privacy loss with these kinds of watchtowers.
+
+Before, I proposed to continue using encrypted-blob watchtowers, except rather than triggering on txid[:16], instead trigger on sighash[:16] (so it would work with either Poon-Dryja or Decker-Russell-Osuntokun).
+This would work with `SIGHASH_NOINPUT` on the update transactions (by matching the computed sighash for `SIGHASH_NOINBPUT`), letting watchtowers rebuild the entire sequence of updates (by also looking at further matches of sighash[:16]) in case of a breach, but *only* in case of a breach.
+With this style, watchtowers cannot know, even within a session, whether a hundred updates you send are for a single channel updating 100 times or for a hundred channels updated once each.
+
+Similarly to Poon-Dryja watchtowers you would send the (sighash[:16], encrypted_blob) pair for an update tx that has just been replaced with a new version.
+And if the old update tx is never put onchain, the watchtower never learns about what channel it was watching (unlike the proposed style where the key is the actual channel outpoint, which reveals to the watchtower the channel it was watching).
+
+
+Of course, I suppose privacy is less important in practice for most users than convenience and low price, sigh.
+
+A privacy-conscious person might run one or more private watchtowers for their nodes, and distribute them physically as much as he or she can.
+But there is still the risk that one or more of these are hacked (indeed there is increased risk if they are not within easy physical reach of the owner), and it would be best still if the watchtowers so created have as little practical information to reveal as possible, so I believe my point still stands.
+
+
+Nonetheless, code talks, so feel free to ignore me here.
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002158.html">[Lightning-dev] Revocations and Watchtowers
+</A></li>
+	<LI>Next message: <A HREF="002161.html">[Lightning-dev] (no subject)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2160">[ date ]</a>
+              <a href="thread.html#2160">[ thread ]</a>
+              <a href="subject.html#2160">[ subject ]</a>
+              <a href="author.html#2160">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

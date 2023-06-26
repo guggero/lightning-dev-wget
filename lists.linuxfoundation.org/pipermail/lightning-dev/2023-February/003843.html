@@ -1,0 +1,108 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Highly Available Lightning Channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Highly%20Available%20Lightning%20Channels&In-Reply-To=%3CAE409318-DC6E-478F-9C47-455D431F9A5C%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003842.html">
+   <LINK REL="Next"  HREF="003844.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Highly Available Lightning Channels</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Highly%20Available%20Lightning%20Channels&In-Reply-To=%3CAE409318-DC6E-478F-9C47-455D431F9A5C%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Highly Available Lightning Channels">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Mon Feb 13 14:40:24 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003842.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+        <LI>Next message: <A HREF="003844.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3843">[ date ]</a>
+              <a href="thread.html#3843">[ thread ]</a>
+              <a href="subject.html#3843">[ subject ]</a>
+              <a href="author.html#3843">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Joost,
+
+I&#8217;m not sure I agree that lightning is &#8220;capital efficient&#8221; (or even close to it), but more generally I don&#8217;t see why this needs a signal.
+
+If nodes start aggressively preferring routes through nodes that reliably route payments (which I believe lnd already does, in effect, to some large extent), they should do so by measurement, not signaling.
+
+In practice, many channels on the network are &#8220;high availability&#8221; today, but only in one direction (I.e. they aren&#8217;t regularly spliced/rebalanced and are regularly unbalanced). A node strongly preferring a high payment success rate *should* prefer such a channel, but in your scheme would not.
+
+This ignores the myriad of &#8220;at what threshold do you signal HA&#8221; issues, which likely make such a signal DOA, anyway.
+
+Finally, I&#8217;m very dismayed at this direction in thinking on how ln should work - nodes should be measuring the network and routing over paths that it thinks are reliable for what it wants, *robustly over an unreliable network*. We should absolutely not be expecting the lightning network to be built out of high reliability nodes, that creates strong centralization pressure. To truly meet a &#8220;high availability&#8221; threshold, realistically, you&#8217;d need to be able to JIT 0conf splice-in, which would drive lightning to actually being a credit network.
+
+With reasonable volume, lightning today is very reliable and relatively fast, with few retries required. I don&#8217;t think we need to change anything to fix it. :)
+
+Matt
+
+&gt;<i> On Feb 13, 2023, at 06:46, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &#65279;
+</I>&gt;<i> Hi,
+</I>&gt;<i> 
+</I>&gt;<i> For a long time I've held the expectation that eventually payers on the lightning network will become very strict about node performance. That they will require a routing node to operate flawlessly or else apply a hefty penalty such as completely avoiding the node for an extended period of time - multiple weeks. The consequence of this is that routing nodes would need to manage their liquidity meticulously because every failure potentially has a large impact on future routing revenue.
+</I>&gt;<i> 
+</I>&gt;<i> I think movement in this direction is important to guarantee competitiveness with centralised payment systems and their (at least theoretical) ability to process a payment in the blink of an eye. A lightning wallet trying multiple paths to find one that works doesn't help with this.
+</I>&gt;<i> 
+</I>&gt;<i> A common argument against strict penalisation is that it would lead to less efficient use of capital. Routing nodes would need to maintain pools of liquidity to guarantee successes all the time. My opinion on this is that lightning is already enormously capital efficient at scale and that it is worth sacrificing a slight part of that efficiency to also achieve the lowest possible latency.
+</I>&gt;<i> 
+</I>&gt;<i> This brings me to the actual subject of this post. Assuming strict penalisation is good, it may still not be ideal to flip the switch from one day to the other. Routing nodes may not offer the required level of service yet, causing senders to end up with no nodes to choose from.
+</I>&gt;<i> 
+</I>&gt;<i> One option is to gradually increase the strength of the penalties, so that routing nodes are given time to adapt to the new standards. This does require everyone to move along and leaves no space for cheap routing nodes with less leeway in terms of liquidity.
+</I>&gt;<i> 
+</I>&gt;<i> Therefore I am proposing another way to go about it: extend the `channel_update` field `channel_flags` with a new bit that the sender can use to signal `highly_available`. 
+</I>&gt;<i> 
+</I>&gt;<i> It's then up to payers to decide how to interpret this flag. One way could be to prefer `highly_available` channels during pathfinding. But if the routing node then returns a failure, a much stronger than normal penalty will be applied. For routing nodes this creates an opportunity to attract more traffic by marking some channels as `highly_available`, but it also comes with the responsibility to deliver.
+</I>&gt;<i> 
+</I>&gt;<i> Without shadow channels, it is impossible to guarantee liquidity up to the channel capacity. It might make sense for senders to only assume high availability for amounts up to `htlc_maximum_msat`.
+</I>&gt;<i> 
+</I>&gt;<i> A variation on this scheme that requires no extension of `channel_update` is to signal availability implicitly through routing fees. So the more expensive a channel is, the stronger the penalty that is applied on failure will be. It seems less ideal though, because it could disincentivize cheap but reliable channels on high traffic links.
+</I>&gt;<i> 
+</I>&gt;<i> The effort required to implement some form of a `highly_available` flag seem limited and it may help to get payment success rates up. Interested to hear your thoughts.
+</I>&gt;<i> 
+</I>&gt;<i> Joost
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003842.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+	<LI>Next message: <A HREF="003844.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3843">[ date ]</a>
+              <a href="thread.html#3843">[ thread ]</a>
+              <a href="subject.html#3843">[ subject ]</a>
+              <a href="author.html#3843">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

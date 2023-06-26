@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] AMP via HD, BN+SS, and TR
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20AMP%20via%20HD%2C%20BN%2BSS%2C%20and%20TR&In-Reply-To=%3ChSTydAtKkoMxoTDxOQm_s6QZaIOTmzDpK_I0H7Aus6bEUPlHVwTjql1PdeCe8_E9OjVHoB5gAmy30tgJ8cp1C_RyAvoraFMvK4CM2YLef18%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001101.html">
+   <LINK REL="Next"  HREF="001106.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] AMP via HD, BN+SS, and TR</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20AMP%20via%20HD%2C%20BN%2BSS%2C%20and%20TR&In-Reply-To=%3ChSTydAtKkoMxoTDxOQm_s6QZaIOTmzDpK_I0H7Aus6bEUPlHVwTjql1PdeCe8_E9OjVHoB5gAmy30tgJ8cp1C_RyAvoraFMvK4CM2YLef18%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] AMP via HD, BN+SS, and TR">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Mon Mar 19 00:25:13 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001101.html">[Lightning-dev] High level fee mechanics
+</A></li>
+        <LI>Next message: <A HREF="001106.html">[Lightning-dev] AMP via HD, BN+SS, and TR
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1100">[ date ]</a>
+              <a href="thread.html#1100">[ thread ]</a>
+              <a href="subject.html#1100">[ subject ]</a>
+              <a href="author.html#1100">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I sketch here the idea, of making atomic multipath payment (AMP), with the properties:
+
+1.  Has a proof-of-payment.
+2.  Multipath decorrelation.
+
+Note: I am not a mathematician.  Thus, it is likely, that there is a mistake here, and we cannot make this work.
+
+First, we look at BIP32 hierarchically derived (HD) keys by Wuille.  Roughly, given a parent private key k_par, we can do derive k_i child keys for integer i by:
+
+k_i = H(i || k_par * G) + k_par
+
+where H(x) is a hash function and G is the generator point. (this it not quite how BIP32 does it, it uses HMAC, maybe that is safer for some reason that my non-mathematician self is unaware of...)
+
+The parent public key K_par = k_par * G.  We can derive K_i public child keys for integer i by:
+
+K_i = H(i || K_par) * G + K_par
+
+(I think)
+
+Note that K_i = k_i * G still, as is usual for elliptic curve asymmetric cryptography:
+
+K_i = k_i * G = (H(i || k_par * G) + k_par) * G = H(i || k_par * G) * G + k_par * G = H(i || K_par) * G + K_par
+
+Of note is that if we know an i, a private child key k_i corresponding to that i, and the public parent key K_par, we can derive the private parent key k_par:
+
+k_i = H(i || K_par) + k_par
+
+k_par = k_i - H(i || K_par)
+
+Now all we need is to have a conditional payment, which can only be performed if the payee provides a private key which matches a public key, i.e. given x * G, the payee must provide x.
+
+Fortunately Poelstra has done this work beforehand in the Scriptless Script (SS) concept, where the payee provides a T = t * G, and the Scriptless Script construction requires that the payee reveal the t in order to claim the payment.  I will not go into the math since there is a good chance I shall make a mistake; look up discussions by better mathematicians by me.  Scriptless Script requires Bellare-Neven (BN) signatures to work.
+
+Note that Scriptless Script handles only the equivalent of hashlocking.  We still need a timelock in case the payee refuses to reveal the proof-of-payment t.
+
+Fortunately, Maxwell has provided a construction, taproot (TR).  This construction has two top-level branches: a Bellare-Neven n-of-n, or a Bitcoin Script.  We know that Scriptless Script can make an equivalent to a hashlock from a Bellare-Neven n-of-n.  The other branch of a taproot construction can now be a simple OP_CLTV+OP_CHECKSIG script, forming the timelock half of an HTLC.
+
+How would a multipath payment work?  The invoice would contain the parent public key K_par.  From this, the payer derives as many K_i, as it needs to split the payment to.  It sets up conditional payments that require revelation of the private child key k_i for each K_i it derives.
+
+When the payee receives a partial payment, it is not incentivized to claim it immediately yet.  This is because revelation of even one child key k_i will, in combination with the parent public key K_par, reveal the parent private key k_par, which serves as proof-of-payment.  The payee will wait for the entire payment to reach it, and then claim all of them.  This reveals all the private child keys k_i, any one of which will let the payer extract the parent private key k_par that serves as proof-of-payment.
+
+Each path has a different k_i, thus providing multipath decorrelation.
+
+(Please check my math --- I am not a mathematician and it is possible I have made a mistake somewhere)
+
+Regards,
+ZmnSCPXj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180318/ce9decae/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180318/ce9decae/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001101.html">[Lightning-dev] High level fee mechanics
+</A></li>
+	<LI>Next message: <A HREF="001106.html">[Lightning-dev] AMP via HD, BN+SS, and TR
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1100">[ date ]</a>
+              <a href="thread.html#1100">[ thread ]</a>
+              <a href="subject.html#1100">[ subject ]</a>
+              <a href="author.html#1100">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

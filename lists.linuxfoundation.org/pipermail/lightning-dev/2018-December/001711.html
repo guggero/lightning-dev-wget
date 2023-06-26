@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Reason for having HMACs in Sphinx
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Reason%20for%20having%20HMACs%20in%20Sphinx&In-Reply-To=%3C2f0a233e-d751-f7d9-3ad5-38cae19559de%40bitonic.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001710.html">
+   <LINK REL="Next"  HREF="001712.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Reason for having HMACs in Sphinx</H1>
+    <B>Corn&#233; Plooy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Reason%20for%20having%20HMACs%20in%20Sphinx&In-Reply-To=%3C2f0a233e-d751-f7d9-3ad5-38cae19559de%40bitonic.nl%3E"
+       TITLE="[Lightning-dev] Reason for having HMACs in Sphinx">corne at bitonic.nl
+       </A><BR>
+    <I>Tue Dec  4 10:23:28 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001710.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+        <LI>Next message: <A HREF="001712.html">[Lightning-dev] Reason for having HMACs in Sphinx
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1711">[ date ]</a>
+              <a href="thread.html#1711">[ thread ]</a>
+              <a href="subject.html#1711">[ subject ]</a>
+              <a href="author.html#1711">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Christian, that makes sense. Unfortunately it's not very clear
+from the BOLT, at least not for me.
+
+Now that I think of this type of attack: *in general* the HMAC prevents
+this kind of attack, but isn't the attack still possible in certain
+specific cases?
+
+
+For instance, the attacking intermediate node might guess that the next
+node in the route is the final node; it can test this by completely
+replacing the onion packet it sends to the next node with a self-written
+onion packet that has the next hop as final node, with the same amount
+and payment hash as instructed by the incoming payment. If that
+succeeds, it has learned that the next node is indeed the final node
+(and nobody gets to know about the attack); if that fails, it might
+retry the payment with the original onion packet. In that case, it
+learned that the next node is *not* the final node. In this case, the
+attack is detectable by the next node though: it first receives an
+incoming payment with a payment hash it doesn't recognize, and then it
+receives a payment forwarding request with the same payment hash.
+
+
+Given that the attacker has good knowledge of the shape of the Lightning
+network, this type of attack can be generalized to test whether a
+certain second-degree neighbor, third-degree neighbor etc. is the final
+node; it scales pretty badly with increasing network distance though. An
+additional advantage for the attacker is that this gives plausible
+deniability: if the attack becomes visible, the attacker can always
+claim it wasn't him, but some node upstream in the route. A practical
+difficulty for the attacker might be that the exact amount forwarded in
+further-away hops is unknown, but it's probably not that difficult to guess.
+
+
+I think we could stop this type of attack by including some kind of
+shared secret in the onion message to the final node:
+
+* Payee generates shared secret and passes this to payer, as part of the
+invoice
+
+* Payer includes shared secret in the per hop data to payee
+
+* On receiving the incoming message, payee checks whether the received
+shared secret corresponds to the generated one. If this is not the case,
+behave in exactly the same way as when the payment hash is unrecognized
+(including timing, to prevent timing side-channel attacks).
+
+If this shared secret is encrypted like the rest of the per hop data,
+the attacker can't learn the shared secret, and can't include it in his
+own replacement onion. He can't copy-paste the encrypted shared secret
+from the original onion either, since he has to use his own, different
+ephemeral key in his own onion. With this protocol in place, a final
+node can no longer be distinguished from a non-final node with this attack.
+
+
+The shared secret doesn't need to be very large: the number of attempts
+per second (to guess the shared secret) is limited by network latency,
+bandwidth and maybe some artificial rate limiting. If an attacker can do
+100 attempts per second, then a 32-bit shared secret will take (on
+average) 2^31 / (100*3600*24) = 248 days to crack, for a single guess of
+which node is the final node. In the mean time, people will have noticed
+the ongoing attack and will have taken countermeasures. Besides, the
+transaction lock time will likely have expired in the mean time as well.
+
+
+CJP
+
+
+On 29-11-18 18:13, Christian Decker wrote:
+&gt;<i> Hi Corne,
+</I>&gt;<i>
+</I>&gt;<i> the HMACs are necessary in order to make sure that a hop cannot modify
+</I>&gt;<i> the packet before forwarding, and the next node not detecting that
+</I>&gt;<i> modification.
+</I>&gt;<i>
+</I>&gt;<i> One potential attack that could facilitate is that an attacker could
+</I>&gt;<i> learn the path length by messing with different per-hop payloads: set
+</I>&gt;<i> n=0 the attacker flips bits in the nth per-hop payload, and forwards
+</I>&gt;<i> it. If the next node doesn't return an error it was the final recipient,
+</I>&gt;<i> if if returns an error, increment n and flip bits in the (n+1)th per-hop
+</I>&gt;<i> payload, until no error is returned. Congratulation you just learned the
+</I>&gt;<i> path length after you. The same can probably be done with the error
+</I>&gt;<i> packet, meaning you can learn the exact position in the route. Add to
+</I>&gt;<i> that the information you already know about the network (cltv_deltas,
+</I>&gt;<i> amounts, fees, ...) and you can probably detect sender and recipient.
+</I>&gt;<i>
+</I>&gt;<i> Adding HMACs solves this by ensuring that the next hop will return an
+</I>&gt;<i> error if anything was changed, i.e., removing the leak about which node
+</I>&gt;<i> would have failed the route.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Christian
+</I>
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001710.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+	<LI>Next message: <A HREF="001712.html">[Lightning-dev] Reason for having HMACs in Sphinx
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1711">[ date ]</a>
+              <a href="thread.html#1711">[ thread ]</a>
+              <a href="subject.html#1711">[ subject ]</a>
+              <a href="author.html#1711">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

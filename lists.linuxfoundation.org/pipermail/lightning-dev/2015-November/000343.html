@@ -1,0 +1,246 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Return to the Layered Commit Transactions?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Return%20to%20the%20Layered%20Commit%20Transactions%3F&In-Reply-To=%3C20151125090754.GA29895%40debian%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000341.html">
+   <LINK REL="Next"  HREF="000346.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Return to the Layered Commit Transactions?</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Return%20to%20the%20Layered%20Commit%20Transactions%3F&In-Reply-To=%3C20151125090754.GA29895%40debian%3E"
+       TITLE="[Lightning-dev] Return to the Layered Commit Transactions?">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Nov 25 09:07:54 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000341.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+        <LI>Next message: <A HREF="000346.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#343">[ date ]</a>
+              <a href="thread.html#343">[ thread ]</a>
+              <a href="subject.html#343">[ subject ]</a>
+              <a href="author.html#343">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Nov 25, 2015 at 10:32:54AM +1030, Rusty Russell wrote:
+&gt;<i>         For A if HTLC times out + revocation relative timeout, OR
+</I>&gt;<i> (Aside: can we reduce the HTLC timeout there so that it takes into account
+</I>&gt;<i> the relative timeout?  I'd have to think harder about all the other
+</I>&gt;<i> scripts, too, but it seems reasonable on the surface?).
+</I>
+Definitions:
+ d -- the OP_CSV delay
+ T -- top OP_CLTV timeout
+ C -- the commitment tx is signed by B and given to A at time C
+ P -- the commitment tx is published at time P
+ S -- the commitment tx is spent at time S
+ X -- the timeout at which a refund can be forced
+
+Constraints enforced by bitcoin:
+
+  P &gt;= C
+  S &gt;= T
+  S &gt;= P+d
+
+When A is paying the HTLC, and wants to claim a refund by unilaterally
+closing the channel, We want to enforce S &gt;= P+d and S &gt;= X.
+
+If C+d &gt;= X, then P+d &gt;= C+d &gt;= X, and we can just use OP_CSV &lt;d&gt;.
+
+If C+d &lt; X, then if the commitment is published immediately, P+d &lt; X,
+and we still need OP_CSV &lt;d&gt; &amp;&amp; OP_CLTV &lt;T=X&gt;.
+
+However if the commitment gets updated while the HTLC remains open, C
+will increase over time while d and X remain constant, so eventually the
+OP_CLTV could be dropped. But I don't see how that does any good?
+
+_But_ if you're updating a commitment and C+d &gt;= X, then it seems like
+your counterparty should already have given up on trying to redeem it,
+not keep it open? If so, you're probably being cheated and should have
+closed the channel already.
+
+Alice forwards to Bob who forward to Carol creates two HTLCs:
+
+  (Bob, x, R, T)
+  (Carol, x-f, R, T-t)
+
+What we want is to be able to say that &quot;assuming Bob can close the HTLC
+with Carol by T-t+k, Alice can close the channel by time T+k&quot;, I think...
+
+ * At time T-t+k, Alice says &quot;Bob, you haven't given me R. Do you give
+   up?&quot;. If Bob has closed his channel with Carol and is cooperative,
+   he reveals R (if Carol did) and is happy, or gives up and Alice times
+   out the HTLC slightly early. (If Bob doesn't answer at this point,
+   he's violating protocol, and we don't care if he loses money)
+
+ * Otherwise, Alice declares Bob uncooperative, and closes the channel,
+   with an output spending to:
+
+      (Alice &amp; OP_CLTV T &amp; OP_CSV d) | (Bob &amp; (R | Revoke_A))
+
+ * This enters the blockchain at time T-t+k+x (where x is some delay due
+   to the time it takes to find a block, and whether the fee Alice's
+   commitment pays is competitive or not)
+
+ * Alice can spend this HTLC at time max(T, T-t+k+x+d), which we'd like to
+   no later than T. So T-t+k+x+d &lt;= T, which just means d &lt;= t-k-x
+   If t &gt;&gt; d (ie, inter-hop-delta is much greater than revocation delay),
+   that's satisfied.
+
+ * Depending on the fee Alice pays etc, her transaction then gets
+   n confirmations by time T+y, or else Bob manages a double spend,
+   revealing R. If we chose k such that y &lt;= k here, we're done: if Bob
+   tried at doublespend, then at time T+k Alice knows R, or Alice is
+   confident she got her refund.
+
+ * Induction lets us note that Bob can apply the same argument and
+   ensure that he complies with protocol, giving us the original
+   assumption.
+
+ * For concreteness, then, assuming you pay fees that get your block
+   accepted withing the next F blocks or so, k=y=10*(n+F) minutes,
+   x=10*F minutes, and t &gt;= d+10*(n+2F).
+
+   So normally your HTLC will expire at T-t+k = T-d-10*F and the channel
+   will stay open; otherwise you'll close the channel and not know the
+   answer for sure until T+k = T+10*(n+F).
+
+   For n=4, F=4, t &gt;= d+2 hours, so normal expiry is no later than
+   T-d-40m, and uncooperative expiry is at T+1h20, so d+2h later.
+
+&gt;<i> &gt; (3)
+</I>&gt;<i> &gt; As the absolute CLTV timeout has to increase with each hop, it can
+</I>
+(decrease with each hop; at least if you start counting at whoever's
+paying)
+
+&gt;<i> It's not about DoS, really.  The revocation time has to be long enough
+</I>&gt;<i> so you're certain to spot someone cheating.  And we've established that
+</I>&gt;<i> the HTLC inter-hop-delta should be &gt;&gt; revocation time.
+</I>&gt;<i> 
+</I>&gt;<i> If your node is online and robust, 3 hours should be sufficient for
+</I>&gt;<i> revocation time (remember, you can jack up fees if you need to). 
+</I>
+So if d=3h, then t&gt;=5h above assuming 4 confirmations is enough to give
+you confidence you won't be reorged and doublespent, and you pay enough
+fees to get into one of the next 4 blocks.
+
+&gt;<i> 12
+</I>&gt;<i> hours will give you plenty of time to take your claim transactions and
+</I>&gt;<i> inject them into the bitcoin network via carrier pidgeon or whatever you
+</I>&gt;<i> need to get around any DDoS.
+</I>
+d=3h and t=12h gives (n+2F)=54, so say n=24, F=15; meaning pay enough
+fees to get in in the next 15 blocks, and accept spends after 24
+confirmations.
+
+&gt;<i> Still, let's assume everyone uses 1 day for revocation time, and 2 days
+</I>&gt;<i> for HTLC timeout delta, and we have 20 hops.
+</I>&gt;<i>
+</I>&gt;<i> The original HTLC (NODE 0 -&gt; NODE 1) times out in 40 days.  The last
+</I>&gt;<i> HTLC (NODE 19 -&gt; NODE 20) times out in 2 days, and that one falls to the
+</I>&gt;<i> blockchain.  NODE 19 takes 3 days to get a refund.
+</I>
+By my protocol above, node 19 would demand an answer from node 20
+at time T-t+k, but T=2 days, and t=2 days, so that's just time 0+k.
+d&lt;=t-k-x, so k&lt;=t-d-x; ie, k&lt;=1 day - x, and x=10*F minutes. So node 19
+demands an answer from node 20 after, say, k=21 hours (F=18 blocks). Node
+20 doesn't reply, so 19 closes the channel and posts the commitment
+to the blockchain, paying enough fee to be visible after 18 blocks,
+which happens to be 3h later, ie 1 day total time.  After another day,
+both OP_CLTV and OP_CSV pass, so node 19 tries spending it, with enough
+fee to get in after 18 blocks, or 3h, so that's at about T=51h.
+
+Meanwhile node 18 is wondering what's going on, and follows the same
+protocol. At time T'-t+k demanding an answer from node 19. T'=4 days,
+t=2 days, and k=21h, so T'-t+k = 69h. So node 19 has 18 hours to be
+confident its refund transaction isn't going to be reorged, or to see an
+attempt at a doublespend by node 20 revealing R. Either way, node 19 can
+respond to node 18's request and keep the channel open. Node 18 can
+pre-emptively pass on R or close 17's HTLC at that point and so on.
+
+So by my count, node 19 has a refund within 2 days 21 hours.
+
+&gt;<i> So, worst case is 3 days unless there are multiple hop failures?
+</I>
+A single hop failure at node 3 immediately after the transaction gets
+passed on would be worse. Setup:
+
+ node 1/node 2 = 38 days
+ node 2/node 3 = 36 days
+ node 3/node 4 = 34 days
+ ...
+ node 19/node 20 = 2 days
+
+t+1 second:
+
+ node 1/node 2 = 38 days
+ node 2/node 3 = 36 days
+ node 3/node 4 = 34 days
+ [everyone else resolved]
+
+Node 4 asks node 3 &quot;wtf??&quot;. doesn't get an answer, closes the channel,
+publishing the commitment to the blockchain.
+
+After a day, node 4 can reclaim uncommitted funds, and reveal R to claim
+the HTLC funds. node 3 is out of pocket.
+
+Within the next 33 days, node 3 wakes up, sees R and finishes the
+transaction. Node 2, in particular, has funds held up for the 34 days
+node 3 was down.
+
+&gt;<i> What do you think about reducing the OP_CHECKLOCKTIMEVERIFY argument if
+</I>&gt;<i> it's followed by the revocation delay?
+</I>
+The revocation delay happens simultaneously, so I don't think this can
+be made to work usefully.
+
+Don't think it's needed either though, so long as channels have parameters
+&quot;t&quot; and &quot;k&quot; as well as &quot;d&quot; to drop to the blockchain well before T
+actually comes around.
+
+Cheers,
+aj
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000341.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+	<LI>Next message: <A HREF="000346.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#343">[ date ]</a>
+              <a href="thread.html#343">[ thread ]</a>
+              <a href="subject.html#343">[ subject ]</a>
+              <a href="author.html#343">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

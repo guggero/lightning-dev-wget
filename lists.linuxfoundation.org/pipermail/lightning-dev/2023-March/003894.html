@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [Splicing] On the topic of commit_sigs +	revoke_and_ack
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BSplicing%5D%20On%20the%20topic%20of%20commit_sigs%20%2B%0A%09revoke_and_ack&In-Reply-To=%3CCAM1a7P2BYT7AFku4xupWy%3DFm_HgDK1Nm%2B3NsdR3WwdJLh93zcw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003893.html">
+   <LINK REL="Next"  HREF="003895.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [Splicing] On the topic of commit_sigs +	revoke_and_ack</H1>
+    <B>niftynei</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BSplicing%5D%20On%20the%20topic%20of%20commit_sigs%20%2B%0A%09revoke_and_ack&In-Reply-To=%3CCAM1a7P2BYT7AFku4xupWy%3DFm_HgDK1Nm%2B3NsdR3WwdJLh93zcw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [Splicing] On the topic of commit_sigs +	revoke_and_ack">niftynei at gmail.com
+       </A><BR>
+    <I>Thu Mar 30 22:08:22 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003893.html">[Lightning-dev] Payment correlation attacks
+</A></li>
+        <LI>Next message: <A HREF="003895.html">[Lightning-dev] Proposed changes to the splicing specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3894">[ date ]</a>
+              <a href="thread.html#3894">[ thread ]</a>
+              <a href="subject.html#3894">[ subject ]</a>
+              <a href="author.html#3894">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>This feels sort of dumb but I wrote it up and thought maybe others would
+find it enlightening.
+
+There's been a question of whether or not we should re-send all of the
+commitment-sigs after a new splice has been negotiated. The current CLN
+draft of splicing sends all of them, should we only send the one?
+
+After writing this out, it seems fairly obvious to me that the correct way
+forward is to only send a commitment sig for the newly negotiated splice;
+all of the commitment sigs should be re-sent only when the underlying
+commitment tx changes (eg. htlc added/removed).
+
+Longer analysis below.
+
+As an interesting 'historical aside', in the original splicing draft
+proposal, all commitment sigs were sent in a single message; we've since
+split them out into more messages, which now nicely allows for only sending
+the new commitment_signed message when appropriate.
+
+~nifty
+
+h/t to @ddustin and @t-bast for surfacing this.
+
+
+# Should we re-send commit_sigs + revoke_and_ack for newly negotiated
+splices?
+
+## Background
+
+When a splice tx is successfully negotiated, we need to send a
+commitment-sig to the peer to be able to send the new funding tx.
+
+After `tx_complete`, we need to exchange the `commitment_sig` for the newly
+created splice tx.
+
+
+## Purpose of `commitment_signed`
+
+The purpose of the `commitment_signed` message is to send the peer your
+commitment sig for the currently proposed commitment.
+
+
+## Purpose of `revoke_and_ack`
+
+The purpose of `revoke_and_ack` is two-fold:
+
+- Send a revocation point for the previous commitment transaction, REVOKING
+the previous commitment
+- ACK that the commitment sig has been received for the next commitment
+
+
+
+## Current Protocol
+
+Currently we send the following:
+- a `commitment_sig` message for the just negotiated splice tx
+- resends all prior negotiated splice `commit_sigs` (if RBF) and the
+non-splice commit-sig.
+
+After receiving all the `commit_sig` messages, we do the 'normal' thing
+where we then exchange a single `revoke_and_ack`.
+
+Notably, the Current Protocol is identical for both new commitment signed
+workflows and a new splice negotiation.
+
+Which is to say, we re-use the same protocol for any new commitment
+signatures that are required.
+
+### Benefits to this Approach
+
+- Single action to be taken after either a new commitment is negotiated or
+a splice.
+- Less complexity in implementation + less testing footprint
+
+### Drawbracks to this Approach
+
+- Redundant messages are sent (peer already has all prior commitment sigs
+in the splice case)
+- More signing required for successful splice
+
+## Alternative Proposal
+
+Instead of sending all of the commit-sigs and a revoke_and_ack, we'd send a
+single `commitment_sig`.
+
+### Benefits of this Approach
+
+- Less data sent over the wire. Only new information is transmitted
+- Less signatures need to be (re)-generated.
+
+### Drawbacks to this Approach
+
+- We need a way to communicate that the `commitment_sig` has been received.
+(`tx_signatures` should fill this role.)
+- It's a slightly different way of doing commitments.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230330/e3b76db5/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230330/e3b76db5/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003893.html">[Lightning-dev] Payment correlation attacks
+</A></li>
+	<LI>Next message: <A HREF="003895.html">[Lightning-dev] Proposed changes to the splicing specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3894">[ date ]</a>
+              <a href="thread.html#3894">[ thread ]</a>
+              <a href="subject.html#3894">[ subject ]</a>
+              <a href="author.html#3894">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] An Alternative Onion-Routing Proposal
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Alternative%20Onion-Routing%20Proposal&In-Reply-To=%3CCAO3Pvs9UpzPpiOEi5s36npgXXEzpji3n9V88pE18jHG0gph5gw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000396.html">
+   <LINK REL="Next"  HREF="000398.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] An Alternative Onion-Routing Proposal</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Alternative%20Onion-Routing%20Proposal&In-Reply-To=%3CCAO3Pvs9UpzPpiOEi5s36npgXXEzpji3n9V88pE18jHG0gph5gw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] An Alternative Onion-Routing Proposal">laolu32 at gmail.com
+       </A><BR>
+    <I>Fri Dec 18 22:16:22 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000396.html">[Lightning-dev] Idea: Using DANE to store node data
+</A></li>
+        <LI>Next message: <A HREF="000398.html">[Lightning-dev] An Alternative Onion-Routing Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#397">[ date ]</a>
+              <a href="thread.html#397">[ thread ]</a>
+              <a href="subject.html#397">[ subject ]</a>
+              <a href="author.html#397">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I'm afraid I don't understand how this backwards-compatibility works,
+</I>&gt;<i> so if it is important that I understand it please point me to docs or
+</I>&gt;<i> explain it more.
+</I>&gt;<i>
+</I>
+So we don't have any docs out (yet). But the general ideas arises from
+considering the following scenario: an edge wallet wishes to send funds
+over lightning to <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">49hwYWYV26Qgym2n1GnpgxBffhKf at roasbeef.computer.</A> Assuming
+we're not use HORNET for payment related messages, the wallet attempts to
+connect directly to roasbeef.computer but is unable to. As a fallback, the
+wallet simply decodes the ID from base58, appends the checksum, adds a
+version byte, and then sends the coins to the resulting address.
+
+Essentially, the idea is to have an easy mechanism for a graceful fallback
+to regular on-chain Bitcoin transactions. But, it's really just a
+half-baked idea at this point.
+
+
+Do you mind explaining why you think this is safe? I don't understand
+&gt;<i> how it could be safe, in the case that the attacker knows a private
+</I>&gt;<i> key that maps to the same 128-bit nodeid as a user's private key does.
+</I>&gt;<i>
+</I>
+Sure. Also, I'm referring to colliding public-key hashes. So for a moment
+let's view the network as essentially having two namespaces: global vs
+local. It's not a requirement that the local namespace be of lower
+cardinality than the global namespace. However, in the case of 16-byte
+local (mix-net) ID, and 32-byte global ID (LN) it is, therefore collisions
+are more frequent. In practice, I think this is safe because in the case a
+global node ID conflicts with the local mix-net ID, it doesn't undermine
+the propagation of an HTLC, since only one node will be able to
+successfully check the MAC, and unwrap the mix-header for the next hop.
+
+Here's an illustration:
+
+Say Alice wishes to send funds to Dave, and her channel sub-graph looks
+like this:
+                 Estelle
+               /
+Alice -- Bob
+                \
+                Carol  - Dave
+
+Alice collects the necessary public keys for the route: Bob -&gt; Carol -&gt;
+Dave. She then generates the Sphinx mix-header for the route. As a step in
+the process she generates 16-byte local node ID's for the &quot;next-hop&quot; part
+of each node's mix-header. She then sends the mix-header to Bob, the first
+hop. However, unbeknownst to Alice, the 16-byte ID of Estelle's public-key
+collides with Carol's ID. Bob get's the mix-header, and processes it as
+normal: checks the MAC, re-blinds group element, and finally peels off
+layer from nested mix-header. Bob then realizes there's a collision in the
+local namespace. So he first tries to send the mix-header to Estelle first.
+Estelle rejects the mix-header because she's unable to check the MAC since
+her derived shared secret isn't the one Alice computed for this hop. Bob
+gets this error message, so he instead forwards it to Carol, who accepts,
+resulting in everything continuing as normal.
+
+To Estelle it just looks like Bob computed the mix-header incorrectly, or
+simply forwarded to the wrong node.
+
+I think that's okay (there may be something I'm overlooking)?
+
+
+&gt;<i> &gt; Otherwise, we'd be forced to ditch chacha20+poly3015 for
+</I>&gt;<i> &gt; AES-CTR+SHA-256-HMAC within Sphinx if serialized pub-keys are used for
+</I>&gt;<i> node
+</I>&gt;<i> &gt; ID's in the routing info.
+</I>&gt;<i>
+</I>&gt;<i> I don't understand why the use of entire public keys instead of
+</I>&gt;<i> possibly-truncated hashes of public keys would force a decision about
+</I>&gt;<i> which cipher and MAC to use.
+</I>&gt;<i>
+</I>
+Sphinx requires that the mix-net node ID's be the same size as the MAC
+within the mix-header. So if node ID's in the mix-net were 32-bytes, then
+we couldn't use poly3015 to generate tags since its tag size is 16-bytes.
+
+-- Laolu
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20151218/1fcd7977/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20151218/1fcd7977/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000396.html">[Lightning-dev] Idea: Using DANE to store node data
+</A></li>
+	<LI>Next message: <A HREF="000398.html">[Lightning-dev] An Alternative Onion-Routing Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#397">[ date ]</a>
+              <a href="thread.html#397">[ thread ]</a>
+              <a href="subject.html#397">[ subject ]</a>
+              <a href="author.html#397">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

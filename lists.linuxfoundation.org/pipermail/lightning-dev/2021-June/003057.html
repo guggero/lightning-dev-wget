@@ -1,0 +1,320 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Waiting SIGHASH_ANYPREVOUT and Packing Packages
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Waiting%20SIGHASH_ANYPREVOUT%20and%20Packing%20Packages&In-Reply-To=%3CCALZpt%2BFF_TT_K3wjWhhaDE6Ue%3DRAsM2JWO7-mYjm5LtHqJvNmg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003056.html">
+   <LINK REL="Next"  HREF="003058.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Waiting SIGHASH_ANYPREVOUT and Packing Packages</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Waiting%20SIGHASH_ANYPREVOUT%20and%20Packing%20Packages&In-Reply-To=%3CCALZpt%2BFF_TT_K3wjWhhaDE6Ue%3DRAsM2JWO7-mYjm5LtHqJvNmg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Waiting SIGHASH_ANYPREVOUT and Packing Packages">antoine.riard at gmail.com
+       </A><BR>
+    <I>Fri Jun 18 22:11:38 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003056.html">[Lightning-dev] Tuesday&#8217;s IRC workshop on L2 onchain support
+</A></li>
+        <LI>Next message: <A HREF="003058.html">[Lightning-dev] Waiting SIGHASH_ANYPREVOUT and Packing Packages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3057">[ date ]</a>
+              <a href="thread.html#3057">[ thread ]</a>
+              <a href="subject.html#3057">[ subject ]</a>
+              <a href="author.html#3057">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+It's a big chunk, so if you don't have time browse parts 1 and 2 and share
+your 2 sats on the deployment timeline :p
+
+This post recalls some unsolved safety holes about Lightning, how
+package-relay or SIGHASH_ANYPREVOUT can solve the first one, how a mempool
+hardening can solve the second one, few considerations on package-relay
+design trade-offs and propose a rough deployment timeline.
+
+1) Lightning Safety Holes : Pre-Signed Feerate and Tx-Pinning (to skip if
+you're a LN dev)
+
+As of today, Lightning is suffering from 2 safety holes w.r.t to base-layer
+interactions, widely discussed among ln devs.
+
+The first one, the pre-signed feerate issue with future broadcasted
+time-sensitive transactions is laid out clearly in Matt Corallo's &quot;CPFP
+Carve-Out Fee-Prediction Issues in Contracting Applications (eg Lightning)&quot;
+[0]. This issue might provoke loss of funds, even in non-adversarial
+settings, i.e a Lightning routing hub not being able to settle backward
+onchain a successful HTLC during occurrences of sudden mempool congestion.
+
+As blockspace demand increases with an always growing number of
+onchain/offchain bitcoin users, coupling effects are more likely to happen
+and this pre-signed feerate issue is going to become more urgent to solve
+[1]. For e.g, few percentiles of increases in feerate being overpriced by
+Lightning routing hubs to close &quot;fractional-reserve&quot; backed anchor
+channels, driving mempools congestions, provoking anchor channels
+fee-bumping reserves becoming even more under-provisioned and thus close
+down, etc.
+
+The second issue, malicious transaction pinnings, is documented in Bastien
+Teinturier's &quot;Pinning Attacks&quot; [2]. AFAIK, there is a rough consensus among
+devs on the conceptual feasibility of such a class of attacks against a LN
+node, though so far we have not seen them executed in the wild and I'm not
+aware of anyone having realized them in real-world conditions. Note, there
+is a variety of attack scenarios to consider which is function of a wide
+matrix (channel types, LN implementation's `update_fee` policy, LN
+implementation's `cltv_delta` policy, mempool congestion feerate groups,
+routing hubs or end nodes) Demoing against deployed LN implementations with
+default settings has been on my todo for a while, though a priori One
+Scenario To Exploit Them All doesn't fit well.
+
+Side-note, as a LN operator, if you're worried about those security risks,
+you can bump your `cltv_delta`/`cltv_expiry_delta` to significantly coarse
+the attacks.
+
+I think there is an important point to underscore. Considering the state of
+knowledge we have today, I believe there is no strong interdependency
+between solving pre-signed feerate and tx-pinning with the same mechanism
+from a safety/usability standpoint. Or last such mechanism can be deployed
+by stages.
+
+2) Solving the Pre-Signed Feerate problem : Package-Relay or
+SIGHASH_ANYPREVOUT
+
+For Lightning, either package-relay or SIGHASH_ANYPREVOUT should be able to
+solve the pre-signed feerate issue [3]
+
+One of the interesting points recalled during the first transaction relay
+workshops was that L2s making unbounded security assumptions on
+non-normative tx-relay/mempool acceptance rules sounds a wrong direction
+for the Bitcoin ecosystem long-term, and more prone to subtle bugs/safety
+risks across the ecosystem.
+
+I did express the contrary, public opinion a while back [4]. That said, I
+start to agree it's wiser ecosystem-wise to keep those non-normatives rules
+as only a groundwork for weaker assumptions than consensus ones. Though it
+would be nice for long-term L2s stability to consider them with more care
+than today in our base-layer protocol development process [4]
+
+On this rational, I now share the opinion it's better long-term to solve
+the pre-signed feerate problem with a consensus change such as
+SIGHASH_ANYPREVOUT rather than having too much off-chain coins relying on
+the weaker assumptions offered by bitcoin core's tx-relay/mempool
+acceptance rules, and far harder to replicate and disseminate across the
+ecosystem.
+
+However, if SIGHASH_ANYPREVOUT is Things Done Right(tm), should we discard
+package-relay ?
+
+Sadly, in the worst-case scenario we might never reach consensus again
+across the ecosystem and Taproot is the last softfork. Ever :/ *sad violons
+and tissues jingle*
+
+With this dilemma in mind, it might be wise for the LN/L2 ecosystems to
+have a fall-back plan to solve their safety/usability issues and
+package-relay sounds a reasonable, temporary &quot;patch&quot;.
+
+Even if package-relay requires serious engineering effort in Bitcoin Core
+to avoid introducing new DoSes, swallowing well the complexity increase in
+critical code paths such as the mempool/p2p stack and a gentle API design
+for our friends the L2 devs, I believe it's worthy the engineering
+resources cost. From-my-completely-biased-LN-dev viewpoint :p
+
+In the best-case scenario, we'll activate SIGHASH_ANYPREVOUT and better
+fee-bumping primitives softforks [5] slowly strip off the &quot;L2 fee-bumping
+primitive&quot; semantic from &quot;package-relay&quot;, friendly nudge the L2 ecosystem
+to seat their fee-bumping on safer, consensus assumptions and maybe keep
+the p2p packages to improve on the malicious mempool-partitions-side or as
+a replacement of our orphan logic.
+
+3) Solving Tx-Pinnings : Hardening the Mempool against Tx-Relay Jammings
+attacks
+
+Current Mempool anti-DoS rules have been mostly designed at a time where
+the shared-utxo model with competing time-sensitive transactions was still
+an idea on the whiteboard. The last few years have revealed those anti-DoS
+rules as a source of security vulnerabilities for Lightning and a research
+concern for L2s still in the early-phase of deployment [6].
+
+Beyond real-world pinning exercises against production software as a
+complement of the current pinning attacks research, it would be better to
+agree on a common L2 attacker model before to modify widely-relied subset
+of the mempool, such as the replace-by-fee logic or the in-mempool package
+limits [7]. One risk of uncareful changes in this area would be to solve a
+pinning vector for a L2-alice but introduce a new vuln for a L2-bob.
+
+I believe the first part of such a revamp could hopefully land somehow next
+year. Though, IMHO, in the years to come, we'll have to do more hard
+reasoning to ensure the mempool supports advanced Bitcoin protocols (e.g
+OP_CTV congestion tree,  CoinPool, interactive cut-through, ...)
+
+Note the opinion I raised above on quality of assumptions on mempool
+behavior, even if we harden it on the base-layer side,  L2s should be
+well-aware the product is shipped with a guarantee limitation :p
+
+4) Considerations on Package-Relay Design
+
+Package relay relies on at least two cleanly separate components (awesome,
+if we schedule to deprecate the higher half in the future!)
+* &quot;the higher half&quot; : extension of the mempool logic, with a new
+package-level policy, not strictly intersecting with the tx-level policy
+* &quot;the lower half&quot; : at least three different designs, receiver initiated,
+sender-initiated and relay-initiated
+
+One open design question for the &quot;higher half&quot; is the package-size of the
+acceptance logic, which is ultimately a function of the L2 ecosystem state.
+Do we have deployed or in deployment phase L2 protocols with a need for
+more than 2-stage and if yes what API bounds do they expect ? That's a
+question I hope we'll gather feedback during next Thursday's transaction
+relay workshops. IMO, such package API should come out with a specification
+on which L2-community can be gathered and public consensus established. For
+the same communications reasons towards downstream projects, we have a
+BIP125 standard. And especially in this case the bitcoin core protocol
+development process should carefully listen to the needs of actual L2
+users. Also, a lot of those L2 devs, they don't speak C++ :)
+
+One could imagine those mempool standards as &quot;perishable&quot; contracts between
+a base-layer implementation and the upper layers, with ultimately the
+full-node implementation reserving itself the right to deprecate them,
+maybe with a lengthy-warning period ?
+
+Beyond that, I believe there is another remaining interdependency between
+&quot;the lower half&quot; design and L2s behaviors, namely bandwidth waste in case
+of a high-frequency of package redundancy. Let's say if a package is
+composed of {A, B}, and the package broadcaster fee-bump, triggering the
+transformation to {A, B'}, A bandwidth at first propagation is going to be
+wasted. Note, if we assume a dynamic fee-market, this package rebroadcast
+behavior should be common across the ecosystem. Though ultimately, the
+seriousness of this issue is going to be a function of the number of
+Lightning nodes relying on base-layer tx-relay and the number of fee-bumped
+onchain operations per Lightning node.
+
+I believe it would be great to come up with simulations on this front, just
+to avoid silently nullifying all the tedious, small improvements which have
+been done in the last years to minimize bitcoin core node's bandwidth.
+
+Another alternative would be to come with a cost-effective
+package-replacement policy, so likely more complexity. But might it not
+make sense to not economically outlaw Lightning nodes with a small fee
+budget ?
+
+Lastly, there is a consideration to have around anti-DoS measures we'll
+have to deploy for package-relay. Too easy, and that's a security concern
+for the base-layer, too hard, and that's introducing yet-another tx-relay
+jamming vector against L2, this time at the p2p layer (though won't be the
+first time [8]
+
+In any-case we should carefully consider the upgradeability of
+package-relay v.0, like if we upgrade some components of it such as package
+format or package-announcement scheme.
+
+So yeah why not early 0.24 ? Maybe a bit too short with all those p2p
+questions to clear up among core devs. Ideally, we would land in the
+beginning/middle of the cycle to have time for beta-testing on the L2-side
+and share feedback.
+
+Though ultimately, this question of p2p design belongs to the bitcoin core
+dev process.
+
+# Deployment timeline
+
+So what I believe as a rough deployment timeline.
+
+* &quot;package-relay&quot; in bitcoin core, early 0.24 or 0.25: a Core's release
+cycle offered to the LN/L2 ecosystem to integrate/exercise/provide feedback
+on package API
+
+* &quot;mempool hardening&quot; in bitcoin core, early 0.26 or 0.27, a Core's release
+cycle offered to the whole Bitcoin ecosystem to adapt their Bitcoin
+clients, maybe with a boolean setting to smooth the new policy deployment
+
+* SIGHASH_ANYPREVOUT softfork in the coming year(s), opt-in of any LN/L2
+implementation to migrate its fee-bumping backend on top of it
+
+* &quot;optimized/multi-party fee-bumping primitive&quot; softfork (one of tx
+mutation/sigash_iomap/sponsorship proposals) softfork in the coming decade,
+friendly uplift of the L2 ecosystem
+
+Glad to answer any unclarity or uncorrectness of mine :)
+
+Cheers,
+Antoine,
+
+[0] see
+<A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2018-November/016518.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2018-November/016518.html</A>
+
+[1] &quot;The Coupling Principle states that as things get larger, they often
+exhibit increased interdependence between components&quot;.
+
+[2] see
+<A HREF="https://github.com/t-bast/lightning-docs/blob/master/pinning-attacks.md">https://github.com/t-bast/lightning-docs/blob/master/pinning-attacks.md</A>
+
+[2] see &quot;Advances in Bitcoin Contracting : Uniform Policy and Package
+Relay&quot;
+<A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-July/018063.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-July/018063.html</A>
+
+[3] I don't think there is a clear discussion on how SIGHASH_ANYPREVOUT
+solves pinnings beyond those LN meetings logs:
+<A HREF="https://gnusha.org/lightning-dev/2020-06-08.log">https://gnusha.org/lightning-dev/2020-06-08.log</A>
+
+[4] And I believe such great example has been done with this recent change
+proposed for bitcoin core addr-relay policy:
+<A HREF="https://github.com/bitcoin/bitcoin/pull/21528#issuecomment-809906430,">https://github.com/bitcoin/bitcoin/pull/21528#issuecomment-809906430,</A> where
+the PR author did bear the burden of reaching out potentially affected
+downstream projects.
+
+[5] Like one of tx_mutation/sighash_iomap/sponsorship proposal proposed in
+the thread &quot;A Stroll through Fee-Bumping Techniques: Input-based vs
+Child-Pay-for-Parent&quot; :
+<A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-May/019031.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-May/019031.html</A>
+
+[6] For a discussion about fee-bumping issues for L2s extended beyond LN
+see the analysis of the Revault protocol :
+<A HREF="https://arxiv.org/pdf/2102.09392.pdf">https://arxiv.org/pdf/2102.09392.pdf</A>
+
+[7] As a WIP towards establishing an attacker model, see &quot;Secure
+Fee-Bumping for L2s&quot;
+<A HREF="https://bitcoin-problems.github.io/problems/fee-bumping.html">https://bitcoin-problems.github.io/problems/fee-bumping.html</A>
+
+[8] Tx-relay rules as a concern for second-layers has been raised early on,
+at least during p2p segwit review
+<A HREF="https://github.com/bitcoin/bitcoin/issues/8279">https://github.com/bitcoin/bitcoin/issues/8279</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210618/4f640fc7/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210618/4f640fc7/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003056.html">[Lightning-dev] Tuesday&#8217;s IRC workshop on L2 onchain support
+</A></li>
+	<LI>Next message: <A HREF="003058.html">[Lightning-dev] Waiting SIGHASH_ANYPREVOUT and Packing Packages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3057">[ date ]</a>
+              <a href="thread.html#3057">[ thread ]</a>
+              <a href="subject.html#3057">[ subject ]</a>
+              <a href="author.html#3057">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

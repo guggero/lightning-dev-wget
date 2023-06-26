@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Committing to dust
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Committing%20to%20dust&In-Reply-To=%3C20151127023807.GA31761%40sapphire.erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000364.html">
+   <LINK REL="Next"  HREF="000348.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Committing to dust</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Committing%20to%20dust&In-Reply-To=%3C20151127023807.GA31761%40sapphire.erisian.com.au%3E"
+       TITLE="[Lightning-dev] Committing to dust">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Nov 27 02:38:07 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000364.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+        <LI>Next message: <A HREF="000348.html">[Lightning-dev] Committing to dust
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#345">[ date ]</a>
+              <a href="thread.html#345">[ thread ]</a>
+              <a href="subject.html#345">[ subject ]</a>
+              <a href="author.html#345">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey,
+
+Suppose you have a lightning channel, with balances of exactly 2 BTC
+on your side, and 1 BTC on the other (and 1mBTC for fees). You send a
+micropayment of 42 satoshi across the channel, resulting in an updated
+commitment that looks like:
+
+  in:
+    anchor (3.001 BTC): [yoursig theirsig redeemscript]
+
+  out:
+    1 BTC: [pay2pubkey(theirs)]
+    1.99999958 BTC: [pay2pubkey(yours)]
+    0.00000042 BTC: [pay2scripthash(htlc to them with R or you after
+                     timeout)]
+
+But the third output will hit the IsDust() test (less than 546 satoshi
+for a min relay fee of 0.01 mBTC) and the entire transaction will be
+rejected, so the channel can't be closed at all!
+
+This is a similar problem to sub 1-satoshi payments, but it's different
+in that while you can't represent them as an HTLC output, you can
+represent them as soon as they complete -- ie:
+
+  out:
+    1.00000042 BTC: [pay2pubkey(theirs)]
+    1.99999958 BTC: [pay2pubkey(yours)]
+
+is completely legitimate (whereas an output of 1.0 + 0.042e-8 BTC
+wouldn't be).
+
+I assume treating them much the same way is the only real option --
+account for them exactly in the lightning state, but just approximate the
+results in the actual commitments. So long as you're closing channels
+infrequently, losing a few hundred satoshi here and there won't matter
+much.
+
+The important thing is that adding dust to your commitment might mean you
+can't access _any_ of your funds if your channel counterparty goes AWOL.
+Even though the amount mightn't matter, you can't just treat it like
+any other case in the code.
+
+Another option might be to weaken the dust protection in the network --
+eg if you made the dust output be
+
+    0.00000042 BTC: [(them &amp;&amp; (R || revoke))
+                     || (you &amp;&amp; d CSV &amp;&amp; t CLTV)
+                     || (3 months CSV)]
+
+then anyone could clear the dust after 3 months if it weren't otherwise
+claimed; maybe having some dust for a finite time is okay. But it'd also
+mean paying to an actual (non-standard) script, rather than a scripthash,
+which would be annoying in its own way... And, really, adding that output
+to the txn would probably cost more in additional fees that it's going
+to pay you in any case.
+
+Cheers,
+aj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000364.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+	<LI>Next message: <A HREF="000348.html">[Lightning-dev] Committing to dust
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#345">[ date ]</a>
+              <a href="thread.html#345">[ thread ]</a>
+              <a href="subject.html#345">[ subject ]</a>
+              <a href="author.html#345">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

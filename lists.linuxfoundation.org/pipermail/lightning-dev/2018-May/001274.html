@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] BIP sighash_noinput
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20BIP%20sighash_noinput&In-Reply-To=%3C20180514092329.GA17286%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001266.html">
+   <LINK REL="Next"  HREF="001282.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] BIP sighash_noinput</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20BIP%20sighash_noinput&In-Reply-To=%3C20180514092329.GA17286%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] BIP sighash_noinput">aj at erisian.com.au
+       </A><BR>
+    <I>Mon May 14 09:23:29 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001266.html">[Lightning-dev] [bitcoin-dev] BIP sighash_noinput
+</A></li>
+        <LI>Next message: <A HREF="001282.html">[Lightning-dev] [bitcoin-dev] BIP sighash_noinput
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1274">[ date ]</a>
+              <a href="thread.html#1274">[ thread ]</a>
+              <a href="subject.html#1274">[ subject ]</a>
+              <a href="author.html#1274">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, May 10, 2018 at 08:34:58AM +0930, Rusty Russell wrote:
+&gt;<i> &gt; The big concern I have with _NOINPUT is that it has a huge failure
+</I>&gt;<i> &gt; case: if you use the same key for multiple inputs and sign one of them
+</I>&gt;<i> &gt; with _NOINPUT, you've spent all of them. The current proposal kind-of
+</I>&gt;<i> &gt; limits the potential damage by still committing to the prevout amount,
+</I>&gt;<i> &gt; but it still seems a big risk for all the people that reuse addresses,
+</I>&gt;<i> &gt; which seems to be just about everyone.
+</I>&gt;<i> If I can convince you to sign with SIGHASH_NONE, it's already a problem
+</I>&gt;<i> today.
+</I>
+So, I don't find that very compelling: &quot;there's already a way to lose
+your money, so it's fine to add other ways to lose your money&quot;. And
+again, I think NOINPUT is worse here, because a SIGHASH_NONE signature
+only lets others take the coin you're trying to spend, messing up when
+using NOINPUT can cause you to lose other coins as well (with caveats).
+
+&gt;<i> [...]
+</I>&gt;<i> In a world where SIGHASH_NONE didn't exist, this might be an argument :)
+</I>
+I could see either dropping support for SIGHASH_NONE for segwit
+v1 addresses, or possibly limiting SIGHASH_NONE in a similar way to
+limiting SIGHASH_NOINPUT. Has anyone dug through the blockchain to see
+if SIGHASH_NONE is actually used/useful?
+
+&gt;<i> That was also suggested by Mark Friedenbach, but I think we'll end up
+</I>&gt;<i> with more &quot;magic key&quot; a-la Schnorr/taproot/graftroot and less script in
+</I>&gt;<i> future.
+</I>
+Taproot and graftroot aren't &quot;less script&quot; at all -- if anything they're
+the opposite in that suddenly every address can have a script path.
+I think NOINPUT has pretty much the same tradeoffs as taproot/graftroot
+scripts: in the normal case for both you just use a SIGHASH_ALL
+signature to spend your funds; in the abnormal case for NOINPUT, you use
+a SIGHASH_NOINPUT (multi)sig for unilateral eltoo closes or watchtower
+penalties, in the abnormal case for taproot/graftroot you use a script.
+
+&gt;<i> That means we'd actually want a different Segwit version for
+</I>&gt;<i> &quot;NOINPUT-can-be-used&quot;, which seems super ugly.
+</I>
+That's backwards. If you introduce a new opcode, you can use the existing
+segwit version, rather than needing segwit v1. You certainly don't need
+v1 segwit for regular coins and v2 segwit for NOINPUT coins, if that's
+where you were going?
+
+For segwit v0, that would mean your addresses for a key &quot;X&quot;, might be:
+
+   [pubkey]  X    
+    - not usable with NOINPUT
+   [script]  2 X Y 2 CHECKMULTISIG
+    - not usable with NOINPUT
+   [script]  2 X Y 2 CHECKMULTISIG_1USE_VERIFY
+    - usable with NOINPUT (or SIGHASH_ALL)
+
+CHECKMULTISIG_1USE_VERIFY being soft-forked in by replacing an OP_NOP,
+of course. Any output spendable via a NOINPUT signature would then have
+had to have been deliberately created as being spendable by NOINPUT.
+
+For a new segwit version with taproot that likewise includes an opcode,
+that might be:
+
+   [taproot]  X
+    - not usable with NOINPUT
+   [taproot]  X or: X CHECKSIG_1USE
+    - usable with NOINPUT
+
+If you had two UTXOs (with the same value), then if you construct
+a taproot witness script for the latter address it will look like:
+
+    X [X CHECKSIG_1USE] [sig_X_NOINPUT]
+
+and that signature can't be used for addresses that were just intending
+to pay to X, because the NOINPUT sig/sighash simply isn't supported
+without a taproot path that includes the CHECKSIG_1USE opcode.
+
+In essence, with the above construction there's two sorts of addresses
+you generate from a public key X: addresses where you spend each coin
+individually, and different addresses where you spend the wallet of
+coins with that public key (and value) at once; and that remains the
+same even if you use a single key for both.
+
+I think it's slightly more reasonable to worry about signing with NOINPUT
+compared to signing with SIGHASH_NONE: you could pretty reasonably setup
+your (light) bitcoin wallet to not be able to sign (or verify) with
+SIGHASH_NONE ever; but if you want to use lightning v2, it seems pretty
+likely your wallet will be signing things with SIGHASH_NOINPUT. From
+there, it's a matter of having a bug or a mistake cause you to
+cross-contaminate keys into your lightning subsystem, and not be
+sufficiently protected by other measures (eg, muSig versus checkmultisig).
+
+(For me the Debian ssh key generation bug from a decade ago is sufficient
+evidence that people you'd think are smart and competent do make really
+stupid mistakes in real life; so defense in depth here makes sense even
+though you'd have to do really stupid things to get a benefit from it)
+
+The other benefit of a separate opcode is support can be soft-forked in
+independently of a new segwit version (either earlier or later).
+
+I don't think the code has to be much more complicated with a separate
+opcode; passing an extra flag to TransactionSignatureChecker::CheckSig()
+is probably close to enough. Some sort of flag remains needed anyway
+since v0 and pre-segwit signatures won't support NOINPUT.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001266.html">[Lightning-dev] [bitcoin-dev] BIP sighash_noinput
+</A></li>
+	<LI>Next message: <A HREF="001282.html">[Lightning-dev] [bitcoin-dev] BIP sighash_noinput
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1274">[ date ]</a>
+              <a href="thread.html#1274">[ thread ]</a>
+              <a href="subject.html#1274">[ subject ]</a>
+              <a href="author.html#1274">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

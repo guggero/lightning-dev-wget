@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20the%20Price%20Of%20Anarchy%20Problem%2C%0A%20Or%3A%20Cheap%20AND%20Reliable%20Payments%20Via%20Forwarding%20Fee%20Economic%0A%20Rationality&In-Reply-To=%3C20220629152515.GA10732%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003626.html">
+   <LINK REL="Next"  HREF="003628.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20the%20Price%20Of%20Anarchy%20Problem%2C%0A%20Or%3A%20Cheap%20AND%20Reliable%20Payments%20Via%20Forwarding%20Fee%20Economic%0A%20Rationality&In-Reply-To=%3C20220629152515.GA10732%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Jun 29 15:25:15 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003626.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+        <LI>Next message: <A HREF="003628.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3627">[ date ]</a>
+              <a href="thread.html#3627">[ thread ]</a>
+              <a href="subject.html#3627">[ subject ]</a>
+              <a href="author.html#3627">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Jun 29, 2022 at 12:38:17PM +0000, ZmnSCPxj wrote:
+&gt;<i> &gt; &gt; ### Inverting The Filter: Feerate Cards
+</I>&gt;<i> &gt; &gt; Basically, a feerate card is a mapping between a probability-of-success range and a feerate.
+</I>&gt;<i> &gt; &gt; * 00%-&gt;25%: -10ppm
+</I>&gt;<i> &gt; &gt; * 26%-&gt;50%: 1ppm
+</I>&gt;<i> &gt; &gt; * 51%-&gt;75%: 5ppm
+</I>&gt;<i> &gt; &gt; * 76%-&gt;100%: 50ppm
+</I>&gt;<i> The economic insight here is this:
+</I>&gt;<i> * The payer wants to pay because it values a service / product more highly than the sats they are spending.
+</I>
+&gt;<i> * If payment fails, then the payer incurs an opportunity cost, as it is unable to utilize the difference in subjective value between the service / product and the sats being spent.
+</I>
+(If payment fails, the only opportunity cost they incur is that they
+can't use the funds that they locked up for the payment. The opportunity
+cost is usually considered to occur when the payment succeeds: at that
+point you've lost the ability to use those funds for any other purpose)
+
+&gt;<i>   * Thus, the subjective difference in value between the service / product being bought, and the sats to be paid, is the cost of payment failure.
+</I>
+If you couldn't successfully route the payment at any price, you never
+had the opportunity to buy whatever the thing was.
+
+&gt;<i> We can now use the left-hand side of the feerate card table, by multiplying `100% - middle_probability_of_success` (i.e. probability of failure) by the fee budget (i.e. cost of failure), and getting the cost-of-failure-for-this-entry.
+</I>
+I don't think that makes much sense; your expected gain if you just try
+one option is:
+
+ (1-p)*0 + p*cost*(benefit/cost - fee)
+ 
+where p is the probability of success that corresponds with the fee.
+
+I don't think you can do that calculation with a range; if I fix the
+probabilities as:
+
+  12.5%  -10ppm
+  27.5%    1ppm
+  62.5%    5ppm
+  87.5%   50ppm
+
+then that approach chooses:
+
+  -10 ppm if the benefit/cost is in (-10ppm, 8.77ppm)
+    5 ppm if the benefit/cost is in [8.77ppm, 162.52ppm)
+   50 ppm if the benefit/cost is &gt;= 162.52ppm
+
+so for that policy, one of those entries is already irrelevant.
+
+But that just feels super unrealistic to me. If your benefit is 8ppm,
+and you try at -10ppm, and that fails, why wouldn't you try again at
+5ppm? That means the real calculation is:
+
+   p1*(benefit/cost - fee1) 
+   + (p2-p1)*(benefit/cost - fee2 - retry_delay)
+   - (1-p2)*(2*retry_delay)
+
+Which is:
+
+   p2*(benefit/cost)
+     - p1*fee1 - (p2-p1)*fee2
+     - (2-p1-p2)*retry_delay
+
+My feeling is that the retry_delay factor's going to dominate...
+
+That's also only considering one hop; to get the entire path, you
+need them all to succeed, giving an expected benefit (for a particular
+combination of rate card entries) of:
+
+  (p1*p2*p3*p4*p5)*cost*(benefit/cost - (fee1 + fee2 + fee3 + fee4 + fee5)
+
+And (p1*..*p5) is going to be pretty small in most cases -- 5 hops at
+87.5% each already gets you down to only a 51% total chance of success.
+And there's an exponential explosion of combinations, if each of the
+5 hops has 4 options on their rate card, that's up to 1024 different
+options to be evaluated...
+
+&gt;<i> We then evaluate the fee card by plugging this in to each entry of the feerate card, and picking which entry gives the lowest total fee.
+</I>
+I don't think that combines hops correctly. For example, if the rate
+cards for hop1 and hop2 are both:
+
+   10%  10ppm
+  100%  92ppm
+
+and your expected benefit/cost is 200ppm (so 100ppm per hop), then
+treated individually you get:
+
+   10%*(100ppm - 10ppm) = 9ppm  &lt;-- this one!
+  100%*(100ppm - 92ppm) = 8ppm
+
+but treated together, you get:
+
+    1%*(200ppm -  20ppm) =  1.8ppm
+   10%*(200ppm - 102ppm) =  9.8ppm (twice)
+  100%*(200ppm - 184ppm) = 16ppm &lt;-- this one!
+
+&gt;<i> This is then added as a fee in payment algorithms, thus translated down to &quot;just optimize for low fee&quot;.
+</I>
+You're not optimising for low fee though, you're optimising for
+maximal expected value, assuming you can't retry. But you can retry,
+and probably in reality also want to minimise the chance of failure up
+to some threshold.
+
+For example: if I buy a coffee with lightning every week day for a year,
+that's 250 days, so maybe I'd like to choose a fee so that my payment
+failure rate is &lt;0.4%, to avoid embarassment and holding up the queue.
+
+&gt;<i> * Nodes utilizing wall strategies and doing lots of rebalancing put low limits on the fee budget of the rebalancing cost.
+</I>&gt;<i>   * These nodes are willing to try lots of possible routes, hoping to nab the liquidity of a low-fee node on the cheap in order to resell it later.
+</I>&gt;<i>   * Such nodes are fine with low probability of success.
+</I>
+Sure. But in that case, they don't care about delays, so why wouldn't they
+just try the lowest fee rates all the time, no matter what their expected
+value is? They can retry once an hour indefinitely, and eventually they
+should get lucky, if the rate card's even remotely accurate. (Though
+chances are they won't get -10ppm lucky for the entire path)
+
+Finding out that you're paying 50ppm at the exact same time someone else
+is &quot;paying&quot; -10ppm is likely to be really irritating, however economically
+rational it might be argued to be too.
+
+&gt;<i> Thus feerate cards may very well unify a fair amount of the concerns we have.
+</I>
+All in all, this just seems crazy to me. But hey, prove me wrong!
+
+&gt;<i> &gt; (dV/V)/(dF/F) &lt; -1 (fee-elasticity of volume is in the elastic
+</I>&gt;<i> &gt; region)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; (&lt;-1 == elastic == flow changes more than the fee does == drop the fee
+</I>&gt;<i> &gt; rate; &gt;-1 == ineleastic == flow changes less than the fee does == raise
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; the fee rate; =-1 == unit elastic == you've found a locally optimal
+</I>&gt;<i> &gt; fee rate)
+</I>&gt;<i> Thank you for the math!
+</I>&gt;<i> I was going to heuristic it and cross my fingers but this is probably a better framework.
+</I>
+&quot;elasticity&quot; is a standard economics concept, that's just slightly too
+complicated to be well known. Super great though, at least when you want
+to start putting any numbers on your supply/demand graphs...
+
+One place I think a fee rate card *could* be interesting is you were to
+parameterise it by *time*: you might find after doing all this elasticity
+analysis, that your optimal fee rate during the US business day is high,
+but during night time it's substantially lower. Rather than broadcasting
+gossip traffic twice daily to switch over, perhaps you could just publish
+it once with a rate card, &quot;55ppm between 12:00UTC and 24:00UTC, 10ppm at
+other times&quot;. Perhaps if you don't mind paying -10ppm to get your channel
+rebalanced, you could advertise that for 20 minutes once a night, eg,
+and just stop forwarding payments once you get to a 50:50 split, at least
+until the 20 mins is over. I guess different fees on weekends, or cheap
+tuesday could also be a thing, perhaps? 0 or 100% fees on the sabbath?
+
+I think in general it will take time to work out if the change in traffic
+justifies raising/lowering your feerate; so my guess is publishing a
+schedule and keeping it the same for weeks is probably pretty fine,
+and maybe also pretty bandwidth friendly for nodes.
+
+A published schedule would also let price sensitive users actually plan
+ahead, which could be nice...
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003626.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+	<LI>Next message: <A HREF="003628.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3627">[ date ]</a>
+              <a href="thread.html#3627">[ thread ]</a>
+              <a href="subject.html#3627">[ subject ]</a>
+              <a href="author.html#3627">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,242 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PTLCs early draft specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3Ms0V6aCsmVt_5H3dLDxcPf9WA7XiCPzC0KP6QGOWUWUw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003386.html">
+   <LINK REL="Next"  HREF="003389.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PTLCs early draft specification</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3Ms0V6aCsmVt_5H3dLDxcPf9WA7XiCPzC0KP6QGOWUWUw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] PTLCs early draft specification">bastien at acinq.fr
+       </A><BR>
+    <I>Wed Dec  8 10:00:18 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003386.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+        <LI>Next message: <A HREF="003389.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3387">[ date ]</a>
+              <a href="thread.html#3387">[ thread ]</a>
+              <a href="subject.html#3387">[ subject ]</a>
+              <a href="author.html#3387">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi AJ,
+
+I think the problem t-bast describes comes up here as well when you
+&gt;<i> collapse the fast-forwards (or, anytime you update the commitment
+</I>&gt;<i> transaction even if you don't collapse them).
+</I>
+
+Yes, exactly.
+
+I think doing a synchronous update of commitments to the channel state,
+&gt;<i> something like:
+</I>
+
+
+Alice -&gt; Bob: propose_new_commitment
+&gt;<i> channel id
+</I>&gt;<i> adaptor sigs for PTLCs to Bob
+</I>
+
+&gt;<i> Bob -&gt; Alice: agree_new_commitment
+</I>&gt;<i> channel id
+</I>&gt;<i> adaptor sigs for PTLCs to Alice
+</I>&gt;<i> sigs for Alice to spend HTLCs and PTLCs to Bob from her own
+</I>&gt;<i> commitment tx
+</I>&gt;<i> signature for Alice to spend funding tx
+</I>&gt;<i>
+</I>&gt;<i> Alice -&gt; Bob: finish_new_commitment_1
+</I>&gt;<i> channel id
+</I>&gt;<i> sigs for Bob to spend HTLCs and PTLCs to Alice from his own
+</I>&gt;<i> commitment tx
+</I>&gt;<i> signature for Bob to spend funding tx
+</I>&gt;<i> reveal old prior commitment secret
+</I>&gt;<i> new commitment nonce
+</I>&gt;<i>
+</I>&gt;<i> Bob -&gt; Alice: finish_new_commitment_2
+</I>&gt;<i> reveal old prior commitment secret
+</I>&gt;<i> new commitment nonce
+</I>&gt;<i>
+</I>&gt;<i> would work pretty well.
+</I>
+
+I agree, this is better than my naive addition of a `remote_ptlcs_signed`
+message in both directions, and even though it changes the protocol messages
+it stays very close to the mechanisms we currently have.
+
+I'll spend some time specifying this in more details, to verify that we're
+not missing anything. What I really like about this proposal is that we
+can probably bundle that protocol change with `option_simplified_update` [0]
+without the adaptor sigs, and simply add the adaptor sigs as tlvs when we
+do PTLCs. That lets us deploy this new update protocol separately from PTLCs
+and ensure it also simplifies the state machine and makes other features
+such as splicing [1] and dynamic channel upgrades [2] easier.
+
+Thanks,
+Bastien
+
+[0] <A HREF="https://github.com/lightning/bolts/pull/867">https://github.com/lightning/bolts/pull/867</A>
+[1] <A HREF="https://github.com/lightning/bolts/pull/863">https://github.com/lightning/bolts/pull/863</A>
+[2] <A HREF="https://github.com/lightning/bolts/pull/868">https://github.com/lightning/bolts/pull/868</A>
+
+Le mer. 8 d&#233;c. 2021 &#224; 10:29, Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; a &#233;crit :
+
+&gt;<i> On Tue, Dec 07, 2021 at 11:52:04PM +0000, ZmnSCPxj via Lightning-dev wrote:
+</I>&gt;<i> &gt; Alternately, fast-forwards, which avoid this because it does not change
+</I>&gt;<i> commitment transactions on the payment-forwarding path.
+</I>&gt;<i> &gt; You only change commitment transactions once you have enough changes to
+</I>&gt;<i> justify collapsing them.
+</I>&gt;<i>
+</I>&gt;<i> I think the problem t-bast describes comes up here as well when you
+</I>&gt;<i> collapse the fast-forwards (or, anytime you update the commitment
+</I>&gt;<i> transaction even if you don't collapse them).
+</I>&gt;<i>
+</I>&gt;<i> That is, if you have two PTLCs, one from A-&gt;B conditional on X, one
+</I>&gt;<i> from B-&gt;A conditional on Y. Then if A wants to update the commitment tx,
+</I>&gt;<i> she needs to
+</I>&gt;<i>
+</I>&gt;<i>   1) produce a signature to give to B to spend the funding tx
+</I>&gt;<i>   2) produce an adaptor signature to authorise B to spend via X from his
+</I>&gt;<i>      commitment tx
+</I>&gt;<i>   3) produce a signature to allow B to recover Y after timeout from his
+</I>&gt;<i>      commitment tx spending to an output she can claim if he cheats
+</I>&gt;<i>   4) *receive* an adaptor signature from B to be able to spend the Y output
+</I>&gt;<i>      if B posts his commitment tx using A's signature in (1)
+</I>&gt;<i>
+</I>&gt;<i> The problem is, she can't give B the result of (1) until she's received
+</I>&gt;<i> (4) from B.
+</I>&gt;<i>
+</I>&gt;<i> It doesn't matter if the B-&gt;A PTLC conditional on Y is in the commitment
+</I>&gt;<i> tx itself or within a fast-forward child-transaction -- any previous
+</I>&gt;<i> adaptor sig will be invalidated because there's a new commitment
+</I>&gt;<i> transaction, and if you allowed any way of spending without an adaptor
+</I>&gt;<i> sig, B wouldn't be able to recover the secret and would lose funds.
+</I>&gt;<i>
+</I>&gt;<i> It also doesn't matter if the commitment transaction that A and B will
+</I>&gt;<i> publish is the same or different, only that it's different from the
+</I>&gt;<i> commitment tx that previous adaptor sigs committed to. (So ANYPREVOUT
+</I>&gt;<i> would fix this if it were available)
+</I>&gt;<i>
+</I>&gt;<i> So I think this is still a relevant question, even if fast-forwards
+</I>&gt;<i> make it a rare problem, that perhaps is only applicable to very heavily
+</I>&gt;<i> used channels.
+</I>&gt;<i>
+</I>&gt;<i> (I said the following in email to t-bast already)
+</I>&gt;<i>
+</I>&gt;<i> I think doing a synchronous update of commitments to the channel state,
+</I>&gt;<i> something like:
+</I>&gt;<i>
+</I>&gt;<i>    Alice -&gt; Bob: propose_new_commitment
+</I>&gt;<i>        channel id
+</I>&gt;<i>        adaptor sigs for PTLCs to Bob
+</I>&gt;<i>
+</I>&gt;<i>    Bob -&gt; Alice: agree_new_commitment
+</I>&gt;<i>        channel id
+</I>&gt;<i>        adaptor sigs for PTLCs to Alice
+</I>&gt;<i>        sigs for Alice to spend HTLCs and PTLCs to Bob from her own
+</I>&gt;<i>          commitment tx
+</I>&gt;<i>        signature for Alice to spend funding tx
+</I>&gt;<i>
+</I>&gt;<i>    Alice -&gt; Bob: finish_new_commitment_1
+</I>&gt;<i>        channel id
+</I>&gt;<i>        sigs for Bob to spend HTLCs and PTLCs to Alice from his own
+</I>&gt;<i>          commitment tx
+</I>&gt;<i>        signature for Bob to spend funding tx
+</I>&gt;<i>        reveal old prior commitment secret
+</I>&gt;<i>        new commitment nonce
+</I>&gt;<i>
+</I>&gt;<i>    Bob -&gt; Alice: finish_new_commitment_2
+</I>&gt;<i>        reveal old prior commitment secret
+</I>&gt;<i>        new commitment nonce
+</I>&gt;<i>
+</I>&gt;<i> would work pretty well.
+</I>&gt;<i>
+</I>&gt;<i> This adds half a round-trip compared to now:
+</I>&gt;<i>
+</I>&gt;<i>    Alice -&gt; Bob: commitment_signed
+</I>&gt;<i>    Bob -&gt; Alice: revoke_and_ack, commitment_signed
+</I>&gt;<i>    Alice -&gt; Bob: revoke_and_ack
+</I>&gt;<i>
+</I>&gt;<i> The timings change like so:
+</I>&gt;<i>
+</I>&gt;<i>   Bob can use the new commitment after 1.5 round-trips (previously 0.5)
+</I>&gt;<i>
+</I>&gt;<i>   Alice can be sure Bob won't use the old commitment after 2 round-trips
+</I>&gt;<i>   (previously 1)
+</I>&gt;<i>
+</I>&gt;<i>   Alice can use the new commitment after 1 round-trip (unchanged)
+</I>&gt;<i>
+</I>&gt;<i>   Bob can be sure Alice won't use the old commitment after 1.5 round-trips
+</I>&gt;<i>   (unchanged -- note: this is what's relevant for forwarding)
+</I>&gt;<i>
+</I>&gt;<i> Making the funding tx a musig setup would mean also supplying 64B
+</I>&gt;<i> of musig2 nonces along with the &quot;adaptor sigs&quot; in one direction,
+</I>&gt;<i> and providing the other side's 64B of musig2 nonces back along with the
+</I>&gt;<i> (now partial) signature for spending the funding tx (a total of 256B of
+</I>&gt;<i> nonce data, not 128B).
+</I>&gt;<i>
+</I>&gt;<i> Because it keeps both peers' commitments synchronised to a single channel
+</I>&gt;<i> state, I think the same protocol should work fine with the revocable
+</I>&gt;<i> signatures on a single tx approach too, though I haven't tried working
+</I>&gt;<i> through the details.
+</I>&gt;<i>
+</I>&gt;<i> Fast forwards would then be reducing the 2 round-trip protocol to
+</I>&gt;<i> update the state commitment to a 0.5 round-trip update, to reduce
+</I>&gt;<i> latency when forwarding by the same amount as before (1.5 round-trips
+</I>&gt;<i> to 0.5 round-trips).
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> aj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211208/e5173822/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211208/e5173822/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003386.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+	<LI>Next message: <A HREF="003389.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3387">[ date ]</a>
+              <a href="thread.html#3387">[ thread ]</a>
+              <a href="subject.html#3387">[ subject ]</a>
+              <a href="author.html#3387">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

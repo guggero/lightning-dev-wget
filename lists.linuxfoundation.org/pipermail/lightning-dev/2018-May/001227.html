@@ -1,0 +1,109 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%3A%20A%20Simplified%20update%20Mechanism%20for%0A%09Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3Ch7nb3BUAECxyhOpzVdN07v9Sn7FT9RB4N0MtaWtXX_D2Q45wnng_qROtQFRJKS-lq0ktg4TjUdipb0Dtwxl-I5QgSQYOV5Jm2tUe3Bpfgx8%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001228.html">
+   <LINK REL="Next"  HREF="001229.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%3A%20A%20Simplified%20update%20Mechanism%20for%0A%09Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3Ch7nb3BUAECxyhOpzVdN07v9Sn7FT9RB4N0MtaWtXX_D2Q45wnng_qROtQFRJKS-lq0ktg4TjUdipb0Dtwxl-I5QgSQYOV5Jm2tUe3Bpfgx8%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue May  1 07:12:35 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001228.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+        <LI>Next message: <A HREF="001229.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1227">[ date ]</a>
+              <a href="thread.html#1227">[ thread ]</a>
+              <a href="subject.html#1227">[ subject ]</a>
+              <a href="author.html#1227">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Christian,
+
+Let me know if I have summarized the paper accurately below:
+
+1.  SIGHASH_NOINPUT removes all inputs of the transaction copy before signing/verifying.
+
+2.  SIGHASH_NOINPUT can be combined with SIGHASH_SINGLE.  It is dangerous to combine it with SIGHASH_NONE (as this also deletes all outputs of the transaction copy, so the signature only commits to nLockTime) and possibly pointless to combine it with SIGHASH_ANYONECANPAY (which deletes other inputs, but since there are no inputs after SIGHASH_NOINPUT, there is nothing else to delete).  The BIP only mentions combining it with SIGHASH_SINGLE, in any case.
+
+3.  We have these kinds transactions: (1) funding transaction paying out to an ordinary N-of-N multisig (confirmed onchain); (2) offchain trigger transaction spending a funding transaction and paying out to the &quot;update transaction script&quot;; (3) offchain update transaction spending a trigger or update transaction and paying out to the &quot;update transaction script&quot; (the same script template as in trigger transaction); (4) offchain settlement transaction spending a trigger or update transaction and paying out to the counterparties according to the final agreed distribution of funds.  Update and settlement transactions are signed with SIGHASH_NOINPUT flags.
+
+4.  The update transaction script has two branches: a CSV-encumbered N-of-N &quot;settlement&quot; branch, and a CLTV-encumbered N-of-N &quot;update&quot; branch.  Crucially, we use past Unix timestamps for the CLTV encumberance on the update.  The CLTV-encumberance starts with a minimum time value on the trigger transaction, and increments by 1 for every update transaction.
+
+5.  The CLTV-encumberance ensures that if a past update transaction is confirmed, we can spend it using any later update transaction, since CLTV uses `stackTop &lt;= nLockTime`.  The actual `nLockTime` we use is a past Unix timestamp so they are not actually time-encumbered, but the `OP_CLTV` still ensures that any later update transaction can be used to spend from any earlier update transaction, but not vice versa.  This is actually quite clever.
+
+6.  The pubkeys on the settlement branch of each update transaction are different, and are derived using any hierarchical derivation method (trivially we can simply use the CLTV-encumberance value as the derivation index).  This ensures that each settlement transaction can only spend a particular update transaction.  Or in other words: There is a one-to-one correspondence between update and settlement transaction, and a settlement transaction can only confirm if the corresponding update transaction can be confirmed deeply enough without having its output re-spent.
+
+7.  The pubkeys on the update branch are all the same in all update transactions.  This lets any update transaction replace any other update transaction, as long as the CLTV-encumberance (which is used for ordering rather than actual absolute locktime) is respected; together they mean that any later update transaction can replace any earlier update transaction.
+
+8.  If an old update transaction is confirmed, the settlement transaction corresponding to it is still encumbered by CSV and cannot be confirmed immediately.  During this time, a later update transaction can spend it and be confirmed.  If that update transaction is still not the latest available, it can be further replaced with any, later transaction (since the CLTV-encumberance and the `nLockTime` increase in lockstep with each other) until the latest update transaction is confirmed.
+
+9.  When the latest update transaction gets confirmed, no other update transaction can successfully spend its &quot;update&quot; branch (as their `nLockTime` is less than the CLTV-encumberance on that branch).  This lets the CSV-encumbered settlement transaction be confirmable after some blocks.
+
+10.  Update transactions pay no fees!  Instead, for update transactions (but not settlement transactions) we additionally give SIGHASH_SINGLE: thus, no matter what transaction they end up in, the signatures for the update transaction will always be verified against only the update transaction output that pays out to the update transaction script.  We join update transactions with a spend of some onchain UTXO we control, which pays for the fees of the joined the update transactions, and may have a second output that is the remainder of the fund after paying the fees.
+
+11.  Settlement transactions can carry contracts (in much the same way that Poon-Dryja commitment transactions); however contracts that contain absolute timelock components will be affected by the CSV-encumberance of the settlement transaction.
+
+---
+
+Some pros and cons relative to Poon-Dryja (LN-penalty) channels:
+
+- Requires more transactions in the worst-case: trigger, update, settlement.  Compare to Poon-Dryja: commitment, claim.  Decker-Russell-Osuntokun channels can be trigger-settlement but only in the degenerate case where the channel was never updated (indeed for implementation simplicity we might rather prefer to make an initial update transaction at the start, instead of starting with a trigger-settlement).
+
+- Dropping unilaterally onchain requires the party doing the drop to have some onchain funds it controls completely, since update transactions do not pay fees by themselves.  We cannot have an autopilot that puts all onchain funds on channels, we need to reserve some small amount for paying fees of unilateral closes.
+
++ The above is counterbalanced by the fact that we can easily adjust onchain fees for update transactions, unlike the case for Poon-Dryja commitment transactions which once signed cannot have fees updated.
+
+= The onchain reserve (for paying fees for unilaterally dropped channels) is roughly equivalent to the channel reserve under Poon-Dryja; such a channel reserve no longer exists under Decker-Russell-Osuntukun channels, but is replaced by the onchain fee-paying reserve.  Possibly the fee-paying reserve here might be feasibly smaller than the channel reserve under Poon-Dryja.
+
+- The CSV-encumberance on settlement transactions, which are the ones which carry the contracts in the channel, affects all absolute-timelocked contracts transported on the channel.  Compare to Poon-Dryja, where commitment transactions themselves are unencumbered by CSV, and we simply insert the revocation to spends of the contracts being transported (i.e. the reason why we have HTLC-success and HTLC-timeout transactions in BOLT spec).
+
++ Like invalidation trees, we can use N-party funds rather than just 2-party funds (channels).  We can even use M-of-N, so if there is at least some amount of trust you have with a group of entities (family, close friends, conglomeration partners, ZmnSCPxj, politicians...) it would be possible to have funds that require say only a majority of its owners to be updated.
+
+Please inform me if there are important points I missed.
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001228.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+	<LI>Next message: <A HREF="001229.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1227">[ date ]</a>
+              <a href="thread.html#1227">[ thread ]</a>
+              <a href="subject.html#1227">[ subject ]</a>
+              <a href="author.html#1227">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

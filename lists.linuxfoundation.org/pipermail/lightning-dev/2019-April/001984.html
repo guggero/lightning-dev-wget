@@ -1,0 +1,124 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Stale Factory (and channel) problem
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Stale%20Factory%20%28and%20channel%29%20problem&In-Reply-To=%3C35ffe1d3-3217-156f-9a5a-09522e49fca1%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001981.html">
+   <LINK REL="Next"  HREF="001975.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Stale Factory (and channel) problem</H1>
+    <B>Alejandro Ranchal Pedrosa</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Stale%20Factory%20%28and%20channel%29%20problem&In-Reply-To=%3C35ffe1d3-3217-156f-9a5a-09522e49fca1%40gmail.com%3E"
+       TITLE="[Lightning-dev] Stale Factory (and channel) problem">a.ranchalpedrosa at gmail.com
+       </A><BR>
+    <I>Sun Apr 21 02:38:23 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001981.html">[Lightning-dev] Stale Factory (and channel) problem
+</A></li>
+        <LI>Next message: <A HREF="001975.html">[Lightning-dev] Broken Factory Attack
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1984">[ date ]</a>
+              <a href="thread.html#1984">[ thread ]</a>
+              <a href="subject.html#1984">[ subject ]</a>
+              <a href="author.html#1984">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+I also thought about the possibility of using 'SIGHASH_NOINPUT', it 
+certainly offers a functionality very similar to the one I suggest in 
+the paper.
+
+The problem with 'SIGHASH_NOINPUT' as it is now is that, if I am not 
+mistaken, in the example you are showing, seems like A,D and C can 
+unilaterally decide to include a new participant, F. Seems to me like 
+this can affect the no-lock property of offchain layers, since they 
+might require F to release the funds in the mainchain.
+
+Certainly, with some variants to SIGHASH_NOINPUT this solution can be 
+achieved. Actually, this is in some way what I propose in the Lightning 
+Factories paper. Adding a non-interactive aggregate signature scheme is 
+just going one step further with an optimization to save space, the same 
+way Schnorr-based signatures schemes for aggregation are proposed in 
+Channel Factories. But with minor variants (that are listed in the 
+paper), a SIGHASH_NOINPUT would work like a charm.
+
+Best,
+
+Alejandro.
+
+
+On 17/04/2019 13:39, ZmnSCPxj wrote:
+&gt;<i> Good morning Alejandro and list,
+</I>&gt;<i>
+</I>&gt;<i> Let me characterize the problem in detail.
+</I>&gt;<i>
+</I>&gt;<i> * Stale offchain system is the issue where one participant of a multiparticipant offchain system sends a signature that advances the protocol, but is unable to receive further signatures from one or more of the other participants to continue the protocol.
+</I>&gt;<i> * Often, such a stall in the protocol requires some timeout and a backoff path, aborting the protocol and performing some corrective action onchain.
+</I>&gt;<i> * More participants means more chances of this kind of stale offchain system disruption.
+</I>&gt;<i>
+</I>&gt;<i> * For two-participant offchain systems (&quot;payment channels&quot;), this disruption is indistinguishable from the other participant going offline.
+</I>&gt;<i> * For payment channels, the other participant going offline implies that future updates of the channel will not occur, thus it is always possible for participants to insist on redoing the signature exchange before performing further updates.
+</I>&gt;<i>    * Thus, for payment channels, this issue can be fixed by allowing the exchange of signatures (including those you believe to have sent previously) of the most recent state upon re-establishing a communication channel.
+</I>&gt;<i>    * BOLT already requires this.
+</I>&gt;<i>
+</I>&gt;<i> * For multiparticipant offchain systems that host other offchain systems (&quot;channel factories&quot;), this disruption is also indistinguishable from one of the participants going offline.
+</I>&gt;<i> * For channel factories, the remaining participants might wish to continue participating in hosted offchain systems (&quot;on-factory channels&quot;) that do not involve the dropped participant.
+</I>&gt;<i> * However, it is unknown if the dropped participant is able to construct the new state or not.
+</I>&gt;<i>    * Thus it is ambiguous if on-factory channels should be rooted from the old state or the new state.
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i>
+</I>&gt;<i> A thought comes to mind: would `SIGHASH_NOINPUT` help?
+</I>&gt;<i> On-factory channels not affected by a channel reorganization operation at the factory level can continue to operate, by use of `SIGHASH_NOINPUT`.
+</I>&gt;<i>
+</I>&gt;<i> For instance, suppose the current factory state is the channels: (A, B) 1; (B, C) 1; (A, D) 1; (C, D) 1
+</I>&gt;<i> Suppose A, C, and D propose a reorganization to the new state: (A, B) 1; (B, C) 1; (A, C) 0.5; (C, D) 1.5
+</I>&gt;<i>
+</I>&gt;<i> If channel states use `SIGHASH_NOINPUT` in signatures, then (A, B) and (B, C) channels can be trivially re-rooted in both the old or the new factory state,
+</I>&gt;<i> At the same time, (A, D) 1 and (C, D) 1 are both closed until the new state is completely signed, so their continued operation is stopped.
+</I>&gt;<i> And the channels (A, C) 0.5 and (C, D) 1.5 are not yet opened until the new state is completely signed, so their operation cannot be begun.
+</I>&gt;<i>
+</I>&gt;<i> This allows unaffected channels to continue operation even if a factory-level operation is in an indterminate state.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>
+-- 
+Alejandro Ranchal Pedrosa
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001981.html">[Lightning-dev] Stale Factory (and channel) problem
+</A></li>
+	<LI>Next message: <A HREF="001975.html">[Lightning-dev] Broken Factory Attack
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1984">[ date ]</a>
+              <a href="thread.html#1984">[ thread ]</a>
+              <a href="subject.html#1984">[ subject ]</a>
+              <a href="author.html#1984">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

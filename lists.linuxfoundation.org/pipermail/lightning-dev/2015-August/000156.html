@@ -1,0 +1,252 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A state machine.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C20150829074239.GA15643%40navy%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000164.html">
+   <LINK REL="Next"  HREF="000157.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A state machine.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C20150829074239.GA15643%40navy%3E"
+       TITLE="[Lightning-dev] A state machine.">aj at erisian.com.au
+       </A><BR>
+    <I>Sat Aug 29 07:42:39 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000164.html">[Lightning-dev] A state machine.
+</A></li>
+        <LI>Next message: <A HREF="000157.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#156">[ date ]</a>
+              <a href="thread.html#156">[ thread ]</a>
+              <a href="subject.html#156">[ subject ]</a>
+              <a href="author.html#156">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Aug 21, 2015 at 03:02:32PM +0930, Rusty Russell wrote:
+&gt;<i> Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; Yeah.  Let me generate a decent text flowchart for the normal cases...
+</I>&gt;<i> I've taken out some transitions for simplicity (eg. ERR_ANCHOR_LOST and
+</I>&gt;<i> ERR_INFORMATION_LEAK, which shouldn't happen):
+</I>
+Some thoughs, fwiw.
+
+I think the two INIT states is odd. I guess I would have expected
+something more like:
+  INIT:
+    - (cmd_open_my_anchor) -&gt; INIT_WITHANCHOR
+    - (pkt_propose_channel) -&gt; INIT_NOANCHOR
+
+I think the &quot;state&quot; orientation of the dot output isn't great. ie rather
+than laying it out like how it is in the code with a state then all the
+transitions from that state:
+
+  NORMAL:
+    - UPDATE_HTLC -&gt; X
+    - UPDATE_PKT -&gt; Y
+    - COMPLETE_HTLC -&gt; Z
+
+I'd rather see it laid out as the protocol steps:
+  UPDATE_HTLC
+    NORMAL -[UPDATE_HTLC]-&gt; X -[ACCEPT]-&gt; X2 -&gt;...
+
+  UPDATE_PKT
+    NORMAL -[UPDATE_PKT]-&gt; Y -&gt;...
+
+ie, have multiple graphs, each starting at INIT/NORMAL with a single
+cmd/pkt and ending at NORMAL'/CLOSED/ERROR. I'd probably prefer
+including the decision points as nodes too.
+
+A lot of the &quot;an error occurred!&quot; abort paths apply to a whole bunch of
+states, it would be nice to combine them in the output... Hmm, I think
+that's doable...
+
+I've had a go at doing this with code. C is hard, so I converted to
+python, and came up with:
+
+  <A HREF="http://azure.erisian.com.au/~aj/tmp/lightstate/statepy.svg">http://azure.erisian.com.au/~aj/tmp/lightstate/statepy.svg</A>
+
+(source bits in the lightstate/ directory)
+
+I was thinking it would be possible to update many HTLCs at once, so
+I was expecting a single PKT_UPDATE_CHANNEL rather than the ADD_HTLC,
+COMPLETE_HTLC, TIMEOUT_HTLC, etc variants. From a protocol POV, I guess
+that's something like:
+
+  UpdateChannel:
+     int  n_ops
+     op   ops[]
+     int  commitment_len;
+     byte commitment[]
+
+where an op would be ADD_HTLC, COMPLETE_HTLC, TIMEOUT_HTLC,
+ROUTEFAIL_HTLC, etc. That's a bit more complicated in the protocol,
+but I think it pays off in simplifying the state diagram and hence the
+software? (I think it's also kindof necessary for some fee models, and
+will be useful for batching updates when performance eventually matters)
+
+That would look something like:
+
+  <A HREF="http://azure.erisian.com.au/~aj/tmp/lightstate/update.svg">http://azure.erisian.com.au/~aj/tmp/lightstate/update.svg</A>
+
+I think...
+
+If you're going to have separate PKT_UPDATE_COMPLETE_HTLC, etc; then
+it might make sense to have some of them go to WAIT_FOR_UPDATE_ACCEPT
+instead of WAIT_FOR_HTLC_ACCEPT so that declining is forbidden -- if you
+reveal R, or claim a timeout has been reached, then your counterparty
+doesn't have the right to decline the update, and if they try, you want
+to close the channel anyway afaics.
+
+Hmm, I find the PRIO stuff pretty klunky. It's only used to choose who
+wins in the event of simultaneous/overlapping channel updates, no? Why
+not just have a constant tiebreak in that case, eg, where whoever has the
+lowest channel balance (or the lowest IP / key id), wins?
+
+  NORMAL
+    &gt;pkt_update
+
+  WAIT_FOR_HTLC_ACCEPT
+    &lt;pkt_update_accept
+    &gt;pkt_update_signature -&gt; WAIT_FOR_UPDATE_COMPLETE
+
+    &lt;pkt_update_decline -&gt; NORMAL
+
+    &lt;pkt_update + &lt;dec_win_tie
+    -&gt; WAIT_FOR_HTLC_ACCEPT
+
+    &lt;pkt_update + &lt;dec_lose_tie + &lt;dec_accept_update
+    &gt;pkt_update_accept -&gt; WAIT_FOR_UPDATE_SIG
+
+    &lt;pkt_update + &lt;dec_lose_tie + &lt;dec_decline_update
+    &gt;pkt_update_decline -&gt; NORMAL
+
+Or alternatively, just have the high priority be given to whoever last
+went from WAIT_FOR_UPDATE_SIG -&gt; NORMAL (and low priority to whoever
+went from WAIT_FOR_UPDATE_COMPLETE -&gt; NORMAL). That way the priority
+would still swap, and you could keep the priority embedded in the state,
+but it would only be needed for NORMAL and WAIT_FOR_*_ACCEPT states;
+and not the UPDATE_COMPLETE and UPDATE_SIG states as well.
+
+AFAICS, you still have a potential deadlock atm if you think you're
+high priority but your counterparty also thinks they're high priority,
+or just missed your update packet. I think there might be a similar
+deadlock if both systems think they're low priority. There should be a
+&quot;timeout waiting for message -&gt; retry/close channel&quot;, for most of the
+non-NORMAL states shouldn't there?
+
+If the INIT_NOANCHOR is meant to do to single-sided-anchor idea proposed
+in
+
+  <A HREF="https://bitcointalk.org/index.php?topic=1134319.msg11963141">https://bitcointalk.org/index.php?topic=1134319.msg11963141</A>
+
+then it would probably be good to have a PKT_REBALANCE_VIA_BLOCKCHAIN
+option; ie something like:
+
+ 0. channel is unbalanced: A has many funds, B has no funds
+ 1. B proposes rebalancing by $x.
+ 2. A accepts, chooses R, reveals #(R).
+ 3. B proposes HTLC from A to B of x funds, conditional on R.
+ 4. B posts $x in funds on the blockchain, payable to:
+      [SIG_B &amp; R | SIG_A &amp; TIMEOUT]
+ 5. B tells A the transaction id (and p2sh details etc).
+ 6. A waits for this to be &quot;deep enough&quot;
+ 7. A claims the blockchain transaction, revealing R.
+ 8. B completes the HTLC, rebalancing the channel.
+
+I think that would look like:
+
+A:
+  NORMAL
+    &lt;pkt_rebalance (x)
+    &gt;pkt_update_channel (add htlc: A-&gt;B, x, R, T)
+
+    (or pkt_rebalance_decline -&gt; NORMAL)
+
+  REBAL_WAIT_FOR_HTLC_ACCEPT (R,x)
+    &lt;pkt_update_accept
+    &gt;pkt_update_signature
+
+  REBAL_WAIT_FOR_UPDATE_COMPLETE (R,x)
+    &lt;pkt_update_complete
+    &gt;pkt_rebal_ok (#R,x)
+
+  NORMAL+REBAL_2 (R,x)
+    &lt;pkt_rebal_underway (txn)
+
+  NORMAL+REBAL_3 (R,x,txn)
+    &lt;bitcoin_depthok (txn)
+    &gt;bitcoin_spend (txn,R,SIG_A -&gt; ...)
+
+  NORMAL
+
+B:
+  NORMAL
+    &lt;cmd_rebalance (x)
+    &gt;pkt_rebalance (x)
+
+  NORMAL+REBAL_A (x)
+    &lt;pkt_rebal_ok (#R,x)
+    &gt;bitcoin_spend (... -&gt; R+SIG_A|TIME+SIG_B)
+    &gt;pkt_rebal_underway (txn)
+
+    (or &lt;pkt_rebal_decline -&gt; NORMAL)
+
+  NORMAL+REBAL_B (#R,x,txn)
+    &lt;bitcoin_spent (txn)
+    &lt;pkt_update_channel
+
+  NORMAL
+
+Not being able to tack on orthogonal state makes things a little clumsy
+here...
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000164.html">[Lightning-dev] A state machine.
+</A></li>
+	<LI>Next message: <A HREF="000157.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#156">[ date ]</a>
+              <a href="thread.html#156">[ thread ]</a>
+              <a href="subject.html#156">[ subject ]</a>
+              <a href="author.html#156">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

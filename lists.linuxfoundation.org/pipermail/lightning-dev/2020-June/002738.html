@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%20make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%0A%20fixes&In-Reply-To=%3CCALZpt%2BGjLPGwh%3Dzyu6dmuc3Z3hi9jWnEBtKrhFh4oPy0Tjzuuw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002737.html">
+   <LINK REL="Next"  HREF="002745.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%20make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%0A%20fixes&In-Reply-To=%3CCALZpt%2BGjLPGwh%3Dzyu6dmuc3Z3hi9jWnEBtKrhFh4oPy0Tjzuuw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes">antoine.riard at gmail.com
+       </A><BR>
+    <I>Thu Jun 18 08:40:45 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002737.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+        <LI>Next message: <A HREF="002745.html">[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2738">[ date ]</a>
+              <a href="thread.html#2738">[ thread ]</a>
+              <a href="subject.html#2738">[ subject ]</a>
+              <a href="author.html#2738">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rene,
+
+Thanks for disclosing this vulnerability,
+
+I think this blackmail scenario holds but sadly there is a lower scenario.
+
+Both &quot;Flood &amp; Loot&quot; and your blackmail attack rely on `update_fee`
+mechanism and unbounded commitment transaction size inflation. Though the
+first to provoke block congestion and yours to lockdown in-flight fees as
+funds hostage situation.
+
+&gt;<i> 1. The current solution is to just not use up the max value of
+</I>htlc's. Eclaire and c-lightning by default only use up to 30 htlcs.
+
+As of today, yes I would recommend capping commitment size both for
+ensuring competitive propagation/block selection and limiting HTLC exposure.
+
+&gt;<i> 2. Probably the best fix (not sure if I understand the consequences
+</I>correctly) is coming from this PR to bitcoin core (c.f.
+<A HREF="https://github.com/bitcoin/bitcoin/pull/15681">https://github.com/bitcoin/bitcoin/pull/15681</A> by @TheBlueMatt . If I get it
+correctly with that we could always have low fees and ask the person who
+want to claim their outputs to pay fees. This excludes overpayment and
+could happen at a later stage when fees are not spiked. Still the victim
+who offered the htlcs would have to spend those outputs at some time.
+
+It's a bit more complex, carve-out output, even combined with anchor output
+support on the LN-side won't protect against different flavors of pinning.
+I invite you to go through logs of past 2 LN dev meetings.
+
+&gt;<i> 3. Don't overpay fees in commitment transactions. We can't foresee the
+</I>future anyway
+
+Once 2. is well-addressed we may deprecate `update_fee`.
+
+&gt;<i> 4. Don't add htlcs for which the on chain fee is higher than the HTLCs
+</I>value (like we do with sub dust amounts and sub satoshi amounts. This would
+at least make the attack expensive as the attacker would have to bind a lot
+of liquidity.
+
+Ideally we want dust_limit to be dynamic, dust cap should be based on HTLC
+economic value, feerate of its output, feerate of HTLC-transaction, feerate
+estimation of any CPFP to bump it. I think that's kind of worthy to do once
+we solved 3. and 4
+
+&gt;<i> 5. Somehow be able to aggregate htlc's. In a world where we use payment
+</I>points instead of preimages we might be able to do so. It would be really
+cool if separate HTLC's could be combined to 1 single output. I played
+around a little bit but I have not come up with a scheme that is more
+compact in all cases. Thus I just threw in the idea.
+
+Yes we may encode all HTLC in some Taproot tree in the future. There are
+some wrinkles but for a high-level theoretical construction see my post on
+CoinPool.
+
+&gt;<i> 6. Split onchain fees differently (now the attacker would also lose fees
+</I>by conducting this attack) - No I don't want to start yet another fee
+bikeshadding debate. (In particular I believe that a different split of
+fees might make the Flood &amp; Loot attack economically more viable which
+relies on the same principle)
+
+Likely a bit more of fee bikeshedding is something we have to do to make LN
+secure... Switching fee from pre-committed ones to a single-party, dynamic
+one.
+
+&gt;<i> Independently I think we should have a hint in our readme file about
+</I>where and how people can disclose attacks and vulnerabilities.
+Implementations have this but the BOLTs do not.
+
+I 100% agree, that's exactly
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/772,">https://github.com/lightningnetwork/lightning-rfc/pull/772,</A> waiting for
+your feedback :)
+
+Cheers,
+
+Antoine
+
+Le mer. 17 juin 2020 &#224; 09:41, ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i>
+</I>&gt;<i> Good morning all,
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Fee futures could help against this.
+</I>&gt;<i> &gt; I remember writing about this some time ago but cannot find where (not
+</I>&gt;<i> sure if it was in lightning-dev or bitcoin-dev).
+</I>&gt;<i>
+</I>&gt;<i> `harding` found it:
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-January/017601.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-January/017601.html</A>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200618/4505fed3/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200618/4505fed3/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002737.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+	<LI>Next message: <A HREF="002745.html">[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2738">[ date ]</a>
+              <a href="thread.html#2738">[ thread ]</a>
+              <a href="subject.html#2738">[ subject ]</a>
+              <a href="author.html#2738">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

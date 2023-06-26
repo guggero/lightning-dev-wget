@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Blind paths revisited
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blind%20paths%20revisited&In-Reply-To=%3C87k13txds8.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002586.html">
+   <LINK REL="Next"  HREF="002590.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Blind paths revisited</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blind%20paths%20revisited&In-Reply-To=%3C87k13txds8.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Blind paths revisited">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Mar 10 00:19:03 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002586.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+        <LI>Next message: <A HREF="002590.html">[Lightning-dev] Blind paths revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2587">[ date ]</a>
+              <a href="thread.html#2587">[ thread ]</a>
+              <a href="subject.html#2587">[ subject ]</a>
+              <a href="author.html#2587">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I recently hit a dead-end on rendezvous routing; the single-use
+requirement is a showstopper for offers (which are supposed to be static
+and reusable).
+
+Fortunately, t-bast has a scheme for blinded paths (see
+<A HREF="https://gist.github.com/t-bast/9972bfe9523bb18395bdedb8dc691faf">https://gist.github.com/t-bast/9972bfe9523bb18395bdedb8dc691faf</A> ) so
+I've been examining that more closely.  I think it can be simplified
+to use more standard primitives.
+
+The problem: Alice wants to present Mallory with a path (Carol, Bob,
+Alice) for which he can create an onion, which is obscured in some way,
+but can be unobscured by the various nodes.  Mallory should be forced to
+use the entire path.
+
+Alice can give Mallory two ECDH blobs to place inside the per-hop
+payload to establish shared secrets with Bob and Carol.  But crucially,
+Bob needs the secret *before* he can unwrap the onion, so the ECDH
+blob for the next peer needs to be sent alongside the onion itself.
+
+t-bast proposed using the secret to XOR the scid, but Christian
+suggested it's more powerful to encrypt a general payload.
+
+What does this leave us with?
+
+1. A new invoice letter `b`.  Encodes
+   1 or more pubkey/feebase/feeprop/cltvdelta/features/encblob.
+
+2. An additional (tlv of course) field to update_add_htlc, `blinding`.
+
+3. New `tlv_payload` field `encblob` (varlen).
+
+4. ECDH on incoming `blinding` to get a shared secret which tells
+   this node how to tweak its nodeid to decrypt onion, and also how to
+   decrypt `encblob`.  This gives a tlv, which presumably contains
+   `short_channel_id` as well as `blinding`.
+
+5. Use `blinding` for the next update_add_htlc.
+
+6. If you get an error from downstream and you sent `blinding`, turn it
+   into your own error for maximum obfuscation.  Perhaps a new
+   &quot;blinded_path_error&quot;?  Obviously does not include a channel_update :)
+
+So, if you get an invoice `b`, with path starting at (known) Carol:
+
+        Carol/1/1/9/&quot;&quot;/enc1
+          Bob'/1/1/9/&quot;&quot;/enc2
+            [Optional: decoy hops...]
+
+Payer constructs the onion to get to Carol as normal, then:
+
+        Carol: No `blinding` in incoming HTLC, but once it decrypts the
+               onion, she sees `encblob` (value enc1).  Uses first 32
+               bytes of `enc1` as `blinding`: do ECDH to get SS1, uses
+               SS1 to decrypt rest to get next scid and `blinding`, send
+               `blinding` with update_add_htlc to Bob.
+
+        Bob: Gets `blinding` from update_add_htlc. ECDH -&gt; SS2.  Tweak
+               own key with SS2 to decode onion.  Use SS2 to decrypt
+               `enc2` to get next scid and blinding.  Send `blinding`
+               with update_add_htlc to Alice.
+
+        Alice: Gets `blinding` from update_add_htlc. ECDH -&gt; SS3.  Tweak
+               own key with SS3 to decode onion.  If it put in decoy
+               hops, this onion won't be terminal, but otherwise it can
+               be treated as terminal iff `blinding` is the expected value
+               for this invoice.
+
+Note that this means no payment secret is necessary, since the incoming
+`blinding` serves the same purpose.  If we wanted to, we could (ab)use
+payment_secret as the first 32-bytes to put in Carol's enc1 (i.e. it's
+the ECDH for Carol to decrypt enc1).
+
+Thoughts?
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002586.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+	<LI>Next message: <A HREF="002590.html">[Lightning-dev] Blind paths revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2587">[ date ]</a>
+              <a href="thread.html#2587">[ thread ]</a>
+              <a href="subject.html#2587">[ subject ]</a>
+              <a href="author.html#2587">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

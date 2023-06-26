@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Channel top-up
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Channel%20top-up&In-Reply-To=%3CfWCa0hDGzX5AeyjKFSGKnZzYIryTdy1n7eNTK7JE8ZWLbs9ZM2NgiCyMNZF2b5JcSfYxX0Mdxhg7FPF4Erep3iJUorfBngugAs0wOW7fUfI%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000697.html">
+   <LINK REL="Next"  HREF="000696.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Channel top-up</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Channel%20top-up&In-Reply-To=%3CfWCa0hDGzX5AeyjKFSGKnZzYIryTdy1n7eNTK7JE8ZWLbs9ZM2NgiCyMNZF2b5JcSfYxX0Mdxhg7FPF4Erep3iJUorfBngugAs0wOW7fUfI%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Channel top-up">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed May  3 16:51:46 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000697.html">[Lightning-dev] [PATCH] Add spellcheck tool (requires `aspell`),	also spellcheck.
+</A></li>
+        <LI>Next message: <A HREF="000696.html">[Lightning-dev] Channel top-up
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#692">[ date ]</a>
+              <a href="thread.html#692">[ thread ]</a>
+              <a href="subject.html#692">[ subject ]</a>
+              <a href="author.html#692">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning people,
+
+I want to propose, the addition of a new operation (and related messages) to the Lightning Network protocol.
+
+Suppose Alice and Bob have a micropayment channel. Now, because Bob provides an excellent service, Alice's side of the micropayment channel is eventually depleted. If Alice needs to spend more for Bob's services, she can either look for another route on a channel she has with someone else, or open a new channel to Bob and close the existing channel.
+
+I would like to propose a &quot;top-up&quot; operation which transmits Bitcoins to Bob on-chain in exchange for crediting that amount to Alice's side in the micropayment channel.
+
+Effectively, this is equivalent, in spirit, to Alice paying Bob to pay Alice. Although no money effectively is transferred by the operation, it moves the state of the channel between Alice and Bob.
+
+Intuitively, for a casual user of LN, it should be possible to &quot;top up&quot; the channel, so that Alice can continuously pay for Bob's excellent service. The concept of topping up already exists outside of LN, and new users might reasonably ask about such a feature. Given that funds in a channel are locked up in that channel until closed, I think that most LN software would separate the amount spendable via Lightning from the amount spendable via normal Bitcoin transactions. A user of the software might want to increase his or her Lightning-spendable funds as they get depleted. While the software can abstract this away and simply create channels to random other nodes, I think the proposed &quot;top-up&quot; operations may reduce load on both Lightning and Bitcoin layers.
+
+The procedure is below:
+
+1. Alice generates a random number preimage.
+
+2. Alice proposes a top-up operation to Bob.
+
+3. Bob responds with a newly-generated public key hash as payment target.
+
+4. Alice generates a recovery public key hash and creates an HTLC transaction containing the top-up amount from her funds, signs it, and broadcasts it to the Bitoin network. The HTLC will pay to Alice's recovery PKH after a CLTV + 2 day timeout, or pay to Bob's payment target with the random number preimage.
+
+5. When the transaction confirms on the Bitcoin blockchain, Alice provides the transaction ID to Bob as well as the hash of the random number preimage. (This is needed to prevent Alice from double-spending the money that should go to Bob).
+
+6. Bob sends a (standard) update_add_htlc to Alice, referring to their channel, with a CLTV +1 day timeout. They recreate commitment transactions as normal response to update_add_htlc message..
+
+7. Alice sends a (standard) update_fulfill_htlc, providing the random number preimage.
+
+8. Bob confirms that the preimage hashes to the random number preimage, and if so fulfills the update_fulfill_htlc. They recreate commitment transactions as normal response to update_fulfill_htlc. After this point, Alice may now spend via Lightning for Bob's services.
+
+9. Bob creates a transaction from the on-chain HTLC transaction to another address he controls.
+
+--
+
+I believe, the top-up operation reduces Lightning and Bitcoin layer overheads slightly.
+
+On Lightning, since the channel is never closed and a new one is never created, new routing gossip does not need to be propagated.
+
+On Bitcoin, we should remember that channels require a minimum amount of money for one counterparty in that channel. Basically, even though Alice's side in the channel is depleted, she still has a tiny amount of money on that channel assigned to her. When closing the channel, it becomes a tiny UTXO. With a top-up operation instead, the UTXO is a relatively medium top-up amount.
+
+Note however that the two transactions created on-chain by top-up are slightly larger than the cooperative commitment transaction of a close and a funding transaction of an open. This is because a lightning channel is funded by a 2-of-2 multisig account, whose script is smaller than an HTLC's script.
+
+Finally, this may be used to hide a self-mix. If Alice maintains several channels to several people, and she knows that her current addresses are traceable to her, she can make up HTLC's paying to herself,via new PKH addresses that she may deny having, then pretending that those are top-up operations with her channel counterparties.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170503/87de06e8/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170503/87de06e8/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000697.html">[Lightning-dev] [PATCH] Add spellcheck tool (requires `aspell`),	also spellcheck.
+</A></li>
+	<LI>Next message: <A HREF="000696.html">[Lightning-dev] Channel top-up
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#692">[ date ]</a>
+              <a href="thread.html#692">[ thread ]</a>
+              <a href="subject.html#692">[ subject ]</a>
+              <a href="author.html#692">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

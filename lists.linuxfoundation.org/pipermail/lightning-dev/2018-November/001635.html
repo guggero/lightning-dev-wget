@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Rendez-vous proposal with ephemeral key switch
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rendez-vous%20proposal%20with%20ephemeral%20key%20switch&In-Reply-To=%3C87wopacxvs.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001634.html">
+   <LINK REL="Next"  HREF="001640.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Rendez-vous proposal with ephemeral key switch</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rendez-vous%20proposal%20with%20ephemeral%20key%20switch&In-Reply-To=%3C87wopacxvs.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Rendez-vous proposal with ephemeral key switch">decker.christian at gmail.com
+       </A><BR>
+    <I>Sun Nov 18 13:34:47 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001634.html">[Lightning-dev] A&#231;ai: a backup protocol for Lightning Network wallets
+</A></li>
+        <LI>Next message: <A HREF="001640.html">[Lightning-dev] Invoice Address Format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1635">[ date ]</a>
+              <a href="thread.html#1635">[ thread ]</a>
+              <a href="subject.html#1635">[ subject ]</a>
+              <a href="author.html#1635">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I finally got around to amending my initial (broken) proposal for the
+rendez-vous protocol using the ephemeral key switch at the rendez-vous
+point. I'd like to try and keep a live document that describes the
+entire proposal in the Wiki to make it easier for people to get an
+overall view of the proposal, instead of having to stitch it together
+from the ML posts. You can find the proposal here [1]. It makes heavy
+use of the description in the onion routing bolt [2].
+
+The initial proposal was to have the rendez-vous node `RV` swap in an
+ephemeral key `ek_rv` instead of generating it from `ss_k` derived from
+ECDH(`ek_{k-1}`, node_id), because that allows the recipient `R` to
+generate the second half of the route by selecting that `ek_rv`.
+
+The problem I mentioned in other mails arises from the fact that when
+`RV` decrypts its payload to learn about its routing instructions and
+learn about `ek_rv`, it was also encrypting the filler bytes appended to
+the end. The decryption is done via XOR with a ChaCha20 bytestream whose
+key is generated from `ss_k`, which is unknown to `R` (depends on the
+ephemeal key selected by the sender and the intermediate hops). This is
+important since `R` needs to know the exact contents of the packet
+including the filler to compute valid HMACs.
+
+The fix is relatively simple, and just adds a virtual hop at `RV`. I'll
+describe the actions of `RV` here instead of the packet building since
+this way is easier to follow:
+
+ - `RV` derives `ss_k` from `ek_k` which was given to it by the previous
+   hop, appends the `0x00`-vector to shift in when stripping its per-hop
+   payload (may need more than 65 bytes now since we shift more than one
+   per-hop field now), generates the ChaCha20 stream using `ss_k` and
+   XORs the packet with the stream.
+ - `RV` reads its per-hop payload notices that an ephemeral key switch
+   is desired and reads `ek_rv` from the per-hop payload. It overwrites
+   the, now encrypted, filler vector with `0x00`-bytes again (to
+   recreate a well-known state that `R` can use when generating its
+   partial onion).
+ - It then derives a new secret key `ss_rv` from `ek_rv` and its node
+   ID. `ss_rv` is then used to generate a new ChaCha20 stream which will
+   encrypt the packet again (obfuscating the filler) and it'll be used
+   to generate a new ephemeral key `ek_{rv+1}` which will be passed on
+   to the next hop.
+
+At this point the normal operation continues as usual. IMHO the proposal
+is clean and backwards compatible, but I'm open for suggestions. There
+are a number of variants for this protocol, but I chose this one for its
+symmetry with the existing scheme. I'll list a few alternatives here:
+
+ - `ek_{rv+1}` == `ek_rv`: it is not really required to generate a new
+   ephemeral key for the next hop, we could just reuse it. The reason
+   the switch is done in normal Sphinx is to avoid correlating hops, but
+   `ek_rv` is not really seen on the wire in cleartext right now so we
+   could just reuse it. I prefer not to simply because of symmetry.
+ - Overwrite the filler with `0x00`-bytes and don't obfuscate it. This
+   is the simple initial proposal, but it leaks the fact that `RV` is a
+   rendez-vous node to the next hop.
+
+Please let me know if I missed something, I'll try to implement this
+soon and see if something unexpected jumps at me :-)
+
+Cheers,
+Christian
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/wiki/Rendez-vous-mechanism-on-top-of-Sphinx">https://github.com/lightningnetwork/lightning-rfc/wiki/Rendez-vous-mechanism-on-top-of-Sphinx</A>
+[2] <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md#shared-secret">https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md#shared-secret</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001634.html">[Lightning-dev] A&#231;ai: a backup protocol for Lightning Network wallets
+</A></li>
+	<LI>Next message: <A HREF="001640.html">[Lightning-dev] Invoice Address Format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1635">[ date ]</a>
+              <a href="thread.html#1635">[ thread ]</a>
+              <a href="subject.html#1635">[ subject ]</a>
+              <a href="author.html#1635">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

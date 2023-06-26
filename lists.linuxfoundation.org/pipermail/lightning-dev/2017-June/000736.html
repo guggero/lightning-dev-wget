@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Composing a transaction of many small transactions
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Composing%20a%20transaction%20of%20many%20small%20transactions&In-Reply-To=%3C1497382083.2344.55.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000735.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Composing a transaction of many small transactions</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Composing%20a%20transaction%20of%20many%20small%20transactions&In-Reply-To=%3C1497382083.2344.55.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] Composing a transaction of many small transactions">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Tue Jun 13 19:28:03 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000735.html">[Lightning-dev] [RFC] Lightning invoice/payment format draft
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#736">[ date ]</a>
+              <a href="thread.html#736">[ thread ]</a>
+              <a href="subject.html#736">[ subject ]</a>
+              <a href="author.html#736">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+=======
+Problem
+=======
+
+One major vulnerability of the Lightning network is that, if someone
+wants to perform a DoS attack on the network, that possible for the
+attacker by sending many large transactions to himself, over a long
+route, and letting them time out (never reveal the payment pre-image).
+Nobody (including the attacker) gains or loses any funds, but a lot of
+funds get locked up, and the total cost of lost opportunity to innocent
+nodes is a lot higher than that of the attacker.
+
+In Milan, we came to a solution for this DoS mode, where nodes require
+either a fast commit or roll-back within a short amount of time (say 30
+seconds), or a proof that another channel was closed. This increases the
+cost for the attacker with the cost of closing a channel.
+
+I've always disliked this approach a bit, since a &quot;proof that another
+channel was closed&quot; can only be accepted by other nodes in the route if
+all those nodes can understand such proof; this means that if a route
+hops over channels on different block chains (e.g. alt coins or side
+chains), or different channel designs, some nodes have to understand all
+these varieties. This limits freedom of node pairs to join the network
+with new / unusual channels in a useful way.
+
+So far, I had accepted this, as the DoS-protection really seemed
+necessary.
+
+================
+Another approach
+================
+
+Last week, Michiel de Jong (CC'ed) presented Interledger at a local
+cryptocurrency meet-up here in Delft. Since Interledger's core feature
+is the routing between different 'ledgers' (including block chains, but
+also banks), using HTLCs on different hops in the same way as Lightning,
+I asked him how they were planning to avoid this DoS mode.
+
+His answer was basically that transactions were being sent in really
+small parts at a time, so that, at any given point in time, only a small
+amount would be locked. If it turns out to be locked for a long time,
+that would not be a problem since it's only a small amount. I suggested
+that, if you do transactions this way, you might as well just add the
+locked amount to the channel transaction fee, and thereby avoid the
+complexity of the HTLC.
+
+=============
+Will it work?
+=============
+
+Initially, my concern with splitting a tx into many small parts was that
+it creates the possibility that only a part of the funds gets
+transferred. I now think that, in most cases, that will not be an issue,
+since usually a certain amount of trust is already required between the
+endpoints of a transaction, e.g. when you pay for physical goods, you
+have to trust they will be delivered. Based on the same trust, the
+endpoints of the transaction can cooperate to resolve the situation,
+e.g. with an attempt to refund through Lightning, or by paying through a
+new channel.
+
+But: does this really resolve the DoS attack mode? I suppose that, after
+locking funds in one small transaction, an attacker can easily lock
+funds in another small transaction, and so on; in the end locking up the
+same amount of funds for the same amount of time as in the original
+attack. Once you detect that one small transaction doesn't unlock, you
+have to somehow stop all subsequent transactions from the attacker.
+
+If, on a channel-level, you just say &quot;I'll no longer accept any new
+transactions as long as one transaction keeps being locked&quot;, I think
+you'll end up worse: it will allow an attacker to disable entire
+channels (potentially very high-capacity channels) with very small
+attack funds, for all users, for the same lock time. So, to prevent
+this, you have to distinguish the attacker from regular users; this is
+difficult in a network where the identity of source and destination are
+protected , e.g. by Sphinx routing.
+
+**Maybe this is where Lightning and Interledger are different? I don't
+know enough about Interledger.**
+
+==========
+Solutions?
+==========
+
+Maybe this can be resolved by requiring nodes to &quot;unwrap the onion&quot; in
+case of a transaction that stays locked for too long? This would be
+mostly useful towards the payee, since the payee side is responsible for
+either showing the hash pre-image, or voluntarily canceling the
+transaction. This could identify the &quot;closest non-cooperating node&quot; in
+the route, but it wouldn't prevent the next locked transaction, since
+you can't see in advance where an onion-routed transaction is going.
+
+The next thing you could say is &quot;the last cooperating node in the route
+(a direct neighbor of the closest non-cooperating node) is no longer
+allowed to forward payments through the non-cooperating node&quot;. Instead,
+he has to immediately roll back any transaction that is aimed in that
+direction.
+
+If the otherwise cooperative node fails this rule, you mark it as
+non-cooperative; the next time, the second-last cooperating node is no
+longer allowed to forward payments through that node. This may continue
+a couple of times, until a truly cooperative node follows all the rules,
+and attacker transactions are canceled in a fast an efficient manner by
+that node.
+
+This might work if there is only a single route on the network
+(line-shaped network), but I'm afraid an attacker can significantly
+delay being blocked, by creating a part of the network under his own
+control, which has at least one &quot;cooperating&quot; node as gateway, followed
+by large numbers of non-cooperating nodes, which are continuously being
+replaced once old ones are being flagged as non-cooperating. Also, it
+could force Lightning nodes to keep very large lists of which nodes have
+to block which of their neighbors.
+
+Do you have any thoughts on this?
+
+CJP
+
+PS.
+I couldn't find anything related to this in the Lightning RFC:
+<A HREF="https://github.com/lightningnetwork/lightning-rfc">https://github.com/lightningnetwork/lightning-rfc</A>
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000735.html">[Lightning-dev] [RFC] Lightning invoice/payment format draft
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#736">[ date ]</a>
+              <a href="thread.html#736">[ thread ]</a>
+              <a href="subject.html#736">[ subject ]</a>
+              <a href="author.html#736">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Decoy node_ids and short_channel_ids
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3C87tv3z8605.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002502.html">
+   <LINK REL="Next"  HREF="002519.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Decoy node_ids and short_channel_ids</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3C87tv3z8605.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Decoy node_ids and short_channel_ids">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Feb 10 03:40:10 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002502.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+        <LI>Next message: <A HREF="002519.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2512">[ date ]</a>
+              <a href="thread.html#2512">[ thread ]</a>
+              <a href="subject.html#2512">[ subject ]</a>
+              <a href="author.html#2512">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; writes:
+&gt;&gt;<i> But Mallory can do the same attack, I think.  Just include the P_I from
+</I>&gt;&gt;<i> the wrong invoice for Bob.
+</I>&gt;<i>
+</I>&gt;<i> Good catch, that's true, thanks for keeping me honest there! In that case
+</I>&gt;<i> my proposal
+</I>&gt;<i> would need the same mitigation as yours, Bob will need to include the
+</I>&gt;<i> `scid` he received
+</I>&gt;<i> in `update_add_htlc` (this is in fact not that hard once we allow TLV
+</I>&gt;<i> extensions on every
+</I>&gt;<i> message).
+</I>
+Yes, I've added this to the PR.  Which gives a new validation path, I
+think:
+
+## Figuring out what nodeid to use to decode onion
+
+1. Look up scid from HTLC; if it didn't include one, use default.
+2. Look up payment_hash; if no invoice is found, use default.
+3. If invoice specified this scid, get nodeid and use that.
+4. ... and refuse to forward the HTLC (it must terminate here).
+
+My plan is to add an argument to `invoice` which is an array of one or
+more scids: we get a temporary scids for each peer and use them in the
+routehints.  We also assign a random temporary nodeid to that invoice.
+
+The above algo is designed to ensure we behave like any other node which
+has no idea about this nodeid if Mallory:
+
+1. tries to use a temporary node id on a normal channel to us.
+2. tries to pay another invoice using this temporary node id.
+3. tries to probe our outgoing channels using this routing hint
+   (I think we should probably ban forwarding to private channels,
+   too, for similar reasons).
+
+---
+
+Note that with any self-assigned SCID schemes, Alice has to respond to
+unknown scids in update_add_htlc with some BADONION code (which makes
+*Bob* give Carol an error response, since Alice can't without revealing
+her identity).
+
+With Bob-assigned SCIDs, Alice simply needs to make him unallocate
+it before forgetting the invoice, so she will simply never see old
+invoices.
+
+(All these schemes give limited privacy, of course: Bob knows who Alice
+is, and fingerprinting and liveness attacks are always possible).
+
+&gt;<i> I'm extremely nervous about custodial lightning services restricting
+</I>&gt;&gt;<i> what they will pay to.  This is not theoretical: they will come under
+</I>&gt;&gt;<i> immense KYC pressure in the near future, which means they cannot pay
+</I>&gt;&gt;<i> arbitrary invoices.
+</I>1&gt;&gt;
+&gt;<i>
+</I>&gt;<i> That's a very good point, thanks for raising this. However I believe that
+</I>&gt;<i> there are (and will be) enough
+</I>&gt;<i> non-custodial wallets to let motivated users pay whatever they want. Users
+</I>&gt;<i> can even run their own
+</I>&gt;<i> node to pay such invoices if needed.
+</I>
+Not if ln_strike (no, the other one!) is the future.
+
+&gt;<i> If you are using a custodial wallet and KYC pressure kicks in, then
+</I>&gt;<i> regardless of that feature law may
+</I>&gt;<i> require users to completely reveal who they are paying, so even normal
+</I>&gt;<i> payments wouldn't protect
+</I>&gt;<i> them, don't you think? Regulation could for example disallow paying via
+</I>&gt;<i> unannounced channels entirely
+</I>&gt;<i> (or require you to show the funding tx associated to your unannounced
+</I>&gt;<i> channel).
+</I>
+Actually, as long as the same method is required for both normal private
+channels (which will all use non-tx-based short_channel_ids in the near
+future I hope!), I don't really mind.  I expect such payments to become
+significant, and as long as paying to a temporary id and paying to a
+private channel looks identical, it's too draconian to ban.  A business
+would probably meet any KYC requirements by simply asking the user
+(perhaps over a certain amount, etc).
+
+(I've put my implementation on hold for a moment while I'm supposed to
+be releasing 0.8.1-rc1 RSN!)
+
+Cheers,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002502.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+	<LI>Next message: <A HREF="002519.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2512">[ date ]</a>
+              <a href="thread.html#2512">[ thread ]</a>
+              <a href="subject.html#2512">[ subject ]</a>
+              <a href="author.html#2512">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

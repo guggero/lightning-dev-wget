@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Route finding and route generation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Route%20finding%20and%20route%20generation&In-Reply-To=%3CCAGpPWDbZrNg8jJxzZbGLkNH_tmLsLka6kTT%2BR%3Dz5c%3DHSODH%2BSg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000749.html">
+   <LINK REL="Next"  HREF="000751.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Route finding and route generation</H1>
+    <B>Billy Tetrud</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Route%20finding%20and%20route%20generation&In-Reply-To=%3CCAGpPWDbZrNg8jJxzZbGLkNH_tmLsLka6kTT%2BR%3Dz5c%3DHSODH%2BSg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Route finding and route generation">billy.tetrud at gmail.com
+       </A><BR>
+    <I>Tue Aug 22 01:08:50 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000749.html">[Lightning-dev] [MINUTES] Dev Meeting 2017-08-21
+</A></li>
+        <LI>Next message: <A HREF="000751.html">[Lightning-dev] BOLT 11, real time micro payments,	and route redundancy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#750">[ date ]</a>
+              <a href="thread.html#750">[ thread ]</a>
+              <a href="subject.html#750">[ subject ]</a>
+              <a href="author.html#750">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey Guys,
+
+I'm testing this mailing list out for the first time, so I'm probably gonna
+be doing it wrong.
+
+I want to talk about route discovery and route generation in the lightning
+network. It seems there's a couple types of things going on with routing:
+
+   - Super basic flood-the-network style routing to get things up and
+   running, as I believe is implicitly proposed here:
+   <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md">https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md</A>
+   - More involved research projects that may not reach fruition any time
+   soon. Eg this:
+   <A HREF="http://bitfury.com/content/5-white-papers-research/whitepaper_flare_an_approach_to_routing_in_lightning_network_7_7_2016.pdf">http://bitfury.com/content/5-white-papers-research/whitepaper_flare_an_approach_to_routing_in_lightning_network_7_7_2016.pdf</A>
+
+I'd like to discuss a near-term approach that can replace the basic
+flood-the-network style route discovery, but isn't so complicated that it
+needs a ton of study and work. This won't be the end-all solution to route
+discovery, but should take us a lot further than flood-the-network.
+
+I propose a protocol where each node knows about its own local network
+topology, and to find a final route, a transaction originator queries a
+number of its connections for routes to the intended destination. By doing
+this, it means that nodes are *not* receiving or storing the entire network
+topology, which makes route discovery a lot less taxing on the network (in
+terms of bandwidth and storage space).
+
+To go into more detail...
+
+When a node joins the network:
+1. it broadcasts its information to all its channels (pretty much as
+proposed here
+&lt;<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md">https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md</A>&gt;)
+announcing its relevant channel information
+2. it requests local network topology information from all its channels for
+information about channels 1 hop beyond its direct connection (ie it will
+receive information about which addresses those channels are connected to,
+and their related fee info / etc)
+3. it then requests topology information for channels 2 hops beyond, etc
+until it has filled its cache to its satisfaction (the user can choose some
+amount of megabytes as its limit of network topology data to store)
+4. it also subscribes to topology changes for nodes at those distances (eg
+if a node has requested information from 3 hops away, it will receive info
+about any new channels or removed channels that fall within that distance)
+
+When a node receives an announcement message from a node joining the
+network:
+1. it will store that node's info in its cache
+2. it will also forward that info to any node that's subscribed to topology
+changes that fall within the relevant distance
+
+When a node wants to construct a route for a transaction:
+1. It checks to see if it has a path to that node in its cache. If it does,
+it finds the cost of the cheapest path it has.
+2. It asks all the channels on the edge of its cached local view for their
+cheapest path (however you want to define cheapest), specifying that it
+only care about paths with a maximum cost of the cheapest path it has
+already found in its cache. For example, if the node has nodes up to 3 hops
+away in its cache, it will *only* ask the nodes 3 hops away (it will not
+ask its direct connections, nor nodes 2 hops away, since it already has
+enough information to ignore them)
+3. When it gets all its responses, it constructs a path
+
+When a node receives a path request from a node:
+1. It checks its cache for its cheapest cache-only path
+2. It asks nodes on the edge of its cached local view for their cheapest
+path, specifying that it only cares about paths with a maximum cost of
+either its cheapest cache-only path or the max-cost specified by the
+requesting node minus the channel cost between it and the requesting node
+(whichever is cheaper). A node on the edge of its cached local view is
+*not* asked for route information if the cost to that node exceeds the
+max-cost this relay node would specify.
+3. It reports the results that satisfy the max-cost requirements of the
+requesting node
+
+And that's it. All the route information can be encrypted and signed so
+relaying nodes can't read the information inside, and so the requesting
+source node can verify which nodes sent that information.
+
+This protocol should keep both node-announcement messages *and* route
+request messages highly localized.
+
+Thoughts?
+
+~BT
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170821/c3f18091/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170821/c3f18091/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000749.html">[Lightning-dev] [MINUTES] Dev Meeting 2017-08-21
+</A></li>
+	<LI>Next message: <A HREF="000751.html">[Lightning-dev] BOLT 11, real time micro payments,	and route redundancy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#750">[ date ]</a>
+              <a href="thread.html#750">[ thread ]</a>
+              <a href="subject.html#750">[ subject ]</a>
+              <a href="author.html#750">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

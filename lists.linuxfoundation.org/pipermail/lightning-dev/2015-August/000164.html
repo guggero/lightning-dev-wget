@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A state machine.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C87a8t8qosk.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000154.html">
+   <LINK REL="Next"  HREF="000156.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A state machine.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C87a8t8qosk.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] A state machine.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Aug 31 00:34:03 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000154.html">[Lightning-dev] A state machine.
+</A></li>
+        <LI>Next message: <A HREF="000156.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#164">[ date ]</a>
+              <a href="thread.html#164">[ thread ]</a>
+              <a href="subject.html#164">[ subject ]</a>
+              <a href="author.html#164">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt; writes:
+&gt;<i> Thanks, this helps a lot !
+</I>&gt;<i>
+</I>&gt;<i> I have more questions after reviewing your new branch 'state', if you have
+</I>&gt;<i> time for that ;-)
+</I>&gt;<i>
+</I>&gt;<i> 1) In PKT_UPDATE_ADD_HTLC, why is the field amount an int32 and not an
+</I>&gt;<i> uint32 ? the value shouldn't be negative right ?
+</I>
+Indeed!  Thanks, fixed (see below for patch).
+
+&gt;<i> 2) For a given payee, is the (simplified) htlc flow always :
+</I>&gt;<i>
+</I>&gt;<i> A-&gt;B PKT_UPDATE_ADD_HTLC
+</I>&gt;<i> B-&gt;A PKT_UPDATE_COMPLETE_HTLC
+</I>&gt;<i> A-&gt;B PKT_UPDATE_ADD_HTLC
+</I>&gt;<i> B-&gt;A PKT_UPDATE_COMPLETE_HTLC ?
+</I>&gt;<i>
+</I>&gt;<i> can we have two successive PKT_UPDATE_ADD_HTLC with the same H, the latter
+</I>&gt;<i> updating the former ? and then a single completion ?
+</I>
+That's not quite right.
+
+Adding an HTLC goes like so:
+
+A: PKT_UPDATE_ADD_HTLC
+B: PKT_UPDATE_ACCEPT (or PKT_UPDATE_DECLINE_HTLC, in which case end)
+A: PKT_UPDATE_SIGNATURE
+B: PKT_UPDATE_COMPLETE
+
+There are three ways to remove it.
+
+It has timed out, so A wants to cancel it:
+A: PKT_UPDATE_TIMEDOUT_HTLC 
+
+OR, B finally gets a failure upstream, so wants to cancel it:
+B: PKT_UPDATE_ROUTEFAIL_HTLC
+
+OR, B gets the R value, and wants to compleete it:
+B: PKT_UPDATE_COMPLETE_HTLC
+
+All these cases lead to the
+PKT_UPDATE_ACCEPT/PKT_UPDATE_SIGNATURE/PKT_UPDATE_COMPLETE sequence.
+
+I will rename PKT_UPDATE_COMPLETE_HTLC to PKT_UPDATE_FULFILL_HTLC which
+avoids overloading &quot;COMPLETE&quot;.
+
+&gt;<i> 3) Since an htlc is completed with a PKT_UPDATE_COMPLETE_HTLC, what is the
+</I>&gt;<i> use case of PKT_UPDATE ?
+</I>
+PKT_UPDATE is a non-htlc transfer.  It was useful for writing test
+utilities, but I've actually now taken it out of the state machine since
+it's not useful in practice.
+
+So all updates are now HTLC updates..
+
+&gt;<i> 4) Why is there no PKT_UPDATE_DECLINE ?
+</I>
+See above.
+
+&gt;<i> 5) I understand the High/Low priorities are a way of resolving conflicts,
+</I>&gt;<i> but I don't get how it works. Could you please explain the principle of it ?
+</I>
+Sure.  The protocol can only do one update at a time.  In the case where
+we both propose an update, we need to decide which goes first.
+
+Thus, each peer alternates between high and low priority states.  If
+you're high priority, your update takes precedence.  Arbitrarily, the
+anchor funder starts in high priority, the other one in low priority.
+
+&gt;<i> 6) In a closing by mutual consent, who is supposed to publish the final
+</I>&gt;<i> transaction ?
+</I>
+Both sides should publish (they should be identical anyway, but it
+doesn't matter).
+
+&gt;<i> 7) How do we manage the fees ?
+</I>
+That's mainly unresolved.  A node will decline if not enough fees are
+offered, but how those are advertised (and how routes are advertised) is
+still TBA.
+
+We'll probably implement fixed fees and terrible routing to begin with.
+
+Cheers,
+Rusty.
+
+Subject: protocol: HTLC amounts can't be negative.
+
+Reported-by: Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt;
+Signed-off-by: Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+
+diff --git a/lightning.pb-c.c b/lightning.pb-c.c
+index b601697..3108aa5 100644
+--- a/lightning.pb-c.c
++++ b/lightning.pb-c.c
+@@ -1711,7 +1711,7 @@ static const ProtobufCFieldDescriptor update_add_htlc__field_descriptors[4] =
+     &quot;amount&quot;,
+     2,
+     PROTOBUF_C_LABEL_REQUIRED,
+-    PROTOBUF_C_TYPE_INT32,
++    PROTOBUF_C_TYPE_UINT32,
+     0,   /* quantifier_offset */
+     offsetof(UpdateAddHtlc, amount),
+     NULL,
+diff --git a/lightning.pb-c.h b/lightning.pb-c.h
+index 05b0a58..77a6c7b 100644
+--- a/lightning.pb-c.h
++++ b/lightning.pb-c.h
+@@ -278,7 +278,7 @@ struct  _UpdateAddHtlc
+   /*
+    * Amount for htlc
+    */
+-  int32_t amount;
++  uint32_t amount;
+   /*
+    * Hash for HTLC R value.
+    */
+diff --git a/lightning.proto b/lightning.proto
+index 4388c5c..86ca52e 100644
+--- a/lightning.proto
++++ b/lightning.proto
+@@ -113,7 +113,7 @@ message update_add_htlc {
+   // Hash for which I will supply preimage to revoke this commitment tx.
+   required sha256_hash revocation_hash = 1;
+   // Amount for htlc
+-  required int32 amount = 2;
++  required uint32 amount = 2;
+   // Hash for HTLC R value.
+   required sha256_hash r_hash = 3;
+   // Time at which HTLC expires (absolute)
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000154.html">[Lightning-dev] A state machine.
+</A></li>
+	<LI>Next message: <A HREF="000156.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#164">[ date ]</a>
+              <a href="thread.html#164">[ thread ]</a>
+              <a href="subject.html#164">[ subject ]</a>
+              <a href="author.html#164">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

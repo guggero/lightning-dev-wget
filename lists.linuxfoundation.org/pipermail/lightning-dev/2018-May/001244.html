@@ -1,0 +1,313 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Scriptless Scripts with ECDSA
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Scriptless%20Scripts%20with%20ECDSA&In-Reply-To=%3CCAO3Pvs-Wkbqe1F0_vV3TWpcK1BNEpwkjsnSuxOKv-KPekRokOA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001282.html">
+   <LINK REL="Next"  HREF="001246.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Scriptless Scripts with ECDSA</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Scriptless%20Scripts%20with%20ECDSA&In-Reply-To=%3CCAO3Pvs-Wkbqe1F0_vV3TWpcK1BNEpwkjsnSuxOKv-KPekRokOA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Scriptless Scripts with ECDSA">laolu32 at gmail.com
+       </A><BR>
+    <I>Mon May  7 23:57:39 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001282.html">[Lightning-dev] [bitcoin-dev] BIP sighash_noinput
+</A></li>
+        <LI>Next message: <A HREF="001246.html">[Lightning-dev] Scriptless Scripts with ECDSA
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1244">[ date ]</a>
+              <a href="thread.html#1244">[ thread ]</a>
+              <a href="subject.html#1244">[ subject ]</a>
+              <a href="author.html#1244">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Pedro,
+
+Very cool stuff! When I originally discovered the Lindell's technique, my
+immediate thought was the we could phase this in as a way to _immediately_
+(no
+additional Script upgrades required), replace the regular 2-of-2 mulit-sig
+with
+a single p2wkh. The immediate advantages of this would: be lower fees for
+opening/closing channels (as the public key script, and witness are
+smaller),
+openings and cooperative close transactions would blend in with the
+anonymity
+set of regular p2wkh transactions, and finally the htlc timeout+success
+transactions can be made smaller as we can remove the multi-sig. The second
+benefit is nerfed a bit if the channel are advertised, but non-advertised
+channels would be able to take advantage of this &quot;stealth&quot; feature.
+
+The upside of the original application I hand in mind is that it wouldn't
+require any end-to-end changes, as it would only be a link level change
+(diff
+output for the funding transaction). If we wanted to allow these styles of
+channels to be used outside of non-advertised channels, then we would need
+to
+update the way channels are verified in the gossip layer.
+
+Applying this to the realm of allowing us to use randomized payment
+identifiers
+across the route is obviously much, much doper. So then the question would
+be
+what the process of integrating the scheme into the existing protocol would
+look like. The primary thing we'd need to account for is the additional
+cryptographic overhead this scheme would add if integrated. Re-reviewing the
+paper, there's an initial setup and verification phase (which was omitted
+from
+y'alls note for brevity) where both parties need to complete before the
+actually signing process can take place. Ideally, we can piggy-back this
+setup
+on top of the existing accept_channel/open_channel dance both sides need to
+go
+through in order to advance the channel negotiation process today.
+
+Conner actually started to implement this when we first discovered the
+scheme,
+so we have a pretty good feel w.r.t the implementation of the initial set of
+proofs. The three proofs required for the set up phase are:
+
+  1. A proof that that the Paillier public key is well formed. In the paper
+  they only execute this step for the party that wishes to _obtain_ the
+  signature. In our case, since we'll need to sign for HTLCs in both
+  directions, but parties will need to execute this step.
+
+  2. A dlog proof for the signing keys themselves. We already do this more
+or
+  less, as if the remote party isn't able to sign with their target key,
+then
+  we won't be able to update the channel, or even create a valid commitment
+in
+  the first place.
+
+  3. A proof that value encrypted (the Paillier ciphertext) is actually the
+  dlog of the public key to be used for signing. (as an aside this is the
+part
+  of the protocol that made me do a double take when first reading it:
+using one
+  cryptosystem to encrypt the private key of another cryptosystem in order
+to
+  construct a 2pc to allow signing in the latter cryptosystem! soo clever!)
+
+First, we'll examine the initial proof. This only needs to be done once by
+both
+parties AFAICT. As a result, we may be able to piggyback this onto the
+initial
+channel funding steps. Reviewing the paper cited on the Lindell paper [1],
+it
+appears this would take 1 RTT, so this shouldn't result in any additional
+round
+trips during the funding process. We should be able to use a Paillier
+modulos
+of 2048 bits, so nothing too crazy. This would just result in a slightly
+bigger
+opening message.
+
+Skipping the second proofs as it's pretty standard.
+
+The third proof as described (Section 6 of the Lindell paper) is
+interactive.
+It also contains a ZK range proof as a sub-protocol which as described in
+Appendix A is also interactive. However, it was pointed out to us by Omer
+Shlomovits on the lnd slack, that we can actually replace their custom range
+proofs with Bulletproofs. This would make this section non-interactive,
+allowing the proof itself to take 1.5 RTT AFAICT. Additionally, this would
+only
+need to be done once at the start, as AFIACT, we can re-use the encryption
+of
+the secp256k1 private key of both parties.
+
+The current channel opening process requires 2 RTT, so it seems that we'd be
+able to easily piggy back all the opening proofs on top of the existing
+funding
+protocol. The main cost would be the increased size of these opening
+messages,
+and also the additional computational cost of operations within the Paillier
+modulus and the new range proof.
+
+The additional components that would need to be modified are the process of
+adding+settling an HTLC, and also the onion payload that drops off the point
+whose dlog is r_1*alpha. Within the current protocol, adding and settling an
+HTLC are more or less non-interactive, we have a single message for each,
+which
+is then staged to be committed in new commitments for both parties. With
+this
+new scheme (if I follow it correctly), adding an HTLC now requires N RTT:
+  1. Alice sends A = G*alpha to Bob. Here alpha is the payment secret.
+  2. Bob sends R_3 = (G*alpha)*r_2 (along w/ a proof of knowledge of r_2 and
+  relation to A)
+  3. Alice sends R_3' = (G*alpha)*r_3 (along with a similar proof as above)
+4.
+  Bob then computes c3 (the encrypted partial sig which when completed will
+  reveal a) to Alice.
+  5. Alice decrypts c3 to get the plaintext partial sig (s'), then finalizes
+  the set up by sending s'' to Bob.
+
+This process takes 2.5 RTT, and would require re-working the state machine
+slightly to only actually commit an HTLC after step 5 has been completed.
+When
+Bob obtains a from the next party in the path, we Alice can then then over
+the
+signature, from which Alice can extract alpha. So adding HTLCs is now a bit
+more interactive, but settling them is the same a before.
+
+Finally, the onion payload would need to be re-interpreted in order to
+encode
+G*alpha which takes 33 bytes. We can shave this down to 32 by selecting the
+x
+coordinate (at the sender) to always be either even or odd. Currently, we
+have
+12 unused bytes in the onion payload. The HMAC is currently 32 bytes. One
+path
+would be to allocate a portion of HMAC space to encoding this point. A
+16-byte
+HMAC would probably have been enough in the beginning, so we can drop down
+to
+that. However, that still leaves 4 bytes somewhere that has to give...one
+could
+either obtain these extra bytes from the CLTV and Amount fields, or just
+have
+each hop consume an extra payload. The latter path would mean that the new
+upper hop limit is actually 10.
+
+However, given that we would need need a new global feature bit in order to
+roll this out, it may make sense to re-work the onion format all together
+which
+would mean that we wouldn't need to hack the old format a bit to accommodate
+this additional data. One aspect of introducing a new end-to-end contract
+type
+which I hadn't considered before is that each new type effectively
+partitions
+the network. This is due to the fact that these HTLCs will now only be able
+to
+be carried along paths that understand this new feature. As a result,
+plausible
+path diversity takes as we can no longer utilize all channels on the network
+for routing. This would suggest that introducing new end to end contract
+types
+(if one wishes to use them widely across arbitrary channels and not for
+specific contract protocols) may be a strong point of synchronization w.r.t
+updates across the network. As a result, we may need to be a bit more
+discerning w.r.t new candidates for e2e contracts given the coordination
+costs.
+
+So the takeaways are:
+  * we can probably piggy back the extra proofs onto the channel opening
+    process
+      * one of the subproofs can use bulletproofs to make the proof shorter
+and
+        also non-interactive
+  * adding an HTLC would take 2.5 RTT's, but settling is just as quick as
+    before
+  * the onion payload would either need to be hacked, or extended to support
+    packaging the point.
+  * the utility of the scheme won't shine until all/most of the network
+uses it
+  * we could start w/ just the introduction of the OG 2PC scheme as a
+multi-sig
+    replacement
+
+
+[1]: <A HREF="https://eprint.iacr.org/2011/494.pdf">https://eprint.iacr.org/2011/494.pdf</A> (section 3.3)
+
+-- Laolu
+
+
+On Fri, Apr 27, 2018 at 11:42 AM Pedro Moreno Sanchez &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pmorenos at purdue.edu</A>&gt;
+wrote:
+
+&gt;<i> Hello guys,
+</I>&gt;<i>
+</I>&gt;<i> as some of you already know, I am working on some cryptographic
+</I>&gt;<i> constructions that might be of interest and useful for the Lightning
+</I>&gt;<i> Network.
+</I>&gt;<i>
+</I>&gt;<i> Recently, I have come up with a scriptless version of the adaptor
+</I>&gt;<i> signatures and the contract required in the Lighting Network using only
+</I>&gt;<i> 2-party ECDSA signatures. The main advantage is that, instead of waiting
+</I>&gt;<i> for Schnorr signatures to be deployed in Bitcoin so that Poelstra's
+</I>&gt;<i> scriptless scripts can be used, I believe that this ECDSA-version of the
+</I>&gt;<i> scriptless scripts can be directly applied today.
+</I>&gt;<i>
+</I>&gt;<i> Details are in the attached PDF. I am looking forward to hearing your
+</I>&gt;<i> comments and suggestions.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Pedro.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180507/32b51086/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180507/32b51086/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001282.html">[Lightning-dev] [bitcoin-dev] BIP sighash_noinput
+</A></li>
+	<LI>Next message: <A HREF="001246.html">[Lightning-dev] Scriptless Scripts with ECDSA
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1244">[ date ]</a>
+              <a href="thread.html#1244">[ thread ]</a>
+              <a href="subject.html#1244">[ subject ]</a>
+              <a href="author.html#1244">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

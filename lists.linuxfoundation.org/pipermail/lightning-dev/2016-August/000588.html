@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Blinded channel observation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3CCAGt-sppizDvz2%2BFWTp6iw4VL8K0wM8LXmbWtePq5kpC6syn%3D%2Bg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000584.html">
+   <LINK REL="Next"  HREF="000593.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Blinded channel observation</H1>
+    <B>Tadge Dryja</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3CCAGt-sppizDvz2%2BFWTp6iw4VL8K0wM8LXmbWtePq5kpC6syn%3D%2Bg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Blinded channel observation">tadge at lightning.network
+       </A><BR>
+    <I>Mon Aug 15 15:18:24 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000584.html">[Lightning-dev] Blinded channel observation
+</A></li>
+        <LI>Next message: <A HREF="000593.html">[Lightning-dev] Blinded channel observation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#588">[ date ]</a>
+              <a href="thread.html#588">[ thread ]</a>
+              <a href="subject.html#588">[ subject ]</a>
+              <a href="author.html#588">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>There's two approaches with encrypted vs non-encrypted: the non-encrypted
+design which I kindof like, is to make all the information given to the
+observer not mean anything on its own.  With encrypted, you achieve the
+same result, but have some decryption key stuffed somewhere in the observed
+transaction to reveal meaningful data which identifies the channel, but is
+encrypted.
+
+Non-encrypted can be more efficient, because it's hard to squeeze down
+compact encrypted data (though see below for an attempt!).  But most things
+in the channel states can be obfuscated such that even if you tell
+everything to the observer, they don't learn anything.  (Even in the case
+where the observer is watching both sides of the channel, they shouldn't be
+able to match them... well other than timing, which is admittedly a very
+effective way to do it!)
+
+I skipped over HTLCs though because they didn't fit with this model.  And
+they really don't -- unlike the updating pubkeys in the commit tx, HTLC's
+are passed though multiple nodes, so information about them can get to the
+observer pretty easily.  So I think HTLCs would need to be in some kind of
+encrypted blob to send to the observer.
+
+I really like txid[0:16] as the truncated txid for the observer and
+txid[16:32] as the decryption key because it's simple and quite fast.  This
+would allow constant-time lookups into the observer's database regarless of
+how many channels it's watching, which HMAC'ing the txid doesn't have.
+ (You could hash txid[16:32] again for the decryption key if you want 32
+bytes.)
+
+The non-HTLC data can be sent unencrypted -- it's pretty much just a
+signature and hash from the tree.  If there is a new HTLC (or a few) added
+in that state, the node can elect to send that to the observer as well.  I
+think the format can be something like:
+
+htlc #1 expiry (4 bytes)
+htlc #1 preimage (20 bytes)
+htlc #2 expiry (4 bytes)
+htlc #2 preimage (20 bytes)
+offset to previous blob (2 bytes)
+decrypt key for previous blob (16 bytes)
+
+having pointers to previous states can save a lot of space if HTLCs are
+added incrementally.  The &quot;blobs&quot; can be kept in a separate data store
+indexed by state number, so it's quick to see that, e.g, state 471 also has
+an HTLC from state 465, which has HTLCs from state 442.  This chained
+decryption may end up revealing more HTLCs than are needed (which are quick
+for the observer to detect and discard) but if the fraud has occurred then
+anonymity is gone anyway and it's no big deal if the observer learns a
+little more -- they already learned all the important stuff.
+
+I *think* 2 bytes is enough; it's not that an HTLC can't last more than 65K
+states, it's that an HTLC can't persist &gt; 65K states with no other HTLCs
+being added during that period.  A long-lived HTLC wouldn't be referenced
+directly; instead later states which still had it would point to a previous
+state that also pointed to it.  It's a bit more work for the observer, who
+might end up with hundreds of extra preimages, but I think optimizing for
+space savings at the cost of CPU time when the fraud occurs is a good
+trade-off.  (The fraud occurs almost never, while the state data transfers
+and storage happen always)
+
+This would also allow nodes to omit or include HTLCs to the observer as
+they see fit, which seems useful for micropayments which might outstrip the
+abilities of the observer.
+
+Also, yeah, padding (handwave) and timing are what make hiding the channel
+very tricky, especially for HTLCs.  With non-HTLC updates, it can be hard
+to know when 2 nodes are updating a channel state, but with HTLCs there are
+more nodes in the mix with more points for data to leak out to the
+observer.  That's another reason you might want to omit sending out some
+portion of HTLC recovery data.
+
+I will try coding some of this and see, because it seems to work in my head
+but that's no indication it'll work on the computer :)
+
+-Tadge
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160815/4eb6ee12/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160815/4eb6ee12/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000584.html">[Lightning-dev] Blinded channel observation
+</A></li>
+	<LI>Next message: <A HREF="000593.html">[Lightning-dev] Blinded channel observation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#588">[ date ]</a>
+              <a href="thread.html#588">[ thread ]</a>
+              <a href="subject.html#588">[ subject ]</a>
+              <a href="author.html#588">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Stale Factory (and channel) problem
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Stale%20Factory%20%28and%20channel%29%20problem&In-Reply-To=%3CFaEtQxbA6OSFmc2IcI9MbDDKrC8OaFcLyJrW6vkCeyIiJKjBsprLpokqXPNAm64zqSAK-ccVed66k59tQ8cy10mtozPOqv0pcd9E-EeTkSs%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001979.html">
+   <LINK REL="Next"  HREF="001985.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Stale Factory (and channel) problem</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Stale%20Factory%20%28and%20channel%29%20problem&In-Reply-To=%3CFaEtQxbA6OSFmc2IcI9MbDDKrC8OaFcLyJrW6vkCeyIiJKjBsprLpokqXPNAm64zqSAK-ccVed66k59tQ8cy10mtozPOqv0pcd9E-EeTkSs%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Stale Factory (and channel) problem">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Apr 16 11:31:23 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001979.html">[Lightning-dev] Stale Factory (and channel) problem
+</A></li>
+        <LI>Next message: <A HREF="001985.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1980">[ date ]</a>
+              <a href="thread.html#1980">[ thread ]</a>
+              <a href="subject.html#1980">[ subject ]</a>
+              <a href="author.html#1980">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Alejandro,
+
+&gt;<i> that's correct, Lightning Factories require support for &quot;transaction fragments&quot; to be added dynamically, which are only possible when using non-interactive aggregation signature schemes.&#160;
+</I>
+I understand.
+Unfortunately I am not a mathematician and cannot comment on non-interactive aggregation signature schemes.
+But it seems good to point this to bitcoin-dev.
+
+&gt;<i>
+</I>&gt;<i> The proposal of having a factory operator is in fact quite interesting, and it is true it would give some scalability while the community discusses other more long-lasting options. Is there a more in-depth proposal of the protocol you suggest, or any of the like?&#160;
+</I>
+I have been mulling this over as a possible intermediate step since the release of the original Burchert-Decker-Wattenhofer channel factories paper.
+However, I have only now actually published it to anybody.
+(the basic genesis of this idea was to consider a `fundmultichannel` command for C-lightning, which I have not been able to implement anyway, hence the base idea that a factory could be created from a single node doing the funding; in essence, before this kind of factory could be standardized, this would be a single transaction funding multiple channels, with the switchover to factories being &quot;seamless&quot; to users of the C-lightning API once this kind of factory is standardized)
+In particular the tremendous CSV delays in the base Decker-Wattenhofer construction was too expensive by my opinion.
+
+Alternately, it would be possible to have a Decker-Wattenhofer factory host Poon-Dryja channels, for instance, with a small number of updates at the factory level keeping the CSV delay down.
+The logic being that channels would need large number of updates, but the factory could remain useful even with fewer supported updates.
+Still need to adjust the CLTV of every HTLC on a route by the largest CSV-delta of the channels in the route, with plain Poon-Dryja channels having 0 CSV-delta (the CSV is after the transported contract, not before as in Decker-Wattenhofer).
+
+After the release of the Decker-Russell-Osuntokun (&quot;eltoo&quot;) paper, I pretty much kept such alternative constructions in the back of my mind as I thought that a Decker-Russell-Osuntokun channel within a Decker-Russell-Osuntokun factory would be sufficient.
+CSV-delta would double, but still be manageable especially with the smaller CSV needed in Decker-Russell-Osuntokun.
+
+However, stale factory at least seems to be a &quot;close your factory&quot; kind of error.
+Unfortunately it seems to be easy to trigger by specifically disconnecting after receiving a message containing a signature.
+Thus updates at the factory level are potentially breaking.
+
+Thus, I revived this thought, which requires not this kind of issue.
+It also avoids the broken factory by the simple expedient of not allowing a broken factory by not allowing factory-level operations other than cooperative closes.
+
+--
+
+A thought occurs: could it be possible to distribute the signatures via node gossip?
+Factory-level operations change the channel-level topology, thus require some gossip message anyway.
+(in particular, closure of a channel inside a factory is not visible, unlike channel closures onchain which are visible onchain, thus need to have some message to attest to the destruction of the channel inside a factory)
+This may mitigate the effect of stale factory by allowing the receipt of the next factory state signatures via other means than direct message sending.
+Of course, if some factory participant becomes completely unresponsive before it broadcasts its signature, the factory operation cannot proceed, but the broken factory problem means that is not possible to perform factory operations without all factory participants anyway.
+(it would also be helpful since participants in the same factory may not have direct communication channels with each other, and nodes are allowed to not broadcast any method of direct contact, so we *do* need some other way to perform a one-to-many send)
+
+Basically, third parties would not consider a &quot;change in channels in factory&quot; gossip message as complete until it receives all signatures from all factory members, but would still gossip such fragments around.
+The &quot;change in channels in factory&quot; gossip might contain the sighash of the transaction, plus the actual signatures unencrypted.
+Third parties would be able to verify the signatures as valid, and could check that the signatures match the n-of-n onchain, but would not be able to force a unilateral factory closure as they would not know the contents of the actual transaction.
+The factory participants could lie and use a random sighash, but anything happening inside a factory is their say-so anyway and cannot be verified in detail unless one is also a participant.
+And if the other participants are lying about the intended next state of the factory, one need only refuse to release such a signature, which would keep the message from being considered by the rest of the network as binding on the current state of the channels inside the factory.
+
+--
+
+How are things done on a Chaumian CoinJoin?
+It seems to me that the same issue exists; a participant in the CoinJoin might have sent a signature authorizing their coins being mixed, but if it does not see the transaction broadcast onchain after some time, it can assume that the joining failed.
+Perhaps a similar construction can be made, obviously without broadcasting onchain.
+
+Perhaps a coordinator, who is one of the factory participants, could solicit signatures from all participants.
+I.e. this could be a fixed factory operator.
+Then when a participant validates the next factory state as valid, and sends its signature to the coordinator, it starts a timer.
+If the coordinator is unable to provide the full set of signatures in that time, the participant assumes failure and unilaterally closes.
+
+This may mitigate the stale factory problem without actually fixing it...
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001979.html">[Lightning-dev] Stale Factory (and channel) problem
+</A></li>
+	<LI>Next message: <A HREF="001985.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1980">[ date ]</a>
+              <a href="thread.html#1980">[ thread ]</a>
+              <a href="subject.html#1980">[ subject ]</a>
+              <a href="author.html#1980">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

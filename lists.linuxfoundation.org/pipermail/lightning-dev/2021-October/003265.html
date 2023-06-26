@@ -1,0 +1,327 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fast Forwards By Channel-in-Channel Construction,	Or: Spillman-Decker-Wattenhofer-Poon-Dryja-Towns
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fast%20Forwards%20By%20Channel-in-Channel%20Construction%2C%0A%09Or%3A%20Spillman-Decker-Wattenhofer-Poon-Dryja-Towns&In-Reply-To=%3Cg8uDDw_RcOKUVfr7PDEpTbnrJbFEtY5Nb6cRkKzJql8nlvTzxacUsuLTFQ4IxhRNqnuWHpM66vS5tRLZm5FGx8dK8Q6O2p9u6YO6MM8So50%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003264.html">
+   <LINK REL="Next"  HREF="003276.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fast Forwards By Channel-in-Channel Construction,	Or: Spillman-Decker-Wattenhofer-Poon-Dryja-Towns</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fast%20Forwards%20By%20Channel-in-Channel%20Construction%2C%0A%09Or%3A%20Spillman-Decker-Wattenhofer-Poon-Dryja-Towns&In-Reply-To=%3Cg8uDDw_RcOKUVfr7PDEpTbnrJbFEtY5Nb6cRkKzJql8nlvTzxacUsuLTFQ4IxhRNqnuWHpM66vS5tRLZm5FGx8dK8Q6O2p9u6YO6MM8So50%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Fast Forwards By Channel-in-Channel Construction,	Or: Spillman-Decker-Wattenhofer-Poon-Dryja-Towns">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Oct  6 00:09:11 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003264.html">[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+</A></li>
+        <LI>Next message: <A HREF="003276.html">[Lightning-dev] Removing lnd's source code from the Lightning specs	repository
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3265">[ date ]</a>
+              <a href="thread.html#3265">[ thread ]</a>
+              <a href="subject.html#3265">[ subject ]</a>
+              <a href="author.html#3265">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+In some direct discussions with me, ajtowns recently came up with a fairly interesting perspective on implementing Fast Forwards, which I thought deserved its own writeup.
+
+The idea by aj is basically having two CSV-variant Spillman unidirectional channels hosted by a Poon-Dryja construction, similar to the proposed Duplex channels by Decker-Wattenhofer.
+The main insight from aj is: why do we need to chain transactions for Fast Forwards, when we can use a channel-like construction for it instead, using two unidirectional channels?
+
+Review: Spillman Channels and Variants
+======================================
+
+If you are a Bitcoin OG feel free to skip this section; it is intended for newer devs who may have never heard of Spillman channel scheme (and its variants).
+Otherwise, or if you would like a refresher, feel free to read on.
+
+The Spillman channel, and its variants, are all unidirectional: there is a fixed payer and a fixed payee.
+The `nLockTime`-based variants also have a maximum lifetime.
+
+* To open:
+  * The payer creates, but does not sign or broadcast, an initial funding transaction, with a funding transaction output that is a simple 2-of-2 between payer and payee, but does *not* sign the transaction.
+  * The payer generates a backout transaction that has a future `nLockTime` agreed upon and signs it.
+  * The payee signs the backout transaction and gives the signature to the payer.
+  * The payer signs and broadcasts the funding transaction.
+  * Both payer and payee wait for deep confirmation of the funding transaction.
+* To pay:
+  * The payer generates a new version of the offchain transaction, giving more funds to the payee and less to the payer than the previous version.
+  * The offchain transactions have no `nLockTime`!
+  * The payer signs the transaction and hands it and its signature over to the payee.
+  * The payee keeps the transaction and the payer signature.
+* To close:
+  * At any time before the timeout, the payee can sign the last offchain transaction and broadcast it, closing the channel.
+  * The payee has every incentive to use the latest offchain transaction, since the channel is unidirectional the latest transaction is always going to give it more money than every earlier transaction.
+  * At the timeout, the payer can recover all of their funds using the backout transaction.
+
+Spillman channels as described are vulnerable to tx malleation, which is fixed in SegWit and later, but at this time we already have Poon-Dryja, which is better than Spillman in most respects.
+
+`CLTV` Spillman Variant
+-----------------------
+
+To avoid tx malleation, instead of a presigned backout transaction, the 2-of-2 between payer and payee can instead be a SCRIPT with the logic:
+
+* Any of the following:
+  * Payer signature and Payee signature.
+  * Payer signature and CLTV of the timeout.
+
+This is mostly a historical footnote, since tx signature malleation is no longer an issue if you use only SegWit, but it is helpful to remember the general form of the above SCRIPT logic.
+
+`nSequence` and `CSV` Spillman Variants
+---------------------------------------
+
+An issue with classic Spillman is that it has a fixed absolute timeout.
+Once the lifetime is reached, even if the payer still has capacity on their side, the channel still has to be closed before the absolute timeout.
+
+With the new post-BIP68 semantics for `nSequence` (i.e. relative lock time), however, it is possible to use a relative locktime in order to lift the fixed channel lifetime.
+With this, the channel can be kept open indefinitely, though it would still end up losing all utility once the payer has exhausted all capacity on their side.
+However, as long as the payer still has capacity, there is no need to close the channel just because of an absolute pre-agreed timeout.
+
+To implement this variant using `nSequence`, we need to insert a &quot;kickoff&quot; transaction between the funding transaction output and the offchain transaction that splits the funds between the payer and payee:
+
+* To open:
+  * The payer creates, but does not sign or broadcast, a funding transaction with a funding transaction paying out to a plain 2-of-2 between payer and payee.
+  * The payer and payee create and sign, and exchange signatures for, a &quot;kickoff&quot; transaction.
+    This is a 1-input-1-output tx that spends the funding TXO and pays to another 2-of-2 between payer and payee.
+  * The kickoff transaction is completely signed at this point and both payer and payee have complete signatures.
+  * The payer creates a backout transaction that spends the kickof transaction output, with an agreed-upon `nSequence` time.
+  * The payee signs the backout transaction and hands the signature to the payer.
+  * The payer signs and broadcasts the funding transaction.
+* To pay:
+  * The payer creates a new version of the offchain transaction, which spends the kickoff transaction output (instead of the funding transaction output as in classic `nSequence` Spillman channels), giving more funds to the payee and less to itself than previous versions.
+  * The offchain transaction has no `nSequence`!
+  * The payer signs the transaction and hands it and its signature to the payee.
+  * The payee keeps the transaction and the payer signature.
+* To close:
+  * Either the payer or the payee broadcasts the kickoff transaction.
+    * The payee has to respond by signing the latest offchain transaction and broadcasting it.
+    * Similar to the `nLockTime` variant, the payee has every incentive to use the latest state, as that is the one with most money to it.
+    * If the payee does not respond, the payer uses the backout transaction to recover all their funds.
+
+Similarly to the `nLockTime` variant, it is possible to instead use a `CSV` SCRIPT at the kickoff transaction output instead of a backout transaction, using the SCRIPT logic:
+
+* Any of the following:
+  * Payer signature and payee signature.
+  * Payer signature and `CSV` of the timeout.
+
+The above `CSV` variant is less useful as it does not fix malleation issues: the kickoff transaction is still vulnerable to malleation!
+However, we *must* keep the above SCRIPT logic in mind in later discussion.
+
+Review: Decker-Wattenhofer Duplex Micropayment Channels
+=======================================================
+
+Again, if you are a Bitcoin OG and can still remember this, skip.
+If not, or you cannot remember details anymore, do read on.
+
+The Decker-Wattenhofer paper proposes a *bidirectional* channel.
+It is constructed by using a bidirectional channel mechanism with some major drawbacks, mitigating those drawbacks by using `CSV` Spilman variants.
+
+Basically:
+
+* It uses a bidirectional channel mechanism, which I call decrementing-`nSequence` (the paper has no particular label for the mechanism, just describes it).
+  * The bidirectional channel mechanism has a limited and *very small* number of updates.
+  * There is no absolute timeout, only a small limit on the number of updates.
+  * The relative locktimes are potentially very high.
+  * The window for being offline is small (very small compared to the worst-case relative locktime)!
+* The above bidirectional channel mechanism is chained multiple times.
+  * This ameliorates the *very small* number of updates:
+    * Earlier mechanisms are only updated once the later mechanism has run out of updates.
+    * Updating an earlier mechanism resets the number of updates allowed for every later mechanism.
+    * The effect is that the number of updates of each stage is multiplied together for the total number of updates of the chain of mechanisms.
+    * This raises the small number of updates, at the cost of increasing the worst-case relative locktime.
+* The final bidirectional channel mechanism in the chain hosts two `nSequence`/`CSV` Spillman variant channels.
+  * This is the &quot;Duplex&quot; part in the title.
+
+I will not be discussing the decrementing-`nSequence` mechanism in detail, you can see e.g. <A HREF="https://reddit.com/r/Bitcoin/comments/et841o/technical_more_channel_mechanisms/">https://reddit.com/r/Bitcoin/comments/et841o/technical_more_channel_mechanisms/</A> for more.
+
+Now, since the bidirectional decrementing-`nSequence` mechanism uses `nSequence`, *obviously*, it too, like the `nSequence`/`CSV` variants of Spillman, requires a kickoff transaction.
+The kickoff transaction is what starts the relative timeout.
+Thus, each such mechanism has *two* transactions, a kickoff, and a &quot;state&quot; transaction.
+
+*However*, an important insight of Decker-Wattenhofer is:
+
+* The &quot;state&quot; transaction of the previous stage in the chain of mechanisms serves as the &quot;kickoff&quot; of the current stage of the chain.
+
+Thus, even when chained together, we only need **one** actual kickoff transaction, the one at the start of the entire chain of constructions.
+Even at the duplex `nSequence`/`CSV` Spillman variants at the end of the cosntruction, the last decrementing-`nSequence` stage serves as the kickoff of both duplex Spillman variants.
+
+Thus, a general principle is that:
+
+* The &quot;state&quot; of a previous stage in a chain of mechanisms can *also* serve as the &quot;kickoff&quot; of a kickoff-requiring later stage.
+
+Poon-Dryja And Fast Forwards
+============================
+
+Now, let us review Poon-Dryja, which *obviously* is not necessary since you are on lightning-dev and can compute shachains in your sleep.
+
+So let me point out how the SCRIPT of a revocable output, owned by the local node, in Poon-Dryja looks like:
+
+* Any of the following:
+  * Local revocation-key signature and remote signature.
+    * The local is the one who holds the revocation key, until the transaction is revoked, at which point local hands over the revocation key to the remote.
+  * Local signature and `CSV` of the timeout.
+
+***OR***, before the state is revoked and only the local node knows the revocation key, in effect:
+
+* Any of the following:
+  * Local signature and remote signature.
+  * Local signature and `CSV` of the timeout.
+
+Now let us do `s/Local/Payer/` and `s/remote/payee/`:
+
+* Any of the following:
+  * Payer signature and payee signature.
+  * Payer signature and `CSV` of the timeout.
+
+And would you look at that, we got the script in the `CSV` Spillman variant!
+
+In short, until a particular Poon-Dryja commitment transaction is revoked, the commitment transaction output can be used to host a `CSV` Spillman variant.
+
+And the Poon-Dryja commitment transaction can *also* serve as the kickoff of a Spillman `CSV` variant channel!
+
+Typically, a Poon-Dryja commitment transaction will have two &quot;main&quot; outputs, one for each counterparty.
+This is the to-local and to-remote output.
+In Fast Forwards I proposed that the to-remote output, which currently just requires &quot;remote signature&quot;, should be modified to use:
+
+* Any of the following:
+  * Local revocation-key signature and remote signature.
+  * Remote signature and `CSV` timeout.
+
+Then, the to-remote output also has the same schema as a Spillman `CSV` variant, with `payer = remote`.
+
+Thus, we *can* in fact use the Poon-Dryja commitment transaction as a kickoff transaction for duplex Spillman channels, like in Decker-Wattenhofer Duplex Micropayment Channels.
+
+Why Poon-Dryja + `CSV`-Spillman?
+--------------------------------
+
+Now, Poon-Dryja is superior to all variants of Spillman, *except* in one aspect: latency.
+
+Poon-Dryja is bidirectional, unlike Spillman, and it requires only one transaction for unilateral closes (ignoring HTLCs, anyway).
+This is unlike Spillman that is unidirectional, and whose `CSV` variant requires a kickoff followed by a state transaction in a unilateral close.
+
+However, Poon-Dryja requires exchanging signatures and revocation keys at each state update, which requires 1.5 roundtrips at minimum.
+
+Spillman in all variants requires only the payer to send a single signature, and that is sufficient: the payee does not need to send back *any* data.
+Thus, Spillman updates require 0.5 roundtrips.
+
+Fast Forwards as I originally proposed are also 0.5 roundtrips, however they involve creating a long chain of HTLC-hosting transactions.
+aj suggested that this chain of transactions be shortened by the use of Spillman variant channels, thus improving onchain footprint in the case of unilateral closure.
+
+HTLC Failure
+============
+
+But an important reason for needing Poon-Dryja bidirectionality is that HTLCs can fail.
+
+When we offer an HTLC to a counterparty, that is a unidiretional operation - the HTLC is not *yet* owned by the counterparty, but is &quot;more owned&quot; than just &quot;completely unowned&quot; --- until the timeout expires, the counterparty has the possibility of claiming the HTLC amount.
+And once the counterparty is able to claim the HTLC, it is now definitely owned by the counterparty.
+Both operations are from us to the counterparty, and thus safely unidirectional.
+
+However, if the counterparty ultimately fails the HTLC before timeout, it needs to somehow refund the HTLC back to us.
+And this requires bidirectionality.
+
+Since there is a Duplex mechanism, there is the possibility to refund by using the *counterparty* end of the channel, sending back an HTLC of equal value to allow refunds.
+
+This refund HTLC has to have a *higher* timeout than the HTLC that is being failed.
+This is because if the HTLC being refunded is invalidly claimed by the counterparty using the hashlock branch after they failed it, we need time to claim the refund HTLC, so the refund HTLC has to have a higher timeout.
+
+Against the above, we should note:
+
+* The counterparty might not have sufficient capacity on *their* Spillman channels to refund, so we have to waste a Poon-Dryja update.
+* The counterparty cannot have keys offline, as it has to sign the Spillman channel update as the payer, thus removing the nice ability of Fast Forwards to be used for semi-offline receipts.
+  * Cancelling an HTLC at a keys-offline receiver may be necessary in case of multipart payments, where some parts reach the receiver but the payer is unable to find a payment solution for the rest of the amount and simply gives up; the receiver would want the HTLC capacity to be freed up as much as possible for other payment attempts.
+
+An alternate idea by aj is to simply have *another* revocation key, this one for individual HTLCs.
+This is *not* stored in a shachain, but instead stored with each historical HTLC (in much the same way that current historical HTLCs have to be kept until channel closure, since they contain non-derivable cryptographic data).
+
+So for example, we are local and we offered an HTLC to the counterparty, the HTLC output looks like:
+
+* Any of the following:
+  * Local revocation-key signature and remote signature.
+  * Local signature and remote signature and `CLTV` of timeout (will be spent via HTLC-timeout transaction).
+  * Local signature and remote signature and preimage of hash (will be spent via a new HTLC-success-reversible transaction).
+
+The HTLC-timeout transaction will have the same output as current HTLC-timeout, and the remote will provide a signature for it to the local.
+The new HTLC-sucess-reversible is new here, and has the following output:
+
+* Any of the following:
+  * Remote HTLC-revocation-key signature and local signature.
+  * Remote signature and `CSV` of `to_self_delay`.
+
+For the counterparty (remote) to fail the HTLC, it has to hand over the HTLC-revocation-key to us (local).
+Then if we need to drop the latest state onchain, we can wait for the HTLC to timeout and reclaim via the HTLC-timeout transaction.
+And if the remote tries to claim the HTLC erroneously after they failed the HTLC, they have given us the HTLC-revocaiton-key and we can claim the output immediately by ourselves without waiting.
+
+Now, suppose the remote wants to be able to bring privkeys offline.
+It can generate the HTLC-revocation-key separately from the privkeys.
+In fact, for every receive, it *must* generate a fresh HTLC-revocation-key, especially since the payer might later retry the same HTLC hash.
+
+Once an incoming HTLC has been failed or claimed by the remote, it can throw away the HTLC-revocation-key --- it is us, the local, that has to remember it!
+If an HTLC with the same hash and timeout is created again, the remote has to generate a fresh HTLC-revocation-key for it.
+
+Of course, since the remote has to provide us with pubkeys of the HTLC-revocation-key, that does imply more than 0.5 round trips, losing the Fast property.
+This may be acceptable for privkey-offline receivers, but does imply that this protocol variation would be dispreferred at forwarding nodes, which want the Fast part of Fast Forwards, not its privkey-offline-receiver part.
+Forwarding nodes would prefer the &quot;refund HTLC&quot; method instead, which allows for fast failures, and move the slow Poon-Dryja update to a less latency-sensitive periodic reset of the Spillman channels.
+
+Now since the privkey-offline receiver generates the HTLC-revocation-key by itself, we might worry that this allows the &quot;online&quot; part of the privkey-offline receiver to fail an HTLC aftr it has released the preimage to the counterparty.
+However, we should note that the &quot;online&quot; part of the receiver already knows the preimage, and can release it without being paid anyway; thus, this is not a degradation of security.
+
+Why Spillmanize?
+----------------
+
+The original Fast Forwards writeup uses a chain of transactions for each HTLC, relying on periodic Poon-Dryja updates to keep the number of transactions down.
+This has bad implications for the number of transactions hitting onchain in case of unilateral close.
+
+By terminating at Spillman channels instead, we reduce the number of transactions that have to hit onchain to a constant amount, instead of chaining multiple of them.
+
+Indeed, one can argue that if we see chains of transactions, like on typical onchain wallet behavior, we should always wonder if we can &quot;cut-through&quot; them using some kind of channel mechanism!
+
+Conclusion
+==========
+
+By this additional mechanism incorporating ideas from Spillman, Decker-Wattenhofer, Poon-Dryja Fast Forwards, and novel ideas from Towns, we can propose a new protocol for fast forwards that reduces the number of transactions that hit onchain in case of unilateral closes, relative to he original Fast Forwards proposal, while retaining its recently-discovered ability (from Fournier) to be useful for privkey-offline receivers.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003264.html">[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+</A></li>
+	<LI>Next message: <A HREF="003276.html">[Lightning-dev] Removing lnd's source code from the Lightning specs	repository
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3265">[ date ]</a>
+              <a href="thread.html#3265">[ thread ]</a>
+              <a href="subject.html#3265">[ subject ]</a>
+              <a href="author.html#3265">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

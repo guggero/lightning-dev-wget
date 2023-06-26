@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Return to the Layered Commit Transactions?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Return%20to%20the%20Layered%20Commit%20Transactions%3F&In-Reply-To=%3C20151127051446.GA4583%40sapphire.erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000346.html">
+   <LINK REL="Next"  HREF="000361.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Return to the Layered Commit Transactions?</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Return%20to%20the%20Layered%20Commit%20Transactions%3F&In-Reply-To=%3C20151127051446.GA4583%40sapphire.erisian.com.au%3E"
+       TITLE="[Lightning-dev] Return to the Layered Commit Transactions?">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Nov 27 05:14:46 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000346.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+        <LI>Next message: <A HREF="000361.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#350">[ date ]</a>
+              <a href="thread.html#350">[ thread ]</a>
+              <a href="subject.html#350">[ subject ]</a>
+              <a href="author.html#350">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Nov 27, 2015 at 02:12:55PM +1030, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt;  Definitions:
+</I>&gt;<i> &gt;   d -- the OP_CSV delay
+</I>&gt;<i> &gt;   T -- top OP_CLTV timeout
+</I>&gt;<i> &gt;   C -- the commitment tx is signed by B and given to A at time C
+</I>&gt;<i> &gt;   P -- the commitment tx is published at time P
+</I>&gt;<i> &gt;   S -- the commitment tx is spent at time S
+</I>&gt;<i> &gt;   X -- the timeout at which a refund can be forced
+</I>&gt;<i> ...
+</I>&gt;<i> &gt;    For n=4, F=4, t &gt;= d+2 hours, so normal expiry is no later than
+</I>&gt;<i> &gt;    T-d-40m, and uncooperative expiry is at T+1h20, so d+2h later.
+</I>&gt;<i> Is the 2 hours here due to timer tolerance?  
+</I>
+Nope, it's just plugging in n and F into &quot;t &gt;= d+10*(n+2F)&quot;.
+
+&gt;<i> &gt; Don't think it's needed either though, so long as channels have parameters
+</I>&gt;<i> &gt; &quot;t&quot; and &quot;k&quot; as well as &quot;d&quot; to drop to the blockchain well before T
+</I>&gt;<i> &gt; actually comes around.
+</I>&gt;<i> I'll be honest, I got lost somewhere in the alphabet reading your post.
+</I>
+Yeah; I'm surprised I didn't while writing it.
+
+But while chatting with matsjj afterwards, I think I came up with a
+beter explanation:
+
+  T = the timeout in the HTLC
+  d = the CSV delay in the HTLC
+  n = how long it takes for you to be confident someone else can't
+      doublespend an input to your transaction (ie, 10 minutes * however
+      many confirmations you want to see)
+  f = how long it takes your transactions to get the first confirmation,
+      given how much fee you pay
+
+(To translate to t and k, t=d+f and k=f+n))
+
+At time T-d-f, if the HTLC hasn't been resolved off-chain, you want to
+publish your commitment transaction. It'll hit the chain at time T-d.
+
+At time T both the CTLV and CSV clauses are satisfied, so you can spend
+it. You should attempt to do so immediately. Your tx will be confirmed
+at time T+f. At time T+f+n, you'll be satisfied your tx is safe.
+
+T-d-f = T-t = when you decide to close the channel and hit the blockchain
+T+f+n = T+k = when you're 100% sure the HTLC is done with
+
+&gt;<i> However, you might be able to help me with a related question: I
+</I>&gt;<i> proposed previously that if you didn't get fast resolution on an HTLC
+</I>&gt;<i> you'd require proof that a commit tx was published, or you'd close the
+</I>&gt;<i> channel yourself to create such a proof to hand back.
+</I>&gt;<i> 
+</I>&gt;<i> How would this work, timeout-wise?  We don't know how many hops are
+</I>&gt;<i> ahead of us.  If the rule is &quot;wait 1 minute, if you don't get a
+</I>&gt;<i> response, close the channel&quot; then everyone in the chain will close the
+</I>&gt;<i> channel at once.  If the timeout is in the HTLC offer, then it makes the
+</I>&gt;<i> message more traceable.
+</I>&gt;<i> 
+</I>&gt;<i> I can't see any obvious solution, can you?
+</I>
+I still hope the &quot;fine people for keeping the channel open&quot; idea (I
+think CJP proposed it?) is possible, but I haven't tried working out if
+you can make the details work when you have to drop to the blockchain,
+and have multiple HTLCs in flight.
+
+If you made the rule be something like &quot;if the HTLC was setup at time
+O with timeout T, wait until O+(T-O)/120 and close the channel&quot; you
+wouldn't have privacy problems though.
+
+You'll still have the problem that if you're near the end of the chain
+you might get left holding the bag though (ie, still having to pay the
+tx amount forward (despite closing that channel), but not being able
+to collect it from the other end (because you cancelled the HTLC you
+forwarded, in order to keep the channel open)).
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000346.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+	<LI>Next message: <A HREF="000361.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#350">[ date ]</a>
+              <a href="thread.html#350">[ thread ]</a>
+              <a href="subject.html#350">[ subject ]</a>
+              <a href="author.html#350">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

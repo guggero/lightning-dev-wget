@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] BOLT3: Commitment Transaction Outputs is weak	to malleability
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT3%3A%20Commitment%20Transaction%20Outputs%20is%20weak%0A%09to%20malleability&In-Reply-To=%3CCAO3Pvs_fAo%3DUU8U0VTOOKBqOr5OjT-%2BA6YEhx5g-_5kben7bzw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000809.html">
+   <LINK REL="Next"  HREF="000813.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] BOLT3: Commitment Transaction Outputs is weak	to malleability</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT3%3A%20Commitment%20Transaction%20Outputs%20is%20weak%0A%09to%20malleability&In-Reply-To=%3CCAO3Pvs_fAo%3DUU8U0VTOOKBqOr5OjT-%2BA6YEhx5g-_5kben7bzw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] BOLT3: Commitment Transaction Outputs is weak	to malleability">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Nov 29 09:22:22 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000809.html">[Lightning-dev] BOLT3: Commitment Transaction Outputs is weak	to malleability
+</A></li>
+        <LI>Next message: <A HREF="000813.html">[Lightning-dev] BOLT3: Commitment Transaction Outputs is weak	to	malleability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#810">[ date ]</a>
+              <a href="thread.html#810">[ thread ]</a>
+              <a href="subject.html#810">[ subject ]</a>
+              <a href="author.html#810">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>FWIW, going by the bitnodes tracker [1], most upgraded nodes are currently
+running a bitcoind version &gt;= 0.14. With segwit widely deployed, I'd safe
+say it's a safe bet to assume that most miners are already running with
+the standard malleability reducing policy that shipped in that version.
+
+However, as you point out there's still the possibility that the Eve's
+first element of Eve's witness stack would pushes the fee rate of Alice's
+justice transaction to an &quot;insufficient&quot; range. If the justice transaction
+is delayed excessively, then there's a chance that the commitment output
+of the peer breaching the transaction matures before Alice's justice
+transaction is confirmed. In this case, Eve may successfully breach the
+contract.
+
+In lnd, we have plans to implement a scorched earth policy when responding
+to on-chain contract breach event. With this policy, once our justice
+transaction punishing the violator of the contract has been broadcast, for
+each block it doesn't confirm in, we'll gradually bump of the fee on the
+transaction (with RBF). The additional fee would be drawn from from the
+*violator's* settled balance in that state. With each iteration (block, no
+confirmation, fee bump) we gradually bleed away the funds of the violator,
+supplementing the fee already present on that commitment state. Assuming
+that rational miners accept the higher fee transaction (and the violator
+isn't colluding with miners), then our justice transaction will make it
+into the block before the transaction breaching the contract. In an
+attempt to counter act this, the violator may try to use CPFP to anchor
+the transaction into the chain with a more attractive fee package.
+However, in order to beat us in, they must spend a total amount of fees
+that is greater than the current cumulative fee rate on our justice
+transaction. If they do so, they'll either end up net negative, or fail to
+profit (as they'll also bleed away all their funds).
+
+
+The vindication strategy described requires the justice transaction to
+signal RBF. This serves as another reason to signal RBF in justice
+transactions. I recommend that all implementations adopt the scorched
+earth vindication strategy when handling breached contracts. It addresses
+Dorier's malleability concern, and also further stack the incentives
+against attempting a contract breach.
+
+
+[1]: <A HREF="https://bitnodes.earn.com/nodes/">https://bitnodes.earn.com/nodes/</A>
+
+-- Laolu
+
+On Tue, Nov 28, 2017 at 11:40 PM Nicolas Dorier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">nicolas.dorier at gmail.com</A>&gt;
+wrote:
+
+&gt;<i> Actually this was merged as policy rules in 0.14, not 0.15.1.
+</I>&gt;<i> Not as bad as I thought, but still a bit uneasy about someone malleating
+</I>&gt;<i> my transaction.
+</I>&gt;<i>
+</I>&gt;<i> Another way to fix the situation which would not require the BOLT to
+</I>&gt;<i> change is to enable RBF of the Penalty transaction so Eve transaction would
+</I>&gt;<i> be replaced by the initial one.
+</I>&gt;<i>
+</I>&gt;<i> Nicolas,
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Nov 29, 2017 at 4:11 PM, Nicolas Dorier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">nicolas.dorier at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> I noticed the Commitment Transaction Output script is weak to
+</I>&gt;&gt;<i> malleability, this can be used to delay confirmation of the revocation.
+</I>&gt;&gt;<i> Luckily, fixing the situation does not require lots of development.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i> OP_IF
+</I>&gt;&gt;<i>     # Penalty transaction
+</I>&gt;&gt;<i>     &lt;revocationkey&gt;
+</I>&gt;&gt;<i> OP_ELSE
+</I>&gt;&gt;<i>     `to_self_delay`
+</I>&gt;&gt;<i>     OP_CSV
+</I>&gt;&gt;<i>     OP_DROP
+</I>&gt;&gt;<i>     &lt;local_delayedkey&gt;
+</I>&gt;&gt;<i> OP_ENDIF
+</I>&gt;&gt;<i> OP_CHECKSIG
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> An attacker can delay the Penalty Transaction by malleating it. Which can
+</I>&gt;&gt;<i> lead to very bad outcome as Lightning dependant on time locks.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The penalty transaction would have.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i> &lt;revocation_sig&gt; 1
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Problem is that Eve could malleate OP_1 into a positive, huge number.
+</I>&gt;&gt;<i> This would have for effect to fill the mempool of nodes/miners with the
+</I>&gt;&gt;<i> malleated version which will have an higher fee rate, delaying the
+</I>&gt;&gt;<i> confirmation of the penalty transaction.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Now, there is a policy rule called SCRIPT_VERIFY_MINIMALIF by jl2012
+</I>&gt;&gt;<i> which was merged into v0.15.1. (
+</I>&gt;&gt;<i> <A HREF="https://github.com/bitcoin/bitcoin/commit/c72c5b1e3bd42e84465677e94aa83316ff3d9a14">https://github.com/bitcoin/bitcoin/commit/c72c5b1e3bd42e84465677e94aa83316ff3d9a14</A>
+</I>&gt;&gt;<i> )
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I guess that by the time LN is ready, 0.15.1 will be spread enough among
+</I>&gt;&gt;<i> miners, but still I think a 2 bytes overhead is well worth the fix.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i> 1 OP_EQUAL OP_IF
+</I>&gt;&gt;<i>     # Penalty transaction
+</I>&gt;&gt;<i>     &lt;revocationkey&gt;
+</I>&gt;&gt;<i> OP_ELSE
+</I>&gt;&gt;<i>     `to_self_delay`
+</I>&gt;&gt;<i>     OP_CSV
+</I>&gt;&gt;<i>     OP_DROP
+</I>&gt;&gt;<i>     &lt;local_delayedkey&gt;
+</I>&gt;&gt;<i> OP_ENDIF
+</I>&gt;&gt;<i> OP_CHECKSIG
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Nicolas,
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20171129/ab719344/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20171129/ab719344/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000809.html">[Lightning-dev] BOLT3: Commitment Transaction Outputs is weak	to malleability
+</A></li>
+	<LI>Next message: <A HREF="000813.html">[Lightning-dev] BOLT3: Commitment Transaction Outputs is weak	to	malleability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#810">[ date ]</a>
+              <a href="thread.html#810">[ thread ]</a>
+              <a href="subject.html#810">[ subject ]</a>
+              <a href="author.html#810">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

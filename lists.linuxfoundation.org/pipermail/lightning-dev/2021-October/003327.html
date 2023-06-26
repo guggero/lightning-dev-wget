@@ -1,0 +1,113 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] In-protocol liquidity probing and channel	jamming mitigation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20In-protocol%20liquidity%20probing%20and%20channel%0A%09jamming%20mitigation&In-Reply-To=%3CNbpSuQ92eT6FP-kvLNK5s7c2kmlTqraab94TeB-ZROCriyD6__9rWZtsu7Gw3Wu-xKm69FTCRTTCubvpTUXJQtGsJ4bAnMIrmgTaddekBLs%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003326.html">
+   <LINK REL="Next"  HREF="003317.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] In-protocol liquidity probing and channel	jamming mitigation</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20In-protocol%20liquidity%20probing%20and%20channel%0A%09jamming%20mitigation&In-Reply-To=%3CNbpSuQ92eT6FP-kvLNK5s7c2kmlTqraab94TeB-ZROCriyD6__9rWZtsu7Gw3Wu-xKm69FTCRTTCubvpTUXJQtGsJ4bAnMIrmgTaddekBLs%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] In-protocol liquidity probing and channel	jamming mitigation">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Oct 19 11:38:43 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003326.html">[Lightning-dev] In-protocol liquidity probing and channel	jamming mitigation
+</A></li>
+        <LI>Next message: <A HREF="003317.html">[Lightning-dev] In-protocol liquidity probing and channel	jamming mitigation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3327">[ date ]</a>
+              <a href="thread.html#3327">[ thread ]</a>
+              <a href="subject.html#3327">[ subject ]</a>
+              <a href="author.html#3327">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Joost,
+
+&gt;<i> There could be some corners where the incentives may not work out 100%, but I doubt that any routing node would bother exploiting this. Especially because there could always be that reputation scheme at the sender side which may cost the routing node a lot more in lost routing fees than the marginal gain from the upfront payment.
+</I>&gt;<i>
+</I>&gt;<i> Another option is that nodes that don't care to be secretive about their channel balances could include the actual balance in a probe failed message. Related:&#160;<A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/695">https://github.com/lightningnetwork/lightning-rfc/pull/695</A>
+</I>&gt;<i>
+</I>&gt;<i> Overall it seems that htlc-less probes are an improvement to what we currently have. Immediate advantages include a reduction of the load on nodes by cutting out the channel update machinery, better ux (faster probes) and no locked up liquidity. On the longer term it opens up the option to charge for failed payments so that we finally have an answer to channel jamming.
+</I>
+One can argue that if you are hoping that forwarding nodes will not exploit this, you can also hope that forwarding nodes will not perform channel-jamming attacks.
+As I noted before, channel jamming attacks will never be performed by payers or payees --- they have an incentive to complete the transaction and earn gains from trade.
+Channel jamming attacks are performed by large forwarding nodes on their smaller competitors, since having 100 capacity on large versus 10 capacity on the smaller competitor is worse than having 89 capacity on the large versus 0 capacity on the smaller competitor.
+
+On the other hand, perhaps it is at this point that we should start computing the exact incentives, hmm.
+
+--
+
+A thing to note is that any node along a path can disrupt an onion response by the simple expedient of XORing it with random stuff, or even just a non-0 constant.
+This may allow for an additional attack vector.
+
+Suppose I am a forwarding node and I receive a probe request, and it turns out the next hop lacks capacity right now.
+I could incite the next hop to lie by forwarding the probe request to the next hop despite the lack of capacity.
+
+If the next hop responds immediately, I can then corrupt the return onion.
+Presumably if the next hop responded immediately it was reporting my lie to the sender.
+By corrupting the return onion the ultimate sender is unable to determine *which* node along the route failed, and I can hope that the reputation penalty to my competitor forwarding nodes along the path compensates for the reputation hit I personally suffer.
+
+If the next hop takes some time before responding, then possibly it colluded with me to lie about the capacity on our channel (i.e. it actually went ahead and forwarded to the next hop despite knowing I lied).
+Then I could faithfully onion-encrypt the response and send it back to the ultimate sender.
+
+
+To mitigate against the above attack:
+
+* If a forwarding node gets a probe request for an amount that the asker is *currently* unable to give anyway:
+  * The forwarding node should still forward the probe request.
+  * On response, however, it replaces the response with its own report that the previous hop was a dirty liar.
+  * Note that the asker is the one who has full control over their funds in the channel, so the asker cannot later claim &quot;but the network latency mixed up our messages!&quot; --- the asker knows when it does `update_add_htlc` to reduce its capacity, so it should know it has the capacity or not.
+
+
+Now, if we are going to add a message &quot;the previous hop was a dirty liar&quot; then we should ask if a forwarding node would want to make a false accusation.
+
+* Suppose the previous hop has sufficient capacity and asked us if we have our own capacity.
+* Does the current hop have any incentive to falsely accuse the previous hop?
+  * No: if it did, then the sender would not try their channel again in the close future, thus leading to lower fee earnings.
+
+
+&gt;<i> ZmnSCPxj, as first person to propose the idea (I think?), would you be interested in opening a draft PR on the spec repository that outlines the new message(s) that we'd need and continue detailing from there?
+</I>
+It might end up not happening given the stuff I juggle randomly, so feel free to start it.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003326.html">[Lightning-dev] In-protocol liquidity probing and channel	jamming mitigation
+</A></li>
+	<LI>Next message: <A HREF="003317.html">[Lightning-dev] In-protocol liquidity probing and channel	jamming mitigation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3327">[ date ]</a>
+              <a href="thread.html#3327">[ thread ]</a>
+              <a href="subject.html#3327">[ subject ]</a>
+              <a href="author.html#3327">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

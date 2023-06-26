@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Post-Schnorr lightning txes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Post-Schnorr%20lightning%20txes&In-Reply-To=%3C20180222192845.GA7584%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001031.html">
+   <LINK REL="Next"  HREF="001035.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Post-Schnorr lightning txes</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Post-Schnorr%20lightning%20txes&In-Reply-To=%3C20180222192845.GA7584%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Post-Schnorr lightning txes">aj at erisian.com.au
+       </A><BR>
+    <I>Thu Feb 22 19:28:45 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001031.html">[Lightning-dev] Post-Schnorr lightning txes
+</A></li>
+        <LI>Next message: <A HREF="001035.html">[Lightning-dev] Privacy issues with proof of payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1038">[ date ]</a>
+              <a href="thread.html#1038">[ thread ]</a>
+              <a href="subject.html#1038">[ subject ]</a>
+              <a href="author.html#1038">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Feb 20, 2018 at 08:59:07AM +1000, Anthony Towns wrote:
+&gt;<i> My understanding of lightning may be out of date, so please forgive
+</I>&gt;<i> (or at least correct :) any errors on my behalf.
+</I>
+&gt;<i> I'm not 100% sure how this approach works compared to the current one
+</I>&gt;<i> for the CSV/CLTV overlap problem. I think any case you could solve by
+</I>&gt;<i> obtaining a HTLC-Timeout or HTLC-Success transaction currently, you could
+</I>&gt;<i> solve in the above scenario by just updating the channel state to remove
+</I>&gt;<i> the HTLC.
+</I>
+So, I didn't understand the HTLC-Timeout/HTLC-Success transactions (you
+don't have to obtain them separately, they're provided along with every
+commitment tx), and the current setup works better than what I suggest
+unless to_self_delay is very small.
+
+It could be possible to make that a tradeoff: choose a small to_self_delay
+because you're confident you'll monitor the chain and quickly penalise any
+cheating, with the bonus that that makes monitoring cheaply outsourcable
+even for very active channels; or choose a large to_self_delay and have
+it cost a bit more to outsource monitoring.
+
+Anyway.
+
+You can redo all the current txes with Schnorr/muSig/scriptless-scripts
+fine, I think:
+
+ - funding tx is 2-of-2 muSig
+
+ - the commitment tx I hold has outputs for:
+      your balance - payable to A(i)
+      my balance - payable to A(i)+R(B,i)
+      each in-flight HTLC - payable to A(i)+R(B,i)+X(j)
+   where
+      A(i) is your pubkey for commitment i
+      R(B,i) is my revocation hash for commitment i
+      X(j) is a perturbation for the jth HTLC to make it hard to know
+        which output is a HTLC and which isn't
+   spends the funding tx
+   locktime and sequence of the funding tx input encode i
+   partially signed by you
+
+ - the HTLC-Success/HTLC-Timeout txes need to have two phases, one that
+   can immediately demonstrate the relevent condition has been met, and
+   a second with a CSV delay to ensure cheating can be penalised.
+
+   so:
+     HTLC-Success: pays A(i)+R(B,i)+Y(j), partially signed by you
+       with scriptless script requirement of revealing preimage for
+       corresponding payment hash
+     HTLC-Timeout: pays A(i)+R(B,i)+Y(j), partially signed by you
+       with locktime set to enforce timeout
+
+ - you also need a claim transaction for each output you can possibly
+   spend:
+     Balance-Claim: pays B(i), funded by my balance output, partially
+       signed by you, with sequence set to enforce relative timelock of
+       to_self_delay
+     HTLC-Claim: pays B(i)+Z(j), funded by the j'th
+       HTLC-Success/HTLC-Timeout transaction, partially signed by you,
+       with sequence set to enforce relative timelock of to_self_delay
+
+   where Y(j) and Z(j) are similar to X(j) and are just to make it hard
+   for third parties to tell the relationship between outputs
+
+Each of those partial signatures require me to have sent you a unique ECC
+point J, for which I know the corresponding secret. I guess you'd just
+need to include those in the revoke_and_ack and update_add_htlc messages.
+
+The drawback with this approach is that to outsource claiming funds
+(without covenants or SIGHASH_NOINPUT), you'd need to send signatures
+for 2+2N outputs for every channel update, rather than just 1, and the
+claiming transactions would be a lot larger.
+
+This retains the advantage that you don't have to store any info about
+outdated HTLCs if you're monitoring for misbehaviour yourself; you just
+need to send an extra two signatures for every in-flight HTLC for every
+channel update if you're outsourcing channel monitoring.
+
+Posting a penalty transaction in this scheme isn't as cheap as just
+being 1-in-1-out, but if you're doing it yourself, it's still cheaper
+than trying to claim the funds while misbehaving: you can do it all in a
+single transaction, and if cross-input signature aggregation is supported,
+you can do it all with a single signature; while they will need to supply
+at least two separate transactions, and 1+2N signatures.
+
+&gt;<i> If your channel updates 100 times a second for an entire year, that's
+</I>&gt;<i> 200GB of data, which seems pretty feasible.
+</I>
+If you update the channel immediately whenever a new HTLC starts or
+ends, that's 50 HTLCs per second on average; if they last for 20 seconds
+on average, it's 1000 HTLCs at any one time on average, so trustless
+outsourcing would require storing about 2000 signatures per update,
+which at 64B per signature, is 13MB/second, or about a terabyte per
+day. Not so feasible by comparison.
+
+The channel update rate is contributing quadratically to that calculation
+though, so reducing the rate of incoming HTLCs to 2 per second on average,
+but capping channel updates at 1 per second, gives an average of 40
+HTLCs at any one time and 81 signatures per update, for 450MB per day
+or 163GB per year, which isn't too bad.
+
+(I guess if you want the privacy preserving features of WatchTower
+monitoring you'd have to roughly double that space requirement? Not
+real sure)
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001031.html">[Lightning-dev] Post-Schnorr lightning txes
+</A></li>
+	<LI>Next message: <A HREF="001035.html">[Lightning-dev] Privacy issues with proof of payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1038">[ date ]</a>
+              <a href="thread.html#1038">[ thread ]</a>
+              <a href="subject.html#1038">[ subject ]</a>
+              <a href="author.html#1038">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

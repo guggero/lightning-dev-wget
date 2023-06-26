@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Thoughts on CoinSwap privacy relative to Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20CoinSwap%20privacy%20relative%20to%20Lightning&In-Reply-To=%3CPTEY1D9pcuRagkYy3PCn3ihizxQDfVYMqi17kdyEEXStuJiHk0O5cRnLE3gwfW4EackO0tErt6ClmmOshJ4B9SdOadGQ9-z8NnhGvz4YvUA%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002254.html">
+   <LINK REL="Next"  HREF="002246.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Thoughts on CoinSwap privacy relative to Lightning</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20CoinSwap%20privacy%20relative%20to%20Lightning&In-Reply-To=%3CPTEY1D9pcuRagkYy3PCn3ihizxQDfVYMqi17kdyEEXStuJiHk0O5cRnLE3gwfW4EackO0tErt6ClmmOshJ4B9SdOadGQ9-z8NnhGvz4YvUA%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Thoughts on CoinSwap privacy relative to Lightning">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Oct 25 07:27:49 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002254.html">[Lightning-dev] Unpublished Channels,	and a Proposal for Local Channel Publication
+</A></li>
+        <LI>Next message: <A HREF="002246.html">[Lightning-dev] Make Me An Offer: Next Level Invoicing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2245">[ date ]</a>
+              <a href="thread.html#2245">[ thread ]</a>
+              <a href="subject.html#2245">[ subject ]</a>
+              <a href="author.html#2245">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+Before, I already expressed the thought, that CoinSwap and related protocols, seem to suspiciously look like payment channels.
+
+* <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-April/016889.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-April/016889.html</A>
+* <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-April/016888.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-April/016888.html</A>
+
+&gt;<i> Any special contracts are hosted inside a temporary offchain cryptocurrency system (slightly like a Lightning channel), and are not exposed if the protocol runs to completion.
+</I>
+Let me flesh out these thoughts further.
+
+One way of implementing CoinSwap involves pre-creating a backout transaction that is simply a future-`nLockTime` transaction.
+This is a &quot;backout&quot; that returns the funds to their provider in case the swap protocol aborts.
+
+* <A HREF="https://github.com/AdamISZ/CoinSwapCS/issues/53">https://github.com/AdamISZ/CoinSwapCS/issues/53</A> - `nLockTime`-protected Backouts
+* <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-April/016888.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-April/016888.html</A> - &quot;pre-swap backout transactions&quot;
+
+As it happens, it is useful to review Spillman channels.
+
+* At setup time, a future-`nLockTime` &quot;backout&quot; transaction is created and signed, which spends the funding transaction output.
+* The funding transaction is signed and broadcast and confirmed once the signature for the above backout has been exchange.
+* At each update, a transaction without a future `nLockTime` (0, or the current blockheight + 1) is created which moves more money to the receiver direction.
+
+In fact, the backout transaction in my CoinSwap proposals is similar to the Spillman initial backout transaction.
+If we squint, we can consider CoinSwap and related protocols to be implementable on top of temporary Spillman channels to execute the coin swap protocol.
+
+But suppose we would like to consider the below surprising fact, which might not otherwise be obvious to everyone on this mailing list:
+
+* Lightning Network: *exists*.
+
+CoinSwapper: *uses Lightning Network*.
+
+Why settle for limited-time unidirectional channels when you can have unlimited-lifetime bidirectional channels?
+
+So let me then propose further, the implementation of a CoinSwap protocol over Lightning.
+Let us suppose we have a number of UTXOs, `U[0..n]`, that we wish to &quot;clean&quot;.
+
+First, the ingredients needed:
+
+* A Lightning Network.
+* An offchain-to-onchain swap service.
+* (Optional) a preexisting Lightning Network node you control.
+
+Then, the ritual to concoct our CoinSwap:
+
+* Set up two nodes.
+  One can be temporary and the other permanent (i.e. the preexisting Lightning Network node you control), or both can be temporary.
+  * One will be the &quot;sender&quot;, it must be temporary.
+    Set it up over Tor!
+  * Other will be &quot;receiver&quot;, it may be permanent or temporary.
+* Get inbound liquidity on the &quot;receiver&quot; node.
+  * i.e. get at least one channel, let us call this in further discussion the &quot;buffer channel&quot;.
+    Then use the offchain-to-onchain swap to acquire incoming liquidity.
+    You will need some clean coins for this.
+* On the &quot;sender&quot; node, create channels to arbitrary points on the network graph, using the `U[0..n]` UTXOs.
+* Send random amounts from the sender to the receiver node.
+* If the receiver incoming liquidity starts to run out, send out some amount via the offchain-to-onchain swap service.
+* Once the sender channels are exhausted, close them.
+  * Due to the 1% reserve requirement, this will leave a small amount owned by the sender node, and still dirty, which we can:
+    * If it is safe to merge them all, we can just try to put them into a new channel and repeat this again.
+    * Or send it to your favorite controversial charity, if it is safe to associate their history with that charity.
+    * Or just send to 1BitcoinEaterAddressDontSendf59kuE individually.
+    * Or just spend all of it on fees and make an `OP_RETURN` output taunting blockchain analysis -- this is at least &quot;nice&quot; in that it reduces the UTXO set.
+
+Now, let me introduce some issues that have been problematic for CoinSwap.
+
+* Same-amount correlation.
+  CoinSwap swaps the histories of two equal-valued coins.
+  However, the values are roughly equal, and thus two UTXOs of equal value that are created in the same block, and subsequently later spent in the same later block, are strong hints of CoinSwap usage.
+  * One of the things that have been proposed is to have multiple UTXOs be swapped for multiple UTXOs, forcing the solution of the subset-sum problem.
+    * But see this: <A HREF="https://github.com/AdamISZ/CoinSwapCS/issues/47#issuecomment-400854870">https://github.com/AdamISZ/CoinSwapCS/issues/47#issuecomment-400854870</A>
+      * TLDR: subset-sum is non-polynomial if you are looking for a subset of *any* size, but in practice this will be for just subsets with two or three members, which is doable in almost-polynomial time.
+* Server logs problem.
+  The general idea is that some passive &quot;server&quot; or &quot;maker&quot; waits for CoinSwap requests, then an active &quot;client&quot; or &quot;taker&quot; pays for CoinSwap operations.
+  * However, arbitrary servers may be run by chain analysis companies, and thus keep a log of such requests for later analysis.
+    * Thus, clients would have to make multiple swaps with distinct servers to reduce the chance that any single entity controls all of them and is able to reconstruct the history.
+
+The proposed CoinSwap-over-Lightning helps with the above issues:
+
+* Same-amount correlation.
+  * If the user is patient enough, the time frames of when the channels are created, and later when the offchain-to-onchain swap provides clean coins, can be extended over multiple blocks, greatly increasing the scope of necessary onchain analysis.
+  * The buffer channel helps obscure how much value has been transferred from the dirty coins to clean coins.
+    * In particular, it easily allows the clean coins to be split differently, i.e. you can put dirty 4BTC, 2BTC, 3BTC coins and get back clean 2BTC, 2BTC, 2BTC, 2BTC, 1BTC coins.
+    * The cleaned coins need not appear on the same block --- value can be kept temporarily in the buffer channel (and is the advantage of the buffer channel).
+      * You could even spend some money over the Lightning Network using the buffer channel.
+    * Value can be left in the buffer channel if the receiver node is your permanent Lightning node, such that the onchain clean coins sum *less than* the input onchain dirty coins, meaning subset-sum is not even the problem to be solved anymore.
+* Server logs problem.
+  * The forwarding nodes between the sender and receiver node, and between the receiver node and the offchain-to-onchain swap, could be logging the activity of the buffer channel.
+    However, unless the sender node happens to connect directly to another node that is secretly controlled by your counterparty in the buffer channel, and you are not using unpublished channels, then you should be fine.
+    Having the sender node spread out its outgoing channels helps reduce the chance that all the nodes it connects are controlled by the same entity.
+    Having the sender node use published channels helps confuse payment analysis, since it is possible your sender node is doing a forward rather than being the source of funds.
+    (the fact that the published channel UTXO, which is traceable from your dirty coins, is publicly associated with the sender node, is immaterial --- the sender node is a temporary node that will be destroyed after the swap is done, after all)
+  * The offchain-to-onchain swap service could be logging the activity of moving from offchain to onchain funds.
+    In particular it knows a mapping between proof-of-payments and actual onchain coins released.
+    If the swap service is not the same entity as the buffer channel counterparty, then it is not possible to determine that the payment is arising from the receiving node buffer channel.
+    However, if the offchain-to-onchain swap is capable of attaching a persistent identity to a set of proofs-of-payment, then the offchain-to-onchain swap can still correlate the owner of the suppsedly-clean coins.
+    Obviously, it would be best to use a swap service that does not require a persistent identity.
+
+Of note, is that it is vital to use published channels here, in order to avoid the Axiom of Terminus: <A HREF="002241.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/002241.html</A>
+The buffer channel is vital to be published, and it is strongly recommended to have multiple buffer channels as well to various points of the network.
+It is often best if the receiver node is a permanent node, that also performs at least some amount of forwarding in which to hide its traffic.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002254.html">[Lightning-dev] Unpublished Channels,	and a Proposal for Local Channel Publication
+</A></li>
+	<LI>Next message: <A HREF="002246.html">[Lightning-dev] Make Me An Offer: Next Level Invoicing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2245">[ date ]</a>
+              <a href="thread.html#2245">[ thread ]</a>
+              <a href="subject.html#2245">[ subject ]</a>
+              <a href="author.html#2245">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

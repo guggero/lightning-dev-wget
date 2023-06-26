@@ -1,0 +1,261 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] CVE-2020-26896: LND Invoice Preimage Extraction
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CVE-2020-26896%3A%20LND%20Invoice%20Preimage%20Extraction&In-Reply-To=%3CCAFfwr8GHVCDZjzMpYjOj9%2BUQV76fXSpMvYJvTw6-PLq1v1BYPQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002858.html">
+   <LINK REL="Next"  HREF="002855.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] CVE-2020-26896: LND Invoice Preimage Extraction</H1>
+    <B>Conner Fromknecht</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CVE-2020-26896%3A%20LND%20Invoice%20Preimage%20Extraction&In-Reply-To=%3CCAFfwr8GHVCDZjzMpYjOj9%2BUQV76fXSpMvYJvTw6-PLq1v1BYPQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] CVE-2020-26896: LND Invoice Preimage Extraction">conner at lightning.engineering
+       </A><BR>
+    <I>Tue Oct 20 21:52:29 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002858.html">[Lightning-dev] CVE-2020-26895: LND Low-S Tx-Relay Standardness
+</A></li>
+        <LI>Next message: <A HREF="002855.html">[Lightning-dev] Full Disclosure: CVE-2020-26896 LND &quot;The (un)covert	channel&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2857">[ date ]</a>
+              <a href="thread.html#2857">[ thread ]</a>
+              <a href="subject.html#2857">[ subject ]</a>
+              <a href="author.html#2857">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+Hi all,
+
+Today we are writing to disclose the details of CVE-2020-26896 as a follow up to
+the partial disclosure sent to lightning-dev [1].
+
+## Abstract
+
+Prior to v0.11.0-beta, an lnd node could be coerced into revealing an invoice
+preimage for a forwarded HTLC with a colliding payment hash. This can be
+exploited to a) weaken the victim's receiver privacy by confirming the
+destination of an HTLC, and/or b) under certain circumstances, result in loss of
+funds to the victim by believing the invoice was paid when it only received
+routing fees. We have no evidence of either case being exploited in the wild.
+
+It affects routing nodes, i.e. any lnd node that permits HTLC forwarding and
+operates as any form of merchant node (accepts payment for goods &amp; services);
+nodes that use rejecthtlc=1 are not affected.
+
+The vulnerability was reported privately to the lnd team by Antoine Riard.
+
+## Background
+
+When resolving incoming HTLCs on-chain, the forwarding node is expected to
+supply a valid preimage via the witness in order to claim the HTLC. Preimages
+can be learned in two primary ways: by generating an invoice or receiving a
+preimage as the result of a successfully forwarded HTLC. Internally, lnd tracks
+these differing preimage classes in two distinct places: an invoice database and
+a preimage database.
+
+For proper handling, a node should inspect the off-chain HTLC it received to
+determine whether the node was an intermediary or the final hop (indicated by an
+all zeros next_hop short channel id). Final hops are intended to consult the
+invoice database for preimages, while intermediaries should consult the preimage
+database.
+
+Earlier versions of lnd would incorrectly fallback to the invoice database if
+the preimage database did not contain the preimage. This resulted in situations
+where the node would reveal an invoice preimage, even though the victim was not
+the final hop in a route.
+
+In coordination with a triggered channel closure, an attacker can construct a
+malicious HTLC through the victim, divulging the target invoice preimage
+on-chain when the incoming HTLCis claimed. After disclosing the preimage, an
+attacker can claim a concurrent outgoing HTLC whose CLTV has not yet expired.
+his results in the HTLC's value being stolen, minus routing fees, since the
+victim incorrectly believes they received the payment.
+
+## Attack Scenario
+
+An example of the attack goes as follows:
+
+Assume a _real HTLC_ is routed to a malicious node, Malice, that has a channel
+with sufficient outgoing bandwidth to forward to the victim, Bob, the intended
+receiver of the payment.
+
+Instead of forwarding the real HTLC, Malice creates a new _malicious HTLC_ which
+has the same payment hash. The first hop&#8217;s amount should be equal or slightly
+larger, the CLTV can be increased as desired up to default implementation
+limits.
+
+Malice forwards the malicious HTLC in a circular route through Bob and back to
+herself, where she holds the malicious HTLC.
+
+With the malicious HTLC locked in place, Malice triggers a unilateral close of
+the Malice-Bob channel. The commitment played (from Bob&#8217;s POV) has an incoming
+HTLC with the target invoice&#8217;s payment hash. The unilateral closure should be
+initiated well before any of the malicious HTLC&#8217;s CLTVs expire, otherwise the
+last channel in the route will also go to chain.
+
+When the unilateral close is confirmed, Bob will promptly broadcast the
+HTLC-success transaction for the malicious HTLC. Due to the bug, the preimage
+provided to sweep the malicious HTLC is obtained from the invoice database as a
+fallback to the (forwarded) preimage database, rather than being ignored.
+
+The victim, Bob, has already marked the invoice settled and published the
+preimage on-chain. However, the malicious HTLC is still active on Bob&#8217;s
+downstream channel (and the rest of the circular route), allowing Malice to
+settle the malicious HTLC she holds _after_ the invoice has already been marked
+paid. This results in Bob only receiving routing fees, and the Malice
+redirecting the payment to herself, while simultaneously convincing Bob of
+receiving the full payment.
+
+At this point, the malicious HTLC  has been successfully pulled from Malice to
+herself in a circular route, making herself whole minus routing fees (in
+addition to chain fees if she was the initiator of the Malice-Bob channel).
+Malice then settles the real, intercepted HTLC using the same preimage to obtain
+a profit.
+
+### Caveats
+
+For the attack to succeed, Malice must intercept a legacy HTLC or a
+single-sharded MPP HTLC. If any other concurrent MPP shard has already reached
+Bob before attempting to claim on-chain, the attack will fail due to additional
+safety checks added to lnd [2], preventing an invoice from being settled by a
+downgraded HTLC after it has already accepted an MPP shard with a valid payment
+secret.
+
+In order to directly profit from the attack, Malice must be intercepting a
+payment from an unsuspecting victim, limiting control of timing and the amount
+that can be siphoned. Malice must also somehow infer or guess that Bob has the
+corresponding invoice being paid.
+
+If Malice runs the same attack without intercepting a real HTLC, she pays
+routing fees, and possibly chain fees, in exchange for the invoice preimage and
+identity of the receiver. However, it is possible for her to indirectly profit
+from this if the service provider releases tangible goods or services to anyone
+with knowledge of the invoice preimage, which is not recommended in practice.
+
+The upstream attacker does not need to be adjacent, they only need to know which
+channel to target and watch for closure. Being adjacent increases the
+assuredness of pulling off an exploit, but is not strictly required.
+
+Similarly, the downstream attacker (possibly distinct from Malice) does not need
+to be adjacent, they can settle the malicious HTLC further downstream to the
+same effect at the cost of more routing fees.
+
+## Patch
+
+This vulnerability was patched in lnd v0.11.0-beta, by properly isolating the
+preimage database from the invoice database according to the HTLC's next_hop
+field in commit cf739f3f [3] of PR 4157 [4]. The isolation ensures that we can
+only claim forwarded HTLCs as a result of learning the preimage from an outgoing
+HTLC. It also fixes the privacy leak by not revealing invoice preimages unless
+the node is the final destination.
+
+Due to the complexities involved in describing vulnerabilities over textual
+mediums, the full nature of the issue wasn&#8217;t fully understood until after
+v0.10.0-beta had been released. Additionally, the covert fix contained in the
+v0.11.0-beta release was pushed back due to a concurrent investigation into
+network instabilities resulting in unexpected channel closures.
+
+Note, although the above patch fixes the issue, this issue could have also been
+avoided by having receivers require payment secrets (BOLT 11 `s` field) since
+the attackers would be unable to guess the payment secret. However, left as
+optional, the attacker can always downgrade to using malicious HTLCs that omit
+the payment secret.
+
+For some time we have debated flipping the switch on requiring payment secrets
+across the three major implementations. This vulnerability is further evidence
+to the additional safety and privacy benefits. Now almost a year since the
+initial deployment of payment secrets in lnd, the upcoming v0.12.0-beta release
+of lnd is likely to make payment secrets required by default. We would welcome
+other implementations to do the same.
+
+## Timeline
+
+04/19/2020 - Initial report from Antoine Riard
+04/29/2020 - lnd v0.10.0-beta released
+07/07/2020 - PR 4157 merged into master
+08/20/2020 - lnd v0.11.0-beta released
+10/08/2020 - Partial Disclosure sent to lightning-dev and lnd mailing list [1]
+10/20/2020 - Full Disclosure sent to lightning-dev and lnd mailing list
+
+## References
+
+[1] <A HREF="002819.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/002819.html</A>
+[2] <A HREF="https://github.com/lightningnetwork/lnd/blob/9f32942a90bcd91cc37a4a9c6c2fb454f534a65d/invoices/update.go#L229">https://github.com/lightningnetwork/lnd/blob/9f32942a90bcd91cc37a4a9c6c2fb454f534a65d/invoices/update.go#L229</A>
+[3] <A HREF="https://github.com/lightningnetwork/lnd/pull/4157/commits/cf739f3f87fdcb28ab45dfd48e3d18adf26e45b3">https://github.com/lightningnetwork/lnd/pull/4157/commits/cf739f3f87fdcb28ab45dfd48e3d18adf26e45b3</A>
+[4] <A HREF="https://github.com/lightningnetwork/lnd/pull/4157">https://github.com/lightningnetwork/lnd/pull/4157</A>
+[5] <A HREF="https://gist.github.com/ariard/6bdeb995565d1cc292753e1ee4ae402d">https://gist.github.com/ariard/6bdeb995565d1cc292753e1ee4ae402d</A>
+
+
+A big thank you to Antoine for the responsible disclosure and for helping to
+make lnd more safu. More information can be found in Antoine&#8217;s disclosure [5].
+
+Regards,
+Conner Fromknecht
+
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCAAdFiEEnI1hhop8SSADsnRO59c3tn+lkscFAl+PWzMACgkQ59c3tn+l
+kseIJw//UwswUyh6BNgmi4D8NoC6olelW0dRmecqcZF7JBQa619kVFm/D7rixp33
+J1YsXvZC2OLTpqmaJcJ3OvBKLVcW7CxheDp3Pm0JjrfVnmOl1NGX4CSymL6Zpou7
+nFqh+nqOZ2n6o4OIv+mx0y2YANKjAVtAcr9LakubMn/3LgYzqvKKu39QGqrtz9vZ
+lYGAAPU3zlAjIjFNv56xWpF0Pj9VE2mQB27w2QmbSuNtR21feOSJhJimEvmXhk6d
+O0Ze78Fea+eaS+d1uyRkB7aaEKBRAA5WCtDKgSOwfEY+mHC7u5+LRasyegjlc8Ie
+hYBNOsjEZqVjwIgr+lqMDbQ8B5RtW4LVro/LMYGCbVRnGuF16gHu/lkDnVgz/sY7
+sbsPVG11wfVFH0U/TyJoBC8qOmeHMJoVsvGbY9I2XQiFw7yAbWxEdU+7mMhQZA2Z
+Zd9pl0ATByLFPyg58gA6G4JV+F45DvYrG3jj6cdkUvL2nQST08IZtTjnDxAnkDTk
+HwnJo0fd7vsixEyssTMuSCjbGSaPDMPCkmNQg8PAhhoIK8MeKUlylCKJuM6gMWeW
+YypzGBmE6O7OtoMTOYFWysU67edVXgQTV2dD/PE6abTYOfS79gvkNekU4BvW9NDE
+af0JBywXovzNVshdqpijPBleOT8/QSyTdLvI78ev+zpJMsKMugU=
+=PY6W
+-----END PGP SIGNATURE-----
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002858.html">[Lightning-dev] CVE-2020-26895: LND Low-S Tx-Relay Standardness
+</A></li>
+	<LI>Next message: <A HREF="002855.html">[Lightning-dev] Full Disclosure: CVE-2020-26896 LND &quot;The (un)covert	channel&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2857">[ date ]</a>
+              <a href="thread.html#2857">[ thread ]</a>
+              <a href="subject.html#2857">[ subject ]</a>
+              <a href="author.html#2857">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

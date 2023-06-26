@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C878tbzugj0.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001016.html">
+   <LINK REL="Next"  HREF="001026.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C878tbzugj0.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Feb 12 01:45:55 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001016.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+        <LI>Next message: <A HREF="001026.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1018">[ date ]</a>
+              <a href="thread.html#1018">[ thread ]</a>
+              <a href="subject.html#1018">[ subject ]</a>
+              <a href="author.html#1018">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Christian Decker &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt; writes:
+&gt;<i> Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+</I>&gt;&gt;<i>         Finally catching up.  I prefer the simplicity of the timestamp
+</I>&gt;&gt;<i> mechanism, with a more ambitious mechanism TBA.
+</I>&gt;<i>
+</I>&gt;<i> Fabrice and I had a short chat a few days ago and decided that we'll
+</I>&gt;<i> simulate both approaches and see what consumes less bandwidth. With
+</I>&gt;<i> zombie channels and the chances for missing channels during a weak form
+</I>&gt;<i> of synchronization, it's not that clear to us which one has the better
+</I>&gt;<i> tradeoff. With some numbers behind it it may become easier to decide :-)
+</I>
+Maybe; I think we'd be best off with an IBLT-approach similar to
+Fabrice's proposal.  An IBLT is better than a simple hash, since if your
+results are similar you can just extract the differences, and they're
+easier to maintain.  Even easier if we make the boundaries static rather
+than now-relative.  For node_announce and channel_update you'd probably
+want separate IBLTs (perhaps, though not necessarily, as a separate
+RTT).
+
+Note that this approach fits really well as a complement to the
+timestamp approach: you'd use this for older pre-timestamp, where you're
+likely to have a similar idea of channels.
+
+&gt;&gt;<i> Deployment suggestions:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1. This should be a feature bit pair.  As usual, even == 'support this or
+</I>&gt;&gt;<i>    disconnect', and odd == 'ok even if you don't understand'.
+</I>&gt;<i>
+</I>&gt;<i> If we add the timestamp to the end of the `init` message, instead of
+</I>&gt;<i> introducing a new message altogether, we are forced to use the required
+</I>&gt;<i> bit, otherwise we just made any future field appended to the `init`
+</I>&gt;<i> message unparseable to non-supporting nodes. Let's say we add another
+</I>&gt;<i> field to it later, that the peer supports, but it follows the timestamp
+</I>&gt;<i> which the peer does not. The peer doesn't know how many bytes to skip
+</I>&gt;<i> (if any) for the timestamp bit he doesn't understand, to get to the
+</I>&gt;<i> bytes he does know how to parse. I'm slowly getting to like the extra
+</I>&gt;<i> message more, since it also allows a number of cute tricks later.
+</I>
+This, of course, is the nature of all appendings.  You can't understand
+feature N+1 without understanding feature N, if they both append to the
+same message.
+
+You don't have to *support* feature N, of course.
+
+&gt;&gt;<i> 2. This `timestamp_routing_sync`? feature overrides `initial_routing_sync`.
+</I>&gt;&gt;<i>    That lets you decide what old nodes do, using the older
+</I>&gt;&gt;<i>    `initial_routing_sync` option.  Similarly, a future `fancy_sync` would
+</I>&gt;&gt;<i>    override `timestamp_routing_sync`.
+</I>&gt;<i>
+</I>&gt;<i> So you'd set both bits, and if the peer knows `timestamp_routing_sync`
+</I>&gt;<i> that then force-sets the `initial_routing_sync`? Sounds ok, if we allow
+</I>&gt;<i> optional implementations, even though I'd like to avoid feature
+</I>&gt;<i> interactions as much as possible.
+</I>
+If we don't allow optional implementations we're breaking the spec.  And
+we're not going to do that*
+
+[* Yeah, OK, we'll eventually do that.  But we'll do it when we're
+   pretty sure that ~0 users would break, because they'd be ancient ]
+
+&gt;&gt;<i> 3. We can append an optional 4 byte `routing_sync_timestamp` field to to
+</I>&gt;&gt;<i>    `init` without issues, since all lengths in there are explicit.  If you
+</I>&gt;&gt;<i>    don't offer the `timestamp_sync` feature, this Must Be Zero (for appending
+</I>&gt;&gt;<i>    more stuff in future).
+</I>&gt;<i>
+</I>&gt;<i> That'd still require the peer to know that it has to skip 4 bytes to get
+</I>&gt;<i> any future fields, which is why I am convinced that either forcing it to
+</I>&gt;<i> be mandatory, or adding a new message is the better way to go, even if
+</I>&gt;<i> now everybody implements it correctly.
+</I>
+This is simply how we upgrade.  See `open_channel` for how this is
+already done, for example; in fact, we originally had two different
+upgrades (but we broke spec instead) and they used exactly this
+technique.
+
+A separate message here is supremely awkward, too.
+
+&gt;&gt;<i> Now, as to the proposal specifics.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I dislike the re-transmission of all old channel_announcement and
+</I>&gt;&gt;<i> node_announcement messages, just because there's been a recent
+</I>&gt;&gt;<i> channel_update.  Simpler to just say 'send anything &gt;=
+</I>&gt;&gt;<i> routing_sync_timestamp`.
+</I>&gt;<i>
+</I>&gt;<i> I'm afraid we can't really omit the `channel_announcement` since a
+</I>&gt;<i> `channel_update` that isn't preceded by a `channel_announcement` is
+</I>&gt;<i> invalid and will be dropped by peers (especially because the
+</I>&gt;<i> `channel_update` doesn't contain the necessary information for
+</I>&gt;<i> validation).
+</I>
+OTOH this is a rare corner case which will eventually be fixed by weekly
+channel_announce retransmission.  In particular, the receiver should
+have already seen the channel_announce, since it preceeded the timestamp
+they asked for.
+
+Presumably IRL you'd ask for a timestamp sometime before you were last
+disconnected, say 30 minutes.
+
+&quot;The perfect is the enemy of the good&quot;.
+
+&gt;&gt;<i> Background: c-lightning internally keeps an tree of gossip in the order
+</I>&gt;&gt;<i> we received them, keeping a 'current' pointer for each peer.  This is
+</I>&gt;&gt;<i> very efficient (though we don't remember if a peer sent us a gossip msg
+</I>&gt;&gt;<i> already, so uses twice the bandwidth it could).
+</I>&gt;<i>
+</I>&gt;<i> We can solve that by keeping a filter of the messages we received from
+</I>&gt;<i> the peer, it's more of an optimization than anything, other than the
+</I>&gt;<i> bandwidth cost, it doesn't hurt.
+</I>
+Yes, it's on the TODO somewhere... we should do this!
+
+&gt;&gt;<i> But this isn't *quite* the same as timestamp order, so we can't just set
+</I>&gt;&gt;<i> the 'current' pointer based on the first entry &gt;=
+</I>&gt;&gt;<i> `routing_sync_timestamp`; we need to actively filter.  This is still a
+</I>&gt;&gt;<i> simple traverse, however, skipping over any entry less than
+</I>&gt;&gt;<i> routing_sync_timestamp.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> OTOH, if we need to retransmit announcements, when do we stop
+</I>&gt;&gt;<i> retransmitting them?  If a new channel_update comes in during this time,
+</I>&gt;&gt;<i> are we still to dump the announcements?  Do we have to remember which
+</I>&gt;&gt;<i> ones we've sent to each peer?
+</I>&gt;<i>
+</I>&gt;<i> That's more of an implementation detail. In c-lightning we can just
+</I>&gt;<i> remember the index at which the initial sync started, and send
+</I>&gt;<i> announcements along until the index is larger than the initial sync
+</I>&gt;<i> index.
+</I>
+True.  It is an implementation detail which is critical to saving
+bandwidth though.
+
+&gt;<i> A more general approach would be to have 2 timestamps, one highwater and
+</I>&gt;<i> one lowwater mark. Anything inbetween these marks will be forwarded
+</I>&gt;<i> together with all associated announcements (node / channel), anything
+</I>&gt;<i> newer than that will only forward the update. The two timestamps
+</I>&gt;<i> approach, combined with a new message, would also allow us to send
+</I>&gt;<i> multiple `timestamp_routing_sync` messages, e.g., first sync the last
+</I>&gt;<i> hour, then the last day, then the last week, etc. It gives the syncing
+</I>&gt;<i> node control over what timewindow to send, inverting the current initial
+</I>&gt;<i> sync.
+</I>
+That would fit neatly with the more complicated bucketing approaches:
+you'd use this technique to ask for the entire bucket if the SHA
+mismatched/IBLT failed.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001016.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+	<LI>Next message: <A HREF="001026.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1018">[ date ]</a>
+              <a href="thread.html#1018">[ thread ]</a>
+              <a href="subject.html#1018">[ subject ]</a>
+              <a href="author.html#1018">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

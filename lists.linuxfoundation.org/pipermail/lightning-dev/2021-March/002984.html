@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Towards more reliable payment path finding via probabilistic modeling the uncertainty of channel balance
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Towards%20more%20reliable%20payment%20path%20finding%20via%0A%20probabilistic%20modeling%20the%20uncertainty%20of%20channel%20balance&In-Reply-To=%3CCAJ5H3Z5eCCGQv_VnrUHqtEEJqMyXF%2BMTA3NjpFMhnChiShx5Ng%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002983.html">
+   <LINK REL="Next"  HREF="002985.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Towards more reliable payment path finding via probabilistic modeling the uncertainty of channel balance</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Towards%20more%20reliable%20payment%20path%20finding%20via%0A%20probabilistic%20modeling%20the%20uncertainty%20of%20channel%20balance&In-Reply-To=%3CCAJ5H3Z5eCCGQv_VnrUHqtEEJqMyXF%2BMTA3NjpFMhnChiShx5Ng%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Towards more reliable payment path finding via probabilistic modeling the uncertainty of channel balance">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Wed Mar 17 12:50:26 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002983.html">[Lightning-dev] Single Round Trustless Schnorr-based PTLC Idea + Offline LN Payment Demo
+</A></li>
+        <LI>Next message: <A HREF="002985.html">[Lightning-dev] Towards more reliable payment path finding via probabilistic modeling the uncertainty of channel balance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2984">[ date ]</a>
+              <a href="thread.html#2984">[ thread ]</a>
+              <a href="subject.html#2984">[ subject ]</a>
+              <a href="author.html#2984">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear fellow Lightning Network developers,
+
+I am very pleased to share with you some research progress [0] with respect
+to achieving better payment path finding and a better reliability of the
+payment process.
+
+TL;DR summary: In payment (multi)path finding use the (multi)paths with the
+highest success probability instead of the shortest or cheapest ones.
+(multi)path success probability is the product of channel success
+probabilities. Given current data crawled on the Network the channel
+success probability grows with the capacity of the channel and with smaller
+amounts that are to be sent (which is both intuitively obvious).
+(Multi)path success probability thus declines exponentially the more
+uncertain channels are included.
+
+I understand that the actual payment path finding is not part of the spec
+but I think my results should be relevant to the list since:
+
+a) The payment pathfinding is currently based on trial and error approach
+which has consequences that have not been studied well in the context of
+the Lightning Network
+b) All implementations will use some heuristics in order to achieve
+pathfinding.
+c) Quick path finding is a crucial for a good user experience.
+d) The uncertainty of payment paths is frequently quoted as a major
+criticism of the Lightning Network (c.f. [1]) and I believe the methodology
+of this paper can be used to address this.
+
+The main breakthrough is that  a very simple model that puts the
+uncertainty of channel balances at its heart. We belief the uncertainty of
+channel balance values is the main reason why some payments take several
+attempts and thus take more time.  With the help of probability theory we
+are able to define the channel success and failure probabilities and
+similarly (multi)path success and failure probabilities. Other Failure
+reasons could also be included to the probability distributions.
+
+With the help of crawling small samples of the network we observe that the
+probability distributions of the channel balances can be estimated well
+with a uniform distribution (which was a little bit surprising) but leads
+to surprisingly easy formulas.  We are able to quantify the uncertainty in
+the channels and use negative Bernoulli trials to compute the expected
+number of attempts that are necessary to deliver a payment of a particular
+amount from one node to another participant of the network. This can be
+used to abort the trial and error path finding if the probability becomes
+to low (expected number of attempts too high)
+
+We can mathematically show what people already knew (and draw conclusions
+like the mentioned ones from it):
+
+a) smaller amounts have higher success probabilities
+b) the success probability declines exponentially with the number of
+uncertain channels in a (multi)path.
+c) depending on the payment pair, amount and splitting strategy it can be
+decided into how many parts a payment should be split to achieve the
+highest success probability.
+d) In particular for small amounts splitting almost never makes sense.
+
+We demonstrate that sorting paths by their descending success probability
+during the trial and error payment process (instead of currently used
+heuristics like fees or route length) and updating the probabilities from
+current failures decreases the number of average attempts and produces a
+much faster delivery of payments.
+
+Additionally we looked what happened if BOLT14 [2] was implemented or nodes
+otherwise would pro-actively rebalance their channels according to previous
+research [3] and realized that the observed prior distribution changes from
+uniform to normal. This is great as small payments become even more likely
+(as one would intuitively assume and as previously showed) Our results show
+that probabilisitic path finding on a rebalanced network works even better
+(as in fewer failed attempts) which is yet another hint why BOLT14 might be
+a good idea. However as mentioned the results can be implemented even
+without BOLT14 or without other protocol changes by any implementation.
+
+One consequence from the paper that is not discussed heavily within the
+paper that I find pretty interesting is that if implementations follow the
+recommendation to use a probabilistic approach they will tend to route
+payments along high capacity channels. While the fee based routing can
+easily be gamed by dumping fees it is much harder to provide more
+liquidity. And if done this would actually provide a service to the
+network. This means that nodes which provide a lot of liquidity and thus
+utility might be able to charge higher fees (as long as they are small
+enough so that users are willing to pay them) which would probably allow
+the emergence of a real routing fee market.
+
+One note on the question of MPP: In the last couple weeks I have been
+collaborating with Christian Decker. I belief (by using the methodology
+from this paper) to also have a definite solution to the question of:
+
+How to split a payment into k parts and how many funds to allocate to each
+path to increase the (multi)path success probability.
+
+While this is is not addressed in the attached paper as we still need to
+run evaluations I can already share that an equal sized split as used in
+the paper (and by some implementations) is not preferable as one can easily
+see from this example:
+Imagine one is to deliver 100 satoshi and has to paths with 1 uncertain
+channel on each path. The first of capacity 101 and  the second of 51.
+Obviously trying to send 100 satoshi along the 101 capacity channel is bad.
+Similarly splitting 50/50 and sending 50 Satoshi along the 51 satoshi
+capacity channel is also bad. Thus a split that allocates for example 67
+Satoshi to the 101 capacity and 33 to the 51 satoshi channel seems way more
+reasonable. Actually 75/25 would probably be the best solution for such a
+setting. And no it is only random coincident that a binary splitter would
+have arrived at that split eventually (after potential miss trials)
+There is way more math theory of how to actually solve the optimization
+problem in the general case and how to find a split and paths that
+maximizes the probability of the attempts. I cannot share these results yet
+but I am pretty confident that there will be updates on that end very soon.
+
+with kind regards Rene
+
+[0]: <A HREF="https://arxiv.org/abs/2103.08576">https://arxiv.org/abs/2103.08576</A> Security and Privacy of Lightning
+Network Payments with Uncertain Channel Balances
+[1]:
+<A HREF="https://www.whatbitcoindid.com/podcast/peter-rizuns-lightning-critique-fud-or-fair">https://www.whatbitcoindid.com/podcast/peter-rizuns-lightning-critique-fud-or-fair</A>
+[2]: <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/780">https://github.com/lightningnetwork/lightning-rfc/pull/780</A>
+[3]:
+<A HREF="../2019-December/002406.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/002406.html</A>
+
+-- 
+<A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+
+Skype: rene.pickhardt
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210317/793a07dd/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210317/793a07dd/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002983.html">[Lightning-dev] Single Round Trustless Schnorr-based PTLC Idea + Offline LN Payment Demo
+</A></li>
+	<LI>Next message: <A HREF="002985.html">[Lightning-dev] Towards more reliable payment path finding via probabilistic modeling the uncertainty of channel balance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2984">[ date ]</a>
+              <a href="thread.html#2984">[ thread ]</a>
+              <a href="subject.html#2984">[ subject ]</a>
+              <a href="author.html#2984">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

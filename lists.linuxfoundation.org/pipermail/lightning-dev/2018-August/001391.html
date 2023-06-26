@@ -1,0 +1,310 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Free Rebalancing Proposals
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Free%20Rebalancing%20Proposals&In-Reply-To=%3CCAOcVdHTdvOoqqDO7RqRGEX2zY7Y4_w8u3eB9oAni04ZCfqUZMg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001390.html">
+   <LINK REL="Next"  HREF="001392.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Free Rebalancing Proposals</H1>
+    <B>Robert Olsson</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Free%20Rebalancing%20Proposals&In-Reply-To=%3CCAOcVdHTdvOoqqDO7RqRGEX2zY7Y4_w8u3eB9oAni04ZCfqUZMg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Free Rebalancing Proposals">robban at robtex.com
+       </A><BR>
+    <I>Mon Aug 13 12:24:45 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001390.html">[Lightning-dev] Free Rebalancing Proposals
+</A></li>
+        <LI>Next message: <A HREF="001392.html">[Lightning-dev] Free Rebalancing Proposals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1391">[ date ]</a>
+              <a href="thread.html#1391">[ thread ]</a>
+              <a href="subject.html#1391">[ subject ]</a>
+              <a href="author.html#1391">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good Morning ZmnSCPxj!
+
+I was thinking using the normal onion-routing, probably modified in some
+way so it can read and modify max. Must admit I haven't studied that part
+at that level at all.
+
+For simple three-member constructs it could be enough with a simple
+non-onion message that A asks B if it would like to rebalance AB,BC and A
+asks C if it would like to balance BC,CA.
+
+But first it seems I have to at least try to convince you that rebalancing
+does help solve some problems.
+
+I think rebalancing is good for many reasons.
+Consider a node A that has the following channel balances. It initiated A-B
+with 100sat and used that up instantly. C initiated an inbound channel of
+200sat. A made a new channel A-D with 300sat
+It ended up looking like the following:
+
+A-B     0-100
+A-C     0-200
+A-D     300-0
+
+For simplicity in this case the total balance is 300-300. Also lets say
+&quot;balanced&quot; means &quot;able to send and receive 25 sat&quot;. Achieving total balance
+on all channels is not realistic. It's up to each node to decide their own
+definition.
+
+A has only one channel to send out via. If D goes down it has even fewer.
+So my idea is: A finds if there exists any D-C channel (or multi-hop), and
+politely asks whomever it may concern if sending 100 sat A-&gt;D-&gt;C-&gt;A would
+benefit them as well. if it does you send over 100 sat and will end up with
+
+A-B     0-100
+A-C     100-100
+A-D     200-100
+
+If the agreed max along the path is lower, it will have to do, it helped a
+little bit, but lets say 100sat was ok with everyone
+Repeat for A-&gt;D-&gt;B-&gt;A and 50sat and you will have
+
+A-B     50-50
+A-C     100-100
+A-D     150-150
+
+Now A instantly have 3 times as many possible routes out, and 50% more
+possible routes in, nobody had to go to the chain to close/open/splice, and
+nobodys channel went unbalanced, and nobody paid anyone.
+
+The possibilites for others in the network to actually route via A
+increases to all 6 paths from 2, before only B-&gt;A-&gt;D and C-&gt;A-&gt;D would
+succeed. So there is also a 3-fold increase.
+
+Consider a bigger node with say 40 channels where 10 has too low local
+balance and 30 has too low remote balance. It would have 300 working paths
+out of 1560, so about 80% failure rate.
+
+So, for redundancy and maximum possible routes, I think rebalancing is good.
+
+The main difference with this protocol compared to how we balance lightning
+channels today is
+
+* that everyone benefits from it (or else would deny to be a part of it) so
+there are not any fees
+* today channel balances sometimes start oscillating if two nodes try to
+balance a channel somewhere in the network according to their own will,
+without caring/knowing about the intermediates wishes or eachothers. now we
+care.
+* less trial and error since you know the perfect amount to send
+
+---
+
+In the case you describe, it is a feature, not a bug.
+If you find a path A-&gt;B-&gt;C-&gt;D
+C would like to balance BC against CD so it offers a rebalance and accepts
+fee-free transactions for things coming in BC and goes out CD. But maybe DB
+channel doesn't exist or have too little capacity.
+It's wishes to rebalance the channel remains. Then suddenly your payment
+goes thru and achieves the same goal, I don't see a problem.
+if C did *not* want to balance in that direction, it would have rejected
+passing the payment for free
+if two payments pass thru the same channels, the second one will be
+rejected as normal with &quot;feeinsufficient&quot;
+
+If we do want to avoid this (maybe because too many flood the network
+probing to find a free hop), you can send the future payment hash, or part
+of it, in the proposal message, and whitelist that hash for 1337 seconds.
+Even if whitelisted, when/if the payment packet arrives, the node shall
+check in&amp;out channel and amount to see if it is still beneficial, otherwise
+just reject it. The agreed max is a soft promise.
+
+Regarding receive-only or send-only nodes and on/off swapping, I think
+those are entirely separate problems. My solution only aims at spreading
+the existing grease around the layer two for smoother operation.
+
+Best Regards
+Robert Olsson
+
+
+
+
+
+On Mon, Aug 13, 2018 at 1:16 PM, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning Robert,
+</I>&gt;<i>
+</I>&gt;<i> I assume, this functionality is transported also via the same
+</I>&gt;<i> onion-routing-packet style that current payment routing uses?
+</I>&gt;<i>
+</I>&gt;<i> If so, then it seems this feature can be used by a payer and payee to
+</I>&gt;<i> coordinate to locate some route that would, if paid normally, charge fees,
+</I>&gt;<i> but if using the &quot;free rebalancing&quot; could be made free.  The payer simply
+</I>&gt;<i> locates some route, adds a synthetic initial balance that is much higher
+</I>&gt;<i> than the payment to be forwarded, and then request for a &quot;free rebalancing&quot;
+</I>&gt;<i> from the payer to the payee.  If at the payee node, the resulting &quot;max&quot; is
+</I>&gt;<i> greater than the actual payment being sent, then the payer and payee have
+</I>&gt;<i> found a fee-free route between them.
+</I>&gt;<i>
+</I>&gt;<i> After all, since the functionality is transported by onion-routing-packet,
+</I>&gt;<i> then intermediate hop routes cannot know that the ultimate source and
+</I>&gt;<i> ultimate destination are different nodes.
+</I>&gt;<i>
+</I>&gt;<i> Note that intermediate nodes cannot detect this at all.  A fee-free
+</I>&gt;<i> rebalance request that follows the fee-free rebalance query may be lower
+</I>&gt;<i> than the max it forwarded, since, a later intermediate node on the route
+</I>&gt;<i> might have lowered the maximum already.
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i>
+</I>&gt;<i> For myself, I think rebalancing is not a particular good solution to
+</I>&gt;<i> anything (similar to splice).
+</I>&gt;<i>
+</I>&gt;<i> Imagine a simple 3-member cyclic-superhub network composed of A -&gt; B -&gt; C
+</I>&gt;<i> (looping back to -&gt; A).  Node A may pay node C via B, and so on.  Now if C
+</I>&gt;<i> is a popular merchant for both B and A, then both the B-C and C-A channels
+</I>&gt;<i> will saturate in favor of C.  In such a case, no rebalancing is possible.
+</I>&gt;<i>
+</I>&gt;<i> A better solution is for C to purchase more incoming balance by asking
+</I>&gt;<i> either of B or A to transfer onchain funds in exchange for a preimage (i.e.
+</I>&gt;<i> swap offchain funds for onchain funds).  This is effectively &quot;batching&quot; the
+</I>&gt;<i> earnings that C gains in LN: C might earn a lot of small amounts, each one
+</I>&gt;<i> too small individually to justify onchain transfers, but which batched
+</I>&gt;<i> together can justify the onchain transfer.  Further, this batching is
+</I>&gt;<i> noncustodial and C can close the channel at any time (incurring an onchain
+</I>&gt;<i> fee), unlike current payment processors (PayPal, credit cards) where
+</I>&gt;<i> payment batching is custodial and may be frozen by the custodian; on LN, at
+</I>&gt;<i> worst the money will be locked for a few days or weeks, but will definitely
+</I>&gt;<i> be returned to you as long as you did not actually cheat.
+</I>&gt;<i>
+</I>&gt;<i> Further this swapping can be done on a separate layer/software that
+</I>&gt;<i> interacts with ordinary existing LN software without requiring additional
+</I>&gt;<i> changes at the LN protocol level, which is always a good thing: I believe
+</I>&gt;<i> we should prefer to make LN a layer that supports further layers, not put
+</I>&gt;<i> every possible feature into LN.
+</I>&gt;<i>
+</I>&gt;<i> This off-to-on and on-to-off swapping solves the same problems that both
+</I>&gt;<i> rebalancing and splcing do (channel balancing, incoming channels, channel
+</I>&gt;<i> reloading) without requiring changes at the LN layer, merely adding an
+</I>&gt;<i> application on top of LN.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Sent with ProtonMail &lt;<A HREF="https://protonmail.com">https://protonmail.com</A>&gt; Secure Email.
+</I>&gt;<i>
+</I>&gt;<i> &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+</I>&gt;<i> On August 12, 2018 7:31 AM, Robert Olsson &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">robban at robtex.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> Dear All,
+</I>&gt;<i>
+</I>&gt;<i> I'd like to suggest a new function in the network, &quot;Free Rebalancing
+</I>&gt;<i> Proposals&quot;
+</I>&gt;<i> It is a fee-less, omni-beneficial rebalancing scheme
+</I>&gt;<i>
+</I>&gt;<i> Background:
+</I>&gt;<i>
+</I>&gt;<i> I currently balance my nodes in the following way, extremely simplified:
+</I>&gt;<i>
+</I>&gt;<i> 1) Identify channels that have too low remote_balance (A) and too low
+</I>&gt;<i> local_balance (B) for being of any use (in that direction)
+</I>&gt;<i> 2) Find potential routes and amounts between all channels A and all
+</I>&gt;<i> channels B that would optimize at least one of them
+</I>&gt;<i> 3) Send a payment along those possible routes for different amounts,
+</I>&gt;<i> sorted after fee, until one succeeds
+</I>&gt;<i>
+</I>&gt;<i> It works quite good and is quite straight forward until the third step. So
+</I>&gt;<i> I would like to propose a better solution which works like this:
+</I>&gt;<i>
+</I>&gt;<i> Send a proposal-for-balancing-message over channel A, and the max amount
+</I>&gt;<i> you would propose to balance in that direction.
+</I>&gt;<i>
+</I>&gt;<i> Each node analyses the in and out channels and adjusts the max to it's own
+</I>&gt;<i> desire to balance. Max can only be adjusted down. Let's say the function is
+</I>&gt;<i> `int freeBalancerMax(channel in,channel out)`. It could be as simple as
+</I>&gt;<i> checking how near &quot;in&quot; is to 100ksat local_balance and &quot;out&quot; is to 100ksat
+</I>&gt;<i> remote_balance. The node passes that message with new max value on to the
+</I>&gt;<i> next node, much like a normal payment.
+</I>&gt;<i>
+</I>&gt;<i> When this packet comes back to the origin it will know how much the
+</I>&gt;<i> intermediate nodes are willing to let you balance, or if someone is
+</I>&gt;<i> reluctant to balance (and the final max value would be 0)
+</I>&gt;<i>
+</I>&gt;<i> If everyone is happy (i.e. max&gt;0), the origin node sends a payment along
+</I>&gt;<i> this node, *without* dropping off any fees along the way, since all nodes
+</I>&gt;<i> agreed and benefit from the rebalancing act.
+</I>&gt;<i>
+</I>&gt;<i> Since all intermediate nodes benefit they are happy to do this without
+</I>&gt;<i> fees. Since they adjust max values to their desire it will stop multiple
+</I>&gt;<i> attempts from different nodes from starting to oscillate the balances in
+</I>&gt;<i> the channels, but will instead reach some kind of equilibrium as long as
+</I>&gt;<i> the node suggesting proposal uses it's freeBalancerMax when proposing and
+</I>&gt;<i> accepting proposals.
+</I>&gt;<i>
+</I>&gt;<i> The intermediate nodes might not need to keep track of any agreements to
+</I>&gt;<i> balancing proposals, it can simply call the freeBalancerMax function, and
+</I>&gt;<i> if the payment is lower, it passes on the payment even if it didn't get any
+</I>&gt;<i> fees, otherwise it fails as usual. If someone tries to send a non agreed
+</I>&gt;<i> payment without fees, but it coincides with the nodes own desire to
+</I>&gt;<i> rebalance, there is no harm done. Only problem with that is that senders
+</I>&gt;<i> might flood a path with creative attempts trying to find a path with a
+</I>&gt;<i> fee-free hop. I think things like that will be stopped by a general
+</I>&gt;<i> throttle functionality which probably will be needed anyhow.
+</I>&gt;<i>
+</I>&gt;<i> Best regards
+</I>&gt;<i> Robert Olsson
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180813/8b2ce414/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180813/8b2ce414/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001390.html">[Lightning-dev] Free Rebalancing Proposals
+</A></li>
+	<LI>Next message: <A HREF="001392.html">[Lightning-dev] Free Rebalancing Proposals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1391">[ date ]</a>
+              <a href="thread.html#1391">[ thread ]</a>
+              <a href="subject.html#1391">[ subject ]</a>
+              <a href="author.html#1391">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

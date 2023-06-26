@@ -1,0 +1,248 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Interactive tx construction and UTXO privacy,	some thoughts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Interactive%20tx%20construction%20and%20UTXO%20privacy%2C%0A%09some%20thoughts&In-Reply-To=%3CCAM1a7P16ESaf2afR4Wd9gSq-SNeWU1Xf98C7nCvjrQ0Akh3iEA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003084.html">
+   <LINK REL="Next"  HREF="003079.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Interactive tx construction and UTXO privacy,	some thoughts</H1>
+    <B>lisa neigut</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Interactive%20tx%20construction%20and%20UTXO%20privacy%2C%0A%09some%20thoughts&In-Reply-To=%3CCAM1a7P16ESaf2afR4Wd9gSq-SNeWU1Xf98C7nCvjrQ0Akh3iEA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Interactive tx construction and UTXO privacy,	some thoughts">niftynei at gmail.com
+       </A><BR>
+    <I>Tue Jun 29 02:21:58 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003084.html">[Lightning-dev] Lightning Mints
+</A></li>
+        <LI>Next message: <A HREF="003079.html">[Lightning-dev] Interactive tx construction and UTXO privacy,	some thoughts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3073">[ date ]</a>
+              <a href="thread.html#3073">[ thread ]</a>
+              <a href="subject.html#3073">[ subject ]</a>
+              <a href="author.html#3073">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey all,
+
+The dual-funding proposal has been up for a while now, and while we've had
+some really great reviews from a few people (@ariard + @rustyrussell thanks
+for
+your comments in particular).
+
+As a refresher, the PR is available here:
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/851.">https://github.com/lightningnetwork/lightning-rfc/pull/851.</A>
+
+I wanted to make a quick summary of some of the biggest objections to
+the protocol. Most of these were made during the course of the 2018 spec
+meeting in Adelaide and while we've done a decent job of architecting
+around them,
+I wanted to make them explicit.
+
+If there's more to add, please do.
+
+## Point One
+One: dual-funding (really the collaborative transaction protocol) requires
+you to share your UTXO set with the channel peer.
+
+This is true, in a 'limited' sense, where 'UTXO set' is actually constricted
+to 'UTXOs you're using for funding transactions'.
+
+On the face of it, this seems to be quite concerning to folks.  Here's a
+few things
+that I think make this less concerning than it might appear at the outset.
+
+First, let's consider the current opening case. You (or your channel peer)
+constructs a transaction and shares the TXID and outpoint that the funding
+output can be found at. This transaction is published and mined,
+after the transaction is at sufficient depth a gossip announcement
+is broadcast to the entire network, explaining where the transaction can be
+found.
+
+Under the current protocol, it's reasonable\* to conclude that
+every UTXO in the funding transaction belongs to a single party, the opener.
+
+Assuming that all the UTXOs in your wallet will, at some point, end up
+in a lightning channel, all of your UTXOs will be *publicly* associated with
+your node at some point (in the current model). Your UTXO set is only
+private in the present, given a long enough time period (and channel opens)
+they will all be tied to your node.
+
+For this reason, it's probably not a great idea to fund wallets using a
+separate wallet that hasn't been coinjoined or otherwise obfuscated. In
+fact, I think you can make a fairly decent argument (under the existing UTXO
+model) for not mixing lightning funds with any funds you wish to remain
+truly
+private/unassociated to an 'entity'.
+
+Given that you're currently telling everyone what UTXOs your node owns
+(or at least has a 50/50 chance of owning..) let's consider the interactive
+transaction protocol.
+Assuming a 2-party dual-funded open, as an outside observer it's much more
+difficult to tell which
+UTXOs belong to who (though you can probably guess given input amounts and
+change outputs; maybe a good heuristic for opens is to use whole UTXOs).
+
+In this on-chain respect, the dual-funding protocol is no worse, and in the
+best case much
+better for on-chain coin-analysis heuristics than the current protocol.
+
+\* There are a few clear exceptions where other protocols (such as Pool,
+iiuc)
+have been developed that make this heuristic bunk as they *also* build a
+multi-party
+transaction, however afaik all of these other protocols (joinmmarket, pool)
+still require sharing
+your UTXOs with another (trusted) party, difference is you know in theory
+where &quot;the Pool
+auctioneer&quot; lives, whereas you don't really know much about &quot;any random
+node that wants to open
+a channel&quot;. Seems like there might be some room in this space for better
+information
+about prospective channel peers...
+
+## Point Two
+Two: an active prober can use the interactive transaction protocol to
+discover your wallet's entire UTXO set.
+
+Given the assumption that all of your node funds will, at some point,
+be used to open a lightning channel, a single attacker discovering a subset
+of your UTXOs is simply a 'fast-forward' of what will eventually become
+public information.
+
+That being said, much smarter minds (e.g. JoinMarket, which suffers from
+a very similar issue in what I would argue an even more privacy-conscious
+context) than mine have employed the PoDLE protocol to make the discovery
+of every UTXO more costly for a potential attacker. This is something
+ we can add quite trivially to the protocol, at the cost of grossly
+increasing
+the gossip traffic.
+
+Worth noting that even without PoDLE you can much slow this type of
+attack by reusing the same UTXO across every open attempt, being choosy
+about which peers you do offer liquidity up to (do they have other
+established
+channels? what's their uptime?) etc.
+
+A dedicated attacker could probably figure out your UTXO set, but that's not
+much different from the current system; the only difference is the span of
+time
+it takes them to figure it out.
+
+## Things We've Done to Counter This:
+I had the pleasure of finally meeting Nadav of SuredBits and DLC fame in
+Miami
+a few weeks ago. The DLC team has adopted a version of the interactive
+transaction protocol for their own purposes. Nadav pointed out that the
+protocol we landed on for lightning interactive construction transactions
+is *quite* interactive; the DLC version modified it to use batching to
+transmit the input/output sets (the interactive protocol is one-by-one).
+
+The rationale for doing the addition of inputs and outputs in a non-batched
+fashion is that this allows for you to interleave UTXOs from a variety
+of sources, for example multiple channel opens in the same tx. With the
+current
+protocol, you can initiate a dual-funded open with many peers at the same
+time,
+each of which may contribute UTXOs and outputs for their own respective
+channel opens or UTXO consolidations etc.
+
+This gives us the real possibility of doing multiparty coinjoins on
+lightning.
+In fact, this is currently possible with c-lightning *today* using
+the multifundchannel command (h/t to ZmnSCPjx for the original framework
+for multifund opens).
+
+As written, the interactive transaction protocol is exceedingly flexible.
+We traded off succinctness for some plausible deniablity wrt
+any UTXOs you send to any peer -- are they yours or are they
+some third party's? How to tell?
+
+I think it's interesting to point out that &quot;succinctness&quot; in rounds
+of required interaction is typically a *highly* desirable trait for
+any cryptographic protocol. The establishment of a lightning channel
+relationship,
+however, isn't a cryptographic signature. A lightning channel, by its very
+nature, is typically a highly interactive relationship between two peers.
+Increasing the rounds of messaging required to establish the channel doesn't
+change the overall interactivity profile of a channel's operation, thus
+adding rounds of comms to channel open is generally a no-op in terms of
+performance/uptime requirements of a node's operations.
+
+## How important is UTXO privacy on lightning?
+Obviously important. But given that the real transactions happen inside
+of channels, invisibly, and that your public channels really truly
+are public via the gossip protocol the much more important &quot;thing&quot; in the
+lightning arena isn't your UTXO privacy so much as *not* associating your
+identity with your node.
+
+## Does Taproot fix this?
+I'm not up to date enough on the progress of Taproot scripts, however,
+assuming the current requirement that every routing node is able to
+independently
+verify the opening output script via the signatures provided
+in the channel_announcement, it seems reasonable that on-chain transactions
+will still be assignable to a node given gossip data. (Purely on-chain
+analysis
+will be stymied, however.)
+
+# In Exitus
+There are legitimate concerns regarding sharing UTXOs with other peers
+in the process of opening a channel. The current protocol, as implemented,
+introduces a mechanism for some plausible deniability wrt who those UTXOs
+actually belong to, as well as providing the tools for building multi-party
+coinjoins as
+opens. Further, with PoDLEs, we can at least achieve a similar level of
+protection
+as JoinMarket currently enjoys.
+
+Finally, regardless of what open mechanism you're using, it's worth
+reiterating
+that best practice is to not *ever* tie your identity to your lightning
+node.
+And it may be worth reconsidering what wallet source you're using to fund
+announced channel opens.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210628/71a44fbe/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210628/71a44fbe/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003084.html">[Lightning-dev] Lightning Mints
+</A></li>
+	<LI>Next message: <A HREF="003079.html">[Lightning-dev] Interactive tx construction and UTXO privacy,	some thoughts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3073">[ date ]</a>
+              <a href="thread.html#3073">[ thread ]</a>
+              <a href="subject.html#3073">[ subject ]</a>
+              <a href="author.html#3073">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

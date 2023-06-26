@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Code%20for%20sub%20second%20runtime%20of%20piecewise%0A%20linarization%20to%20quickly%20approximate%20the%20minimum%20convex%20cost%20flow%20problem%0A%20%28makes%20fast%20multi%20part%20payments%20with%20large%20amounts%20possible%29&In-Reply-To=%3CYi4/pkt1ypeDYpeT%40c-otto.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003510.html">
+   <LINK REL="Next"  HREF="003514.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)</H1>
+    <B>Carsten Otto</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Code%20for%20sub%20second%20runtime%20of%20piecewise%0A%20linarization%20to%20quickly%20approximate%20the%20minimum%20convex%20cost%20flow%20problem%0A%20%28makes%20fast%20multi%20part%20payments%20with%20large%20amounts%20possible%29&In-Reply-To=%3CYi4/pkt1ypeDYpeT%40c-otto.de%3E"
+       TITLE="[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)">bitcoin at c-otto.de
+       </A><BR>
+    <I>Sun Mar 13 19:01:58 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003510.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+        <LI>Next message: <A HREF="003514.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3512">[ date ]</a>
+              <a href="thread.html#3512">[ thread ]</a>
+              <a href="subject.html#3512">[ subject ]</a>
+              <a href="author.html#3512">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rene,
+
+thanks a lot for your contribution! This is exactly what I needed to
+start coding again :) I intend to release a somewhat usable version of
+your approach in lnd-manageJ [1] soon. Preliminary results indicate that
+results (i.e. MPPs to try) can be computed in less than a second, which
+is great!
+
+Important remark: my code can only be used for real MPPs once a usable
+MPP gRPC call is made available, see lnd issue #5746 [2].
+
+While working on my implementation, a few questions came to mind:
+
+1) What's the reasoning behind combining parallel channels?
+
+I agree that parallel channels make things a lot more complicated, but I
+also see the benefit from a node operator's point of view. That being
+said, wouldn't it suffice to treat parallel channels individually?
+
+1.1) A payment of size 2 needs to be split into 1+1 to fit through
+parallel channels of size 1+1. Combining the 1+1 channels into a virtual
+channel of size 2 only complicates the code that has to do come up with
+a MPP that doesn't over-saturate the actual channels. On the other hand,
+I don't think the probability for the virtual channel of size 2 is more
+realistic than reasoning about two individual channels and their
+probabilities - but I didn't even try to see the math behind that.
+Please prove me wrong? :)
+
+1.2) The Mission Control information provided by lnd can be used to
+place a minimum available balance on each of the parallel channels. If
+we know that node A isn't able to forward N sats to node B, we can treat
+all parallel channels between A and B (in that direction) to have a
+capacity of at most N-1 sats. How would this look like if we combined
+the parallel channels into a virtual one? Note that it may still be
+possible to route two individual payments/onions of size N-1 sats from A
+to B, given two parallel channels with that many sats on A's side.
+
+2) Optimal Piecewise Linearization
+
+See Twitter [3].
+
+Is it worth it cutting a channel into pieces of different sizes, instead
+of just having (as per your example) 5 pieces of the same size? If it
+makes a noticeable difference, adding some complexity to the code might
+be worth it.
+
+3) Size of Piecewise Linearization
+
+My gut feeling is that cutting a 1 BTC channel into 5 pieces is
+different from cutting a 0.01 BTC channel into 5 pieces. Would it make
+sense to use different values of N depending on the channel size?
+
+4) Leftovers after Piecewise Linearization
+
+If I cut some channel into N pieces, I might end up with up to N-1 sats
+that don't end up in any of the N pieces, effectively making the channel
+look smaller than it is. For smaller values of N that's obviously not an
+issue (given the uncertainty we're dealing with), but it might be more
+problematic if quantization is used with larger values. Any thoughts on
+this?
+
+5) Fees (and other properties?)
+
+How can we integrate fees into the function? I must admit, I haven't
+even thought about that, yet. A copy-paste answer would be great,
+though! :) Maybe it's also a good idea to punish channels based on their
+CLTV delta? Ratio of enabled channels? Age? Manual punishment score? ...
+
+6) Non-Zero Base Fee
+
+See Twitter [4].
+
+According to Stefan [5] it should be possible to integrate ZmnSCPxj's ideas
+to make this work with non-zero base fees. How?
+Simpler approach: Twitter [6].
+
+7) Private Channels
+
+[very niche topic, not really that interesting nor urgent]
+
+I'm a fan of adding private channels to provide more outbound liquidity,
+mainly to reduce gossip and hide my intentions. If my total liquidity to
+some peer is below the amount announced in public channels, I don't see
+any meaningful complication. However, I might have a public channel of
+size N and several private channels bringing my local liquidity to some
+value &gt;N. It's rather obvious that not announcing this fact is a bad
+idea, as any #pickhardtpayments implementation would think I have 0-N on
+my side of the channel(s). Assuming I'm willing to accept this tradeoff,
+do you see other complications or issues with hidden liquidity?
+
+My gut feeling is that this isn't an issue, at all, as channel balances
+change all the time, which is something the algorithm already has to
+deal with.
+
+8) Quality of Approximation
+
+There are some problems in computer science that are hard/impossible to
+approximate, in the sense that any kind of deviation from the optimum
+could cause the computed results to be extremely bad. Do you have some
+idea (or proof) that your kind of approximation isn't causing a major
+issue? I guess a piece-wise linearization with an infinite number of
+pieces corresponds to the optimal result. Given a finite number of
+pieces, how large is the difference to the optimum?
+
+Bye,
+Carsten
+
+1: <A HREF="https://github.com/C-Otto/lnd-manageJ/issues/6">https://github.com/C-Otto/lnd-manageJ/issues/6</A>
+2: <A HREF="https://github.com/lightningnetwork/lnd/issues/5746">https://github.com/lightningnetwork/lnd/issues/5746</A>
+3: <A HREF="https://twitter.com/c_otto83/status/1502329970349248521">https://twitter.com/c_otto83/status/1502329970349248521</A>
+4: <A HREF="https://twitter.com/c_otto83/status/1502329271964033027">https://twitter.com/c_otto83/status/1502329271964033027</A>
+5: <A HREF="https://twitter.com/stefanwouldgo/status/1502681455918473217">https://twitter.com/stefanwouldgo/status/1502681455918473217</A>
+6: <A HREF="https://twitter.com/c_otto83/status/1502330558793363464">https://twitter.com/c_otto83/status/1502330558793363464</A>
+-- 
+Dr. Carsten Otto
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">carsten at c-otto.de</A>
+<A HREF="https://c-otto.de">https://c-otto.de</A>
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 195 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220313/1437e67a/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220313/1437e67a/attachment.sig</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003510.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+	<LI>Next message: <A HREF="003514.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3512">[ date ]</a>
+              <a href="thread.html#3512">[ thread ]</a>
+              <a href="subject.html#3512">[ subject ]</a>
+              <a href="author.html#3512">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

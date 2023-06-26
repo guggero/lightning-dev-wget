@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%09by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3Ch8QnQr2f565M2Kds8BcD5Cd8DYVgX_D9Le7j73aMJenfLudQbjGGFpYqsl1VktMVGIiXh17rjIQJ9cpCOIoWFrSdTdRyw9Dfd5bnxpV463o%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002097.html">
+   <LINK REL="Next"  HREF="002099.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%09by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3Ch8QnQr2f565M2Kds8BcD5Cd8DYVgX_D9Le7j73aMJenfLudQbjGGFpYqsl1VktMVGIiXh17rjIQJ9cpCOIoWFrSdTdRyw9Dfd5bnxpV463o%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Aug  1 23:02:39 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002097.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+        <LI>Next message: <A HREF="002099.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2098">[ date ]</a>
+              <a href="thread.html#2098">[ thread ]</a>
+              <a href="subject.html#2098">[ subject ]</a>
+              <a href="author.html#2098">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Bastien,
+
+&gt;<i>
+</I>&gt;<i> I think that the main points that make routing in the Lightning Network different from game path-finding algorithms are:
+</I>&gt;<i>
+</I>&gt;<i> -   Paths are consumed by payments, effectively moving available balance between sides of a channel
+</I>&gt;<i> -   The routing algorithm doesn't know remote channels balance allocation (and that changes constantly)
+</I>&gt;<i> -   The cost of a path depends on the value you're sending (proportional fees)
+</I>&gt;<i> -
+</I>&gt;<i> -   This encourages algorithms not to search for an optimal solution (because an optimal solution on outdated/incomplete data doesn't even make sense) but rather fast and good enough solutions with retries
+</I>
+I believe the differences are smaller than you might initially think.
+
+Units move around on the map and a pathfinding algorithm cannot predict how the *other* units owned by allied players will be, once the current units asking for a path have moved along the path.
+i.e. the algorithm does not know how remote tiles are occupied (and that changes constantly)
+
+Faster units really should be able to walk around slower units, because there is often a tradeoff between speed and combat effectiveness and a player asking a faster unit to move probably is depending on their speed.
+i.e. paths can be blocked by slower units, effectively becoming slow-moving obstacles that need to be worked around.
+
+And so on.
+
+&gt;<i>
+</I>&gt;<i> There are a few technicalities that might be a problem for some of your suggestions, I'm interested in your opinion on how to address them.
+</I>&gt;<i>
+</I>&gt;<i> For `permuteroute`, you mention the following pre-requisite:
+</I>&gt;<i>
+</I>&gt;<i> &gt; the original payer is informed of which node reported the failure and which channel failed.
+</I>&gt;<i>
+</I>&gt;<i> We currently don't have a solution for reliable error reporting, as pointed out in [1].
+</I>&gt;<i> I think making progress on this thread would be interesting and useful for routing heuristics.&#160;
+</I>
+We already have sufficiently-good error reporting on route failures: <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md#returning-errors">https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md#returning-errors</A>
+
+&gt;<i> When an origin node receives an error message matching a transfer it initiated
+</I>&gt;<i> (i.e. it cannot return-forward the error any further) it generates the `ammag`
+</I>&gt;<i> and `um` keys for each hop in the route.
+</I>&gt;<i> It then iteratively decrypts the error message, using each hop's `ammag`
+</I>&gt;<i> key, and computes the HMAC, using each hop's `um` key.
+</I>
+The number of iterations of decryption is how distant the error-reporting node is from the payer.
+Knowing the entire route, we can know which node reported the error.
+The channel that is failing is then the channel *after* the error-reporting node (assuming bit `NODE` (`0x2000`) is not set in the `failure_code`: if it is a node-level error we should back off by one node and mark the erring node as unreliable).
+The node reporting the error is the node that we start the limited-range search to &quot;heal&quot; the path.
+`permuteroute` does not *need* better error reporting than we already have.
+
+Of course, if a node is malingering and does not report anything, there is nothing we can do, but this is unavoidable anyway and does not prevent use of `permuteroute` in other cases either.
+
+Indeed, the other insight here is that, if we were able to receive an error report from forwarding node N, this implies that every node and channel between us and node N is reliable.
+`permuteroute` reuses this prefix, since it is known-reliable.
+
+&gt;<i>
+</I>&gt;<i> I thought about path pre-computation and path caching, but what bothered me is that the cost depends on the amount you want to send.
+</I>&gt;<i> When pre-computing / caching, you have to either ignore that completely (which can be fine, I don't think trying to always find the most
+</I>&gt;<i> cost-efficient route is a reasonable goal) or take into account some kind of &quot;universal&quot; factor that works for most amounts. How did you take
+</I>&gt;<i> that into account in your pre-computation experiments?
+</I>
+Just to be clear: I have not run any experiments.
+I work on Lightning in a hobbyist capacity, am a small-time HODLer, and cannot even afford to run a mainnet LN node (which is why I had to ask Rene to time `getroute`).
+I mostly get by on sheer code review, tons of armchair reasoning, and sheer force of will.
+
+While costs depend on the amount you want to send, we observe that there are three main costs:
+
+* Risk of locking up funds for `cltv_delta` blocks
+* `fee_proportional_millionths`
+* `fee_base_msatoshi`
+
+Of these, the first two are proportional to the value being sent.
+So if you double the value, you double the cost, but you also double this same cost on *every* alternate path.
+And pathfinding algorithms do not judge the absolute cost, but the relative cost of every path.
+In short the cases below are equivalent and given the same map and the same source and destination, will result in the same path (assuming your variables do not overflow, of course):
+
+* Plains cost 1 movement point, Forests cost 2 movement point
+* Plains cost 2 movement point, Forests cost 4 movement point
+* Plains cost 3241 movement point, Forests cost 6482 movement point
+
+The issue is not so much that costs are proportional to the value being sent.
+The *real* issue is that costs are *both* fixed and proportional.
+So we need to select a balancing factor between the fixed and proportional costs.
+
+We can assume &quot;past performance is an indicator of future performance&quot; and record the average payment size of the user in order to determine how to balance the fixed and proportional costs.
+Picking an example value of say 1mBTC at the start, when the user has not used the node yet, seems reasonable.
+
+Using the average value here, assuming the distribution of values the user sends is the same in the future, minimizes the error between the cached result vs the actual resulting fees.
+
+Again, the point is that we need some sort of way to set limits on the fees and risk the user has for payments, hence the need for `maxfeepercent` and `maxdelay`.
+We cannot reliably get perfect paths on potentially-stale data anyway.
+So I think we can just use whatever path we find using precomputation and caching (using some &quot;example value&quot;), and then do a double-check that the generated path does not get past `maxfeepercent` and `maxdelay`.
+If the generated path gets past the limits, we fall back to a non-precomputed search: given a good-enough &quot;example value&quot; this should be rare in practice.
+
+&gt;<i>
+</I>&gt;<i> I do agree that multi-part payments and trampoline (hierarchical routing) can offer a lot of room for algorithmic improvements and your&#160;
+</I>&gt;<i> ideas on how to leverage them resonate with mine.
+</I>&gt;<i>
+</I>&gt;<i> An interesting thing to note is that trampoline (in the current proposal at least) allows trampoline nodes to leverage multi-part payments
+</I>&gt;<i> &quot;at each hop&quot;, meaning that a trampoline node can join/split arbitrarily an incoming payment to reach the next trampoline node.
+</I>
+I agree, this is an interesting thing.
+
+&gt;<i> While implementing a first version of multi-part payments, I realized that they need to be tightly integrated to the routing algorithm.
+</I>&gt;<i> Since each payment &quot;consumes&quot; a path, potentially &quot;stealing&quot; it from other payments, a naive implementation of multi-part payments
+</I>&gt;<i> &#160;would try to use different paths for each sub-payment, but that's an inefficient way of solving it. Working on multi-part payments made
+</I>&gt;<i> me think that maybe our routing problem is more similar to a circulation or network flow problem [2] rather than path-finding. Have you
+</I>&gt;<i> thought about this? If so what is your opinion?
+</I>
+Most solutions to the network flow problem seem to require an accurate view of flows at each node, which we do not have.
+For multi-part, this is actually similar to the issue of sending a blob of units from one location to another, while keeping the units in a cohesive blob without them forming a line of units where everyone walks nearly the exact same path.
+(older RTSs tend to form these lines when sending blobs of units on long-distance trips, with the downside that on reaching the combat location units come to battle one at a time rather than all at once, reducing the impact of the blob; players learned to micromanage these lines near the combat location so that at least the first entry into the attack is a small group of units rather than a solitary one.)
+Walking nearly the exact same path is, incidentally, the thing we want to avoid in multi-part payments, incidentally, so we have a similar problem as RTS games with lines of units going into battle one-by-one.
+
+Hence, why I proposed the use of flocking, which is a technique used to retain cohesion of a blob of units.
+For example, some RTS games have a concept of putting their units &quot;in formation&quot;, which is actually just a way to excuse the flocking behavior to the player.
+
+Another solution is to use `permuteoute`.
+Run normal single-pathfinding algo.
+Find the smallest-capacity channels in the returned route and `permuteroute` around those channels, resulting in an alternate route that avoids the smallest-capacity channels (which are more likely to fail when multiple payments run through them) but shares the rest of the path with the original route.
+Keep doing this until `permuteroute` fails, then we have a bunch of alternate routes we can try to use for multi-part routing.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002097.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+	<LI>Next message: <A HREF="002099.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2098">[ date ]</a>
+              <a href="thread.html#2098">[ thread ]</a>
+              <a href="subject.html#2098">[ subject ]</a>
+              <a href="author.html#2098">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

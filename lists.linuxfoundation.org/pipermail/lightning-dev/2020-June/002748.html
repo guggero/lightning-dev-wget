@@ -1,0 +1,286 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%20make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%0A%20fixes&In-Reply-To=%3CCAD5xwhgCzVHzdTOC004H-1bi4b9UOFcmaPKk4L_ypUXZn6ad7A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002747.html">
+   <LINK REL="Next"  HREF="002749.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes</H1>
+    <B>Jeremy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%20make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%0A%20fixes&In-Reply-To=%3CCAD5xwhgCzVHzdTOC004H-1bi4b9UOFcmaPKk4L_ypUXZn6ad7A%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes">jlrubin at mit.edu
+       </A><BR>
+    <I>Sun Jun 21 22:17:39 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002747.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+        <LI>Next message: <A HREF="002749.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2748">[ date ]</a>
+              <a href="thread.html#2748">[ thread ]</a>
+              <a href="subject.html#2748">[ subject ]</a>
+              <a href="author.html#2748">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+My understanding is that you can use the CTV deferral to also get
+independent HTLC relative timelocks start points per output. This would
+help with this sort of issue right?
+
+And you're correct that there's overhead of indirection, but it's not super
+large (minimally complicated something like an extra 100 bytes per output,
+if you were to have a flat array where each entry is a CTV output so that
+each out gets its own clock).
+
+Essentially something like this:
+
+Chan
+     |
+     ---------------------------------------------
+     |           |             |             |            |
+CTV(A) CTV(B) CTV(C) CTV(D)      (Optional CPFP Anchor?)
+     |           |             |             |
+1 block    1 block   1 block   1 block
+     |           |             |             |
+    A          B           C            D
+
+Where A B C and D are all HTLCs.
+
+Now because of the one-hop indirection, A B C and D can all expand
+independently. It's also possible for the Channel Operator to do something
+like:
+
+Chan
+     |
+     ---------------------------------------------
+     |           |             |             |            |
+CTV(A) CTV(B) CTV(C) CTV(D)      (Optional CPFP Anchor?)
+     |           |             |             |
+1 block    1 block   1 block   10 blocks
+     |           |             |             |
+    A          B           C            D
+
+To make D have a further out resolution time to prevent the
+simultaneous-ness issue (trees or a linear-chain rather than total fan-out
+can also be used but I think it's a bit more confusing for a basic
+example). The benefit of trees is that I can do something like:
+
+
+Chan
+     |
+     --------------------------------------------------------
+     |           |             |             |                          |
+CTV(A) CTV(B) CTV(C) CTV(400 HTLC)      (Optional CPFP Anchor?)
+     |           |             |             |                |
+1 block    1 block   1 block   10 blocks  (Optional CPFP Anchor?)
+     |           |             |              |
+     |           |             |             / ....\
+    A          B           C            | ..... |
+
+Which makes it so that the low-value new HTLCs can be deprioritized fee
+wise. So that the attack, which occurs during a fee spike, doesn't end up
+*requiring* substantial fees to be added to the channel to support a burst
+of HTLCS.
+
+--
+@JeremyRubin &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+&lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+
+
+On Sat, Jun 20, 2020 at 8:34 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning Jeremy,
+</I>&gt;<i>
+</I>&gt;<i> &gt; I am not steeped enough in Lightning Protocol issues to get the full
+</I>&gt;<i> design space, but I'm fairly certain BIP-119 Congestion Control trees would
+</I>&gt;<i> help with this issue.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; You can bucket a tree by doing a histogram of HTLC size, so that all
+</I>&gt;<i> small HTLCs live in a common CTV subtree and don't interfere with higher
+</I>&gt;<i> value HTLCs. You can also play with sequencing to prevent those HTLCs from
+</I>&gt;<i> getting longchains in the mempool until they're above a certain value.
+</I>&gt;<i>
+</I>&gt;<i> If the attacker stops responding, then all HTLC rules need to be published
+</I>&gt;<i> onchain for enforcement of the HTLC rules.
+</I>&gt;<i> And that publication onchain is the problem: every HTLC published requires
+</I>&gt;<i> onchain space, which must be paid for.
+</I>&gt;<i>
+</I>&gt;<i> The most compact way to expose the HTLCs is as a flat array, i.e. outputs
+</I>&gt;<i> of a single transaction.
+</I>&gt;<i> Every tree structure is going to take up more space than a flat array.
+</I>&gt;<i>
+</I>&gt;<i> What CTV buys is to be able to defer *when* you reveal scripts, possibly
+</I>&gt;<i> to a later time when blockchain space is cheaper.
+</I>&gt;<i> But in case the victim owns the timelock branch of an outgoing HTLC, it is
+</I>&gt;<i> unsafe for the victim to defer: it has to enforce the locktime soon or it
+</I>&gt;<i> could end up losing both incoming and outgoing HTLC amounts.
+</I>&gt;<i> And to enforce the locktime it has to publish the HTLC.
+</I>&gt;<i>
+</I>&gt;<i> Now of course with CTV you could publish only the HTLC you have to enforce
+</I>&gt;<i> *now*, and keep the rest in an CTV output.
+</I>&gt;<i> The attacker can counter this by pushing 483 HTLCs with the same timelock
+</I>&gt;<i> at the victim, so that the victim has to publish all HTLCs simultaneously.
+</I>&gt;<i> And a flat array of outputs is cheaper than a tree.
+</I>&gt;<i>
+</I>&gt;<i> What *can* be done would be to bin by timelock rather than amount; tree
+</I>&gt;<i> leaves are a transaction that exposes all HTLCs with a particular timelock
+</I>&gt;<i> as a flat array of outputs, but different timelocks go to different tree
+</I>&gt;<i> branches.
+</I>&gt;<i> But the attacker can still do the same-timelock trick, and the tree
+</I>&gt;<i> structure is likely to take up more space in the end than just a non-treed
+</I>&gt;<i> flat array of outputs.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; --
+</I>&gt;<i> &gt; @JeremyRubin
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Thu, Jun 18, 2020 at 1:41 AM Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Hi Rene,
+</I>&gt;<i> &gt; &gt; Thanks for disclosing this vulnerability,
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; I think this blackmail scenario holds but sadly there is a lower
+</I>&gt;<i> scenario.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Both &quot;Flood &amp; Loot&quot; and your blackmail attack rely on `update_fee`
+</I>&gt;<i> mechanism and unbounded commitment transaction size inflation. Though the
+</I>&gt;<i> first to provoke block congestion and yours to lockdown in-flight fees as
+</I>&gt;<i> funds hostage situation.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; 1. The current solution is to just not use up the max value of
+</I>&gt;<i> htlc's. Eclaire and c-lightning by default only use up to 30 htlcs.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; As of today, yes I would recommend capping commitment size both for
+</I>&gt;<i> ensuring competitive propagation/block selection and limiting HTLC exposure.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; 2. Probably the best fix (not sure if I understand the consequences
+</I>&gt;<i> correctly) is coming from this PR to bitcoin core (c.f.
+</I>&gt;<i> <A HREF="https://github.com/bitcoin/bitcoin/pull/15681">https://github.com/bitcoin/bitcoin/pull/15681</A> by @TheBlueMatt . If I get
+</I>&gt;<i> it correctly with that we could always have low fees and ask the person who
+</I>&gt;<i> want to claim their outputs to pay fees. This excludes overpayment and
+</I>&gt;<i> could happen at a later stage when fees are not spiked. Still the victim
+</I>&gt;<i> who offered the htlcs would have to spend those outputs at some time.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; It's a bit more complex, carve-out output, even combined with anchor
+</I>&gt;<i> output support on the LN-side won't protect against different flavors of
+</I>&gt;<i> pinning. I invite you to go through logs of past 2 LN dev meetings.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; 3. Don't overpay fees in commitment transactions. We can't foresee
+</I>&gt;<i> the future anyway
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Once 2. is well-addressed we may deprecate `update_fee`.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; 4. Don't add htlcs for which the on chain fee is higher than the
+</I>&gt;<i> HTLCs value (like we do with sub dust amounts and sub satoshi amounts. This
+</I>&gt;<i> would at least make the attack expensive as the attacker would have to bind
+</I>&gt;<i> a lot of liquidity.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Ideally we want dust_limit to be dynamic, dust cap should be based on
+</I>&gt;<i> HTLC economic value, feerate of its output, feerate of HTLC-transaction,
+</I>&gt;<i> feerate estimation of any CPFP to bump it. I think that's kind of worthy to
+</I>&gt;<i> do once we solved 3. and 4
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; 5. Somehow be able to aggregate htlc's. In a world where we use
+</I>&gt;<i> payment points instead of preimages we might be able to do so. It would be
+</I>&gt;<i> really cool if separate HTLC's could be combined to 1 single output. I
+</I>&gt;<i> played around a little bit but I have not come up with a scheme that is
+</I>&gt;<i> more compact in all cases. Thus I just threw in the idea.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Yes we may encode all HTLC in some Taproot tree in the future. There
+</I>&gt;<i> are some wrinkles but for a high-level theoretical construction see my post
+</I>&gt;<i> on CoinPool.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; 6. Split onchain fees differently (now the attacker would also lose
+</I>&gt;<i> fees by conducting this attack) - No I don't want to start yet another fee
+</I>&gt;<i> bikeshadding debate. (In particular I believe that a different split of
+</I>&gt;<i> fees might make the Flood &amp; Loot attack economically more viable which
+</I>&gt;<i> relies on the same principle)
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Likely a bit more of fee bikeshedding is something we have to do to
+</I>&gt;<i> make LN secure... Switching fee from pre-committed ones to a single-party,
+</I>&gt;<i> dynamic one.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Independently I think we should have a hint in our readme file about
+</I>&gt;<i> where and how people can disclose attacks and vulnerabilities.
+</I>&gt;<i> Implementations have this but the BOLTs do not.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; I 100% agree, that's exactly
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/772,">https://github.com/lightningnetwork/lightning-rfc/pull/772,</A> waiting for
+</I>&gt;<i> your feedback :)
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Cheers,
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Antoine
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Le mer. 17 juin 2020 &#224; 09:41, ZmnSCPxj via Lightning-dev &lt;
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Good morning all,
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Fee futures could help against this.
+</I>&gt;<i> &gt; &gt; &gt; &gt; I remember writing about this some time ago but cannot find where
+</I>&gt;<i> (not sure if it was in lightning-dev or bitcoin-dev).
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; `harding` found it:
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-January/017601.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2020-January/017601.html</A>
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt; &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200621/8e0db1ae/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200621/8e0db1ae/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002747.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+	<LI>Next message: <A HREF="002749.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2748">[ date ]</a>
+              <a href="thread.html#2748">[ thread ]</a>
+              <a href="subject.html#2748">[ subject ]</a>
+              <a href="author.html#2748">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

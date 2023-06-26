@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A state machine.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C87si6ybnmm.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000176.html">
+   <LINK REL="Next"  HREF="000178.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A state machine.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C87si6ybnmm.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] A state machine.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Sep  1 07:32:49 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000176.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+        <LI>Next message: <A HREF="000178.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#177">[ date ]</a>
+              <a href="thread.html#177">[ thread ]</a>
+              <a href="subject.html#177">[ subject ]</a>
+              <a href="author.html#177">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> On 31 August 2015 at 11:04, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> &gt; I was thinking it would be possible to update many HTLCs at once, so
+</I>&gt;&gt;<i> &gt; I was expecting a single PKT_UPDATE_CHANNEL rather than the ADD_HTLC,
+</I>&gt;&gt;<i> &gt; COMPLETE_HTLC, TIMEOUT_HTLC, etc variants. From a protocol POV, I guess
+</I>&gt;&gt;<i> &gt; that's something like:
+</I>&gt;&gt;<i> This is the kind of optimization we may see later, but I really shy away
+</I>&gt;&gt;<i> from doing it now.  Your diagram looks simpler because you removed all
+</I>&gt;&gt;<i> the rest of the handshaking.  Try this:
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &#8203;I think the statepy.svg includes all the handshaking (including errors,
+</I>&gt;<i> but I think excluding internal errors) apart from the nop state
+</I>&gt;<i> transitions. Having a single PKT_UPDATE_CHANNEL would just combine those
+</I>&gt;<i> into one subgraph / one edge.
+</I>
+My instinct is to encode as much in the state itself as possible,
+because it simplifies verification.
+
+&gt;<i> I'm a bit surprised that CMD_CLOSE isn't a valid option when proposing an
+</I>&gt;<i> update -- it's valid during WAIT_FOR_UPDATE_SIG but not
+</I>&gt;<i> WAIT_FOR_HTLC_ACCEPT/WAIT_FOR_UPDATE_COMPLETE.
+</I>
+Looking at that git tree (I've done some work since then)...  Ah, you
+can't send a command while processing an existing command.  Seems a
+logical simplification.
+
+&gt;<i> (Correspondingly, PKT_CLOSE
+</I>&gt;<i> doesn't seem valid during WAIT_FOR_UPDATE_SIG)
+</I>
+It's a corrollary of the above.
+
+&gt;<i> A: ADD_HTLC --&gt; B: DECLINE_HTLC
+</I>&gt;&gt;<i>   OR
+</I>&gt;&gt;<i> A: ADD_HTLC --&gt; B: ACCEPT --&gt; A: SIGNATURE --&gt; B: COMPLETE
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> After success:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> B: FULFILL_HTLC -&gt; A: ACCEPT --&gt; B: SIGNATURE --&gt; A: COMPLETE
+</I>&gt;&gt;<i>   OR
+</I>&gt;&gt;<i> B: ROUTEFAIL_HTLC -&gt; A: ACCEPT --&gt; B: SIGNATURE --&gt; A: COMPLETE
+</I>&gt;&gt;<i>   OR
+</I>&gt;&gt;<i> A: TIMEDOUT_HTLC -&gt; B: ACCEPT --&gt; A: SIGNATURE --&gt; B: COMPLETE
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This makes the constraints clearer, eg. you can't DECLINE_HTLC anything
+</I>&gt;&gt;<i> but an ADD_HTLC.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &#8203;Your states currently allow declining those though:
+</I>
+Not at all (or if it does, it's a bug).  Each state is defined as
+something which can accept inputs, and for which all those inputs are
+always valid.
+
+&gt;<i> If your counterparty proposes a broken HTLC update, I'm not sure there's
+</I>&gt;<i> harm in being allowed to decline it? They can choose to close the channel
+</I>&gt;<i> if they think you're unreasonable, retry the update if they found a
+</I>&gt;<i> mistake, or just forget it and not worry (if they were issuing a ROUTEFAIL,
+</I>&gt;<i> it's not /their/ funds that are on the line eg).
+</I>
+The simplest (and safest) system is always to error and close when they
+break protocol.  There's some game theory involved in whether you should
+wait or not, but in the end, they're broken and there's not much you can
+do.
+
+&gt;<i> I also wonder if
+</I>&gt;<i>
+</I>&gt;<i>   A: TIMEDOUT_HTLC -&gt; B: DECLINE (err_time_sync_lost)
+</I>&gt;<i>
+</I>&gt;<i> might be useful.
+</I>
+I don't think it's useful, though if you disagree on time you might get
+an error packet.  (What else can you do?)
+
+Perhaps we should add a current time field to UPDATE_ADD_HTLC so you can
+defuse clock sync problems earlier?
+
+&gt;&gt;<i> AFAICS, you still have a potential deadlock atm if you think you're
+</I>&gt;&gt;<i> &gt; high priority but your counterparty also thinks they're high priority,
+</I>&gt;&gt;<i> &gt; or just missed your update packet. I think there might be a similar
+</I>&gt;&gt;<i> &gt; deadlock if both systems think they're low priority.
+</I>&gt;&gt;<i> They can't get into that state.
+</I>&gt;<i>
+</I>&gt;<i> &#8203;Sorry, I was assuming that one or both implementations were buggy. I meant
+</I>&gt;<i> to make that explicit.&#8203; You're talking with strangers on the network, so
+</I>&gt;<i> you can't assume their software is bug free, right?
+</I>
+That applies to any scheme you come up with, though.  Propose something
+simpler, and I'll gladly rewrite.
+
+&gt;<i> BTW, your states currently switch priority even when an update is declined,
+</I>&gt;<i> so the low bit of the current commitment id (which obviously isn't changed
+</I>&gt;<i> on a declined update) doesn't actually give you the priority afaics.
+</I>
+True!  I will change that, since it's conceptually simpler.
+
+Thanks,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000176.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+	<LI>Next message: <A HREF="000178.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#177">[ date ]</a>
+              <a href="thread.html#177">[ thread ]</a>
+              <a href="subject.html#177">[ subject ]</a>
+              <a href="author.html#177">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

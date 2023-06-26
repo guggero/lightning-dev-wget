@@ -1,0 +1,269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Achieving Zero Downtime Splicing in Practice via Chain Signals
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Achieving%20Zero%20Downtime%20Splicing%20in%20Practice%0A%20via%20Chain%20Signals&In-Reply-To=%3CCAO3Pvs93_XwP4fcLb2KR-4UiSzGFbP7FzSjKFbh4j2jL2x8%3DwA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003622.html">
+   <LINK REL="Next"  HREF="003632.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Achieving Zero Downtime Splicing in Practice via Chain Signals</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Achieving%20Zero%20Downtime%20Splicing%20in%20Practice%0A%20via%20Chain%20Signals&In-Reply-To=%3CCAO3Pvs93_XwP4fcLb2KR-4UiSzGFbP7FzSjKFbh4j2jL2x8%3DwA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Achieving Zero Downtime Splicing in Practice via Chain Signals">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Jun 29 23:57:40 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003622.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice	via Chain Signals
+</A></li>
+        <LI>Next message: <A HREF="003632.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice	via Chain Signals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3630">[ date ]</a>
+              <a href="thread.html#3630">[ thread ]</a>
+              <a href="subject.html#3630">[ subject ]</a>
+              <a href="author.html#3630">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty,
+
+Thanks for the feedback!
+
+&gt;<i> This is over-design: if you fail to get reliable gossip, your routing will
+</I>&gt;<i> suffer anyway.  Nothing new here.
+</I>
+Idk, it's pretty simple: you're already watching for closes, so if a close
+looks a certain way, it's a splice. When you see that, you can even take
+note of the _new_ channel size (funds added/removed) and update your
+pathfinding/blindedpaths/hophints accordingly.
+
+If this is an over-designed solution, that I'd categorize _only_ waiting N
+blocks as wishful thinking, given we have effectively no guarantees w.r.t
+how long it'll take a message to propagate.
+
+If by routing you mean a routing node then: no, a routing node doesn't even
+really need the graph at all to do their job.
+
+If by routing you mean a sender, then imo still no: you don't necessarily
+need _all_ gossip, just the latest policies of the nodes you route most
+frequently to. On top of that, since you can get the latest policy each time
+you incur a routing failure, as you make payments, you'll get the latest
+policies of the nodes you care about over time. Also consider that you might
+fail to get &quot;reliable&quot; gossip, simply just due to your peer neighborhood
+aggressively rate limiting gossip (they only allow 1 update a day for a
+node, you updated your fee, oops, no splice msg for you).
+
+So it appears you don't agree that the &quot;wait N blocks before you close your
+channels&quot; isn't a fool proof solution? Why 12 blocks, why not 15? Or 144?
+
+&gt;<i>From my PoV, the whole point of even signalling that a splice is on going,
+</I>is for the sender's/receivers: they can continue to send/recv payments over
+the channel while the splice is in process. It isn't that a node isn't
+getting any gossip, it's that if the node fails to obtain the gossip message
+within the N block period of time, then the channel has effectively closed
+from their PoV, and it may be an hour+ until it's seen as a usable (new)
+channel again.
+
+If there isn't a 100% reliable way to signal that a splice is in progress,
+then this disincentives its usage, as routers can lose out on potential fee
+revenue, and sends/receivers may grow to favor only very long lived
+channels. IMO _only_ having a gossip message simply isn't enough: there're
+no real guarantees w.r.t _when_ all relevant parties will get your gossip
+message. So why not give them a 100% reliable on chain signal that:
+something is in progress here, stay tuned for the gossip message, whenever
+you receive that.
+
+-- Laolu
+
+
+On Tue, Jun 28, 2022 at 6:40 PM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> Hi Roasbeef,
+</I>&gt;<i>
+</I>&gt;<i> This is over-design: if you fail to get reliable gossip, your routing
+</I>&gt;<i> will suffer anyway.  Nothing new here.
+</I>&gt;<i>
+</I>&gt;<i> And if you *know* you're missing gossip, you can simply delay onchain
+</I>&gt;<i> closures for longer: since nodes should respect the old channel ids for
+</I>&gt;<i> a while anyway.
+</I>&gt;<i>
+</I>&gt;<i> Matt's proposal to simply defer treating onchain closes is elegant and
+</I>&gt;<i> minimal.  We could go further and relax requirements to detect onchain
+</I>&gt;<i> closes at all, and optionally add a perm close message.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Rusty.
+</I>&gt;<i>
+</I>&gt;<i> Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; writes:
+</I>&gt;<i> &gt; Hi y'all,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; This mail was inspired by this [1] spec PR from Lisa. At a high level, it
+</I>&gt;<i> &gt; proposes the nodes add a delay between the time they see a channel
+</I>&gt;<i> closed on
+</I>&gt;<i> &gt; chain, to when they remove it from their local channel graph. The motive
+</I>&gt;<i> &gt; here is to give the gossip message that indicates a splice is in process,
+</I>&gt;<i> &gt; &quot;enough&quot; time to propagate through the network. If a node can see this
+</I>&gt;<i> &gt; message before/during the splicing operation, then they'll be able relate
+</I>&gt;<i> &gt; the old and the new channels, meaning it's usable again by
+</I>&gt;<i> senders/receiver
+</I>&gt;<i> &gt; _before_ the entire chain of transactions confirms on chain.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; IMO, this sort of arbitrary delay (expressed in blocks) won't actually
+</I>&gt;<i> &gt; address the issue in practice. The proposal suffers from the following
+</I>&gt;<i> &gt; issues:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   1. 12 blocks is chosen arbitrarily. If for w/e reason an announcement
+</I>&gt;<i> &gt;   takes longer than 2 hours to reach the &quot;economic majority&quot; of
+</I>&gt;<i> &gt;   senders/receivers, then the channel won't be able to mask the splicing
+</I>&gt;<i> &gt;   downtime.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   2. Gossip propagation delay and offline peers. These days most nodes
+</I>&gt;<i> &gt;   throttle gossip pretty aggressively. As a result, a pair of nodes doing
+</I>&gt;<i> &gt;   several in-flight splices (inputs become double spent or something, so
+</I>&gt;<i> &gt;   they need to try a bunch) might end up being rate limited within the
+</I>&gt;<i> &gt;   network, causing the splice update msg to be lost or delayed
+</I>&gt;<i> significantly
+</I>&gt;<i> &gt;   (IIRC CLN resets these values after 24 hours). On top of that, if a
+</I>&gt;<i> peer
+</I>&gt;<i> &gt;   is offline for too long (think mobile senders), then they may miss the
+</I>&gt;<i> &gt;   update all together as most nodes don't do a full historical
+</I>&gt;<i> &gt;   _channel_update_ dump anymore.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; In order to resolve these issues, I think instead we need to rely on the
+</I>&gt;<i> &gt; primary splicing signal being sourced from the chain itself. In other
+</I>&gt;<i> words,
+</I>&gt;<i> &gt; if I see a channel close, and a closing transaction &quot;looks&quot; a certain
+</I>&gt;<i> way,
+</I>&gt;<i> &gt; then I know it's a splice. This would be used in concert w/ any new
+</I>&gt;<i> gossip
+</I>&gt;<i> &gt; messages, as the chain signal is a 100% foolproof way of letting an aware
+</I>&gt;<i> &gt; peer know that a splice is actually happening (not a normal close). A
+</I>&gt;<i> chain
+</I>&gt;<i> &gt; signal doesn't suffer from any of the gossip/time related issues above,
+</I>&gt;<i> as
+</I>&gt;<i> &gt; the signal is revealed at the same time a peer learns of a channel
+</I>&gt;<i> &gt; close/splice.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Assuming, we agree that a chain signal has some sort of role in the
+</I>&gt;<i> ultimate
+</I>&gt;<i> &gt; plans for splicing, we'd need to decide on exactly _what_ such a signal
+</I>&gt;<i> &gt; looks like. Off the top, a few options are:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   1. Stuff something in the annex. Works in theory, but not in practice,
+</I>&gt;<i> as
+</I>&gt;<i> &gt;   bitcoind (being the dominant full node implementation on the p2p
+</I>&gt;<i> network,
+</I>&gt;<i> &gt;   as well as what all the miners use) treats annexes as non-standard.
+</I>&gt;<i> Also
+</I>&gt;<i> &gt;   the annex itself might have some fundamental issues that get in the
+</I>&gt;<i> way of
+</I>&gt;<i> &gt;   its use all together [2].
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   2. Re-use the anchors for this purpose. Anchor are nice as they allow
+</I>&gt;<i> for
+</I>&gt;<i> &gt;   1st/2nd/3rd party CPFP. As a splice might have several inputs and
+</I>&gt;<i> outputs,
+</I>&gt;<i> &gt;   both sides will want to make sure it gets confirmed in a timely manner.
+</I>&gt;<i> &gt;   Ofc, RBF can be used here, but that requires both sides to be online to
+</I>&gt;<i> &gt;   make adjustments. Pre-signing can work too, but the effectiveness
+</I>&gt;<i> &gt;   (minimizing chain cost while expediting confirmation) would be
+</I>&gt;<i> dependent
+</I>&gt;<i> &gt;   on the fee step size.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   In this case, we'd use a different multi-sig output (both sides can
+</I>&gt;<i> rotate
+</I>&gt;<i> &gt;   keys if they want to), and then roll the anchors into this splicing
+</I>&gt;<i> &gt;   transaction. Given that all nodes on the network know what the anchor
+</I>&gt;<i> size
+</I>&gt;<i> &gt;   is (assuming feature bit understanding), they're able to realize that
+</I>&gt;<i> it's
+</I>&gt;<i> &gt;   actually a splice, and they don't need to remove it from the channel
+</I>&gt;<i> graph
+</I>&gt;<i> &gt;   (yet).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   3. Related to the above: just re-use the same multi-sig output. If
+</I>&gt;<i> nodes
+</I>&gt;<i> &gt;   don't care all that much about rotating these keys, then they can just
+</I>&gt;<i> use
+</I>&gt;<i> &gt;   the same output. This is trivially recognizable by nodes, as they
+</I>&gt;<i> already
+</I>&gt;<i> &gt;   know the funding keys used, as they're in the channel_announcement.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   4. OP_RETURN (yeh, I had to list it). Self explanatory, push some
+</I>&gt;<i> bytes in
+</I>&gt;<i> &gt;   an OP_RETURN and use that as the marker.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   5. Fiddle w/ the locktime+sequence somehow to make it identifiable to
+</I>&gt;<i> &gt;   verifiers. This might run into some unintended interactions if the
+</I>&gt;<i> inputs
+</I>&gt;<i> &gt;   provided have either relative or absolute lock times. There might also
+</I>&gt;<i> be
+</I>&gt;<i> &gt;   some interaction w/ the main constructing for eltoo (uses the
+</I>&gt;<i> locktime).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Of all the options, I think #2 makes the most sense: we already use
+</I>&gt;<i> anchors
+</I>&gt;<i> &gt; to be able to do fee bumping after-the-fact for closing transactions, so
+</I>&gt;<i> why
+</I>&gt;<i> &gt; not inherit them here. They make the splicing transaction slightly
+</I>&gt;<i> larger,
+</I>&gt;<i> &gt; so maybe #3 (or something else) is a better choice.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The design space for spicing is preeetty large, so I figure the most
+</I>&gt;<i> &gt; productive route might be discussing isolated aspects of it at a time.
+</I>&gt;<i> &gt; Personally, I'm not suuuper caught up w/ what the latest design drafts
+</I>&gt;<i> are
+</I>&gt;<i> &gt; (aside from convos at the recent LN Dev Summit), but from my PoV, how to
+</I>&gt;<i> &gt; communicate the splice to other peers has been an outstanding design
+</I>&gt;<i> &gt; question.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; [1]: <A HREF="https://github.com/lightning/bolts/pull/1004">https://github.com/lightning/bolts/pull/1004</A>
+</I>&gt;<i> &gt; [2]:
+</I>&gt;<i> &gt;
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-March/020045.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-March/020045.html</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; -- Laolu
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220629/0823b5a9/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220629/0823b5a9/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003622.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice	via Chain Signals
+</A></li>
+	<LI>Next message: <A HREF="003632.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice	via Chain Signals
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3630">[ date ]</a>
+              <a href="thread.html#3630">[ thread ]</a>
+              <a href="subject.html#3630">[ subject ]</a>
+              <a href="author.html#3630">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

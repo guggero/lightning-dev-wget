@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PTLCs early draft specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3C20211208092853.GA10507%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003385.html">
+   <LINK REL="Next"  HREF="003387.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PTLCs early draft specification</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3C20211208092853.GA10507%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] PTLCs early draft specification">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Dec  8 09:28:53 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003385.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+        <LI>Next message: <A HREF="003387.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3386">[ date ]</a>
+              <a href="thread.html#3386">[ thread ]</a>
+              <a href="subject.html#3386">[ subject ]</a>
+              <a href="author.html#3386">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Dec 07, 2021 at 11:52:04PM +0000, ZmnSCPxj via Lightning-dev wrote:
+&gt;<i> Alternately, fast-forwards, which avoid this because it does not change commitment transactions on the payment-forwarding path.
+</I>&gt;<i> You only change commitment transactions once you have enough changes to justify collapsing them.
+</I>
+I think the problem t-bast describes comes up here as well when you
+collapse the fast-forwards (or, anytime you update the commitment
+transaction even if you don't collapse them).
+
+That is, if you have two PTLCs, one from A-&gt;B conditional on X, one
+from B-&gt;A conditional on Y. Then if A wants to update the commitment tx,
+she needs to
+
+  1) produce a signature to give to B to spend the funding tx
+  2) produce an adaptor signature to authorise B to spend via X from his
+     commitment tx
+  3) produce a signature to allow B to recover Y after timeout from his
+     commitment tx spending to an output she can claim if he cheats
+  4) *receive* an adaptor signature from B to be able to spend the Y output
+     if B posts his commitment tx using A's signature in (1)
+
+The problem is, she can't give B the result of (1) until she's received
+(4) from B.
+
+It doesn't matter if the B-&gt;A PTLC conditional on Y is in the commitment
+tx itself or within a fast-forward child-transaction -- any previous
+adaptor sig will be invalidated because there's a new commitment
+transaction, and if you allowed any way of spending without an adaptor
+sig, B wouldn't be able to recover the secret and would lose funds.
+
+It also doesn't matter if the commitment transaction that A and B will
+publish is the same or different, only that it's different from the
+commitment tx that previous adaptor sigs committed to. (So ANYPREVOUT
+would fix this if it were available)
+
+So I think this is still a relevant question, even if fast-forwards
+make it a rare problem, that perhaps is only applicable to very heavily
+used channels.
+
+(I said the following in email to t-bast already)
+
+I think doing a synchronous update of commitments to the channel state,
+something like:
+
+   Alice -&gt; Bob: propose_new_commitment
+       channel id
+       adaptor sigs for PTLCs to Bob
+
+   Bob -&gt; Alice: agree_new_commitment
+       channel id
+       adaptor sigs for PTLCs to Alice
+       sigs for Alice to spend HTLCs and PTLCs to Bob from her own
+         commitment tx
+       signature for Alice to spend funding tx
+
+   Alice -&gt; Bob: finish_new_commitment_1
+       channel id
+       sigs for Bob to spend HTLCs and PTLCs to Alice from his own
+         commitment tx
+       signature for Bob to spend funding tx
+       reveal old prior commitment secret
+       new commitment nonce
+
+   Bob -&gt; Alice: finish_new_commitment_2
+       reveal old prior commitment secret
+       new commitment nonce
+
+would work pretty well.
+
+This adds half a round-trip compared to now:
+
+   Alice -&gt; Bob: commitment_signed
+   Bob -&gt; Alice: revoke_and_ack, commitment_signed
+   Alice -&gt; Bob: revoke_and_ack
+
+The timings change like so:
+
+  Bob can use the new commitment after 1.5 round-trips (previously 0.5)
+
+  Alice can be sure Bob won't use the old commitment after 2 round-trips
+  (previously 1)
+
+  Alice can use the new commitment after 1 round-trip (unchanged)
+
+  Bob can be sure Alice won't use the old commitment after 1.5 round-trips
+  (unchanged -- note: this is what's relevant for forwarding)
+
+Making the funding tx a musig setup would mean also supplying 64B
+of musig2 nonces along with the &quot;adaptor sigs&quot; in one direction,
+and providing the other side's 64B of musig2 nonces back along with the
+(now partial) signature for spending the funding tx (a total of 256B of
+nonce data, not 128B).
+
+Because it keeps both peers' commitments synchronised to a single channel
+state, I think the same protocol should work fine with the revocable
+signatures on a single tx approach too, though I haven't tried working
+through the details.
+
+Fast forwards would then be reducing the 2 round-trip protocol to
+update the state commitment to a 0.5 round-trip update, to reduce
+latency when forwarding by the same amount as before (1.5 round-trips
+to 0.5 round-trips).
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003385.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+	<LI>Next message: <A HREF="003387.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3386">[ date ]</a>
+              <a href="thread.html#3386">[ thread ]</a>
+              <a href="subject.html#3386">[ subject ]</a>
+              <a href="author.html#3386">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

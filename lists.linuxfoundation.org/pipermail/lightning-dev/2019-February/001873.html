@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Quick analysis of channel_update data
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Quick%20analysis%20of%20channel_update%20data&In-Reply-To=%3C8736olfgc8.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001887.html">
+   <LINK REL="Next"  HREF="001874.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Quick analysis of channel_update data</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Quick%20analysis%20of%20channel_update%20data&In-Reply-To=%3C8736olfgc8.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Quick analysis of channel_update data">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Feb 18 12:09:43 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001887.html">[Lightning-dev] Payee pay fee
+</A></li>
+        <LI>Next message: <A HREF="001874.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1873">[ date ]</a>
+              <a href="thread.html#1873">[ thread ]</a>
+              <a href="subject.html#1873">[ subject ]</a>
+              <a href="author.html#1873">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>BTW, I took a snapshot of our gossip store from two weeks back, which
+simply stores all gossip in order (compacting every week or so).
+
+channel_updates which updated existing channels: 17766
+... which changed *only* the timestamps: 12644
+    ... which were a week since the last: 7233
+... which only changed the disable/enable: 4839
+
+So there are about 5100 timestamp-only updates less than a week apart
+(about 2000 are 1036 seconds apart, who is this?).
+
+1. I'll look at getting even more conservative with flapping (120second
+   delay if we've just sent an update) but that doesn't seem to be the
+   majority of traffic.
+2. I'll also slow down refreshes to every 12 days, rather than 7, but
+   again it's only a marginal change.
+
+But basically, the majority of updates I saw two weeks ago are actually
+refreshes, not spam.
+
+Hope that adds something?
+Rusty.
+
+Fabrice Drouin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">fabrice.drouin at acinq.fr</A>&gt; writes:
+&gt;<i> Additional info on channel_update traffic:
+</I>&gt;<i>
+</I>&gt;<i> Comparing daily backups of routing tables over the last 2 weeks shows
+</I>&gt;<i> that nearly all channels get at least a new update every day. This
+</I>&gt;<i> means that channel_update traffic is not primarily cause by nodes
+</I>&gt;<i> publishing new updates when channel are about to become stale:
+</I>&gt;<i> otherwise we would see 1/14th of our channels getting a new update on
+</I>&gt;<i> the first day, then another 1/14th on the second day and so on.This is
+</I>&gt;<i> confirmed by comparing routing table backups over a single day: nearly
+</I>&gt;<i> all channels were updated, one average once, with an update that
+</I>&gt;<i> almost always does not include new information.
+</I>&gt;<i>
+</I>&gt;<i> It could be caused by &quot;flapping&quot; channels, probably because the hosts
+</I>&gt;<i> that are hosting them are not reliable (as in is often offline).
+</I>&gt;<i>
+</I>&gt;<i> Heuristics can be used to improve traffic but it's orhtogonal to the
+</I>&gt;<i> problem of improving our current sync protocol.
+</I>&gt;<i> Also, these heuristics would probaly be used to close channels to
+</I>&gt;<i> unreliable nodes instead of filtering/delaying publishing updates for
+</I>&gt;<i> them.
+</I>&gt;<i>
+</I>&gt;<i> Finally, this is not just obsessing over bandwidth (though bandwidth
+</I>&gt;<i> is a real issue for most mobile users). I'm also over obsessing over
+</I>&gt;<i> startup time and payment UX :), because they do matter a lot for
+</I>&gt;<i> mobile users, and would like to push the current gossip design as far
+</I>&gt;<i> as it can go. I also think that we'll face the same issue when
+</I>&gt;<i> designing inventory messages for channel_update messages.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> Fabrice
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Wed, 9 Jan 2019 at 00:44, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Fabrice Drouin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">fabrice.drouin at acinq.fr</A>&gt; writes:
+</I>&gt;&gt;<i> &gt; I think there may even be a simpler case where not replacing updates
+</I>&gt;&gt;<i> &gt; will result in nodes not knowing that a channel has been re-enabled:
+</I>&gt;&gt;<i> &gt; suppose you got 3 updates U1, U2, U3 for the same channel, U2 disables
+</I>&gt;&gt;<i> &gt; it, U3 enables it again and is the same as U1. If you discard it and
+</I>&gt;&gt;<i> &gt; just keep U1, and your peer has U2, how will you tell them that the
+</I>&gt;&gt;<i> &gt; channel has been enabled again ? Unless &quot;discard&quot; here means keep the
+</I>&gt;&gt;<i> &gt; update but don't broadcast it ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This can only happen if you happen to lose connection to the peer(s)
+</I>&gt;&gt;<i> which sent U2 before it sends U3.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Again, this corner case penalizes flapping channels.  If we also
+</I>&gt;&gt;<i> ratelimit our own enables to 1 per 120 seconds, you won't hit this case?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; But then there's a risk that nodes would discard channels as stale
+</I>&gt;&gt;<i> &gt; because they don't get new updates when they reconnect.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> You need to accept redundant updates after 1 week, I think.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Cheers,
+</I>&gt;&gt;<i> Rusty.
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001887.html">[Lightning-dev] Payee pay fee
+</A></li>
+	<LI>Next message: <A HREF="001874.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1873">[ date ]</a>
+              <a href="thread.html#1873">[ thread ]</a>
+              <a href="subject.html#1873">[ subject ]</a>
+              <a href="author.html#1873">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

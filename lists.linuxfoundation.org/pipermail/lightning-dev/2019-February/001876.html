@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] SURBs as a Solution for Protocol-Level Payment	ACKs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20SURBs%20as%20a%20Solution%20for%20Protocol-Level%20Payment%0A%09ACKs&In-Reply-To=%3C87pnroeh4e.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001865.html">
+   <LINK REL="Next"  HREF="001863.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] SURBs as a Solution for Protocol-Level Payment	ACKs</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20SURBs%20as%20a%20Solution%20for%20Protocol-Level%20Payment%0A%09ACKs&In-Reply-To=%3C87pnroeh4e.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] SURBs as a Solution for Protocol-Level Payment	ACKs">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Feb 19 00:50:25 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001865.html">[Lightning-dev] SURBs as a Solution for Protocol-Level Payment	ACKs
+</A></li>
+        <LI>Next message: <A HREF="001863.html">[Lightning-dev] Extending Associated Data in the Sphinx Packet to	Cover All Payment Details
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1876">[ date ]</a>
+              <a href="thread.html#1876">[ thread ]</a>
+              <a href="subject.html#1876">[ subject ]</a>
+              <a href="author.html#1876">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; writes:
+&gt;<i> Hi y'all,
+</I>&gt;<i>
+</I>&gt;<i> Recently we've started to do more design work related to the Sphinx packet
+</I>&gt;<i> (EOB format, rendezvous protocol). This prompted me to re-visit the original
+</I>&gt;<i> Sphinx paper to refresh my memory w.r.t some of the finer details of the
+</I>&gt;<i> protocol.  While I was re-reading the paper, I realized that we may be able
+</I>&gt;<i> to use use SURBs (single-use-reply-blocks) to implement a &quot;payment ACK&quot; for
+</I>&gt;<i> each sent HTLC.
+</I>&gt;<i>
+</I>&gt;<i> (it's worth mentioning that switching to HORNET down the line would solve
+</I>&gt;<i> this problem as well since the receiver already gets a multi-use backwards
+</I>&gt;<i> route that they can use to send information back to the receiver)
+</I>
+I think HORNET is a better way forward for soft errors, since using the
+same circuit is *way* more reliable (Christian indicated most probe
+failures are due to disconnected nodes, not capacity).
+
+I'd like to see us work towards that instead, at least in baby steps.
+
+&gt;<i> Right now HTLC routing is mainly a game of &quot;send and hope it arrives&quot;, as
+</I>&gt;<i> you have no clear indication of the _arrival_ of an HTLC at the destination.
+</I>&gt;<i> Instead, you only receive a protocol level message if the HTLC failed for
+</I>&gt;<i> w/e reason, or if it was successfully redeemed.  As part of BOLT 1.1, it was
+</I>&gt;<i> agreed upon that we should implement some sort of &quot;payment ACK&quot; feature. A
+</I>&gt;<i> payment ACK scheme is strongly desired as it:
+</I>&gt;<i>
+</I>&gt;<i>   * Allows the sender to actually know when a payment has reached the
+</I>&gt;<i>     receiver which is useful for many higher level protocols. Atm, the
+</I>&gt;<i>     sender is unable to distinguish an HTLC being &quot;black holed&quot; from one
+</I>&gt;<i>     that's actually reached the sender, and they're just holding on to it.
+</I>
+Agreed, though in the long run we'll have to do something about that.
+
+&gt;<i>   * AMP implementations would be aided by being able to receive feedback on
+</I>&gt;<i>     successfully routed splits. If we're able to have the receiver ACK each
+</I>&gt;<i>     partial payment, then implementations can more aggressively split
+</I>&gt;<i>     payments as they're able to gain assurance that the first 2 BTC of 5
+</I>&gt;<i>     total have actually reached the sender, and weren't black holed.
+</I>
+Yes, I suspect this will quickly get messy.  Sender wants longer
+timeouts for AMP, network definitely doesn't.  In my current draft I
+chose 60 seconds for the timeout, but that's a compromise.
+
+&gt;<i>   * Enforcing and relying on ACKs may also thwart silly games receivers
+</I>&gt;<i>     might play, claiming that the HTLC &quot;didn't actually arrive&quot;.
+</I>
+And general debugging and diag as the network gets larger.
+
+&gt;<i> Some also call this feature a &quot;soft error&quot; as a possible implementation
+</I>&gt;<i> might to re-use the existing onion error protocol we've deployed today.  For
+</I>&gt;<i> reference, in order to send back errors back long the route in a way that
+</I>&gt;<i> doesn't reveal the sender of the HTLC to the receiver (or any of the
+</I>&gt;<i> intermediate nodes) we re-use the shared secret each hop has derived, and
+</I>&gt;<i> onion wrap a MAC'd error to the sender. Each hop can't actually check that
+</I>&gt;<i> they've received a well formed error, but the sender is able to attribute an
+</I>&gt;<i> error to a node in the route based on which shared secret they're able to
+</I>&gt;<i> check the MAC with.
+</I>
+Either way, someone should spec that :)
+
+Cheers,
+Rusty.
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001865.html">[Lightning-dev] SURBs as a Solution for Protocol-Level Payment	ACKs
+</A></li>
+	<LI>Next message: <A HREF="001863.html">[Lightning-dev] Extending Associated Data in the Sphinx Packet to	Cover All Payment Details
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1876">[ date ]</a>
+              <a href="thread.html#1876">[ thread ]</a>
+              <a href="subject.html#1876">[ subject ]</a>
+              <a href="author.html#1876">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Blinded channel observation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3CCAGt-spocB259Z4PdzD3%3DLVTC3VpxbFWDk1PL3cWmU71hTqYLWQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000569.html">
+   <LINK REL="Next"  HREF="000572.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Blinded channel observation</H1>
+    <B>Tadge Dryja</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3CCAGt-spocB259Z4PdzD3%3DLVTC3VpxbFWDk1PL3cWmU71hTqYLWQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Blinded channel observation">tadge at lightning.network
+       </A><BR>
+    <I>Wed Aug 10 01:34:43 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000569.html">[Lightning-dev] Blinded channel observation
+</A></li>
+        <LI>Next message: <A HREF="000572.html">[Lightning-dev] Blinded channel observation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#570">[ date ]</a>
+              <a href="thread.html#570">[ thread ]</a>
+              <a href="subject.html#570">[ subject ]</a>
+              <a href="author.html#570">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>
+</I>&gt;<i> 4. When the watcher receives a new block, they HMAC(txid+salt1) all
+</I>&gt;<i> transactions and compare against the key-value store
+</I>&gt;<i>
+</I>&gt;<i> This method does not require significant computation upon receiving a
+</I>&gt;<i> new block and checking against the datastore. I forgot to note, that the
+</I>&gt;<i>
+</I>
+
+If you're only watching 1 channel, this is OK as you're just doing one HMAC
+operation per incoming tx.  This works when the number of states per
+channel is high but the number of channels watched is low.
+If you're watching 1M channels with 1K states each, this requires 1M HMAC
+operations for every incoming tx.
+
+By giving the whole (or a truncated part) of the txid, the observing node
+can put all txids being watched for into the same tree and have seek access
+time independent of the number of separate channels being watched.  Whether
+it's 1 channel with 1 billion states, or 100M channels with 10 states each,
+you have the same cpu and I/O cost per incoming tx.
+
+I'm not clear on the advantages of sending encrypted state information to
+the observer.  Most information the observer needs to construct a punishing
+transaction is available in the observed commitment tx; the only per-state
+information which needs to be stored is the signature (and in the case of
+HTLCs, the preimage).  Reconstructing messages from hashes and / or
+signatures isn't possible as long as there's sufficient unknown data in the
+preimage or message.  This is achievable by changing the pubkeys used in
+the commit tx script and pubkey hash each state, without needing additional
+data in an OP_RETURN.
+
+-Tadge
+
+On Tue, Aug 9, 2016 at 6:29 PM, Joseph Poon &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joseph at lightning.network</A>&gt;
+wrote:
+
+&gt;<i> On Wed, Aug 10, 2016 at 06:36:11AM +0930, Rusty Russell wrote:
+</I>&gt;<i> &gt; Yes, I think we agree some &quot;filter hint&quot; is needed to avoid a crazy
+</I>&gt;<i> &gt; amount of outsourcing work (eg. first 8/16 bytes of txid).  I don't
+</I>&gt;<i> &gt; think an HMAC check per registered commitment is quite fast enough.
+</I>&gt;<i>
+</I>&gt;<i> For #1, the HMAC would be pre-computed by the outsourcer. So the flow
+</I>&gt;<i> looks like:
+</I>&gt;<i>
+</I>&gt;<i> 1. The outsourcer takes the txid, HMAC(txid+salt1) and encrypts the blob
+</I>&gt;<i> 2. The outsourcer gives the 32-byte hmac and blob to the watcher
+</I>&gt;<i> 3. The watcher adds the 32-byte hmac and the blob to a key-value store
+</I>&gt;<i>         (the watcher can optionally truncate or whatever)
+</I>&gt;<i> 4. When the watcher receives a new block, they HMAC(txid+salt1) all
+</I>&gt;<i> transactions and compare against the key-value store
+</I>&gt;<i>
+</I>&gt;<i> This method does not require significant computation upon receiving a
+</I>&gt;<i> new block and checking against the datastore. I forgot to note, that the
+</I>&gt;<i> salt2 is sort of unnecessary, it can just be the pure txid as the key
+</I>&gt;<i> but was there for superstition and aid in understanding what's going on.
+</I>&gt;<i> I was just making a point that there needs to be some kind of &quot;hint&quot;/key
+</I>&gt;<i> to look for.
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt; 2. HMAC the transaction itself (not txid) as the secret key (or
+</I>&gt;<i> anything
+</I>&gt;<i> &gt; &gt; part of the transaction, as long as it isn't SHA256(tx) for obvious
+</I>&gt;<i> &gt; &gt; reasons). I like something along these lines better than option #1.
+</I>&gt;<i> &gt; &gt; Whatever computational cost there is will be extremely low, as the
+</I>&gt;<i> &gt; &gt; operations are constrained by block size.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If we include the witness in that HMAC we risk reintroducing
+</I>&gt;<i> &gt; malleability.  If we don't, we risk txs being predictable.
+</I>&gt;<i>
+</I>&gt;<i> I was referring to the non-witness txid when making that comment, but
+</I>&gt;<i> there should be sufficient entropy from the revocation hash (whose P2WSH
+</I>&gt;<i> is part of the Commitment outputs).
+</I>&gt;<i>
+</I>&gt;<i> &gt; I can think of a few fixes: insert some randomness in the tx (OP_RETURN?
+</I>&gt;<i> &gt; Different addresses each time?), or try to extract the input signature
+</I>&gt;<i> &gt; from the witness, which is unguessable, as our filter?
+</I>&gt;<i>
+</I>&gt;<i> Yeah! I like this idea to use one's own input sig as the key for the
+</I>&gt;<i> encrypted blob too. If Alice is the one outsourcing the Commitment which
+</I>&gt;<i> Bob can broadcast, Bob can only broadcast it using the sig Alice gave
+</I>&gt;<i> Bob as it's spending from a 2-of-2. If Alice is outsourcing Bob's
+</I>&gt;<i> Commitment broadcasts, a hash of her input signature is a solid way to
+</I>&gt;<i> derive a key as well without malleability concerns.
+</I>&gt;<i>
+</I>&gt;<i> I also like that it &quot;encourages&quot; more nodes to download witness data;
+</I>&gt;<i> ignoring witnesses is a concern of mine which this helps with :^)
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Joseph Poon
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160809/0485a6e7/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160809/0485a6e7/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000569.html">[Lightning-dev] Blinded channel observation
+</A></li>
+	<LI>Next message: <A HREF="000572.html">[Lightning-dev] Blinded channel observation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#570">[ date ]</a>
+              <a href="thread.html#570">[ thread ]</a>
+              <a href="subject.html#570">[ subject ]</a>
+              <a href="author.html#570">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fees: 402 Payment Required for Lightning itself
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%20itself&In-Reply-To=%3CCAJBJmV85FuZjKPMbudTkUtoNeMoW4PrZnCEBbz7YqLp4xUVCdw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002823.html">
+   <LINK REL="Next"  HREF="002827.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fees: 402 Payment Required for Lightning itself</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%20itself&In-Reply-To=%3CCAJBJmV85FuZjKPMbudTkUtoNeMoW4PrZnCEBbz7YqLp4xUVCdw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Hold fees: 402 Payment Required for Lightning itself">joost.jager at gmail.com
+       </A><BR>
+    <I>Mon Oct 12 11:03:49 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002823.html">[Lightning-dev] two-round MuSig less dangerous than it seems
+</A></li>
+        <LI>Next message: <A HREF="002827.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2826">[ date ]</a>
+              <a href="thread.html#2826">[ thread ]</a>
+              <a href="subject.html#2826">[ subject ]</a>
+              <a href="author.html#2826">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello list,
+
+Many discussions have taken place on this list on how to prevent undesired
+use of the Lightning network. Spamming the network with HTLCs (for probing
+purposes or otherwise) or holding HTLCs to incapacitate channels can be
+done on today's network at very little cost to an attacker. So far this
+doesn't seem to be happening in practice, but I believe that it is only a
+matter of time before it will become a real issue.
+
+Rate limits and other limits such as the maximum number of in-flight HTLCs
+increase the cost of an attack, but may also limit the capabilities of
+honest users. It works as a mitigation, but it doesn't seem to be the ideal
+solution.
+
+We've looked at all kinds of trustless payment schemes to keep users
+honest, but it appears that none of them is satisfactory. Maybe it is even
+theoretically impossible to create a scheme that is trustless and has all
+the properties that we're looking for. (A proof of that would also be
+useful information to have.)
+
+Perhaps a small bit of trust isn't so bad. There is trust in Lightning
+already. For example when you open a channel, you trust (or hope) that your
+peer remains well connected, keeps charging reasonable fees, doesn't
+force-close in a bad way, etc.
+
+What I can see working is a system where peers charge each other a hold fee
+for forwarded HTLCs based on the actual lock time (not the maximum lock
+time) and the htlc value. This is just for the cost of holding and separate
+from the routing fee that is earned when the payment settles.
+
+This hold fee could be: lock_time * (fee_base + fee_rate * htlc_value).
+fee_base is in there to compensate for the usage of an htlc slot, which is
+a scarce resource too.
+
+I think the implementation of this is less interesting at this stage, but
+some ideas are:
+
+A. Prepayment: node pays an amount to its channel peer (for example via
+keysend) and the channel peer deducts the hold fees from that prepaid
+balance until it is at zero. At that point it somehow (in the htlc fail
+message?) communicates Lightning's version of http 402 to ask for more
+money.
+
+B. Tightly integrated with the htlc add/fail/settle messages. When an htlc
+is added, the maximum cost (based on maximum lock time) for holding is
+deducted from the sender's channel balance. When the htlc settles, a refund
+is given based on the actual lock time. An additional `update_fee`-like
+message is added for peers to update their hold fee parameters (fee_base
+and fee_rate).
+
+In both cases the sender needs to trust its peer to not steal the payment
+and/or artificially delay the forwarding to inflate the hold fee. I think
+that is acceptable given that there is a trust relation between peers
+already anyway.
+
+A crucial thing is that these hold fees don't need to be symmetric. A new
+node for example that opens a channel to a well-known, established routing
+node will be forced to pay a hold fee, but won't see any traffic coming in
+anymore if it announces a hold fee itself. Nodes will need to build a
+reputation before they're able to command hold fees. Similarly, routing
+nodes that have a strong relation may decide to not charge hold fees to
+each other at all.
+
+This asymmetry is what is supposed to prevent channel jamming attacks. The
+attacker needs to pay hold fees to send out the payment, but when it comes
+back to the attacker after traversing a circular route, they won't be able
+to charge a hold fee to cancel out the hold fee paid at the start of the
+route. (Assuming the attacker node is not trusted.)
+
+A consequence for honest users is that payment attempts are no longer free.
+The cost should however be negligible for fast-failing attempts. Also
+senders will have to be a lot more selective when building a route.
+Selecting a 'black hole' hop (hop that doesn't forward nor fail) can be
+costly.
+
+The hold fee scheme is a bit looser compared to previously proposed schemes
+(as far as I know...). It is purely an arrangement between channel peers
+and doesn't try to exactly compensate every hop for its costs. Instead
+trust relations that arguably exist already are leveraged to present a bill
+to the actor who deserves it.
+
+Interested to hear opinions about this proposal.
+
+I'd also like to encourage everyone to prioritize this spam/jam issue and
+dedicate more time to solving it. Obviously there is a lot more to do in
+Lightning, but I am not sure if we can afford to wait for the real
+adversaries to show up on this one.
+
+Cheers,
+Joost
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201012/c7943c5e/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201012/c7943c5e/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002823.html">[Lightning-dev] two-round MuSig less dangerous than it seems
+</A></li>
+	<LI>Next message: <A HREF="002827.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2826">[ date ]</a>
+              <a href="thread.html#2826">[ thread ]</a>
+              <a href="subject.html#2826">[ subject ]</a>
+              <a href="author.html#2826">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

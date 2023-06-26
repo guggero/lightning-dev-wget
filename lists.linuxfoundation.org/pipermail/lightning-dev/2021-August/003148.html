@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Removing the Dust Limit
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Removing%20the%20Dust%20Limit&In-Reply-To=%3C20210808215101.wuaidu5ww63ajx6h%40ganymede%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003161.html">
+   <LINK REL="Next"  HREF="003149.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Removing the Dust Limit</H1>
+    <B>David A. Harding</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Removing%20the%20Dust%20Limit&In-Reply-To=%3C20210808215101.wuaidu5ww63ajx6h%40ganymede%3E"
+       TITLE="[Lightning-dev] Removing the Dust Limit">dave at dtrt.org
+       </A><BR>
+    <I>Sun Aug  8 21:51:01 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003161.html">[Lightning-dev] [bitcoin-dev] Removing the Dust Limit
+</A></li>
+        <LI>Next message: <A HREF="003149.html">[Lightning-dev] Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3148">[ date ]</a>
+              <a href="thread.html#3148">[ thread ]</a>
+              <a href="subject.html#3148">[ subject ]</a>
+              <a href="author.html#3148">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Aug 08, 2021 at 11:52:55AM -0700, Jeremy wrote:
+&gt;<i> We should remove the dust limit from Bitcoin. Five reasons:
+</I>
+Jeremy knows this, but to be clear for other readers, the dust limit is
+a policy in Bitcoin Core (and other software) where it refuses by
+default to relay or mine transactions with outputs below a certain
+amount.  If nodes or miners running with non-default policy choose to
+relay or mine those transactions, they are not penalized (not directly,
+at least; there's BIP152 to consider).
+
+Question for Jeremy: would you also allow zero-value outputs?  Or would
+you just move the dust limit down to a fixed 1-sat?
+
+I think the dust limit is worth keeping:
+
+&gt;<i> 1) it's not our business what outputs people want to create
+</I>
+Every additional output added to the UTXO set increases the amount of
+work full nodes need to do to validate new transactions.  For miners
+for whom fast validation of new blocks can significantly affect their
+revenue, larger UTXO sets increase their costs and so contributes
+towards centralization of mining.
+
+Allowing 0-value or 1-sat outputs minimizes the cost for polluting the
+UTXO set during periods of low feerates.
+
+If your stuff is going to slow down my node and possibly reduce my
+censorship resistance, how is that not my business?
+
+&gt;<i> 2) dust outputs can be used in various authentication/delegation smart
+</I>&gt;<i> contracts
+</I>
+All of which can also use amounts that are economically rational to
+spend on their own.  If you're gonna use the chain for something besides
+value transfer, and you're already wiling to pay X in fees per onchain
+use, why is it not reasonable for us to ask you to put up something on
+the order of X as a bond that you'll actually clean up your mess when
+you're no longer interested in your thing?
+
+&gt;<i> 3) dust sized htlcs in lightning (
+</I>&gt;<i> <A HREF="https://bitcoin.stackexchange.com/questions/46730/can-you-send-amounts-that-would-typically-be-considered-dust-through-the-light">https://bitcoin.stackexchange.com/questions/46730/can-you-send-amounts-that-would-typically-be-considered-dust-through-the-light</A>)
+</I>&gt;<i> force channels to operate in a semi-trusted mode 
+</I>
+Nope, nothing is forced.  Any LN node can simply refuse to accept/route
+HTLCs below the dust limit.
+
+&gt;<i> which has implications
+</I>&gt;<i> (AFAIU) for the regulatory classification of channels in various
+</I>&gt;<i> jurisdictions
+</I>
+Sucks for the people living there.  They should change their laws.  If
+they can't do that, they should change their LN node policies not to
+route uneconomic HTLCs.  We shouldn't make Bitcoin worse to make
+complying with regulations easier.
+
+I also doubt your proposed solution fixes the problem.  Any LN node that
+accepts an uneconomic HTLC cannot recover that value, so the money is
+lost either way.  Any sane regulation would treat losing value to
+transaction fees the same as losing value to uneconomical conditions.
+
+Finally, if LN nodes start polluting the UTXO set with no economic way
+to clean up their mess, I think that's going to cause tension between
+full node operators and LN node operators.
+
+&gt;<i> agnostic treatment of fund transfers would simplify this
+</I>&gt;<i> (like getting a 0.01 cent dividend check in the mail)
+</I>
+I'm not sure I understand this point.  It sounds to me like you're
+comparing receiving an uneconomic output to receiving a check that isn't
+worth the time to cash.  But the costs of checks are borne only by the
+people who send, receive, and process them.  The costs of uneconomic
+outputs polluting the UTXO set are borne by every full node forever (or
+for every archival full node forever if non-archival nodes end up using
+something like utreexo).
+
+&gt;<i> 4) thinly divisible colored coin protocols might make use of sats as value
+</I>&gt;<i> markers for transactions.
+</I>
+I'm not exactly sure what you're talking about, but if Alice wants to
+communicate the number n onchain, she can do:
+
+    if n &lt; dust:
+      nSequence = 0x0000 + n  # should probably check endianess
+    else:
+      nValue = n
+
+There's at least 15 bits of nSequence currently without consensus or
+policy meaning, and the dust limits are currently in the hundreds of
+sat, so there's plenty of space.
+
+Alice could probably also communicate the same thing by grinding her
+output script's hash or pubkey; again, with dust limits just being
+hundreds of sats, that's not too much grinding.
+
+&gt;<i> 5) should we ever do confidential transactions we can't prevent it without
+</I>&gt;<i> compromising privacy / allowed transfers
+</I>
+I'm not an expert, but it seems to me that you can do that with range
+proofs.  The range proof for &gt;dust doesn't need to become part of the
+block chain, it can be relay only.
+
+I haven't looked since they upgraded to bulletproofs, but ISTR the
+original CT implementation leaked the most significant digits or
+something (that kept down the byte size of the proofs), so maybe it was
+already possible to know what was certainly not dust and what might be
+dust.
+
+In short, it's my opinion that the dust limit is not creating any real
+problems, so it should be kept for its contribution to keeping full
+nodes faster, cheaper, and more efficient.
+
+-Dave
+
+P.S. As I prepared to send this, Matt's email arrived about &quot;If it
+weren't for the implications in changing standardness here, I think we
+should consider increasing the dust limit instead.&quot;  I'm in agreement
+with both parts of that statement.
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 833 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210808/3feb232d/attachment-0001.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210808/3feb232d/attachment-0001.sig</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003161.html">[Lightning-dev] [bitcoin-dev] Removing the Dust Limit
+</A></li>
+	<LI>Next message: <A HREF="003149.html">[Lightning-dev] Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3148">[ date ]</a>
+              <a href="thread.html#3148">[ thread ]</a>
+              <a href="subject.html#3148">[ subject ]</a>
+              <a href="author.html#3148">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

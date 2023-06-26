@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PoDLEs revisited
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3C87eei4fwov.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002938.html">
+   <LINK REL="Next"  HREF="002933.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PoDLEs revisited</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3C87eei4fwov.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] PoDLEs revisited">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu Jan 28 23:50:24 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002938.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+        <LI>Next message: <A HREF="002933.html">[Lightning-dev] Battlement: A Quorum Based Design for Lightning Network Key Management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2939">[ date ]</a>
+              <a href="thread.html#2939">[ thread ]</a>
+              <a href="subject.html#2939">[ subject ]</a>
+              <a href="author.html#2939">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Lloyd Fournier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lloyd.fourn at gmail.com</A>&gt; writes:
+&gt;<i> I think immediate broadcast of signaling TX is a bad idea even if it's done
+</I>&gt;<i> over lightning since it leaks that the UTXO associated with the signaling
+</I>&gt;<i> TX is creating a channel (even if the channel was meant to be private).
+</I>&gt;<i> You could argue that the signaling TX need not be associated with a UTXO
+</I>&gt;<i> but I find this awkward.
+</I>&gt;<i> Lazily broadcast, signaling txs are a good way to protect against
+</I>&gt;<i> sequential attacks but are weak against parallel attacks. Unfortunately I
+</I>&gt;<i> think protection of the former means very little without the latter.
+</I>
+Agreed.  Let's PoDLE!
+
+&gt;<i> Let H0 and H1 be 32-byte output hash functions.
+</I>&gt;<i>
+</I>&gt;<i> 1. In any of the `tx_add_input` messages the initiator may attach a PoDLE
+</I>&gt;<i> which contains the public key for an input as well as a P2 (the public key
+</I>&gt;<i> projected onto a different generator).
+</I>&gt;<i> 2. Upon receiving the PoDLE, the peer checks its validity and creates a
+</I>&gt;<i> &quot;claim&quot; message claiming the UTXO which contains.
+</I>&gt;<i>     i) H0(P2)
+</I>&gt;<i>     ii) A MAC (e.g. Poly1305) produced with the H1(P2) as the key and
+</I>&gt;<i> claimer_node_id as the message -- required so conflicting claim messages
+</I>&gt;<i> can only be produced by someone who actually knows P2.
+</I>&gt;<i>     iii) The claimer_node_id and a BIP340 signature under it over the rest
+</I>&gt;<i> of the message data -- required to stop spam: only accept and re-broadcast
+</I>&gt;<i> these messages from nodes who have real channels.
+</I>
+Note: we can avoid leaking claimer_node_id (Hey, look at me, someone's
+opening a channel with me now!).  The purpose of claimer_node_id is to
+restrict spam (you need to have broadcasted a valid open channel to be
+recognized by the network as a valid node_id), but we can make this
+direct: require a utxo + the script needed to spend it, and any key in
+that script will serve in place of claimer_node_id (for v1
+segwit, the output itself may serve as key).
+
+Since we're headed to an anchor (or Eltoo) world where nodes have to
+keep a few UTXOs around for emergencies anyway, this may have better
+privacy.  At worst, they use a key from an existing, public channel
+UTXO, which is no worse than using their node_id.
+
+&gt;<i> Now I'd like to make the strongest possible argument against it in favor of
+</I>&gt;<i> just doing nothing (for now) at the protocol level about this problem.
+</I>&gt;<i>
+</I>&gt;<i> Consider the following propositions:
+</I>&gt;<i> 1. The public nodes that will offer dual funding and are susceptible to
+</I>&gt;<i> this attack will be the kind that have a lot of churn i.e. they dual fund a
+</I>&gt;<i> channel, when that closes they use the remaining funds to fund another
+</I>&gt;<i> channel.
+</I>&gt;<i> 2. Chainalysis already works very well at identifying the UTXOs these kinds
+</I>&gt;<i> of nodes. If the change output of a funding or the closing output are
+</I>&gt;<i> reused in another public channel it is easy to identify which node was
+</I>&gt;<i> funding what with the techniques in [1,2].
+</I>
+Less true after taproot though?
+
+&gt;<i> 3. It is therefore rather redundant to do this type of active UTXO probing
+</I>&gt;<i> since all you need to do is wait and be patient. Churning public nodes will
+</I>&gt;<i> eventually use their UTXO to do a dual or single funding. Then by
+</I>&gt;<i> cross-layer de-anonymization techniques you will be able to determine that
+</I>&gt;<i> they owned that UTXO without ever interacting with the node.
+</I>&gt;<i> 4. These techniques can even be applied to private channels at least while
+</I>&gt;<i> they are identifiable on the blockchain (in [2] using chainalysis they can
+</I>&gt;<i> identify one node involved in a private channel 79% of the time).
+</I>&gt;<i> 5. There is of course some extra advantage in doing this attack but looking
+</I>&gt;<i> at the effectiveness of techniques in [1,2] and my intuition about how
+</I>&gt;<i> churning nodes are most susceptible to these techniques I *guess* it
+</I>&gt;<i> wouldn't be much. If this is the case then chainalysis companies may not be
+</I>&gt;<i> able to justify  doing active attacks when passive attacks work almost as
+</I>&gt;<i> well.
+</I>&gt;<i> 6. It may be more effective to deal with UTXO probing outside of the
+</I>&gt;<i> protocol. For example, a group of dual-funders could maintain a shared UTXO
+</I>&gt;<i> blacklist and use chainalysis on it to not only ban single UTXOs but entire
+</I>&gt;<i> clusters of outputs. i.e. do chainalysis on the chainalyzers! There are
+</I>&gt;<i> some efforts to create open tools to do Chainalysis [3] that could be
+</I>&gt;<i> leveraged against this attack. This might be much more effective than
+</I>&gt;<i> PoDLEs as just spending the output somewhere else would not be enough to
+</I>&gt;<i> use it again in the attack.
+</I>&gt;<i> 7. The above PoDLE proposal actually creates a new extra bit of data that
+</I>&gt;<i> can be used for chainalysis -- when you broadcast the claim message you are
+</I>&gt;<i> saying you're going to make a dual funded channel sometime soon. So
+</I>&gt;<i> Chainalysis can look in the next block for something that looks like a dual
+</I>&gt;<i> funding and know you participated. This could be quite valuable for them
+</I>&gt;<i> and I would hesitate to give it to them in the anticipation of them doing
+</I>&gt;<i> an attack they may never actually do.
+</I>&gt;<i> 8. If all of the above points are not enough to prevent this attack from
+</I>&gt;<i> being widespread and the above PoDLE proposal is still the best idea I
+</I>&gt;<i> guess it wouldn't be too hard to shoehorn it into the protocol later.
+</I>&gt;<i>
+</I>&gt;<i> At the moment my bias is towards doing nothing and keeping things simple.
+</I>&gt;<i> It seems chainalysis techniques are effective at associating funding UTXOs
+</I>&gt;<i> to nodes for the most common usage patterns. Taproot will change the game
+</I>&gt;<i> for private channels but won't do much for public channels.
+</I>&gt;<i> Having said that -- it was a thing in JoinMarket so I might be wrong. I can
+</I>&gt;<i> offer some conjecture as to why JoinMarket had this issue: if you can find
+</I>&gt;<i> all the maker UTXOs before and after a join then you have removed a lot of
+</I>&gt;<i> the anonymity set. Since CoinJoin is a UTXO privacy technology this makes
+</I>&gt;<i> sense.
+</I>
+I also agree; it's fairly easy to add later with a feature bit, and I
+think we now have a roadmap on how it should be done.  Let's not boil
+the ocean.
+
+&gt;<i> [1] <A HREF="https://arxiv.org/abs/2007.00764">https://arxiv.org/abs/2007.00764</A>
+</I>&gt;<i> [2] <A HREF="https://arxiv.org/pdf/2003.12470.pdf">https://arxiv.org/pdf/2003.12470.pdf</A>
+</I>&gt;<i> [3] <A HREF="https://graphsense.info/">https://graphsense.info/</A>
+</I>&gt;<i>
+</I>&gt;<i> I am told there is a new revision of [1] coming out any day now that will
+</I>&gt;<i> present a few more tricks and have contributions directly from a scientist
+</I>&gt;<i> at Chainalsysis (the company).
+</I>
+I'll add to my reading list (or wait for one of my colleagues to provide
+the TL;DR!).
+
+Cheers!
+Rusty.
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002938.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+	<LI>Next message: <A HREF="002933.html">[Lightning-dev] Battlement: A Quorum Based Design for Lightning Network Key Management
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2939">[ date ]</a>
+              <a href="thread.html#2939">[ thread ]</a>
+              <a href="subject.html#2939">[ subject ]</a>
+              <a href="author.html#2939">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

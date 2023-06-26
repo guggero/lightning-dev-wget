@@ -1,0 +1,310 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Using Per-Update Credential to enable Eltoo-Penalty
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%20Eltoo-Penalty&In-Reply-To=%3CCALZpt%2BFAEz_--d5b%2Bci%2BjqrgaRGxehdQreXLzBDRSiD0NR2bjg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002080.html">
+   <LINK REL="Next"  HREF="002066.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Using Per-Update Credential to enable Eltoo-Penalty</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%20Eltoo-Penalty&In-Reply-To=%3CCALZpt%2BFAEz_--d5b%2Bci%2BjqrgaRGxehdQreXLzBDRSiD0NR2bjg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Using Per-Update Credential to enable Eltoo-Penalty">antoine.riard at gmail.com
+       </A><BR>
+    <I>Sat Jul 13 04:35:30 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002080.html">[Lightning-dev] Paper: A Composable Security Treatment of the Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="002066.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2064">[ date ]</a>
+              <a href="thread.html#2064">[ thread ]</a>
+              <a href="subject.html#2064">[ subject ]</a>
+              <a href="author.html#2064">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+Eltoo has been criticized to lower the cost for a malicious party to
+test your monitoring of the chain. If we're able to reintroduce some
+form of punishment without breaking transaction symmetry that would be
+great.
+
+Transaction symmetry implies that we can't deduce from observing
+txid which party broadcast a previous state. How to assign the
+faulty broadcast to the right party to punish it in consequence ?
+Thanks to taproot we have cheap witness asymmetry.
+Witness asymmetry can be used as a way to force the broadcaster to reveal
+a secret, and so committing thatn the transaction is the latest one.
+
+If the party misbehaves, we wish to use the revealed secret to punish
+him on a second stage transaction. Doing so would be really insecure
+in case of reorg or even mempool monitoring by enabling a replay attack
+of your committed secret on a lower state update tx. i.e Mallory
+would counterfeit being Alice, and so enable the use of a punishment tx
+against an honest peer.
+
+To solve the assignment problem, we need to have per-update credentials,
+a secret committed to a state number. You need a scheme were both your
+highest credential can't be used against you while at the same time if some
+attacker broadcast a transaction with a lower credential you are able to
+punish him.
+
+How to make Bitcoin Script aware of a secret committed to
+a lower state number ? To do so, we may use some SIGHASH magic, if you sign
+two messages with the same key and we can be sure thatn the only difference
+between
+them is the nLocktime (encoding the state-number in eltoo), that means you
+tried to breach the contract.
+
+Without access to arbitrary messages on the stack, the only messages we can
+enforce signatures on are Bitcoin transactions. We force a party
+broadcasting an Update tx to sign it with
+SIGHASH_ANYPREVOUTSCRIPT|SIGHASH_NONE|SIGHASH_SINGLE. If someone can shows
+a
+Litigation Tx with a higher state than the Update, we know that this one
+has
+been revoked, and someone is cheating among channel parties. We enter in a
+Litigation phase, the Settlement Tx will be encumbered by a Challenge Tx
+against
+which you will need to produce a signature with the same SIGHASH flags as
+the Update Tx.,
+The only difference will be the nLocktime inherited from Litigation.
+
+Assume Alice is trying to cheat, now Bob can take the signature from her
+broadcast Update tx
+and Alice&#8217;s signature on the Challenge tx, pass it as witness to a script
+verifying their validity
+and identity. If their validity is true and identity is false, you can
+spend with a Justice tx,
+splitting Alice&#8217;s funds between the other parties. If validity is true and
+identity is true, then the script should fail. After timelock expiration,
+if no one has proven Alice misbehaved,
+she can redeem her funds.
+
+Eltoo-Penalty Transaction Tree
+==============================
+
+
+
+
+                               Friendly Settlement Tx
+                Challenge Tx -- Justice Tx
+                                 /
+                          /
+                                /
+                       /
+Funding-Output -- Update Tx -- Litigation Tx -- .. -- Hostile Settlement Tx
+--  Challenge Tx -- Justice Tx
+
+                      \
+
+                       \  Challenge Tx -- Justice Tx
+
+
+Eltoo-Penalty Scripts
+================
+
+(I've omitted chaperon signatures)
+
+FUNDING_OUTPUT:
+output 0:
+Q = P + tG
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECKSIGVERIFY &lt;Alice_key&gt; CHECKSIGVERIFY&quot; (Alice script path)
+&quot;OP_1 CHECKSIGVERIFY &lt;Bob_key&gt; CHECKSIGVERIFY&quot; (Bob script path)
+&quot;OP_1 CHECKSIGVERIFY &lt;Caroll_key&gt; CHECKSIGVERIFY&quot; (Caroll script path)
+]
+
+UPDATE TX:
+nLocktime: 500e6 + n
+output 0:
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECKSIGVERIFY&quot; (friendly settlement script path)
+&quot;OP_1 CHECKSGIVERIFY 500e6+n OP_CLTV OP_DROP&quot; (litigation script path)
+witness:
+&quot;sig(A, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P,
+hash_type=SINGLE)&quot;  (Alice commitment signature)
+&quot;sig(B, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P,
+hash_type=SINGLE)&quot;  (Bob commitment signature)
+&quot;sig(C, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P,
+hash_type=SINGLE)&quot;  (Caroll commitment signature)
+
+LITIGATION TX:
+nLocktime: 500e6 + n
+nSequence: [delay]
+output 0:
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECKSIG&quot; (litigation script path)
+&quot;OP_1 CHECKSIGVERIFY&quot; (hostile settlement script path)
+witness:
+&quot;sig(P, hash_type=SINGLE|ANYPREVOUTANYSCRIPT)
+
+
+HOSTILE SETTLEMENT TX:
+nLocktime: 0
+nSequence: [delay]
+output 0: (to_Alice)
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECHSIGVERIFY &lt;Alice_key&gt; CHECKSIGVERIFY 500e6n OP_CLTV OP_DROP&quot;
+(Alice challenge script path)
+]
+output 1: (to_Bob)
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECHSIGVERIFY &lt;Bob_key&gt; CHECKSIGVERIFY 500e6n OP_CLTV OP_DROP&quot; (Bob
+challenge script path)
+]
+output 2: (to_Caroll)
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECHSIGVERIFY &lt;Caroll_key&gt; CHECKSIGVERIFY 500e6n OP_CLTV OP_DROP&quot;
+(Caroll challenge script path)
+]
+output N (pending HTLCs)
+witness:
+&quot;sig(P, hash_type=ALL)
+
+CHALLENGE TX: (Alice case)
+nLocktime: 500e6n
+nSequence: 0
+output 0:
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECKSIGVERIFY OP_DUP &lt;Alice_key&gt; CHECKSIGVERIFY OP_DUP OP_SWAP
+&lt;Alice_key&gt; CHECKSIGVERIFY
+    OP_EQUAL OP_NOT OP_VERIFY&quot;  (proof-of-Alice-fraud script path)
+&quot;&lt;n&gt; OP_CSV &lt;Alice refund_key&gt; (refund Alice script path)
+]
+witness:
+&quot;sig(A, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P, hash_type=ALL)&quot;
+
+JUSTICE TX: (Alice punishment)
+nLocktime: 500e6n
+nSequence: 0
+output 0: (to_Caroll)
+output 1: (to_Bob)
+witness:
+&quot;sig_Alice_from_update_tx sig_Alice_from_challenge_tx sig(P, hash_type=ALL)&quot;
+
+
+State Update
+============
+
+Alice, Bob and Caroll build new friendly Settlement tx N, new Update Tx and
+revoke old one by
+generating a Justice tx with state higher than the previous one, a hostile
+Settlement tx plus
+Y challenge txn and Y justice txn with Y number of parties.
+
+Cooperative Case
+================
+
+After X updates, Alice, Bob, Caroll, cooperate to closing transaction using
+key path
+spending of funding Taproot output, the spending transactions contains
+accurate balances.
+
+Unilateral Case
+================
+
+After X updates, Alice broadcast the last Update tx N, by signing it with
+her private key with
+SIGHASH_NONE,SIGHASH_ANYPREVOUTANYSCRIPT,SIGHASH_SINGLE and use MuSig
+previously distributed
+between parties at state update. Her signature doesn't protect anything
+except commitment to
+the latest state number.
+
+After finalization of the friendly settlement tx, she can redeem her
+balance, and timeout/fulfill
+her outputs.
+
+If she has broadcast the latest state, none of the parties should be able
+to broadcast a Litigation
+tx with a highest state number. Her signature committing to the locktime,
+no one is able to
+counterfeit her identity by spending the funding taproot output with a
+lowest update tx.
+
+Malicious Case
+==============
+
+Bob is broadcasting a lowest Update tx with his signature committing to it.
+Alice use Litigation tx
+to spend it, if anyone has a highest Litigation tx, he can use it. After
+Litigation tx finalization,
+hostile settlement transaction is used. Each output returning to a channel
+party, is encumbered
+by a &quot;challenge&quot;. To unlock your funds, you must provide a signature
+against same pubkey and same
+SIGHASH flags than the one encumbering your tapscript for funding output.
+
+Challenge tx is using a taproot output, one leaf returning fund to Alice
+after some timelock,
+The other one, let anyone with a MuSig and two valid signatures committing
+to different nLocktime
+to send challenged fund to a Justice tx, doing an equal split between other
+channel parties.
+
+You need signatures to be safe against third-party malleability, i.e being
+able to tweak
+your signatures to be still valid but diff being interpreted as a proof of
+commitment on lowest state number. On the Justice tx, you need a new key
+type to enforce that every signature must have sighash
+SIGHASH_MASKLOCKTIMEWITH, where you expect the signature to be followed by
+the state number which is going to be used as locktime in transaction
+digest algorithm. So in this way state number are provided in witness and
+you can equivocate Justice tx as both revoked Update Tx and Challenge Tx.
+
+Okay, I'm quite sure that Script gurus on this list are going to point
+flaws of this scheme.
+It's more a thought experiment and I was curious if anyone has other ideas
+to get Eltoo + penalties,
+if yes let it know !
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190713/421bc6e4/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190713/421bc6e4/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002080.html">[Lightning-dev] Paper: A Composable Security Treatment of the Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="002066.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2064">[ date ]</a>
+              <a href="thread.html#2064">[ thread ]</a>
+              <a href="subject.html#2064">[ subject ]</a>
+              <a href="author.html#2064">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

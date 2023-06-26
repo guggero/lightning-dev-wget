@@ -1,0 +1,143 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Scriptless Scripts with ECDSA
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Scriptless%20Scripts%20with%20ECDSA&In-Reply-To=%3Cf6eeN4KpsFGxfaILiSuYTlzexA8zQV1uQ9lPnn3waat8aqdMycMeibPZmEOiArjgDpJtxA6oicK7I-V-SPmNrzJSUtVEbftxaIHeVDuLxS4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001255.html">
+   <LINK REL="Next"  HREF="001297.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Scriptless Scripts with ECDSA</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Scriptless%20Scripts%20with%20ECDSA&In-Reply-To=%3Cf6eeN4KpsFGxfaILiSuYTlzexA8zQV1uQ9lPnn3waat8aqdMycMeibPZmEOiArjgDpJtxA6oicK7I-V-SPmNrzJSUtVEbftxaIHeVDuLxS4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Scriptless Scripts with ECDSA">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed May  9 03:59:01 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001255.html">[Lightning-dev] Scriptless Scripts with ECDSA
+</A></li>
+        <LI>Next message: <A HREF="001297.html">[Lightning-dev] Scriptless Scripts with ECDSA
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1256">[ date ]</a>
+              <a href="thread.html#1256">[ thread ]</a>
+              <a href="subject.html#1256">[ subject ]</a>
+              <a href="author.html#1256">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Benjamin,
+
+Your caution is laudable, I think.
+
+&gt;<i> Yes, bitcoin is wise to at least hash the pub key until use. Granted, lightning (necessarily?) risks public key exposure, but in a pinch there are other signature algorithms for lightning to move to.
+</I>
+Lightning cannot *quickly* move to a new signature algorithm.  At the minimum you need to wait for the signature algorithm to get widely deployed in the base-layer blockchain, then LN implementations will need to scramble to implement the new signature algorithm.  Then all LN users need to update, close existing channels, and reopen new ones.
+
+Another issue is that the message transport is encrypted using a shared key derived from the node-identity public keys.  If a break lets attackers derive private keys from public keys, then it is possible for any LN node to have its communications spoofed, meaning any mitigation may very well be obviated: channels need to be re-anchored cooperatively, but how do you know you are cooperating with the other node in the channel rather than the attacker, if the attacker can derive the private key from the other node public key?
+
+The sudden influx of close followed by open transactions will probably massively load the blockchain layer, too.
+
+In that case, perhaps a concrete proposal would be to prepare a new message protocol for reanchoring transactions:
+
+1.  A new &quot;signing algo&quot; concept, which is effectively an enumeration that will be extended later, e.g. 0 =&gt; ECDSA on secp256k1, 1-&gt;255 =&gt; reserved.
+2.  `open_channel` would need to provide a `signing_algo` that underlies the commitment structure at a lower level.
+3.  A new `reopen_channel` to move a channel from one signing algorithm to another, plus a reply to accept the switch and provide new commitment transactions for both sides.  This is effectively a `shutdown` followed by the `closing_signed` negotiation followed by a new `open_channel`, but with the resulting transaction cutting through a close and a funding transaction (in order to reduce blockspace competition).
+4.  A new `reopen_channel_rbf`, possibly including a proof that an existing reopen channel has replaced (e.g. sending the actual transaction that spends the funding outpoint and bids a higher feerate than the last re-open transaction), to RBF the re-open transaction that moves from one signing algorithm to another; better to lose the channel to miners as fees then to let a thief succeed (i.e. scorched earth). This is complicated by the fact that the re-open has to be signed cooperatively by two parties whereas a thief can be singular and thus faster in replacing transactions.  But at least better to make an effort than to just give up!
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> In the case of Lightning, the attack scenario on scriptless scripts is that a peer is going to use a quantum computer to steal all live payments routed through them from their senders before they get to the recipient. This would be bad, but not catastrophic, and once it is recognized that the attack is possible, insecure channels could be closed.
+</I>&gt;<i>
+</I>&gt;<i> All channels would become insecure, the very premise of lightning would thus break, which is only a problem if the world came to depend on it. But then why try a thing, unless you plan to maybe succeed? Also, we don't know that a quantum computer is necessary. SHA-1 was secure, until it wasn't, no quantum computer was needed to break it.
+</I>&gt;<i>
+</I>&gt;&gt;<i> But furthermore, an attacker with a quantum computer could just steal the multisig funding output directly instead of attacking scriptless scripts.
+</I>&gt;<i>
+</I>&gt;<i> Absolutely, and today there is no redundant signature of different algorithm, in the code. (That would be better.) But even so, how hard would it be to swap one signature algorithm for another? Then users &quot;just&quot; move their funds to multisig addresses under the new algorithm.
+</I>&gt;<i>
+</I>&gt;&gt;<i> So additional protocol changes relying on the DL assumption don't bother me in the least.
+</I>&gt;<i>
+</I>&gt;<i> I don't follow the logic. If today we would have a frantic scramble in event of sudden DL weakness, as indeed seems probable, it does not then follow that we might as well design DL weakness to become a fundamentally unsurvivable problem. DL signatures bother me less because lattice cryptography can serve as backup. Scriptless scripts worry me because I just don't know what the backup is, when (not if) DL falls. Perhaps scriptless scripts can be done with lattices(?), in which case I am simply unaware - but some such backup should be identified, at least at a conceptual level, prior to use.
+</I>
+At least on Lightning, Scriptless Script can only be used for payment forwarding.  Thus the vulnerability is time-bounded.  Further, while Scriptless Script enables new applications such as within-path decorrelation (privacy boost) and multi-path payments with proof-of-payment (functionality boost), we *can* fall back to the simple hashlocking we use now, which degrades functionality and privacy (but only to the level that we have today!).  Hashlocking can have the exact hash function changed reasonably easily, modulo blockchain-layer infrastructure change (i.e. the base layer needs to implement the replacement before upper layers can use them), plus the need to update invoice formats to use a different hash function.
+
+&gt;<i> If this is just a toy, then never mind. If we don't expect the world to ever depend on this for anything important, then there is no need to fret over the finite lifespan of primitives. Or maybe we can just hope, that this time will be unlike all the others in the history of cryptography.
+</I>&gt;<i>
+</I>&gt;<i> Otherwise, consider for example the history of DES, or SHA-1. Those are scenarios where we saw the problems coming far enough in advance to transition. Sure, it would be better if we had redundant primitives for every function in the actual code itself - just in case of either a sudden, or else a secret, break. In fact, we should aim to one day get there. But for now, let's at least have functionally equivalent backups for every function, even if only on paper. When exciting new functionality is invented but based on a mathematically unproven assumption, then let's wait to build on it until after at least one or two mathematically dissimilar assumptions have been found as alternative backup foundation. The global economy deserves such careful hands, I think, or else we do not deserve it.
+</I>
+Naively, it seems to me that there are already multiple ways to do Scriptless.
+
+(I am not a mathematician and not a cryptographer; I am merely a dilettante, and probably massively misunderstand this)
+
+1.  The classic one which takes advantage of Bellare-Neven signature linearity, where you provide an adaptor signature that can have magical mathematic operations with the actual signature to reveal the private key.
+2.  Nonce reuse, where you provide a different message signed using the private key and a specific nonce, and commit that the actual transaction gets signed with the same private key and the same nonce used in the first message, which in combination with magical mathematic operations will reveal the private key.
+3.  The Paillier cryptosystem thing that the ECDSA Scriptless Script uses, where you encrypt the private key in the Paillier cryptosystem, provide it, and you can have magical mathematic operations reveal the private key when you sign with it.
+
+All of the above still depend on the Discrete Log Problem being Hard.  I am uncertain if they can be adapted in a Lattice-based signing algorithm; the first one almost certainly cannot, I am unsure for the second and third.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180508/5b582653/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180508/5b582653/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001255.html">[Lightning-dev] Scriptless Scripts with ECDSA
+</A></li>
+	<LI>Next message: <A HREF="001297.html">[Lightning-dev] Scriptless Scripts with ECDSA
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1256">[ date ]</a>
+              <a href="thread.html#1256">[ thread ]</a>
+              <a href="subject.html#1256">[ subject ]</a>
+              <a href="author.html#1256">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

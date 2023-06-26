@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Arbitrary Bitcoin Contracts over LN
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Arbitrary%20Bitcoin%20Contracts%20over%20LN&In-Reply-To=%3CMelsGv5i5WuCjwz10-aWelfzkh-aNPA94XDTVdaF8bRR_TRMEBhtD_447e9hPSxyvTHb6S3fmy_d8T6Jm4x1VIw0Q4Op5D1tFT14XCtLKNY%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001385.html">
+   <LINK REL="Next"  HREF="001386.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Arbitrary Bitcoin Contracts over LN</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Arbitrary%20Bitcoin%20Contracts%20over%20LN&In-Reply-To=%3CMelsGv5i5WuCjwz10-aWelfzkh-aNPA94XDTVdaF8bRR_TRMEBhtD_447e9hPSxyvTHb6S3fmy_d8T6Jm4x1VIw0Q4Op5D1tFT14XCtLKNY%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Arbitrary Bitcoin Contracts over LN">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Aug  2 03:43:23 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001385.html">[Lightning-dev] Arbitrary Bitcoin Contracts over LN
+</A></li>
+        <LI>Next message: <A HREF="001386.html">[Lightning-dev] Lack of capacity field in channel_announcement makes life difficult. Why is it not there?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1387">[ date ]</a>
+              <a href="thread.html#1387">[ thread ]</a>
+              <a href="subject.html#1387">[ subject ]</a>
+              <a href="author.html#1387">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Christian,
+
+&gt;<i> My issue is with the fact that CLTV-branches and nLocktimed spending
+</I>&gt;<i> transactions also need to be guarded with a further `OP_CSV` condition,
+</I>&gt;<i> since they may leak on-chain, and be immediately valid. This is the
+</I>&gt;<i> reason why we introduced the two stage HTLC resolution, with the first
+</I>&gt;<i> stage acting as the `OP_CSV` guard, and keeping the second stage clean.
+</I>&gt;<i>
+</I>&gt;<i> I think therefore the construction of the contract ought to be this:
+</I>&gt;<i>
+</I>&gt;<i> [/arbitrary/, A &amp;&amp; B] -&gt; [signA signB, (revoke) || (CSV &amp;&amp; A &amp;&amp; B &amp;&amp; C)] -&gt; [signA signB witnessCbyA, revoke || A] /* held by A */
+</I>&gt;<i> [/arbitrary/, A &amp;&amp; B] -&gt; [signA signB, (revoke) || (CSV &amp;&amp; A &amp;&amp; B &amp;&amp; C)] -&gt; [signA signB witnessCbyB, revoke || B] /* held by B */
+</I>&gt;<i>
+</I>&gt;<i> Namely the CSV belongs in the output script, not the input script (which
+</I>&gt;<i> is under the control of the spending party). Notice that I might have
+</I>&gt;<i> misgroked your syntax :-) If C now contains a CLTV-branch whose timeout
+</I>&gt;<i> expires before we attempt the on-chain mediation, suddenly both branches
+</I>&gt;<i> become valid and we have a race.
+</I>
+I believe not.  In the BOLT #3, a received HTLC looks like this:
+
+    ## (revoke) ||
+    OP_DUP OP_HASH160 &lt;RIPEMD160(SHA256(revocationpubkey))&gt; OP_EQUAL
+    OP_IF
+        OP_CHECKSIG
+    OP_ELSE
+        ## B &amp;&amp;
+        &lt;remote_htlcpubkey&gt; OP_SWAP
+            OP_SIZE 32 OP_EQUAL
+        ## C
+        OP_IF
+            # To local node via HTLC-success transaction.
+            OP_HASH160 &lt;RIPEMD160(payment_hash)&gt; OP_EQUALVERIFY
+            2 OP_SWAP &lt;local_htlcpubkey&gt; 2 OP_CHECKMULTISIG
+        OP_ELSE
+            # To remote node after timeout.
+            OP_DROP &lt;cltv_expiry&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+            OP_CHECKSIG
+        OP_ENDIF
+    OP_ENDIF
+
+The above contains no CSV, and is the output of the second transaction (the one that spends the funding transaction directly).  I annotated the SCRIPT with ## of what I consider each component to be (with A=local, B=remote).  I believe it is equivalent to ((revoke) || B &amp;&amp; C), where C is the HTLC (A &amp;&amp; (x == H(x))) || (CLTV)), with the requirement of A included within C and that this is &quot;simply&quot; an optimization (in principle, we could have required both local and remote HTLC pubkeys for the HTLC, but that just makes our witnesses unnecessarily larger).
+
+It is instead the HTLC-timeout/HTLC-success transactions (which spends from the above script) that have a CSV:
+
+    OP_IF
+        ## (revoke) ||
+        # Penalty transaction
+        &lt;revocationpubkey&gt;
+    OP_ELSE
+        ## (CSV &amp;&amp; A)
+        `to_self_delay`
+        OP_CSV
+        OP_DROP
+        &lt;local_delayedpubkey&gt;
+    OP_ENDIF
+    OP_CHECKSIG
+
+Which I render as ((revoke) || (CSV &amp;&amp; A)).
+
+The need for the CSV here is precisely what you described, but it comes *after* the contract being enforced, not before.
+
+Thus under Poon-Dryja the CSV occurs on a transaction that is dependent on a CLTV, not the other way around, and the CSV does not interfere with the CLTV. (indeed with current LN the CSV never comes into play during routing; if CSV interfered with CLTV here, then it should have been considered in our routing algorithm. instead we need to plan out this CSV-interference when we eventually move to Decker-Osuntokun-Russell eltoo channels.)
+
+The drawback is that the condition in the second transaction becomes complicated, and thus cleverness like the above eliding of A from A &amp;&amp; B &amp;&amp; C is needed to keep witnesses and script size down.
+
+Sincerely,
+AmkG
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001385.html">[Lightning-dev] Arbitrary Bitcoin Contracts over LN
+</A></li>
+	<LI>Next message: <A HREF="001386.html">[Lightning-dev] Lack of capacity field in channel_announcement makes life difficult. Why is it not there?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1387">[ date ]</a>
+              <a href="thread.html#1387">[ thread ]</a>
+              <a href="subject.html#1387">[ subject ]</a>
+              <a href="author.html#1387">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

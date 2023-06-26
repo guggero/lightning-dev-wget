@@ -1,0 +1,234 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Feedback please!
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C87sh16h5my.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001457.html">
+   <LINK REL="Next"  HREF="001458.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Feedback please!</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C87sh16h5my.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Feedback please!">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Oct 16 04:33:57 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001457.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+        <LI>Next message: <A HREF="001458.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1462">[ date ]</a>
+              <a href="thread.html#1462">[ thread ]</a>
+              <a href="subject.html#1462">[ subject ]</a>
+              <a href="author.html#1462">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; writes:
+&gt;<i> Hi Rusty,
+</I>&gt;<i>
+</I>&gt;<i> Happy to get the splicing train rolling!
+</I>&gt;<i>
+</I>&gt;&gt;<i> We've had increasing numbers of c-lightning users get upset they can't
+</I>&gt;&gt;<i> open multiple channels, so I guess we're most motivated to allow splicing
+</I>&gt;<i> of
+</I>&gt;&gt;<i> existing channels
+</I>&gt;<i>
+</I>&gt;<i> Splicing isn't a substitute for allowing multiple channels. Multiple
+</I>&gt;<i> channels allow nodes to:
+</I>&gt;<i>
+</I>&gt;<i>   * create distinct channels with distinct acceptance policies.
+</I>&gt;<i>   * create a mix of public and non-advertised channels with a node.
+</I>&gt;<i>   * be able to send more than the (current) max HTLC amount
+</I>&gt;<i>     using various flavors of AMP.
+</I>&gt;<i>   * get past the (current) max channel size value
+</I>&gt;<i>   * allow a link to carry more HTLCs (due to the current super low max HTLC
+</I>&gt;<i>     values) given the additional HTLC pressure that
+</I>&gt;<i>     AMP may produce (alternative is a commitment fan out)
+</I>
+These all seem marginal to me.  I think if we start hitting max values,
+we should discuss increasing them.
+
+&gt;<i> Is there a fundamental reason that CL will never allow nodes to create
+</I>&gt;<i> multiple channels? It seems unnecessarily limiting.
+</I>
+Yeah, we have a daemon per peer.  It's really simple with 1 daemon, 1
+channel.  My own fault: I was the one who insisted we mux multiple
+connections over the same transport; if we'd gone for independent
+connections our implementation would have been trivial.
+
+&gt;&gt;<i> Splice Negotiation:
+</I>&gt;<i>
+</I>&gt;<i> Any reason to now make the splicing_add_* messages allow one to add several
+</I>&gt;<i> inputs in a single message? Given &quot;acceptable&quot; constraints for how large the
+</I>&gt;<i> witness and pkScripts can be, we can easily enforce an upper limit on the
+</I>&gt;<i> number of inputs/outputs to add.
+</I>
+Mainly limitations of our descriptor language, TBH.  
+
+&gt;<i> I like that the intro messages have already been designed with the
+</I>&gt;<i> concurrent case in mind beyond a simpler propose/accept flow. However is
+</I>&gt;<i> there any reason why it doesn't also allow either side to fully re-negotiate
+</I>&gt;<i> _all_ the funding details? Splicing is a good opportunity to garbage collect
+</I>&gt;<i> the prior revocation state, and also free up obsolete space in watch towers.
+</I>
+I thought about restarting the revocation sequence, but it seems like
+that only saves a tiny amount since we only store log(N) entries.  We
+can drop old HTLC info post-splice though, and (after some delay for
+obscurity) tell watchtowers to drop old entries I think.
+
+&gt;<i> Additionally, as the size of the channel is either expanding or contracting,
+</I>&gt;<i> both sides should be allowed to modify things like the CSV param, reserve,
+</I>&gt;<i> max accepted htlc's, max htlc size, etc. Many of these parameters like the
+</I>&gt;<i> CSV value should scale with the size of the channel, not allowing these
+</I>&gt;<i> parameters to be re-negotiated could result in odd scenarios like still
+</I>&gt;<i> maintain a 1 week CSV when the channel size has dipped from 1 BTC to 100k
+</I>&gt;<i> satoshis.
+</I>
+Yep, good idea!  I missed that.
+
+Brings up a side point about these values, which deserves its own
+post...
+
+&gt;&gt;<i> 1. type: 40 (`splice_add_input`) (`option_splice`)
+</I>&gt;<i>
+</I>&gt;<i> In order to add nested p2sh inputs, we'll need to also expose the redeem
+</I>&gt;<i> script here, or add additional fields to allow sides to set a sig script as
+</I>&gt;<i> well as witness during the signing phase.
+</I>&gt;<i>
+</I>&gt;&gt;<i> - scriptpubkey is empty, or of form 'HASH160 &lt;20-byte-script-hash&gt; EQUAL'
+</I>&gt;<i>
+</I>&gt;<i> So no P2SH? :(
+</I>
+Another omission, yeah, we'd want that too I think.
+
+&gt;&gt;<i>    * [`4`:`feerate_per_kw`]
+</I>&gt;<i>
+</I>&gt;<i> What fee rate is this? IMO we should do commitmentv2 before splicing as then
+</I>&gt;<i> we can more or less do away with the initiator distinction and have most
+</I>&gt;<i> fees be ad hoc.
+</I>
+We're basically co-generating a tx here, just like shutdown, except it's
+funding a new replacement channel.  Do we want to CPFP this one too?
+
+&gt;&gt;<i> Splice Signing
+</I>&gt;<i>
+</I>&gt;<i> It seems that we're missing some fields here if we're to allow the splicing
+</I>&gt;<i> of inputs to be done in a non-blocking manner. We'll need to send two
+</I>&gt;<i> revocation points for the new commitment: one to allow it to be created, and
+</I>&gt;<i> another to allow updates to proceed right after the signing is completed. In
+</I>&gt;<i> this case we'll also need to update both commitments in tandem until the
+</I>&gt;<i> splicing transaction has been sufficiently confirmed.
+</I>
+I think we can use the existing revocation points for both.
+
+&gt;<i> Also, what about change addresses? Are they to be explicitly specified as
+</I>&gt;<i> splice outs?
+</I>
+They'd be splice-outs, yeah.
+
+&gt;&gt;<i> 1. type: 43 (`splice_commitment_signature`) (`option_splice`)
+</I>&gt;<i>
+</I>&gt;<i> It may be worth pointing out there that we're able to transfer all existing
+</I>&gt;<i> HTLCs over to the new commitment as additional context.
+</I>
+Yeah, I think people missed that it was non-blocking like that.
+
+&gt;&gt;<i> 1. type: 45 (`splice_witness`) (`option_splice`)
+</I>&gt;<i>
+</I>&gt;<i> Should also allow either side to specify the sig script here if we're to
+</I>&gt;<i> allow nested p2sh (which we should IMO!).
+</I>
+Yep.
+
+&gt;&gt;<i>   * [`2`:`len`]
+</I>&gt;&gt;<i>   * [`len`:`witnesses`]
+</I>&gt;<i>
+</I>&gt;<i> Is the extra length needed if all the witness elements themselves are length
+</I>&gt;<i> delimited?
+</I>
+Yes, we always length-delimit fields so we can add options later.
+
+&gt;<i>
+</I>&gt;<i> It isn't clear in the current draft, but I take it that the splice_signature
+</I>&gt;<i> is for the old multi-sig?
+</I>
+Yes, that's the signature required to spend the old funding txout.
+
+&gt;&gt;<i> so we append to the existing `channel_update` for the original channel,
+</I>&gt;&gt;<i> using a new `message_flags` field:
+</I>&gt;<i>
+</I>&gt;<i> IMO, we need to hold off on optional fields for now, until we revisit the
+</I>&gt;<i> formatting in order to actually get it right. As is now, all the optional
+</I>&gt;<i> fields are basically serial mandatory soft forks. So clients must understand
+</I>&gt;<i> the prior in order to understand the following fields. Instead, we
+</I>&gt;<i> essentially need more of a map design.
+</I>
+You need to add prior options to your wire parser, but that's usually
+the most trivial part of handling them.  And they may waste space on the
+wire since we treat them as append-only, but OTOH it avoids
+combinatorial testing explosion.
+
+&gt;&gt;<i> The post-splice reserve is 1% of post-splice capcacity (rounded down).
+</I>&gt;<i>
+</I>&gt;<i> This should be re-negotiated at time of splice creation, rather than a new
+</I>&gt;<i> hard coded value in the protocol.
+</I>&gt;<i>
+</I>&gt;&gt;<i> In addition, you can forget everything about the old channel (including
+</I>&gt;&gt;<i> old HTLCs and revocation requirements).
+</I>&gt;<i>
+</I>&gt;<i> We still have the same shachain state however (if we don't allow new state
+</I>&gt;<i> to be exchanged during the start of the splicing scenario), correct?
+</I>
+Yep.
+
+Thanks,
+Rusty.
+
+&gt;<i> -- Laolu
+</I>&gt;<i>
+</I>&gt;<i> -- Laolu
+</I>
+PS, Damn, I always suspected there were multiple Roasbeefs, and we're simply
+dealing with the output of an advanced multiplexing protocol.  I present
+the above as conclusive evidence of this thesis...
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001457.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+	<LI>Next message: <A HREF="001458.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1462">[ date ]</a>
+              <a href="thread.html#1462">[ thread ]</a>
+              <a href="subject.html#1462">[ subject ]</a>
+              <a href="author.html#1462">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] type,len,value standard
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20type%2Clen%2Cvalue%20standard&In-Reply-To=%3C87r2flamwx.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001627.html">
+   <LINK REL="Next"  HREF="001621.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] type,len,value standard</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20type%2Clen%2Cvalue%20standard&In-Reply-To=%3C87r2flamwx.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] type,len,value standard">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Nov 16 00:25:34 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001627.html">[Lightning-dev] type,len,value standard
+</A></li>
+        <LI>Next message: <A HREF="001621.html">[Lightning-dev] Splicing Proposal: Now with RBF
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1620">[ date ]</a>
+              <a href="thread.html#1620">[ thread ]</a>
+              <a href="subject.html#1620">[ subject ]</a>
+              <a href="author.html#1620">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Conner Fromknecht &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">conner at lightning.engineering</A>&gt; writes:
+&gt;<i> Hi ZmnSCPxj,
+</I>&gt;<i>
+</I>&gt;<i> Thanks for writing this up! I had started an email, but you beat me to it :)
+</I>&gt;<i>
+</I>&gt;&gt;<i> 1.  For a sequence of `type,len,value`, each `type` must be unique. --
+</I>&gt;&gt;<i> accepted.
+</I>&gt;<i>
+</I>&gt;<i> To add to this, it seemed that there was some agreement that repeated fields
+</I>&gt;<i> should be serialized under a single root key, since a receiver can't know if a
+</I>&gt;<i> field is allowed to have duplicates if they don't understand the field.
+</I>
+If a receiver doesn't understand it, it doesn't have to enforce any
+rules on it *at all*.  So it depends on individual cases.
+
+&gt;&gt;<i> For a sequence of `type,len,value`, the `type`s must be in ascending order
+</I>&gt;&gt;<i> -- not explicitly accepted or rejected.  It would be easier to check
+</I>&gt;&gt;<i> uniqueness &gt; (the previous rule we accepted) here for a naive parser (keep
+</I>&gt;&gt;<i> track of some &quot;minimum allowed type&quot; that initializes at zero, check current
+</I>&gt;&gt;<i> type &gt;= this, update to current type + 1) if `type`s are in ascending order.
+</I>&gt;<i>
+</I>&gt;<i> Yep ascending makes sense to me, for the reasons you stated.
+</I>
+Again, writer MUST, with no constraint on reader.
+
+&gt;&gt;<i> 1, `type` - one byte or two?
+</I>&gt;<i>
+</I>&gt;<i> I'd lean towards one, if a message has 256 optional fields, it might be time to
+</I>&gt;<i> consider a new message type altogether.
+</I>
+Exactly.
+
+&gt;&gt;<i> 3. `type` - does &quot;it's OK to be odd&quot; apply?  i.e. if an even `type` that is
+</I>&gt;&gt;<i> not known is found, crash and burn.  But intent of this system is for future
+</I>&gt;&gt;<i> expansion for optional fields, so...?
+</I>&gt;<i>
+</I>&gt;<i> Perhaps this depends on context:
+</I>&gt;<i>  - for gossip messages, I think the primary concern is not breaking signature
+</I>&gt;<i>      validation, and that these would need to remain optional for backwards
+</I>&gt;<i>      compatibility.
+</I>
+Yes, &quot;not OK&quot; is message dependent.  It doesn't break parsing (if you
+want that, use a new message type), but it does break *usage*; &quot;you
+can't use this information&quot;.
+
+TLV makes sense when there are many many options, at cost of a couple of
+bytes per option.  We agreed to consider it for new additions, but
+sometimes a simple option bitmap will be a win.
+
+&gt;<i>  - for link-level messages, we have a little more control. I imagined the fields
+</I>&gt;<i>    would be gated by feature bit negotiation, and deviating from
+</I>&gt;<i>    unsupported/required would result in being disconnected.
+</I>
+It's nice if you can simplify your code by always sending it, even if
+the remote doesn't understand it.
+
+&gt;&gt;<i> 5. `len` - one byte or two? I believe we tend to use two bytes for various
+</I>&gt;&gt;<i> lengths.
+</I>&gt;<i>
+</I>&gt;<i> Maybe varint? One byte is not enough for all lengths, but two seems excessive
+</I>&gt;<i> for uint8 or even uint32.
+</I>
+Yes, it's a nice compromise IMHO.
+
+&gt;&gt;<i> 6.  BOLT - I propose making a separate BOLT for `type,len,value`, which other
+</I>&gt;&gt;<i> messages and so on simply refer to.
+</I>&gt;<i>
+</I>&gt;<i> Indeed, are you thinking we'd use this to add new fields proposed in 1.1?
+</I>
+Well, it's a very individual message thing.  We would specify it in
+general, then each place where it's used (eg. gossip) would have their
+own types.
+
+&gt;<i> In addition to the above, do we also want to flesh out what sub-TLV structures
+</I>&gt;<i> would look like? Or perhaps that isn't necessary, if we can continue adding more
+</I>&gt;<i> root-level keys.
+</I>
+I think that the general TLV definition just belongs in BOLT #1, since
+it's so short.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001627.html">[Lightning-dev] type,len,value standard
+</A></li>
+	<LI>Next message: <A HREF="001621.html">[Lightning-dev] Splicing Proposal: Now with RBF
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1620">[ date ]</a>
+              <a href="thread.html#1620">[ thread ]</a>
+              <a href="subject.html#1620">[ subject ]</a>
+              <a href="author.html#1620">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

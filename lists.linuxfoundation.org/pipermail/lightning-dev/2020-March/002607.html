@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Anchor Outputs Spec &amp; Implementation Progress
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Anchor%20Outputs%20Spec%20%26%20Implementation%20Progress&In-Reply-To=%3CCAO3Pvs9kchrzEvxC__bFxX-_nGmCxH75fqzT54khf1%2BxP8KdcA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002606.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Anchor Outputs Spec &amp; Implementation Progress</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Anchor%20Outputs%20Spec%20%26%20Implementation%20Progress&In-Reply-To=%3CCAO3Pvs9kchrzEvxC__bFxX-_nGmCxH75fqzT54khf1%2BxP8KdcA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Anchor Outputs Spec &amp; Implementation Progress">laolu32 at gmail.com
+       </A><BR>
+    <I>Mon Mar 30 19:00:12 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002606.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2607">[ date ]</a>
+              <a href="thread.html#2607">[ thread ]</a>
+              <a href="subject.html#2607">[ subject ]</a>
+              <a href="author.html#2607">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all,
+
+We've been discussing the current state of the spec and implementation
+readiness of anchor outputs for a few week now on IRC. As detailed
+conversations are at times difficult to have on IRC, and there's no true
+history, I figured I'd start a new discussion thread where we can hammer out
+the final details.
+
+First, on the current state of implementation. Anchor outputs are now fully
+supported in the master branch of lnd. A user can opt into this new format
+by specifying a new command line parameter: --protocol.anchors (off by
+default).  Nodes running with this flag will use the feature bit 1337 for
+negotiation. We didn't use the range above 65k, as we realized that would
+result in rather large init messages. This feature will be included in our
+upcoming 0.10 release, which will be entering the release mandate phase in
+the next week or two. We also plan to add an entry in the wiki declaring our
+usage of this feature bit.
+
+Anchors in lnd implement the spec as is currently defined: two anchors at
+all times, with each anchor utilizing 330 satoshis.
+
+During the last spec meeting, the following concerns were raised about
+having two anchors at all times (compared to one and re-using the to_remote)
+output:
+
+  1. two anchors adds extra bytes to the commitment transaction, increasing
+the
+     fee burden for force closing
+  2. two anchors pollutes the UTXO set, so instead one anchor (for the force
+     closing party) should be present, while the other party re-uses their
+     to_remote output for this purpose
+
+In response to the first concern: it is indeed the case that these new
+commitments are more expensive, but they're only _slightly_ so. The new
+default commitment weight is as if there're two HTLCs at all times on the
+commitment transaction. Adding in the extra anchor cost (660 satoshis) is a
+false equivalence as both parties are able to recover these funds if they
+chose. It's also the case that force cases in the ideal case are only due to
+nodes needing to go on-chain to sweep HTLCs, so the extra bytes may be
+dwarfed by several HTLCs, particularly in a post MPP/AMP world. The extra
+cost may seem large (relatively) when looking at a 1 sat/byte commitment
+transaction. However, fees today in the system are on the rise, and if one
+is actually in a situation where they need to resolve HTLCs on chain,
+they'll likely require a fee rate higher than 1 sat/byte to have their
+commitment confirm in a timely manner.
+
+On the topic of UTXO bloat, IMO re-purposing the to_remote output as an
+anchor is arguably _worse_, as only a single party in the channel is able to
+spend that output in order to remove its impact on the UTXO set. On the
+other hand, using two anchors (with their special scripts) allows _anyone_
+to sweep these outputs several blocks after the commitment transaction has
+confirmed. In order to cover the case where the remote party has no balance,
+but a single incoming HTLC, the channel initiator must either create a new
+anchor output for this special case (creating a new type of ad-hoc reserve),
+or always create a to_remote output for the other party (donating the 330
+satoshis).  The first option reduces down to having two anchors once again,
+while the second option creates an output which is likely uneconomical to
+sweep in isolation (compared to anchors which can be swept globally in the
+system taking advantage of the input aggregation savings).
+
+The final factor to consider is if we wish to properly re-introduce a CSV
+delay to the to_remote party in an attempt to remedy some game theoretical
+issues w.r.t forcing one party to close early without a cost to the
+instigator. In the past we made some headway in this direction, but then
+reverted our changes as we discoverers some previously unknown gaming
+vectors even with a symmetrical delay. If we keep two anchor as is, then we
+leave this thread open to a comprehensive solution, as the dual anchor
+format is fully decoupled from the rest of the commitment.
+
+Circling back to our implementation, we're ready to deploy what we have as
+is.  In the future, if the scheme changes, then we'll be able to easily
+update all our users, as we're also concurrently working on a dynamic
+commitment update protocol. By dynamic I mean that users will be able to
+update their commitment type on the fly, compared to being locked into a
+commitment type when the channel opens as is today.
+
+Would love to hear y'alls thoughts on the two primary concerns laid out
+above, and my response to them, thanks!
+
+-- Laolu
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200330/466a001f/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200330/466a001f/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002606.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2607">[ date ]</a>
+              <a href="thread.html#2607">[ thread ]</a>
+              <a href="subject.html#2607">[ subject ]</a>
+              <a href="author.html#2607">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%60htlc_maximum_msat%60%20as%20a%20valve%20for%20flow%20control%0A%20on%20the%20Lightning%20Network&In-Reply-To=%3CYzI1IJwKitl8Vfv1%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003698.html">
+   <LINK REL="Next"  HREF="003702.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%60htlc_maximum_msat%60%20as%20a%20valve%20for%20flow%20control%0A%20on%20the%20Lightning%20Network&In-Reply-To=%3CYzI1IJwKitl8Vfv1%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Sep 26 23:26:24 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003698.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="003702.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3701">[ date ]</a>
+              <a href="thread.html#3701">[ thread ]</a>
+              <a href="subject.html#3701">[ subject ]</a>
+              <a href="author.html#3701">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Sep 26, 2022 at 01:26:57AM +0000, ZmnSCPxj via Lightning-dev wrote:
+&gt;<i> &gt; &gt; * you're providing a way of throttling payment traffic independent of
+</I>&gt;<i> &gt; &gt; fees -- since fees are competitive, they can have discontinuous effects
+</I>&gt;<i> &gt; &gt; where a small change to fee can cause a large change to traffic volume;
+</I>&gt;<i> &gt; &gt; but this seems like it should mostly have a proportional response,
+</I>&gt;<i> &gt; &gt; with a small decrease in htlc_max_msat resulting in a small decrease in
+</I>&gt;<i> &gt; &gt; payment volume, and conversely. Much better for stability/optimisation!
+</I>
+&gt;<i> &gt; This may depend on what gets popular for sender algorithms.
+</I>&gt;<i> &gt; Senders may quantize their payments, i.e. select a &quot;standard&quot; value and divide all payments into multipath sub-payments of this value.
+</I>
+I don't think that's really the case. 
+
+One option is that you quantize based on the individual payment -- you
+want to send $100, great, your software splits it into 50x $2 payments,
+and routes them. But that doesn't have an all or nothing effect: if you
+reject anything over $1.99, then instead of routing 1/50th of payments
+up to $100, you're routing 1/50th of payments up to $99.50.
+
+The other approach is to quantize by some fixed value no matter what the
+payment is (maybe for better privacy?). I don't think that's a good idea
+in the first place -- it trades off maybe a small win for your privacy
+for using up everyone else's HTLC slots -- but if it is, it'll need to be
+quite a small value so as not to force you to round up the overall payment
+too much, and to allow small payments in the first place. But in that case
+most channels will have their html_max_msat well above that value anyway.
+
+&gt;<i> Basically, the intuition &quot;small decrease in `htlc_max_msat` == small decrease in payment volume&quot; inherently assumes that HTLC sizes have a flat distribution across all possible sizes.
+</I>
+The intuition is really the other way around: if you want a stable,
+decentralised network, then you need the driving decision on routing to
+be something other than just &quot;who's cheaper by 0.0001%&quot; -- otherwise
+everyone just chooses the same route at all times (which becomes
+centralised towards the single provider who can best monetise forwarding
+via something other than fees), and probably that route quickly becomes
+unusable due to being drained (which isn't stable).
+
+(But of course, I hadn't had any ideas on what such a thing could be,
+otherwise I'd have suggested something like this earlier!)
+
+So, to extend the intuition further: that means that if using
+htlc_max_msat as a valve/throttle can fill that role, then that's a reason
+to not do weird things like force every HTLC to be 2**n msats or similar.
+
+If there is a conflict, far better to have a lightning network that's
+decentralised, stable, and doesn't require node operators to spy on
+transactions to pay for their servers.
+
+It's not quite as bad as you suggest though -- the payment sizes
+don't need to have a flat distribution, they only need to have a
+smooth/continuous distribution.
+
+&gt;<i> * Coffee or other popular everyday product may settle on a standard price, which again implies a spike around that standard price.
+</I>
+Imagine the price of coffee is $5, and you find three potential paths 
+to pay for that coffee:
+
+  Z -&gt; A -&gt; X
+  Z -&gt; B -&gt; C -&gt; X
+  Z -&gt; B -&gt; D -&gt; X
+
+(I think you choose both the fee and max_msat for Z-&gt;A and Z-&gt;B hops,
+so we'll assume they're 0%/infinite, respectively)
+
+Suppose the fee on AX is 0.01%, and the total fee for BCX is 0.02%
+and the total fee for BDX is 0.1%.
+
+If AX's max_msat is $5, they'll get the entire transaction. If it's
+$4.99, you might instead optimise fees by doing AMP: send $4.99 through
+AX and $0.01 through BCX, for a total fee rate of 0.01002%.
+
+If everyone quantizes at 10c (500sat?) instead of 1c (50sat?) or lower
+then that just means instead of getting maybe a 0.2% reduction in payment
+flow, AX gets a 2% reduction in payment flow.
+
+Likewise, if AX's max_msat is $1, BCX's max_msat is $3, and BDX's max_msat
+is $20, then you split your payment up as $1/$3/$1 and pay a fee of
+0.034%. Meanwhile AX's payment flow has been reduced by perhaps 80%
+(if everyone's buying $5 coffees), and BCX's by perhaps 25% (from $4 to
+$3), allowing them to maintain balanced channels.
+
+&gt;<i> So the reliability of `htlc_max_msat` as a valve is dependent on market forces, and may be as non-linear as feerates, which *are* the sum total of the market force.
+</I>
+No: without some sort of external throttle, fees have a tendency to be all
+or nothing. If there's no metric other than fees, why would I ever choose
+to pay 0.02% (let alone 0.1%!) in fees? And if a new path comes along
+offering a fee rate of 0.00999% fees, why would I continue paying 0.01%?
+
+Even if everyone does start quantizing their payments -- and does so with
+an almost 6 order of magnitude jump from 1msat to 500sats -- you're only
+implying traffic bumps of perhaps 2% when tweaking parameters that are
+near important thresholds, rather than 100%.
+
+&gt;<i> Feerates on the other hand are always going to be something that senders optimize for, [...]
+</I>
+Sure, but that can't be the end of the story, since it has a clear winner
+that everyone immediately agrees upon, and there's no point anyone else
+participating in trying to route lightning transactions.
+
+There's plenty of other possible throttling mechanisms: at the very least,
+senders can *not* optimise for fees, and instead randomly select routes
+within a budget; or you can maintain external &quot;reliability&quot; scores for
+nodes and factor those in along with fee rates.
+
+What's novel and interesting about this approach (IMO) is it's one that
+the channel operator can use directly (so the person who's meant to know
+the private channel state is making the decision that depends on the
+private channel state), and that they don't have a particular incentive
+to lie about (with random choice, maybe you want to pretend you have many
+nodes/channels so you get selected more often; if reliability is factored
+in, maybe you're tempted to pretend to be more reliable than you are).
+
+Cheers,
+aj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003698.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="003702.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3701">[ date ]</a>
+              <a href="thread.html#3701">[ thread ]</a>
+              <a href="subject.html#3701">[ subject ]</a>
+              <a href="author.html#3701">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

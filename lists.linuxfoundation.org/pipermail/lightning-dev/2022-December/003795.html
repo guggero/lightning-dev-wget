@@ -1,0 +1,292 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Two-party eltoo w/ punishment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Two-party%20eltoo%20w/%20punishment&In-Reply-To=%3CY5Lb8yXCJTlXUo2F%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003799.html">
+   <LINK REL="Next"  HREF="003790.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Two-party eltoo w/ punishment</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Two-party%20eltoo%20w/%20punishment&In-Reply-To=%3CY5Lb8yXCJTlXUo2F%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Two-party eltoo w/ punishment">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Dec  9 06:55:47 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003799.html">[Lightning-dev] Two-party eltoo w/ punishment
+</A></li>
+        <LI>Next message: <A HREF="003790.html">[Lightning-dev] Jamming mitigation call
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3795">[ date ]</a>
+              <a href="thread.html#3795">[ thread ]</a>
+              <a href="subject.html#3795">[ subject ]</a>
+              <a href="author.html#3795">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Dec 08, 2022 at 02:14:06PM -0500, Antoine Riard wrote:
+&gt;<i> &gt;  - 2022-10-21, eltoo/chia:
+</I>&gt;<i> <A HREF="https://twitter.com/bramcohen/status/1583122833932099585">https://twitter.com/bramcohen/status/1583122833932099585</A>
+</I>&gt;<i> On the eltoo/chia variant, from my (quick) understanding, the main
+</I>&gt;<i> innovation aimed for is 
+</I>
+I'd say the main innovation aimed for is just doing something like
+lightning over the top of chia (rather than bitcoin, liquid, ethereum
+etc), and making it simple enough to be easily implemented.
+
+&gt;<i> the limitation of the publication of eltoo states
+</I>&gt;<i> more than once by a counterparty, by introducing a cryptographic puzzle,
+</I>&gt;<i> where the witness can be produced once and only once ? I would say you
+</I>&gt;<i> might need the inheritance of the updated scriptpubkey across the chain of
+</I>&gt;<i> eltoo states, with a TLUV-like mechanism.
+</I>
+Chia uses different terminology to bitcoin; &quot;puzzle&quot; is just what we call
+&quot;scriptPubKey&quot; in bitcoin, more or less. Since its scripting capabilities
+are pretty powerful, you can rig up a TLUV/OP_EVICT like mechanism, but
+for a two-party setup, in practice I think that mostly just means you
+can encode the logic directly as script, and when updating the state you
+then only need to exchange CHECKSIGFROMSTACK-like signatures along the
+lines of &quot;state N implies outputs of A,B,C,... -- Alice&quot;, rather than
+signing multiple transactions.
+
+&gt;<i> &gt; The basic idea is &quot;if it's a two party channel with just Alice and Bob,
+</I>&gt;<i> &gt; then if Alice starts a unilateral close, then she's already had her say,
+</I>&gt;<i> &gt; so it's only Bob's opinion that matters from now on, and he should be
+</I>&gt;<i> &gt; able to act immediately&quot;, and once it's only Bob's opinion that matters,
+</I>&gt;<i> &gt; you can simplify a bunch of things.
+</I>&gt;<i> From my understanding, assuming Eltoo paper terminology, Alice can publish
+</I>&gt;<i> an update K transaction, and then after Bob can publish an update
+</I>&gt;<i> transaction K&lt;N or Alice can publish the settlement transaction N, or Bob
+</I>&gt;<i> can publish an update transaction N. The main advantage of this
+</I>&gt;<i> construction I can see is a strict bound on the shared_delay encumbered in
+</I>&gt;<i> the on-chain publication of the channel ?
+</I>
+If you have fully symmetric transactions, then you could have the
+situation where Alice broadcasts update K, then attacks Bob and when
+he attempts to post update N, she instead does a pinning attack by
+broadcasting update K+1 (spending update K), which then forces Bob to
+generate a new version update N, which she then blocks with update K+2,
+etc. An attack like that is presumably pretty difficult to pull off in
+practice, but it makes it pretty hard to reason about many of the limits.
+
+A simple advantage to breaking the symmetry is that if A does a unilateral
+close, then B can immediately confirm that closure releasing all funds
+for both parties. Without breaking the symmetry, you can't distinguish
+that case from B attempting to confirm his own unilateral close, which
+would allow B to cheat.
+
+&gt;<i> &gt; fast forwards: we might want to allow our channel partner
+</I>&gt;<i> &gt; to immediately rely on a new state we propose without needing a
+</I>&gt;<i> &gt; round-trip delay -- this potentially makes forwarding payments much
+</I>&gt;<i> &gt; faster (though with some risk of locking the funds up, if you do a
+</I>&gt;<i> &gt; fast forward to someone who's gone offline)
+</I>&gt;<i> 
+</I>&gt;<i> IIRC, there has already been a &quot;fast-forward&quot; protocol upgrade proposal
+</I>&gt;<i> based on update-turn in the LN-penalty paradigm [0]. I think reducing the
+</I>&gt;<i> latency of HTLC propagation across payment paths would constitute a UX
+</I>&gt;<i> improvement, especially a link-level update mechanism upgrade deployment
+</I>&gt;<i> might be incentivized by routing algorithms starting to penalize routing
+</I>&gt;<i> hops HTLC relay latency. What is unclear is the additional risk of locking
+</I>&gt;<i> the funds up. If you don't receive acknowledgement the fast forward state
+</I>&gt;<i> has been received, you should still be able to exit with the state N-1 ?
+</I>
+Yes, you can unilaterally close the channel with state N-1; but even
+then they might respond by bumping to state N anyway. If that happens,
+then the funds can remain locked up until the timeout, as you can no
+longer time the htlc out off-chain.
+
+Still, if it's one hung per htlc for the channel's entire lifetime
+(because you close it &quot;immediately&quot; when it happens), that's probably
+not going to cause problems frequently...
+
+&gt;<i> &gt; doubled delays: once we publish the latest state we can, we want to
+</I>&gt;<i> &gt; be able to claim the funds immediately after to_self_delay expires;
+</I>&gt;<i> &gt; however if our counterparty has signatures for a newer state than we
+</I>&gt;<i> &gt; do (which will happen if it was fast forwarded), they could post that
+</I>&gt;<i> &gt; state shortly before to_self_delay expires, potentially increasing
+</I>&gt;<i> &gt; the total delay to 2*to_self_delay.
+</I>&gt;<i> 
+</I>&gt;<i> While the 2*to_self_delay sounds the maximum time delay in the state
+</I>&gt;<i> publication scenario where the cheating counterparty publishes a old state
+</I>&gt;<i> then the honest counterparty publishes the latest one, there could be the
+</I>&gt;<i> case where the cheating counterparty broadcast chain of old states, up to
+</I>&gt;<i> mempool's `limitancestorcount`. However, this chain of eltoo transactions
+</I>&gt;<i> could be replaced by the honest party paying a higher-feerate (assuming
+</I>&gt;<i> something like nversion=3).
+</I>
+With the asymmetric transactions proposed here, you'd need to have your
+watchtowers collude with the attacker for this to happen.
+
+I think you could prevent chains from building up in the mempool by
+requiring a relative timelock of perhaps 2 or 3 blocks for a WA.n/WB.n
+tx to be valid (giving you time to post RA.n/RB.n in the meantime).
+
+&gt;<i> &gt; * WA.n, WB.n : watchtower update to state n
+</I>&gt;<i> &gt;   - this is for an untrusted watchtower to correct attempted cheating
+</I>&gt;<i> &gt;     by Bob on behalf of Alice (or vice-versa). Spends UB.k or WA.k
+</I>&gt;<i> &gt;     (or UA.k/WB.k) respectively, provided k &lt; n.
+</I>&gt;<i> I wonder if the introduction of watchtower specific transactions doesn't
+</I>&gt;<i> break the 2*to_self_delay assumption
+</I>
+The to_self_delay applies to whoever initiated the unilateral close,
+and provided they actually posted the most recent state, no watchtower
+tx is a valid spend. ie, if Alice is honest and n is the latest state,
+then the only possible spends of UA.n are SA.n (after a delay) or CB.n,
+and as soon as either of those are on chain, she gets access to her funds.
+No version of WB.k or RB.k (or WA.k, CA.k, RA.k) are valid if k&lt;=n and
+UA.n is confirmed.
+
+If Alice is dishonest, and posts a very old state (n-x), then Bob could
+post up to x watchtower txs (WB.(n-x+1) .. WB.n) causing Alice to be
+unable to access her funds for up to (x+1)*to_self_delay blocks. But
+that's just a reason for her to not be dishonest in the first place.
+
+&gt;<i> (iiuc it's a design goal of current
+</I>&gt;<i> protocol) and what is the design rationale. Beyond that, there is a concern
+</I>&gt;<i> with watchtower-specific transactions, it might leak your towers topology
+</I>&gt;<i> (i.e the number of them and the distribution in the p2p network) to an
+</I>&gt;<i> adversary.
+</I>
+If you have a watchtower and it takes action, I don't think you can
+expect to retain privacy over the fact that you have a watchtower,
+and how effective it is against an attacker with extensive monitoring
+of the p2p network...
+
+&gt;<i> &gt; * SA.n, SB.n : slowly claim funds according to state n
+</I>&gt;<i> &gt;   - this is for Alice to claim her funds if Bob is completely offline
+</I>&gt;<i> &gt;     (or vice-versa). Spends UA.n, UB.n, WA.n or WB.n with relative
+</I>&gt;<i> &gt;     timelock of to_self_delay.
+</I>&gt;<i> 
+</I>&gt;<i> If I'm following correctly the description, this is logically equivalent to
+</I>&gt;<i> the sweep of a `to_local`/`to_remote` output on a commitment transaction
+</I>&gt;<i> though instead the waiting delay is eltoo shared_delay. There is no
+</I>&gt;<i> to_self_delay, at the punishment seems only to happen on the update-level,
+</I>&gt;<i> or maybe one should be also able to punish slow fund exit, and another
+</I>&gt;<i> relative locktime should exist on the S* transactions.
+</I>
+I'm just using &quot;to_self_delay&quot; as the X in &quot;if you attempt to cheat,
+I'll definitely notice and take action within X blocks&quot;. If you post
+UA.n then post SA.n after X blocks (due to SA.n's relative time lock)
+then you've already proven you didn't cheat, because that was enough
+time for B to notice and take action.
+
+&gt;<i> &gt; * Alice and Bob's watchtower collude, but Bob has many watchtowers:
+</I>&gt;<i> &gt;     F -&gt; UA.k1 -&gt; WB.k2 -&gt; WB.n -&gt; (to_self_delay) -&gt; SA.n -&gt; money
+</I>&gt;<i> Could the punishment transactions R* be also delegated to watchtowers,
+</I>&gt;<i> assuming they have been pre-signed to lockdown the exit scriptpubkeys ?
+</I>
+No -- the RB.n transactions immediately release A's funds after applying
+the penalty, so if the watchtower colludes with A and has an old RB.y
+transaction, Alice can steal funds by posting UA.x and RB.y, provided that
+her balance now is sufficiently less than her balance then (ie bal.n &lt;
+bal.y - penalty).
+
+In this model, Bob shouldn't be signing RB.n or CB.n txs until Alice
+has already started a unilateral close and posted UA.n/UA.k.
+
+&gt;<i> &gt; In order to allow fast-forwards, when Alice proposes a new state,
+</I>&gt;<i> &gt; she needs to send her partial signatures to allow Bob to unilaterally
+</I>&gt;<i> &gt; accept the new state, ie sigs for: UB.n, CB.n, SB.n, RB.n. But she
+</I>&gt;<i> &gt; also needs to be able to claim the funds if Bob proposes the new state
+</I>&gt;<i> &gt; and broadcasts UB.n, she needs to be able broadcast CA.n. This can be
+</I>&gt;<i> &gt; achieved with an adaptor signature approach (spelt out a bit more fully
+</I>&gt;<i> &gt; in the gist) or a CTV-like approach, provided that UB.n reveals the
+</I>&gt;<i> &gt; state needed to calculate the the CTV commitment (see &quot;EXPR_SETTLE&quot; in
+</I>&gt;<i> &gt;
+</I>&gt;<i> <A HREF="https://github.com/instagibbs/bolts/blob/29fe6d36cbad4101d5ec76c2b19c83c1494ac2fc/XX-eltoo-transactions.md">https://github.com/instagibbs/bolts/blob/29fe6d36cbad4101d5ec76c2b19c83c1494ac2fc/XX-eltoo-transactions.md</A>
+</I>&gt;<i> ).
+</I>&gt;<i> 
+</I>&gt;<i> If you would like to have fast forward of chain of transactions, I wonder
+</I>&gt;<i> if there could be also the &quot;sig-in-the-script&quot; trick, where UB.n
+</I>&gt;<i> scriptpubkey (or one of its tapscripts) contains the signature for CB.n,
+</I>&gt;<i> SB.n, RB.n. Though you might have an issue of re-generating the
+</I>&gt;<i> witnessscript in case of state loss.
+</I>
+Broadcasting UB.n will only reveal signatures by B; so that would only
+potentially help with CA.n or RA.n; and if UB.n is on-chain, then RA.n
+isn't valid (since it would require &quot;n &lt; n&quot;). 
+
+The EXPR_SETTLE stuff in the github link describes how to do the trick
+via a CTV-ish approach (including an APO signature in a tapscript in the
+scriptPubKey of UA.n here; and including data in the annex so that you
+can recalculate thinks if an old UA.n is broadcast after you've
+forgotten n's state details).
+
+&gt;<i> &gt; * how to pay watchtowers -- when a watchtower broadcasts a W
+</I>&gt;<i> &gt;   transaction, it needs to add fees, and it's not clear (to me) how it
+</I>&gt;<i> &gt;   could fairly and reliably ensure it's compensated for those costs,
+</I>&gt;<i> &gt;   particularly if multiple W transactions are broadcast for a single
+</I>&gt;<i> &gt;   unilateral close attempt, due to one or more watchtowers colluding
+</I>&gt;<i> &gt;   with an attacker, or simply having out of date information.
+</I>&gt;<i> I wonder if paying a watchtower, or getting paid as a watchtower isn't  a
+</I>&gt;<i> &quot;counterparty risk&quot; similar to what is happening with jamming due to
+</I>&gt;<i> non-covered HTLC forward risk.
+</I>
+Actually, perhaps you could &quot;yo dawg&quot; it: if you give the watchtower a
+pre-signed transaction WA.n:
+
+    input 1: UA.k/WA.k (ANYPREVOUTANYSCRIPT, SINGLE)
+    input 2: my funds (SINGLE, ALL)
+
+    output 1: WA.n
+    output 2: new lightning channel between me and watchtower
+    output 3: ephemeral OP_TRUE output
+
+then you could have the &quot;new lightning channel&quot; be setup with an initial
+capacity of &quot;my funds&quot;, and off-chain update the state of that channel so
+that the watchtower's balance is how much you're willing to contribute in
+fees if the watchtower does its job. If you set things up so that you're
+always able to claim a penalty via WA.n-&gt;RA.n if the watchtower acts,
+then you can give up to that penalty to the watchtower and still end up
+making a profit.
+
+Doesn't generalise to redundant untrusted watchtowers though, but
+presumably nothing does. (You could use the same utxo across multiple
+watchtowers, but a rogue watchtower could just post an old WA.k tx and
+claim your funds, preventing some honest watchtower from helping)
+
+(Yo dawg, I heard you liked closing lightning channels, so we put a
+lightning channel in your watchtower, so you can close a channel while
+you're closing a channel. Alternatively: &quot;when god closes one channel,
+he opens another&quot;)
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003799.html">[Lightning-dev] Two-party eltoo w/ punishment
+</A></li>
+	<LI>Next message: <A HREF="003790.html">[Lightning-dev] Jamming mitigation call
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3795">[ date ]</a>
+              <a href="thread.html#3795">[ thread ]</a>
+              <a href="subject.html#3795">[ subject ]</a>
+              <a href="author.html#3795">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%3A%20A%20Simplified%20update%20Mechanism%20for%0A%20Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3C396529c1-8534-26d8-1caa-bb9cba496852%40bitonic.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001240.html">
+   <LINK REL="Next"  HREF="001279.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts</H1>
+    <B>Corn&#233; Plooy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20eltoo%3A%20A%20Simplified%20update%20Mechanism%20for%0A%20Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3C396529c1-8534-26d8-1caa-bb9cba496852%40bitonic.nl%3E"
+       TITLE="[Lightning-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts">corne at bitonic.nl
+       </A><BR>
+    <I>Tue May 15 13:22:44 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001240.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+        <LI>Next message: <A HREF="001279.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1278">[ date ]</a>
+              <a href="thread.html#1278">[ thread ]</a>
+              <a href="subject.html#1278">[ subject ]</a>
+              <a href="author.html#1278">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Christian, ZmnSCPxj ,
+
+
+&gt;&gt;<i> - The CSV-encumberance on settlement transactions, which are the ones
+</I>&gt;&gt;<i> which carry the contracts in the channel, affects all
+</I>&gt;&gt;<i> absolute-timelocked contracts transported on the channel.  Compare to
+</I>&gt;&gt;<i> Poon-Dryja, where commitment transactions themselves are unencumbered
+</I>&gt;&gt;<i> by CSV, and we simply insert the revocation to spends of the contracts
+</I>&gt;&gt;<i> being transported (i.e. the reason why we have HTLC-success and
+</I>&gt;&gt;<i> HTLC-timeout transactions in BOLT spec).
+</I>&gt;<i> True, but as I argued in another mail, this is a fixed offset, that is
+</I>&gt;<i> in the same range as today's CLTV deltas for some nodes. So for the
+</I>&gt;<i> network of today using eltoo is roughly equivalent of adding another hop
+</I>&gt;<i> to our path :-)
+</I>
+Let me think how this is supposed to work (I can't find that other mail
+you're referring to):
+
+I assume the HTLC outputs are in the settlement transaction. In case of
+a unilateral close while there are HTLCs present, the following sequence
+happens:
+1. The trigger transaction is broadcasted.
+2. One or more update transactions are broadcasted. These are not
+affected by the CSV condition and can be confirmed immediately. Once the
+last update transaction gets confirmed, its CSV clock for the settlement
+transaction starts.
+3. The settlement transaction (containing HTLCs) can be broadcasted, but
+it will not be confirmed before the CSV time-out of the last update
+transaction.
+4. At this point, the HTLC conditions become relevant. Before the HTLC
+time-out, the receiving side can access the funds with the preimage.
+After the timeout, the sending side can access the funds without the
+preimage.
+
+If the HTLC time-out is before the start of step 4, then the sending
+side can try to get the funds back, even if the preimage was already
+released much earlier. For the safety of the receiving side, this
+situation must be avoided. So, if T is the (absolute) HTLC time-out
+time, S is the CSV time-out period and C is the expected worst-case time
+involved in confirming everything, then the receiving side of a HTLC
+must drop the channel on-chain before T - S - C. Obviously, HTLCs for
+which this time has already passed on creation must be rejected.
+Dropping on-chain is no longer needed if the HTLC is removed by a
+channel update before T - S - C.
+
+What happens in case of a transaction time-out? Let's number the nodes
+0, 1, ... on the route, and Tn the HTLC time-out between nodes n and
+n+1. For simplicity, assume the same S+C for all channels. If node n
+becomes unresponsive after accepting its incoming HTLC, then two moments
+in time are relevant:
+* T(n-1)
+* T(n-2) - S - C
+In case T(n-1) happens first, node n-1 knows it doesn't have to pay
+outgoing funds, so it can cooperatively cancel the incoming HTLC. This
+will propagate back immediately, keeping all channels open.
+In case T(n-2) - S - C happens first, node n-1 has to close its channel
+with n-2. On-chain, the HTLC conditions continue to apply, so for the
+rest, nothing changes. As soon as T(n-1) is reached, node n-1 knows the
+transaction has timed out, but it no longer has a way to propagate this
+knowledge to node n-2. For node n-2, two times are relevant:
+* T(n-2)
+* T(n-3) - S - C
+... and the same steps are repeated. In this case, a transaction
+time-out leads to closing all channels on the route. This is a major DoS
+attack vector, and must be prevented.
+
+Therefore, we must set T(n-1) &gt; T(n-2) - S - C, so the HTLC time-out
+increment must be at least S+C.
+
+Theoretically, it seems workable. What would be a practical value for S
+(the CSV time-out)? In the absence of watch towers, you'd want to set it
+to at least a couple of weeks, to allow yourself to go off-line on
+holiday without worrying about computer issues. However, a time-out
+increment of a couple of weeks *per hop* for the HTLCs adds up really
+quickly to unpractical values. Maybe the conclusion simply is that we
+really really need watchtowers? Otherwise, only professional parties
+that can manage near-100% uptime can safely perform transaction routing.
+
+CJP
+
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001240.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+	<LI>Next message: <A HREF="001279.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1278">[ date ]</a>
+              <a href="thread.html#1278">[ thread ]</a>
+              <a href="subject.html#1278">[ subject ]</a>
+              <a href="author.html#1278">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

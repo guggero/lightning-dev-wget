@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal: Add support for proxying p2p connections to/from LND
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Add%20support%20for%20proxying%20p2p%0A%20connections%20to/from%20LND&In-Reply-To=%3CCAMXsxZMPMgAamnALPS9hjV6FwwQ9UiPuDO_s%3DyCPdHKsMhhEJw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003682.html">
+   <LINK REL="Next"  HREF="003683.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal: Add support for proxying p2p connections to/from LND</H1>
+    <B>Pierre</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Add%20support%20for%20proxying%20p2p%0A%20connections%20to/from%20LND&In-Reply-To=%3CCAMXsxZMPMgAamnALPS9hjV6FwwQ9UiPuDO_s%3DyCPdHKsMhhEJw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Proposal: Add support for proxying p2p connections to/from LND">pm+lists at acinq.fr
+       </A><BR>
+    <I>Sat Sep  3 13:04:22 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003682.html">[Lightning-dev] Proposal: Add support for proxying p2p connections to/from LND
+</A></li>
+        <LI>Next message: <A HREF="003683.html">[Lightning-dev] Proposal: Add support for proxying p2p connections to/from LND
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3684">[ date ]</a>
+              <a href="thread.html#3684">[ thread ]</a>
+              <a href="subject.html#3684">[ subject ]</a>
+              <a href="author.html#3684">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Alex,
+
+This is quite similar to eclair's cluster mode [1] so I can definitely say
+it's a great idea :-)
+
+Our rationale was as much reducing the attack surface (we didn't like our
+node being directly accessible from the internet) as improving scalability
+(handling the constant flow of connections/disconnections from mobile
+wallets, and a ton of gossip).
+
+Some specific points on our implementation:
+- there can be N instances of proxy and their number can be adjusted
+without downtime
+- our proxy also does preprocessing for gossip (they keep an up-to-date
+copy of routing table and directly answer queries, and also dedup incoming
+announcements before forwarding to the backend, where the announcements are
+verified)
+- outgoing connections (initiated by an operator from the backend) are also
+initiated by the proxy. Even incoming connections from Tor are directed to
+the proxy. The backend node handles zero LN connections
+- since the front needs the node key for the secure handshake, this led us
+to introduce a separate key hierarchy for channel management [2]
+- we have considered, but not implemented, a &quot;lockdown mode&quot; where the
+front would only allow incoming connections from known peers that already
+have a channel
+- if your setup has a separate db server (e.g. postgres), and logs are
+properly rotated/streamed out, then the resources that typically run out
+when scaling up (file descriptors, disk space, etc.) should be really under
+control on your main node
+
+Hope that helps,
+
+Pierre
+
+
+[1] <A HREF="https://github.com/ACINQ/eclair/blob/master/docs/Cluster.md">https://github.com/ACINQ/eclair/blob/master/docs/Cluster.md</A>
+[2] <A HREF="https://github.com/ACINQ/eclair/pull/1584">https://github.com/ACINQ/eclair/pull/1584</A>
+
+
+Le jeu. 1 sept. 2022 &#224; 19:56, Alex Akselrod via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i> At NYDIG, we're considering ways to harden large LND deployments. Joost
+</I>&gt;<i> and I discussed that currently, when external untrusted peers make inbound
+</I>&gt;<i> connections, LND must verify the identity of the peer during the noise
+</I>&gt;<i> handshake, and it must do this before enforcing any potential key-based
+</I>&gt;<i> allow lists. This is done in the same process as the node's other critical
+</I>&gt;<i> tasks, such as monitoring the chain.
+</I>&gt;<i>
+</I>&gt;<i> To reduce the attack area of the main node process, we'd like to propose a
+</I>&gt;<i> means to optionally separate the peer communication into a separate
+</I>&gt;<i> process: something like CLN's connectd, running separately, and the
+</I>&gt;<i> connections would be multiplexed over a single network connection initiated
+</I>&gt;<i> from the node to the proxy. The core of our current idea is demonstrated in
+</I>&gt;<i> a draft PR: <A HREF="https://github.com/lightningnetwork/lnd/pull/6843">https://github.com/lightningnetwork/lnd/pull/6843</A>
+</I>&gt;<i>
+</I>&gt;<i> I'd love some early feedback on the general direction of this. If this
+</I>&gt;<i> would be interesting, I'll build it out into a fully working feature.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i>
+</I>&gt;<i> Alex Akselrod
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220903/3d759580/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220903/3d759580/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003682.html">[Lightning-dev] Proposal: Add support for proxying p2p connections to/from LND
+</A></li>
+	<LI>Next message: <A HREF="003683.html">[Lightning-dev] Proposal: Add support for proxying p2p connections to/from LND
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3684">[ date ]</a>
+              <a href="thread.html#3684">[ thread ]</a>
+              <a href="subject.html#3684">[ subject ]</a>
+              <a href="author.html#3684">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

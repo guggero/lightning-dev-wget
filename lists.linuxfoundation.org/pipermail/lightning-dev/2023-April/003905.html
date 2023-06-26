@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splice Lock Race Condition Solution
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Lock%20Race%20Condition%20Solution&In-Reply-To=%3CCAN%2BF7jm7rPyaS0-GnaZog17zborXPgyWwh0zdEFD_P3-%3DLAvZA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003904.html">
+   <LINK REL="Next"  HREF="003909.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splice Lock Race Condition Solution</H1>
+    <B>Dusty Daemon</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Lock%20Race%20Condition%20Solution&In-Reply-To=%3CCAN%2BF7jm7rPyaS0-GnaZog17zborXPgyWwh0zdEFD_P3-%3DLAvZA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Splice Lock Race Condition Solution">dustin at koinkeep.com
+       </A><BR>
+    <I>Thu Apr  6 16:14:41 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003904.html">[Lightning-dev] Splice Lock Race Condition Solution
+</A></li>
+        <LI>Next message: <A HREF="003909.html">[Lightning-dev] A new Bitcoin implementation integrated with	Core Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3905">[ date ]</a>
+              <a href="thread.html#3905">[ thread ]</a>
+              <a href="subject.html#3905">[ subject ]</a>
+              <a href="author.html#3905">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>
+</I>&gt;<i> I haven't looked at the `announcement_signatures` case yet, but at least
+</I>&gt;<i> for the `commit_sig` case this should never be an issue.
+</I>&gt;<i>
+</I>Yup the issue is the same for `announcement_signatures`. Storing the
+last_short_channel_id is key here so you know which announcement
+message you can safely ignore and which are considered errors. This
+behavior should be enacted until sending OR receiving `revoke_and_ack`.
+
+
+&gt;<i> It only means
+</I>&gt;<i> that sometimes, after sending `splice_locked`, you will receive some
+</I>&gt;<i> `commit_sig` messages that are for commitments that you don't care about
+</I>&gt;<i> anymore. You should be able to safely ignore those `commit_sig`. I have
+</I>&gt;<i> provided more details in the gist linked.
+</I>&gt;<i>
+</I>Yup you should ignore invalid commit_sigs for this brief period of time but
+then
+go back to rejecting invalid commit_sigs after sending OR receiving
+`revoke_and_ack`.
+
+
+&gt;<i> Let me know if I'm missing something, but I believe this is simply an
+</I>&gt;<i> edge case that implementations need to correctly handle, not a protocol
+</I>&gt;<i> issue? Or maybe I'm not understanding the scenario correctly?
+</I>&gt;<i>
+</I>It is a critical detail to implement correctly. Implementations without
+good test coverage can easily ship releases that will break / force close
+randomly during the splice lock process. What's worse is this effects
+the larger more valuable/busy routing nodes more often and is easy to
+miss on a simple regtest node &#128563;.
+
+By the way, I find your notation a bit hard to follow...I think that we
+&gt;<i> really need to detail the exact message flow (like I did in the linked
+</I>&gt;<i> gist) to be able to explain protocol issues, otherwise there's always
+</I>&gt;<i> a risk that people think about a slightly different message flow, which
+</I>&gt;<i> means we'll just talk past each other...
+</I>&gt;<i>
+</I>The original gist from back in January is here:
+<A HREF="https://gist.github.com/ddustin/7ee222eb31c3eac5b141c991c0937fae">https://gist.github.com/ddustin/7ee222eb31c3eac5b141c991c0937fae</A>
+
+Happy to add more details but the example is accurate to exactly the
+messages sent during this time. Confirmed it with actual tests as well.
+
+Is there some message that it looks like I missed here? If it helps I can
+give you an actual log message flow from the real tests, but honestly,
+they just make it more confusing to understand &#129335;.
+
+It might be simpler to follow by working backwards from this solution:
+<A HREF="https://gist.github.com/ddustin/017aeadfbf34d2fcd950f1238614afe2">https://gist.github.com/ddustin/017aeadfbf34d2fcd950f1238614afe2</A>
+
+My original proposal from late January ^ 100% solves the issue but
+adds a lock on the connection via an extra STFU step.
+
+My current proposal is essentially &quot;let's allow the race condition and
+observe which things become invalid during it.&quot; I settled on two things
+invalid events that occur:
+* A stale `commitments_signed` message (bundle) with extra signatures
+* A stale `announcement_sigs` message for the pre-splice channel
+
+An &quot;easy&quot; solution an implementation could do is allow any invalid
+`commitments_signed` or `announcement_sigs` to come through
+and ignore them without warning or error. This &quot;works&quot; but leaves the
+node in a messy state where actual errors are being squelched
+and opens up a potential DoS issue.
+
+So the ideal solution is to allow a certain class of 'stale' messages
+for a period of time, that time being from:
+A) mutual_splice_locked (the moment we have both sent &amp; received
+`splice_locked`)
+B) A successful `commitment_signed` &lt;-&gt; `revoke_and_ack` round trip (in
+either direction)
+
+The definition of A is pretty straightforward and we need to detect
+mutual_splice_lock anyway so that's easy.
+
+The definition of B can be a couple of things but the simplest is I believe
+the sending OR receiving of `revoke_and_ack`.
+
+Is it a little more work to implement it this way? Yeah. But I think the
+effort
+is worth it to make the protocol &amp; our nodes more robust.
+
+Cheers,
+Dusty
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230406/cee4770b/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230406/cee4770b/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003904.html">[Lightning-dev] Splice Lock Race Condition Solution
+</A></li>
+	<LI>Next message: <A HREF="003909.html">[Lightning-dev] A new Bitcoin implementation integrated with	Core Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3905">[ date ]</a>
+              <a href="thread.html#3905">[ thread ]</a>
+              <a href="subject.html#3905">[ subject ]</a>
+              <a href="author.html#3905">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

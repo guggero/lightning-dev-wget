@@ -1,0 +1,199 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Mitigating Channel Jamming with Stake Certificates
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigating%20Channel%20Jamming%20with%20Stake%20Certificates&In-Reply-To=%3Cd48a50c2-f7ce-483e-a2bb-da603c8e860d%40Spark%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002883.html">
+   <LINK REL="Next"  HREF="002885.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Mitigating Channel Jamming with Stake Certificates</H1>
+    <B>Gleb Naumenko</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigating%20Channel%20Jamming%20with%20Stake%20Certificates&In-Reply-To=%3Cd48a50c2-f7ce-483e-a2bb-da603c8e860d%40Spark%3E"
+       TITLE="[Lightning-dev] Mitigating Channel Jamming with Stake Certificates">naumenko.gs at gmail.com
+       </A><BR>
+    <I>Thu Nov 26 21:40:46 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002883.html">[Lightning-dev] [c-lightning] v0.9.2 &quot;Now with 0-of-N Multisig&quot;	Released
+</A></li>
+        <LI>Next message: <A HREF="002885.html">[Lightning-dev] Mitigating Channel Jamming with Stake	Certificates
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2884">[ date ]</a>
+              <a href="thread.html#2884">[ thread ]</a>
+              <a href="subject.html#2884">[ subject ]</a>
+              <a href="author.html#2884">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hello list,
+
+In this post, we explore a different approach to channel jamming mitigation.
+We won&#8217;t talk about the background here, for the problem description as well as some proposed solutions (mainly upfront payment schemes), see [1].
+
+We&#8217;re suggesting using UTXO ownership proofs (a.k.a. Stake Certificates) to solve this problem. Previously, these proofs were only used in the Lightning Network at channel announcement time to prevent malicious actors from announcing channels they don&#8217;t control. One can think of it as a &#8220;fidelity bond&#8221; (as a scarce resource) as a requirement for sending HTLCs.
+
+We start by overviewing issues with other solutions, and then present a naive, privacy-broken Stake Certificates. Then we examine designing a privacy-preserving version, evaluating them. At the end, we talk about non-trivial design decisions and open questions.
+
+## Issues with other proposals
+
+We find unsatisfying that upfront payment schemes come at a cost of new fees (forward and/or backward), thus inflating payment cost for *any* payment.
+In the future, the upfront base fee might even make &#8220;micropayments&#8221; economically infeasible by exceeding the value they transfer. Thus, a good solution should not inflate payment cost while still requiring &#8220;burning&#8221; a scarce resource (so that the attack is not free).
+
+Another issue with upfront payments is a circular trust dependency. Ideally, we shouldn&#8217;t introduce anything less trust-minimized than the Lightning Network itself.
+Upfront payment schemes are not like that, because they in one way or another rely on the honest behavior of route participants.
+
+We believe Stake Certificates we are going to introduce are satisfactory in both of these directions: they don&#8217;t inflate payment costs for honest users and don&#8217;t require trust. The main disadvantage of Stake Certificates seems to be the novel cryptography required.
+See more details in the &#8220;Evaluation&#8221; section.
+
+## Channel Ownership Proofs as Routing Credit Balance
+
+Let&#8217;s say Alice wants to relay an HTLC to Carol through Bob. Per the Stake Certificates scheme, she has to commit to a particular channel UTXO by embedding an ownership proof in the onion packet while sending an HTLC to Bob.
+
+Bob then unwraps the onion and verifies:
+1) the channel identifier is pointing unambiguously to an on-chain UTXO;
+2) the ownership proof (e.g., a signature) is valid against the previously disclosed UTXO witness script.
+
+If all those checks succeed, Bob should see if Alice hasn&#8217;t exceeded her credit balance. In case she hasn&#8217;t, Bob has to &#8220;decrement Alice&#8217;s credit balance&#8221; and relay the HTLC to Carol.
+Decrementing credit balance unconditionally of packet success or failure bounds liquidity abuse by malicious HTLC senders.
+Since there is no credit assigned initially, &#8220;decrementing the credit balance&#8221; means just remembering that &#8220;Alice spent X out of Y of the credit she received for her Stake Certificates&#8221;.
+
+Unfortunately, this naive protocol is a privacy nightmare, because routing nodes can now easily assign every HTLC they forward to the sender&#8217;s UTXO.
+
+Let&#8217;s first define the terms here one more time, and then proceed to the non-naive, private Stake Certificates.
+
+- Stake Certificate. Either means a solution we&#8217;re proposing or the primitive it is based on, namely proof of UTXO ownership. As we will argue later, it actually makes sense to use proof of LN channel UTXO ownership specifically rather than any funds ownership.
+- Stake Certificate value. An amount of the corresponding UTXO or a ballpark this amount provably &#160;belongs to.
+- Credit balance. When Alice provides a routing node Bob with a Stake Certificate, Bob should increase Alice&#8217;s routing credit balance. Alice is then limited in her payments by this balance, and this rule is enforced by routing nodes to prevent free channel jamming in the network. Note that ideally &#8220;Alice&#8217;s credit balance&#8220; should be virtual and only known to Alice, while routing nodes should only observe per-UTXO credit balance. We currently assume that each routing node keeps track of per-UTXO credit balance separately, see &#8220;Design decisions&#8221; for more details.
+- Stake-to-credit function defines how much credit balance is given per a Stake Certificate of a given value. This function is a policy of a routing node, and it should be announced.
+- Credit-to-value-transferred function defines how much value a sender can transfer along a given channel considering how much credit they might claim. The function may also consider different factors (e.g., the available capacity of a channel being used) to provide extra robustness.
+
+## Privacy-preserving Stake Certificates
+
+The presented scheme could preserve privacy if it relied on zero-knowledge proofs of UTXO ownership by avoiding pointing to a particular UTXO.
+More specifically, the verifier should be able to check that:
+a) The staked UTXO is an element of the current UTXO set
+b) The prover knows the witness script committed by the UTXO witness program
+c) The prover knows a valid witness for the witness script
+d) The staked UTXO was not used to produce a different Stake Certificate which is currently in use as well.
+
+The verifier should also have a way to see a Stake Certificate value to properly account for the credit. This can be achieved by restricting the UTXO set being proved upon to only those UTXOs with a specific range of values: &#8220;I will prove that I own a UTXO among all UTXOs between 0.5 BTC and 1 BTC&#8221;.
+
+Unfortunately, steps (b) and (c) require zero-knowledge protocols for general statements, which are more experimental primitives than most of the stuff we have in Bitcoin protocols,
+although we assume it&#8217;s feasible to consider them for non-consensus stuff.
+
+## Evaluation
+
+Stake Certificates, upfront payment schemes, and other potential solutions (given a particular configuration) may be compared along the following axis:
+1) Economic feasibility
+1a) What is the cost of overcoming the protection for an attacker? Likely a non-linear function: sats_spent =f(channels_to_jam, [&#8230;])
+1b) How does this solution limit honest users?
+2) How sophisticated is this solution in terms of integration and making good UX?
+3) How complex is this solution in terms of protocol design/implementation?
+
+When it comes to (1a), both Stake Certificates and upfront payments are probably equal, in a way that they&#8217;re just best-effort ideas to increase the attack cost. Unfortunately, we currently don&#8217;t know how to design something as economically powerful as PoW in Bitcoin [3].
+This aspect can be properly evaluated by applying these ideas to different hypothetical kinds of LN in a simulation and observing the resulting trade-off between (1a) and (1b) considering different attack strategies.
+
+In the previous sections of this post, we have argued that Stake Certificates may provide a much better (1b) for the cost of (3) because it relies on zero-knowledge.
+When it comes to (2), the design of Stake Certificates may vary in terms of UX burden, from completely automatic to requiring custom actions with private keys from users.
+
+Some of these trade-offs along with other interesting questions are discussed in the following section.
+
+## Design decisions and questions
+
+#### Should the credit spending be gossipped across the entire network, or should only the routing nodes involved in the payment know?
+
+Economically, these two approaches are likely to be equivalent, and it&#8217;s just a matter of stake-to-credit ratio.
+However, announcing credit spending to the network results in a privacy leak. It also imposes bandwidth and CPU overhead on the routing nodes.
+
+#### Which zero-knowledge system should be used for Stake Certificates?
+
+Choosing a ZK system boils down to picking the right trade-offs of proving and verifying time, and assumptions. As we mentioned previously, we would need proving general statements.
+At the same time, we need something cheap in both proving and verification, because Lightning is supposed to be fast.
+At the same time, the setup probably doesn&#8217;t matter, because proofs are supposed to be verified only by one participant, a routing node this proof is generated for.
+Perhaps we can also pick any cryptographic assumptions we want since this stuff is not mission-critical and can be easily updated if someone breaks a cryptographic assumption and we observe an attack.
+
+#### Should we allow holding *any* Bitcoins (not just LN channels) for Stake Certificates?
+
+This idea might make sense if we&#8217;re worried that some LN users might want to send more payments than they can afford per their credit. However, we believe that allowing any UTXO would give an attacker more opportunities to use their cold funds for this attack, or even have a secondary market where holders sell their proofs (they have nothing to loose).
+Instead, we should a) design the credit-to-stake-functions better; b) encourage users send payments across different routing nodes (since credits are not tracked globally) [4].
+
+#### What&#8217;s the best credit-to-value-transferred function?
+
+We reckon that this function should be not just linear to provide maximum security against malicious channel jammers. For example, we can charge more credit for the last 20% of the capacity of the *channel used for routing*. Alternatively, we could discourage making too many payments from the same UTXO within a short period of time by charging more credit in this case.
+
+#### What about the interactivity and lifetime of Stake Certificates?
+
+Interactive proofs mean that they are constructed on demand of a routing node, non-interactive means constructed by a payment sender ahead of time.
+Both interactivity and lifetime have something to do with the ease of producing proof and accessing keys.
+We will omit the details of the trade-off we consider, but it remains an open question.
+
+#### If Stake Certificates are valid for N blocks after proof generation, does it mean that if the UTXO is spent during those N blocks, new proof can be generated from the same coins without invalidating the old proof?
+
+Yes, but an attacker would, first of all, have to pay an on-chain fee for this. If we&#8217;re still worried about this problem, there are workaround ideas.
+For example, we could have epochs of 100 blocks (every epoch starts at #XYZXYZ00 block). If at the start of an epoch, a channel wasn&#8217;t in the UTXO set, it provides very little credit.
+Alternatively, we could expand the zero-knowledge part to proving that the coins were not yet spent.
+
+#### Should spending a UTXO reveal all Stake Certificates generated from it?
+
+This would also solve the problem in the previous question, but it would mean a retrospective privacy leak again. To avoid a privacy leak, we should prevent this.
+
+#### What if malicious Sybil *routing* nodes failing payments causing other honest routing nodes to reduce the credit of an honest payment sender?
+
+Both Stake Certificates and upfront payment schemes suffer from malicious routing nodes failing the payments and &#8220;wasting&#8221; the sender&#8217;s credit or fees. This problem even applies out of the channel jamming context, when considering payment failure rate.
+This problem can be addressed by reducing the reputation of faulty links and routing nodes on the payment sender node. When payment routing becomes a for-profit activity, this would encourage routing nodes to sanitize their links.
+The mitigation can be even stronger by using &#8220;provable blaming&#8221; introduced in [2].
+
+## Conclusion
+
+We propose Stake Certificates, a new solution to channel jamming. Perhaps, it might not be the best near-term solution due to the complexity, but the zero satoshi overhead for honest payments is an appealing argument to switch to it in the future.
+This proposal also illustrates how stake-based protocols can solve Sybil challenges in the Bitcoin ecosystem. Since this might be useful in other contexts (Sybil-resistance of many kinds, proof-of-ownership), discussing Stake Certificates is even more useful.
+The next step is a discussion of Stake Certificates. If the community finds it interesting, then we should discuss the design questions mentioned above, and choose a cryptosystem.
+
+Cheers,
+Gleb Naumenko and Antoine Riard
+
+&#8212;&#8212;&#8212;
+
+References and footnotes:
+1. <A HREF="https://github.com/t-bast/lightning-docs/blob/master/spam-prevention.md">https://github.com/t-bast/lightning-docs/blob/master/spam-prevention.md</A>
+2. <A HREF="../2015-August/000135.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/000135.html</A>
+3. We don&#8217;t actually suggest PoW to solve these issues, because a) the trade-off between honest user cost and attacker cost is misaligned due to specialized hardware and b) smartphones would die too fast if they have to compute PoW; PoW is just an unreachable example of system robustness due to well-aligned game theory.
+4. Secondary markets are still possible even if we restrict acceptable proofs to only LN channels, but supply would be much smaller, and markets would work much worse for an attacker.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201126/618274fa/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201126/618274fa/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002883.html">[Lightning-dev] [c-lightning] v0.9.2 &quot;Now with 0-of-N Multisig&quot;	Released
+</A></li>
+	<LI>Next message: <A HREF="002885.html">[Lightning-dev] Mitigating Channel Jamming with Stake	Certificates
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2884">[ date ]</a>
+              <a href="thread.html#2884">[ thread ]</a>
+              <a href="subject.html#2884">[ subject ]</a>
+              <a href="author.html#2884">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

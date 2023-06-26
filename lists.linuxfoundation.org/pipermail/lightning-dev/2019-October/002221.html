@@ -1,0 +1,243 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Payment%20Point%20Feature%20Family%20%28MultiSig%2C%20DLC%2C%0A%20Escrow%2C%20...%29&In-Reply-To=%3CCAH5Bsr1NyoBOpSf%2B9j7%2BDHh_45%2BYGpwdbW6AKH7wTXj86uDv8g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002222.html">
+   <LINK REL="Next"  HREF="002228.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Payment%20Point%20Feature%20Family%20%28MultiSig%2C%20DLC%2C%0A%20Escrow%2C%20...%29&In-Reply-To=%3CCAH5Bsr1NyoBOpSf%2B9j7%2BDHh_45%2BYGpwdbW6AKH7wTXj86uDv8g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Fri Oct 11 00:41:34 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002222.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+        <LI>Next message: <A HREF="002228.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2221">[ date ]</a>
+              <a href="thread.html#2221">[ thread ]</a>
+              <a href="subject.html#2221">[ subject ]</a>
+              <a href="author.html#2221">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Nadav,
+
+I've thought about similar problems before. Essentially you are trying to
+create an &quot;access structure&quot; on discrete logarithm (the completion of the
+adaptor signature in &quot;pay-to-point&quot;). I think the term for arbitrary
+combinations of AND and ORs and even N-of-M is called a *monotone
+access structure*.
+
+&gt;<i> Essentially the idea is to use the point S + ECDH(B, E) where S is the
+</I>seller's point, B is the buyer's point and E is the escrow's point
+
+I can't see how you can create an access structure like this with ECDH.
+Neither B nor E know the discrete log of ECDH(B,E). I can see that you can
+hash it and use it as a scalar but then you have to make a heavy zkp to
+prove the validity (or interact with the escrow which violates the premise).
+
+Fortunately, I think it is possible to create any monotone access structure
+on a discrete logarithm using *verifiable encryption*.  Applying this to
+the Escrow payment problem, the buyer decides on the payment point B and
+verifiably encrypts the discrete logarithm of B under the Escrow's public
+key E and sends the encryption to the seller. If there's a dispute, the
+seller sends the encryption to the Escrow. If the Escrow resolve the
+dispute in favour of the seller they just decrypt the ciphertext and send
+the discrete log of B to the seller. The seller can now redeem the payment.
+
+If we want to create more complex access structures then we use verifiable
+secret sharing where the discrete log of B is split up into shares and
+distributed according the the desired structure.
+
+So how do we do this verifiable encryption/secret sharing? Well it's not
+really straight forward. In the case of Escrow, Camenisch-Shoup [1]
+verifiable encryption might be attractive since the Escrow can be trusted
+to produce the Paillier modulus properly. Otherwise there's
+Camenisch-Damgaard [2] which is much less efficient but only relies on CDH
+assumption. As far as I know there are no usable implementations of either
+of these schemes but Camenisch-Damgaard is relatively straightforward and I
+think it's practical.
+
+[1] <A HREF="https://www.shoup.net/papers/verenc.pdf">https://www.shoup.net/papers/verenc.pdf</A>
+[2] <A HREF="https://eprint.iacr.org/1999/008">https://eprint.iacr.org/1999/008</A>
+
+LL
+
+On Thu, Oct 10, 2019 at 10:43 AM Nadav Kohen &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">nadav at suredbits.com</A>&gt; wrote:
+
+&gt;<i>  Hi list,
+</I>&gt;<i>
+</I>&gt;<i> I'm back again with another idea about Payment Points and fun things to do
+</I>&gt;<i> with them! Hopefully this time I'm not entirely just hashing out old ideas
+</I>&gt;<i> in public like an out-of-the-loop person :)
+</I>&gt;<i>
+</I>&gt;<i> *TLDR: Adding and ECDH-ing points gives us AND and OR functionality which
+</I>&gt;<i> we can compose to make cool lightning contracts like Multisig, Escrow, and
+</I>&gt;<i> DLCs*
+</I>&gt;<i>
+</I>&gt;<i> So when looking at the following (likely incomplete) list of things you
+</I>&gt;<i> can do with payment points:
+</I>&gt;<i>
+</I>&gt;<i> 1) Payment De-correlation
+</I>&gt;<i> 2) &quot;Stuckless&quot; Payments
+</I>&gt;<i> 3) High AMP
+</I>&gt;<i> 4) Selling Signatures
+</I>&gt;<i> 5) Selling Pedersen De-commitment
+</I>&gt;<i> 6) Escrow Contracts
+</I>&gt;<i>
+</I>&gt;<i> I started of trying to classify what kind of thing these new features are
+</I>&gt;<i> in hopes of coming across new ones. The first three I clumped into a group
+</I>&gt;<i> I called &quot;Payment point addition allows us to do cool things while
+</I>&gt;<i> maintaining the Proof of Payment (PoP) property&quot;. The next two (4 and 5) I
+</I>&gt;<i> called &quot;Commitment applications where point is public&quot;. But ZmnSCPxj's
+</I>&gt;<i> proposal for lightning escrow contracts (
+</I>&gt;<i> <A HREF="../2019-June/002028.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/002028.html</A>)
+</I>&gt;<i> struck me as something different that might somehow be made more general.
+</I>&gt;<i>
+</I>&gt;<i> Essentially the idea is to use the point S + ECDH(B, E) where S is the
+</I>&gt;<i> seller's point, B is the buyer's point and E is the escrow's point. This
+</I>&gt;<i> means that the scalar can be discovered by the seller in collaboration with
+</I>&gt;<i> the buyer or the escrow, that is, S AND (B OR E). I propose that under
+</I>&gt;<i> certain circumstances (such as the parties involved being able to
+</I>&gt;<i> interact), this can be generalized to have payments conditioned on
+</I>&gt;<i> arbitrary AND/OR circuits.
+</I>&gt;<i>
+</I>&gt;<i>  I believe that AND is very straightforward as you simply take two
+</I>&gt;<i> conditions A and B and add them together to get a point that requires both
+</I>&gt;<i> of their scalars are discoverable (except maybe under certain bad
+</I>&gt;<i> circumstances that can be avoided where like B = C - A, this must be
+</I>&gt;<i> guarded against).
+</I>&gt;<i>
+</I>&gt;<i> OR is harder but I think that it can be achieved in the two party case by
+</I>&gt;<i> ECDH and in the n-party case by multi-party key exchanges (which I know
+</I>&gt;<i> pretty much nothing about other than that they exist). Given some key
+</I>&gt;<i> exchange protocol (preferably non-interactive), KE, KE(A_1, ..., A_n)
+</I>&gt;<i> should result in a number known only to those who know any scalar a_1, ...,
+</I>&gt;<i> a_n and no one else. Assuming this exists and we can manage to trustlessly
+</I>&gt;<i> (in some possibly stretched sense of the word) compute shared keys
+</I>&gt;<i> (including such things as KE(A+B, C)), then KE(A, B) acts as A OR B in our
+</I>&gt;<i> payment condition contract.
+</I>&gt;<i>
+</I>&gt;<i> To restate the escrow contract idea in this setting, the payment is
+</I>&gt;<i> conditioned on S + KE(B, E). Important to note is that not all parties must
+</I>&gt;<i> know about the details of the payment itself: the Escrow in this example
+</I>&gt;<i> knows nothing about this payment (other than that some payment exists)
+</I>&gt;<i> unless there is a dispute.
+</I>&gt;<i>
+</I>&gt;<i> Lastly, note that contracts following this scheme look indistinguishable
+</I>&gt;<i> to normal payments on the network, and are fully compatible with High AMPs
+</I>&gt;<i> since we can simply take the payment point specified by our contract and
+</I>&gt;<i> add that point to each partial payment point.
+</I>&gt;<i>
+</I>&gt;<i> Well this is all nice in theory, but is there anything that will actually
+</I>&gt;<i> come out of this thinking? I'll detail the two things I've thought of so
+</I>&gt;<i> far for which I'd love critique! I'd also love to hear if anyone else
+</I>&gt;<i> things of any cool application using this line of thought (or really
+</I>&gt;<i> anything cool with payment points :P).
+</I>&gt;<i>
+</I>&gt;<i> Idea 1: &quot;MultiSignature&quot; Lightning Contracts
+</I>&gt;<i> I mean &quot;MultiSignature&quot; here only in the sense that m-of-n parties must
+</I>&gt;<i> agree to the payment in order for it to happen, no actual signatures are
+</I>&gt;<i> used. A &quot;MultiSignature&quot; contract is simply a bunch of ANDs and ORs! For
+</I>&gt;<i> example a 2-of-3 multisig between parties A, B, and C can be represented as
+</I>&gt;<i> (A AND B) OR (B AND C) OR (C AND A). As such, if some seller has a point S
+</I>&gt;<i> and three parties have points A, B, and C where a certain payment must go
+</I>&gt;<i> through if any two of them think it should, then the payment point used for
+</I>&gt;<i> the payment should be S + KE(A + B, B + C, C + A). We add S to this point
+</I>&gt;<i> so that the scalar, s, can act as proof of payment. And that's it! I
+</I>&gt;<i> haven't thought long enough to come up with any situation where this might
+</I>&gt;<i> be useful but hoping someone who reads this will!
+</I>&gt;<i>
+</I>&gt;<i> Idea 2: DLCs Routed over Lightning
+</I>&gt;<i> Say that some DLC oracle will either broadcast s_A or s_B whose public
+</I>&gt;<i> points are S_A and S_B (which can be computed from public information as
+</I>&gt;<i> per the DLC scheme). Then say that Alice and Bob enter into a contract
+</I>&gt;<i> under which Alice wins some amount if s_A is broadcasted and Bob if s_B is
+</I>&gt;<i> broadcasted. Say Alice has a point A and Bob has a point B. They each send
+</I>&gt;<i> the other a payment with the amount that party must receive if they win
+</I>&gt;<i> with the payment point A + S_A for Bob's payment to Alice and B + S_B for
+</I>&gt;<i> Alice's payment to Bob. And this is it! If s_A is broadcasted then Alice
+</I>&gt;<i> gets paid (and Bob gets proof of payment a, which is the scalar to A),
+</I>&gt;<i> otherwise s_B is broadcasted and Bob gets paid (with Alice receiving b as
+</I>&gt;<i> PoP). An interesting note is that under this scheme neither party is forced
+</I>&gt;<i> to pay extra on-chain fees in the case of a counter-party who doesn't
+</I>&gt;<i> cooperate whilst in the wrong.
+</I>&gt;<i> One wrinkle with this scheme is that setup isn't trustless. Although it is
+</I>&gt;<i> generally true that one party must sign the funding transaction for a DLC
+</I>&gt;<i> before the other party for on-chain DLCs, at least there is the mitigation
+</I>&gt;<i> that when your counter-party goes silent, you can move your input funds
+</I>&gt;<i> invalidating the funding transaction you signed (at a cost because fees).
+</I>&gt;<i> So what can we do here to ensure that both payments are setup at the same
+</I>&gt;<i> time in the case that Alice and Bob don't trust each other?
+</I>&gt;<i> Say that although they don't trust each other, they're both willing to
+</I>&gt;<i> trust some escrow entity who generates some point E for their payment.
+</I>&gt;<i> Alice's payment point to Bob becomes B + S_B + E and Bob's to Alice becomes
+</I>&gt;<i> A + S_A + E. The escrow now waits to hear from Alice and Bob that they have
+</I>&gt;<i> incoming payments setup and only once both of them attest to this (using
+</I>&gt;<i> signatures, for example) does the escrow release the scalar to E to them
+</I>&gt;<i> both. The escrow can also have a timeout at which it will never reveal the
+</I>&gt;<i> scalar to E: forcing both parties to commit to the contract well before the
+</I>&gt;<i> DLC event. In this way, trust has been moved from counter-party to
+</I>&gt;<i> trustworthy (hopefully) escrow in such a way that the Escrow learns nothing
+</I>&gt;<i> about the contract itself (other than that there is one of some kind).
+</I>&gt;<i> I believe that this scheme can be extended to more events through the use
+</I>&gt;<i> of multiple payments being setup (usually in both directions) but this
+</I>&gt;<i> seems complicated and I've rambled for long enough. One last note is that
+</I>&gt;<i> DLC oracles can be composed in the usual way under this scheme (by
+</I>&gt;<i> addition) and potentially even threshold multi-oracles can be supported in
+</I>&gt;<i> this way, although this would require the oracles to attest to some shared
+</I>&gt;<i> key's points with other oracles which isn't necessarily optimal.
+</I>&gt;<i>
+</I>&gt;<i> Best,
+</I>&gt;<i> Nadav
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191011/44faca88/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191011/44faca88/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002222.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+	<LI>Next message: <A HREF="002228.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2221">[ date ]</a>
+              <a href="thread.html#2221">[ thread ]</a>
+              <a href="subject.html#2221">[ subject ]</a>
+              <a href="author.html#2221">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

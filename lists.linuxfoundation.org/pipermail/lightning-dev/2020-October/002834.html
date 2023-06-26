@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3Cssr1ZsFHdAcjOmUQu6_HiDh8oucZsFvc5cZuux8IpnyE0T02GkgvD0KLFIMgUKQUfhxRArPEwz8vCKnWYGXhhcN-doy7lYOp0SwsvzoJOok%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002828.html">
+   <LINK REL="Next"  HREF="002836.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3Cssr1ZsFHdAcjOmUQu6_HiDh8oucZsFvc5cZuux8IpnyE0T02GkgvD0KLFIMgUKQUfhxRArPEwz8vCKnWYGXhhcN-doy7lYOp0SwsvzoJOok%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Oct 13 10:36:36 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002828.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+        <LI>Next message: <A HREF="002836.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2834">[ date ]</a>
+              <a href="thread.html#2834">[ thread ]</a>
+              <a href="subject.html#2834">[ subject ]</a>
+              <a href="author.html#2834">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Joost,
+
+&gt;<i> &gt; &gt; A. Prepayment: node pays an amount to its channel peer (for example via keysend) and the channel peer deducts the hold fees from that prepaid balance until it is at zero. At that point it somehow (in the htlc fail message?) communicates Lightning's version of http 402 to ask for more money.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If the node has already forwarded the HTLC onward, what enforcement hold does the node have on the sender of the incoming HTLC?
+</I>&gt;<i> &gt; Presumably the sender of the HTLC has already gotten what it wanted --- an outgoing HTLC --- so how can the forwarding node enforce this request to get more money.
+</I>&gt;<i>
+</I>&gt;<i> The idea is that the available prepaid hold fee balance is enough to cover the worst case hold fee. Otherwise the forward won't happen. The main difference with option B is that you pay a sum upfront which can be used to cover multiple forwards. And that this payment is a separate Lightning payment, not integrated with the add/fail/settle flow. I prefer option B, but implementation effort is also a consideration.
+</I>
+Okay, so basically, it becomes something like this.
+
+* There exists a network Joost &lt;-&gt; Rusty &lt;-&gt; Rene
+* I connect to Joost.
+* I owe Rene some sats.
+* First, I prepay Joost directly a bunch of sats.
+  * Joost is now willing to forward to Rusty, but Rusty is not yet willing to forward further.
+* I prepay Rusty a bunch of sats.
+  * I effectively &quot;spend&quot; some of the prepaid service that I already paid to Joost in order to pay to Rusty.
+* Finally, using the prepay to Joost and Rusty, I now can route a payment to Rene.
+
+Is that approximately how it works out?
+
+Does it mean that Joost and Rusty have to know the source of the payment route?
+Worse, they have to keep track of prepaid fees from all nodes, not just their direct peers?
+
+If the above is not done (i.e. if I only prepay Joost but not Rusty) then it seems to me that the below remote attack is possible:
+
+* I convince Rene to make a channel to me.
+* I connect to Joost.
+* I prepay to Joost.
+* I forward Me-&gt;Joost-&gt;Rusty-&gt;Rene-&gt;me.
+  * I am exploiting the pre-existing tr\*st that Rusty has to Joost, and the tr\*st that Rene has to Rusty.
+* When the HTLC reaches me, I dicker around and wait until it is about to time out before ultimately failing.
+* Rusty loses tr\*st in Joost, and Rene loses tr\*st in Rusty.
+
+---
+
+Thinking a little more deeply: it is in principle possible to give a financial value to an amount of msat being locked for an amount of time.
+For instance the C-Lightning `getroute` has a `riskfactor` argument which is used in this conversion.
+Basically, by being locked in an HTLC and later failing, then the forwarding node loses the expected return on investment if instead the amount were locked in an HTLC that later succeeds.
+
+Now, the cost on a forwarding node is based on the actual amount of time that its outgoing HTLC is locked.
+
+When we consider multi-hop payments, then we should consider that the initiator of the multi-hop payment is asking multiple nodes to put their funds at risk.
+
+Thus, the initiator of a multi-hop payment should, in principle, prepay for *all* the risk of *all* the hops.
+
+
+If we do not enforce this, then an initiator of a multi-hop payment can pay a small amount relative to the risk that *all* the hops are taking.
+
+
+
+
+Secondarily, we currently assume that forwarding nodes will, upon having their outgoing HTLC claimed, seek to claim the incoming HTLC as quickly as possible.
+This is because the incoming HTLC would be locked and unuseable until they claim their incoming HTLC, and the liquidity would not be usable for earning more fees until the incoming HTLC is claimed and put into its pool of liquidity.
+
+However, if we make anything that is based on the time that a forwarding node claims its incoming HTLC, then this may incentivize the forwarding node to delay claiming the incoming HTLC.
+
+
+
+
+&gt;<i>
+</I>&gt;<i> &gt; &gt; B. Tightly integrated with the htlc add/fail/settle messages. When an htlc is added, the maximum cost (based on maximum lock time) for holding is deducted from the sender's channel balance. When the htlc settles, a refund is given based on the actual lock time. An additional `update_fee`-like message&#160;is added for peers to update&#160;their hold fee parameters (fee_base and fee_rate).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If I am a forwarding node, and I receive the preimage from the outgoing HTLC, can I deliberately defer claiming the incoming HTLC (pretending that the outgoing HTLC was taking longer than it actually took) in order to reduce the amount I have to refund?
+</I>&gt;<i>
+</I>&gt;<i> Yes you can. That is the trust part, your peer trusts you not to do this. If they don't trust you, they won't forward to you if you charge a (high) hold fee.
+</I>
+What happens if I charge a tiny hold feerate in msats/second, but end up locking the funds for a week?
+How does my peer know that even though I charge a tiny hold fee, I will hold their funds hostage for a week?
+
+
+&gt;<i> &gt; &gt; In both cases the sender needs to trust its peer to not steal the payment and/or artificially delay the forwarding to inflate the hold fee. I think that is acceptable given that there is a trust relation between peers already anyway.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I am wary of *adding* trust.
+</I>&gt;<i> &gt; You might trust someone to keep an eye on your snacks while you go refill your drink, but not to keep an eye on your hardware wallet when you do the same.
+</I>&gt;<i> &gt; (Since consuming snacks and drinks and hardware wallets are human activities, this should show that I am in fact a human.)
+</I>&gt;<i>
+</I>&gt;<i> So I am arguing that there is trust already between peers. Quite considerable trust even in case of high on-chain fee conditions. The added risk of being scammed out of these prepay sats may not be significant.
+</I>
+Well, onchain activity is fairly rare in practice, so I am uncertain about the relative size of prepays compared to relative fees of onchain activity.
+I imagine payment forwardings to be much more common than onchain activity, thus the prepays can add up and be significant compared to fees on onchain activity, thus the tr\*st being considered may end up being a good fraction of the current tr\*st.
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002828.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+	<LI>Next message: <A HREF="002836.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2834">[ date ]</a>
+              <a href="thread.html#2834">[ thread ]</a>
+              <a href="subject.html#2834">[ subject ]</a>
+              <a href="author.html#2834">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

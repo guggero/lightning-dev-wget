@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] SURBs as a Solution for Protocol-Level Payment ACKs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20SURBs%20as%20a%20Solution%20for%20Protocol-Level%20Payment%20ACKs&In-Reply-To=%3CCAO3Pvs8y3QbqJpFJvmv1nfcvBB07d-ATr5MxCWPnegNw2Q%3Dy5Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001861.html">
+   <LINK REL="Next"  HREF="001865.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] SURBs as a Solution for Protocol-Level Payment ACKs</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20SURBs%20as%20a%20Solution%20for%20Protocol-Level%20Payment%20ACKs&In-Reply-To=%3CCAO3Pvs8y3QbqJpFJvmv1nfcvBB07d-ATr5MxCWPnegNw2Q%3Dy5Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] SURBs as a Solution for Protocol-Level Payment ACKs">laolu32 at gmail.com
+       </A><BR>
+    <I>Fri Feb  8 01:19:13 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001861.html">[Lightning-dev] Revocations with OP_CSFS &amp; signed sequence	commitments
+</A></li>
+        <LI>Next message: <A HREF="001865.html">[Lightning-dev] SURBs as a Solution for Protocol-Level Payment	ACKs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1862">[ date ]</a>
+              <a href="thread.html#1862">[ thread ]</a>
+              <a href="subject.html#1862">[ subject ]</a>
+              <a href="author.html#1862">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all,
+
+Recently we've started to do more design work related to the Sphinx packet
+(EOB format, rendezvous protocol). This prompted me to re-visit the original
+Sphinx paper to refresh my memory w.r.t some of the finer details of the
+protocol.  While I was re-reading the paper, I realized that we may be able
+to use use SURBs (single-use-reply-blocks) to implement a &quot;payment ACK&quot; for
+each sent HTLC.
+
+(it's worth mentioning that switching to HORNET down the line would solve
+this problem as well since the receiver already gets a multi-use backwards
+route that they can use to send information back to the receiver)
+
+Right now HTLC routing is mainly a game of &quot;send and hope it arrives&quot;, as
+you have no clear indication of the _arrival_ of an HTLC at the destination.
+Instead, you only receive a protocol level message if the HTLC failed for
+w/e reason, or if it was successfully redeemed.  As part of BOLT 1.1, it was
+agreed upon that we should implement some sort of &quot;payment ACK&quot; feature. A
+payment ACK scheme is strongly desired as it:
+
+  * Allows the sender to actually know when a payment has reached the
+    receiver which is useful for many higher level protocols. Atm, the
+    sender is unable to distinguish an HTLC being &quot;black holed&quot; from one
+    that's actually reached the sender, and they're just holding on to it.
+  * AMP implementations would be aided by being able to receive feedback on
+    successfully routed splits. If we're able to have the receiver ACK each
+    partial payment, then implementations can more aggressively split
+    payments as they're able to gain assurance that the first 2 BTC of 5
+    total have actually reached the sender, and weren't black holed.
+  * Enforcing and relying on ACKs may also thwart silly games receivers
+    might play, claiming that the HTLC &quot;didn't actually arrive&quot;.
+
+Some also call this feature a &quot;soft error&quot; as a possible implementation
+might to re-use the existing onion error protocol we've deployed today.  For
+reference, in order to send back errors back long the route in a way that
+doesn't reveal the sender of the HTLC to the receiver (or any of the
+intermediate nodes) we re-use the shared secret each hop has derived, and
+onion wrap a MAC'd error to the sender. Each hop can't actually check that
+they've received a well formed error, but the sender is able to attribute an
+error to a node in the route based on which shared secret they're able to
+check the MAC with.
+
+The original Sphinx packet format has a way for the receiver to send a
+message back to the sender. This was originally envisioned to allow the
+receiver to send a replay email/message back to the sender without knowing
+who they were, and also in a manner that was bit-wise indistinguishable from
+a regular forwarded packet. This is called a SURB or &quot;single use reply
+block&quot;. A SURB is composed of: a pre-crafted sphinx packet for the
+&quot;backwards route&quot; (which can be distinct from the forwards route), the first
+hop of the backwards route, and finally a symmetric key to use when
+encrypting the reply.
+
+When we more or less settled on using Sphinx, we started to remove things
+that we didn't have a clear use for at the time. Two things that were
+removed were the original end-to-end payload, and also the SURB. Removing
+the payload made the packet size smaller, and it didn't seem realistic to
+give _each_ hop a SURB to send reply back.
+
+In order to implement payment ACKs, we can have the sender craft a SURB (for
+the ACK), and mark the receipt of the SURB as the payment ACK itself.
+Creating and processing a SURB is identical to the regular HTLC packets we
+use today. As a result, the code impact to the code sphinx packet logic is
+minimal. We'd then also re-introduce the e2e payload so we can carry the
+SURB in the forward direction (HLTC add). The backwards packet would also
+have a payload of random bytes with the same size as a regular packet to
+make them look identical on the wire.
+
+This payload can further be put to use in order to implement streaming or
+subscription payments in a way. Since we must add a payload for in order to
+send/reply look the same, we can also piggy back some useful additional
+data. Each time a payment is sent, the receiver can use the extra payload to
+stack on details such as:
+  * A new invoice to pay for the metered service being paid for.
+  * An invoice along with a deadline for when this must be paid, lest the
+    subscription service expire.
+  * Details of lightning-native API
+  * etc, etc
+
+IMO, this approach is better than a potential client-server payment
+negotiation protocol as it doesn't require any additional servers along side
+the node, also maintains sender anonymity, and doesn't rely on any sort of
+PKI.
+
+&gt;<i>From the prospective of packet-analysis, errors today are identifiable due
+</I>to the packet size (though we do pad them out to avoid being able to
+distinguish some errors from others on the wide). SURBs on the other hand,
+have the same profile as regular HTLC adds since they use the same Sphinx
+packet format.  Unlike the wrapped onion errors, intermediate nodes are also
+able to validate the integrity of the payment ACK as they'll check the
+per-hop
+MAC as normal. Additionally, the replies naturally create cover traffic as
+they look like regular payments.
+
+One down side is that this would essentially double the size of HTLC
+messages on the network today, as they need to also carry SURB.  Most
+candidates for possible rendezvous schemes to deploy would also increase the
+packet size if up to 20 hops it be allowed in both directions.  We also
+(from my PoV), don't really have a feel on how much of an issue the 1.2KB
+HTLC packet size is today in the network.
+
+By re-introducing SURBs, we have an opportunity to cleanly solve the payment
+ACK issue, re-use a component of our favorite thing in Lightning, enable
+protocol-level streaming/subscription payments and also make replies
+indistinguishable-ish from regular payments.
+
+Thoughts?
+
+-- Laolu
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190207/77cde3d7/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190207/77cde3d7/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001861.html">[Lightning-dev] Revocations with OP_CSFS &amp; signed sequence	commitments
+</A></li>
+	<LI>Next message: <A HREF="001865.html">[Lightning-dev] SURBs as a Solution for Protocol-Level Payment	ACKs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1862">[ date ]</a>
+              <a href="thread.html#1862">[ thread ]</a>
+              <a href="subject.html#1862">[ subject ]</a>
+              <a href="author.html#1862">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

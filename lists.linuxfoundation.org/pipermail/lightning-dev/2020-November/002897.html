@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning Distributed Routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20Distributed%20Routing&In-Reply-To=%3CCAP5RGW5mMq5i1-JeqJ__V0zBjJ7ybvV94z54y2eVFt5eZdDNnA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002896.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning Distributed Routing</H1>
+    <B>Jo&#227;o Valente</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20Distributed%20Routing&In-Reply-To=%3CCAP5RGW5mMq5i1-JeqJ__V0zBjJ7ybvV94z54y2eVFt5eZdDNnA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Lightning Distributed Routing">jvalente96 at gmail.com
+       </A><BR>
+    <I>Mon Nov 30 17:13:20 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002896.html">[Lightning-dev] Lightning Distributed Routing
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2897">[ date ]</a>
+              <a href="thread.html#2897">[ thread ]</a>
+              <a href="subject.html#2897">[ subject ]</a>
+              <a href="author.html#2897">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello Bastien!
+
+Firstly I'd like to thank you for the time you took to read the paper, it's
+been hard to get some quality reviews.
+Your feedback made me think and reach the following conclusions:
+Let's assume node A is sending information to its peer, node B, with the
+goal of attracting more business (increasing the number of payments that
+are routed through it). In LDR this would mean A would want to announce to
+B that it belongs to larger volume routes than the ones it actually does.
+Let's say A and B shared channel state is (A: 1, B: 4).
+A shares a channel with C, state (A: 2, C: 3).
+B also shares a channel with C, state (B: 3, C: 6).
+A could dishonestly share with B knowing a path to C with capacity 4 BTC
+although it only has 2 currently available. By doing this A would
+effectively change B's routing preferences for payments to C, making B's
+routing table go from:
+
+Destination | Next Hop | Capacity
+       C                A                 2
+       C                C                 3
+
+...to:
+
+Destination | Next Hop | Capacity
+       C                A                 4
+       C                C                 3
+
+Meaning B now thinks payments to C with volume in the [3, 4] BTC range can
+only be routed through A and payments to C in the [0, 3] BTC range can be
+routed to A or directly to C. What does this information change and how
+does it affect honest nodes?
+Larger [3, 4] BTC payments are not within the capacity provided by the path
+that goes directly to C and would immediately fail when the payment is made
+in the LN layer using the path that goes through A. This breaks the
+incentive to, at least for payments in this volume range, share the invalid
+information. The cheating nodes would not be putting honest nodes out of
+business nor increasing the number of payments that go through them.
+The problem starts when the cheating node fakes directly competing for
+routes within the capacity range provided by honest nodes and not by them
+([2, 3] BTC range for the example). Although this could not be used to
+collect more fees because payments would eventually fail in the LN layer
+and the fees wouldn't be able to be collected, it could certainly be used
+to &quot;put honest nodes out of work&quot;, stealing routing paths that would
+otherwise belong to them.
+I think the solution lies in the way in which a node chooses the next best
+hop for a certain destination. I started by proposing the following
+(section 3.1.2):
+
+&gt;<i>The &#8221;best next hop&#8221; for a certain payment destination is defined as being
+</I>the hop with the lowest fee from the group of next hops for that
+destination where the maximum volume allowed is bigger than the payment&#8217;s
+volume.
+
+I propose changing it to:
+
+&gt;<i>The &#8221;best next hop&#8221; for a certain payment destination is defined as being
+</I>a random hop taken from the group of next hops for that destination
+where the maximum volume allowed is higher than the payment&#8217;s volume.
+
+Which would diminish the incentive attacking nodes have to share fake
+gossip by not allowing them to set themselves as first in line to be chosen
+as next hop. A maximum fee that a node is willing to pay would also need to
+be set,
+Also, keep in mind that the capacity the maximum path capacity can lie
+about is limited by the capacity of his biggest channel, available in the
+blockchain.
+
+PS: I adapted Figure 5 from your trampoline routing presentation, hope
+that's ok!
+
+Kind regards,
+Jo&#227;o Valente
+
+On Mon, 30 Nov 2020 at 08:36, Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; wrote:
+
+&gt;<i> Hi Joao,
+</I>&gt;<i>
+</I>&gt;<i> Thanks for the time you spent on this, the paper is clear on the
+</I>&gt;<i> trade-offs (sacrificing some privacy for
+</I>&gt;<i> efficiency).
+</I>&gt;<i>
+</I>&gt;<i> My main negative feedback here is that you seem to assume that nodes will
+</I>&gt;<i> honestly cooperate.
+</I>&gt;<i> It feels to me that nodes can cheat and gossip biased or invalid
+</I>&gt;<i> information to their peers in order to
+</I>&gt;<i> attract more payments through their nodes (and collect more fees or put
+</I>&gt;<i> honest routing nodes out of
+</I>&gt;<i> business).
+</I>&gt;<i>
+</I>&gt;<i> Is that something you've thought about?
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Bastien
+</I>&gt;<i>
+</I>&gt;<i> Le dim. 29 nov. 2020 &#224; 00:46, Jo&#227;o Valente &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">jvalente96 at gmail.com</A>&gt; a
+</I>&gt;<i> &#233;crit :
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hey!
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I've been working on this new concept for routing in the lightning
+</I>&gt;&gt;<i> network. It leverages the use of the information nodes have on the
+</I>&gt;&gt;<i> distribution of funds in their channels to try and maximize the probability
+</I>&gt;&gt;<i> of success for a payment.
+</I>&gt;&gt;<i> Each node shares with his neighbours the information it has about the
+</I>&gt;&gt;<i> distribution of funds in its own neighbourhood through the form of a
+</I>&gt;&gt;<i> routing table. As nodes receive new tables they'll be updating their own
+</I>&gt;&gt;<i> locally maintained tables with the new information, periodically sharing
+</I>&gt;&gt;<i> them with their neighbours.
+</I>&gt;&gt;<i> Routing tables associate destination addresses (representing nodes in the
+</I>&gt;&gt;<i> network) to the next hop in the maximum capacity path to these nodes.
+</I>&gt;&gt;<i> If a new payment is to be made a payment probe is forwarded by the payer
+</I>&gt;&gt;<i> and through every node in the path, collects the path information along the
+</I>&gt;&gt;<i> way, and reaches the payee who returns it to the payer. The payer can then
+</I>&gt;&gt;<i> use this knowledge and confidently use the discovered path to route LN
+</I>&gt;&gt;<i> payments through.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I wrote a 10 page paper about the subject and would love to get some
+</I>&gt;&gt;<i> feedback:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> <A HREF="https://drive.google.com/file/d/1dahW0X-N59138ZbY-4odpXjpDnX4Gb7Z/view?usp=sharing">https://drive.google.com/file/d/1dahW0X-N59138ZbY-4odpXjpDnX4Gb7Z/view?usp=sharing</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Cheers,
+</I>&gt;&gt;<i> Jo&#227;o Valente
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201130/39249949/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201130/39249949/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002896.html">[Lightning-dev] Lightning Distributed Routing
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2897">[ date ]</a>
+              <a href="thread.html#2897">[ thread ]</a>
+              <a href="subject.html#2897">[ subject ]</a>
+              <a href="author.html#2897">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

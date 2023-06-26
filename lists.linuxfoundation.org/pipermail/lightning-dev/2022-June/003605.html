@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Why OpenTimestamps does not &quot;linearize&quot; its	transactions
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Why%20OpenTimestamps%20does%20not%20%22linearize%22%20its%0A%09transactions&In-Reply-To=%3CYqhtDoN784GG4Cx8%40petertodd.org%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003638.html">
+   <LINK REL="Next"  HREF="003606.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Why OpenTimestamps does not &quot;linearize&quot; its	transactions</H1>
+    <B>Peter Todd</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Why%20OpenTimestamps%20does%20not%20%22linearize%22%20its%0A%09transactions&In-Reply-To=%3CYqhtDoN784GG4Cx8%40petertodd.org%3E"
+       TITLE="[Lightning-dev] Why OpenTimestamps does not &quot;linearize&quot; its	transactions">pete at petertodd.org
+       </A><BR>
+    <I>Tue Jun 14 11:12:14 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003638.html">[Lightning-dev] LN Summit 2022 Notes &amp; Summary/Commentary
+</A></li>
+        <LI>Next message: <A HREF="003606.html">[Lightning-dev] [bitcoin-dev] Why OpenTimestamps does not	&quot;linearize&quot; its transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3605">[ date ]</a>
+              <a href="thread.html#3605">[ thread ]</a>
+              <a href="subject.html#3605">[ subject ]</a>
+              <a href="author.html#3605">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, May 02, 2022 at 08:59:49AM -0700, Jeremy Rubin wrote:
+&gt;<i> Ok, got it. Won't waste anyone's time on terminology pedantism.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> The model that I proposed above is simply what *any* correct timestamping
+</I>&gt;<i> service must do. If OTS does not follow that model, then I suspect whatever
+</I>&gt;<i> OTS is, is provably incorrect or, in this context, unreliable, even when
+</I>&gt;<i> servers and clients are honest.
+</I>
+Do you think RFC 3628 is &quot;provably incorrect&quot; too? It's just a standard for
+Trusted Time-Stamping Authorities to issue timestamp proofs via digital
+signatures, in the most straight forward manner of signing a message claiming
+that some digest existed as of some time.
+
+As the RFC says in the introduction:
+
+    The TSA's role is to time-stamp a datum to establish evidence indicating that a
+    datum existed before a particular time.  This can then be used, for example, to
+    verify that a digital signature was applied to a message before the
+    corresponding certificate was revoked thus allowing a revoked public key
+    certificate to be used for verifying signatures created prior to the time of
+    revocation.
+
+Simple and straight forward.
+
+The problem here is starts with the fact that you're asking timestamp services
+to do things that they're not claiming they do; a timestamp proof simply proves
+that some message m existed prior to some time t. Nothing more.
+
+Worse though, linearization is a busted approach.
+
+&gt;<i> Unreliable might mean different things to
+</I>&gt;<i> different people, I'm happy to detail the types of unreliability issue that
+</I>&gt;<i> arise if you do not conform to the model I presented above (of which,
+</I>&gt;<i> linearizability is one way to address it, there are others that still
+</I>&gt;<i> implement epoch based recommitting that could be conceptually sound without
+</I>&gt;<i> requiring linearizability).
+</I>&gt;<i> 
+</I>&gt;<i> Do you have any formal proof of what guarantees OTS provides against which
+</I>&gt;<i> threat model? This is likely difficult to produce without a formal model of
+</I>&gt;<i> what OTS is, but perhaps you can give your best shot at producing one and
+</I>&gt;<i> we can carry the conversation on productively from there.
+</I>
+So as you know, an OpenTimestamps proof consists of a series of commitment
+operations that act on an initial message m, leading to a message known to have
+been created at some point in time. Almost always a Bitcoin block header. But
+other schemes like trusted timestamps are possible too.
+
+A commitment operation (namely hashes + concatenation) simply needs the
+property that for a given input message m, the output H(m) can't be predicted
+without knowledge of m. In the case of concatenation, this property is achieved
+trivially by the fact that the output includes m verbatim. Similarly, SHA1 is
+still a valid commitment operation.
+
+Behind the scenes the OTS infrastructure builds merkle trees of commitment
+operations for scalability reasons. But none of those details are relevant to
+the validity of OTS proofs - the OTS infrastructure could magically mine a
+block per transaction with the digest in the coinbase, and from the client's
+point of view, everything would work the same.
+
+
+The important thing to recognize is that timestamp proof is simply a one-sided
+bound on when a given message existed, proving a message existed _prior_ to
+some point in time. For example:
+
+    $ ots verify hello-world.txt.ots
+    Assuming target filename is 'hello-world.txt'
+    Success! Bitcoin block 358391 attests existence as of 2015-05-28 EDT
+
+Obviously, the message &quot;Hello World!&quot; existed prior to 2015 (Indeed, it's such
+a short message it's brute-forcable. But for sake of example, we'll ignore
+that).
+
+Thus your claim re: linearization that:
+
+&gt;<i> Having a chain of transactions would serve to linearize history of
+</I>&gt;<i> OTS commitments which would let you prove, given reorgs, that knowledge of
+</I>&gt;<i> commit A was before B a bit more robustly.
+</I>
+...misunderstands the problem. We care about proving statements about messages.
+Not timestamp proofs. Building infrastructure to order timestamp proofs
+themselves is pointless.
+
+
+What you're alluding to is dual-sided bounds on when messages were created.
+That's solved by random beacons: messages known to have been created *after* a
+point in time, and unpredictable prior. A famous example of course being the
+genesis block quote:
+
+    The Times 03/Jan/2009 Chancellor on brink of second bailout for banks
+
+Bitcoin block hashes make for a perfectly good random beacon for use-cases with
+day to hour level precision. For higher precision, absolute time, there are
+many trusted alternatives like the NIST random beacon, Roughtime, etc.
+
+
+OpenTimestamps could offer a trustless _relative_ random beacon service by
+making the per-second commitments a merkle mountain range, and publishing the
+tip digests. In fact, that's how I came up with merkle mountain ranges in the
+first place, and there's code from 2012 to do exactly that in depths of the git
+repo. But that's such a niche use-case I decided against that approach for now;
+I'll probably resurrect it in the future for trusted timestamps/clock sync.
+
+Again, involving the transactions themselves in any of this random beacon stuff
+is pointless.
+
+-- 
+<A HREF="https://petertodd.org">https://petertodd.org</A> 'peter'[:-1]@petertodd.org
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 488 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220614/569cfb2a/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220614/569cfb2a/attachment.sig</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003638.html">[Lightning-dev] LN Summit 2022 Notes &amp; Summary/Commentary
+</A></li>
+	<LI>Next message: <A HREF="003606.html">[Lightning-dev] [bitcoin-dev] Why OpenTimestamps does not	&quot;linearize&quot; its transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3605">[ date ]</a>
+              <a href="thread.html#3605">[ thread ]</a>
+              <a href="subject.html#3605">[ subject ]</a>
+              <a href="author.html#3605">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

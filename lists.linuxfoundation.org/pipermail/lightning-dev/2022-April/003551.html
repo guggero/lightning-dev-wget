@@ -1,0 +1,99 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3CqBMP7AlKy20OpLYFla4bB5bGr4710ijHxapXix0gcGi32_5eacBBXTO99NbkTSVvXfE5bMQJcYZxsT3ufffAA0sS9ycvBQIzfsDBp5--KJo%3D%40endothermic.dev%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003570.html">
+   <LINK REL="Next"  HREF="003552.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation</H1>
+    <B>Alex Myers</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3CqBMP7AlKy20OpLYFla4bB5bGr4710ijHxapXix0gcGi32_5eacBBXTO99NbkTSVvXfE5bMQJcYZxsT3ufffAA0sS9ycvBQIzfsDBp5--KJo%3D%40endothermic.dev%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation">alex at endothermic.dev
+       </A><BR>
+    <I>Thu Apr 14 21:00:14 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003570.html">[Lightning-dev] [bitcoin-dev] [Pre-BIP] Fee Accounts
+</A></li>
+        <LI>Next message: <A HREF="003552.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3551">[ date ]</a>
+              <a href="thread.html#3551">[ thread ]</a>
+              <a href="subject.html#3551">[ subject ]</a>
+              <a href="author.html#3551">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello lightning developers,
+
+I&#8217;ve been investigating set reconciliation as a means to reduce bandwidth and redundancy of gossip message propagation. This builds on some earlier work from Rusty using the minisketch library [1]. The idea is that each node will build a sketch representing it&#8217;s own gossip set. Alice&#8217;s node will encode and transmit this sketch to Bob&#8217;s node, where it will be merged with his own sketch, and the differences produced. These differences should ideally be exactly the latest missing gossip of both nodes. Due to size constraints, the set differences will necessarily be encoded, but Bob&#8217;s node will be able to identify which gossip Alice is missing, and may then transmit exactly those messages.
+
+This process is relatively straightforward, with the caveat that the sets must otherwise match very closely (each sketch has a maximum capacity for differences.) The difficulty here is that each node and lightning implementation may have its own rules for gossip acceptance and propagation. Depending on their gossip partners, not all gossip may propagate to the entire network.
+
+Core-lightning implements rate limiting for incoming channel updates and node announcements. The default rate limit is 1 per day, with a burst of 4. I analyzed my node&#8217;s gossip over a 14 day period, and found that, of all publicly broadcasting half-channels, 18% of them fell afoul of our spam-limiting rules at least once. [2]
+
+Picking several offending channel ids, and digging further, the majority of these appear to be flapping due to Tor or otherwise intermittent connections. Well connected nodes may be more susceptible to this due to more frequent routing attempts, and failures resulting in a returned channel update (which otherwise might not have been broadcast.)A slight relaxation of the rate limit resolves the majority of these cases.
+
+A smaller subset of channels broadcast frequent channel updates with minor adjustments to htlc_maximum_msat and fee_proportional_millionths parameters. These nodes appear to be power users, with many channels and large balances. I assume this is automated channel management at work.
+
+Core-Lightning has updated rate-limiting in the upcoming release to achieve a higher acceptance of incoming gossip, however, it seems that a broader discussion of rate limits may now be worthwhile. A few immediate ideas:
+
+- A common listing of current default rate limits across lightning network implementations.
+
+- Internal checks of RPC input to limit or warn of network propagation issues if certain rates are exceeded.
+
+- A commonly adopted rate-limit standard.
+
+My aim is a set reconciliation gossip type, which will use a common, simple heuristic to accept or reject a gossip message. (Think one channel update per block, or perhaps one per block_height &lt;&lt; 5.) See my github for my current draft. [3] This solution allows tighter consensus, yet suffers from the same problem as original anti-spam measures &#8211; it remains somewhat arbitrary. I would like to start a conversation regarding gossip propagation, channel_update and node_announcement usage, and perhaps even bandwidth goals for syncing gossip in the future (how about a million channels?) This would aid in the development of gossip set reconciliation, but could also benefit current node connection and routing reliability more generally.
+
+Thanks,
+
+Alex
+
+[1] <A HREF="https://github.com/sipa/minisketch">https://github.com/sipa/minisketch</A>
+
+[2] <A HREF="https://github.com/endothermicdev/lnspammityspam/blob/main/sampleoutput.txt">https://github.com/endothermicdev/lnspammityspam/blob/main/sampleoutput.txt</A>
+
+[3] <A HREF="https://github.com/endothermicdev/lightning-rfc/blob/gossip-minisketch/07-routing-gossip.md#set-reconciliation">https://github.com/endothermicdev/lightning-rfc/blob/gossip-minisketch/07-routing-gossip.md#set-reconciliation</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220414/daf0c088/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220414/daf0c088/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003570.html">[Lightning-dev] [bitcoin-dev] [Pre-BIP] Fee Accounts
+</A></li>
+	<LI>Next message: <A HREF="003552.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3551">[ date ]</a>
+              <a href="thread.html#3551">[ thread ]</a>
+              <a href="subject.html#3551">[ subject ]</a>
+              <a href="author.html#3551">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

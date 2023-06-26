@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3CCAJBJmV8-TgA3fqY1tOR_Vf8SeLA3CKYsSaJF02onfswFGi9mLw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002584.html">
+   <LINK REL="Next"  HREF="002586.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3CCAJBJmV8-TgA3fqY1tOR_Vf8SeLA3CKYsSaJF02onfswFGi9mLw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">joost.jager at gmail.com
+       </A><BR>
+    <I>Mon Mar  9 12:45:24 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002584.html">[Lightning-dev] Refunds without offers
+</A></li>
+        <LI>Next message: <A HREF="002586.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2585">[ date ]</a>
+              <a href="thread.html#2585">[ thread ]</a>
+              <a href="subject.html#2585">[ subject ]</a>
+              <a href="author.html#2585">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Feb 20, 2020 at 4:22 AM Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; wrote:
+
+&gt;<i> On Tue, Feb 18, 2020 at 10:23:29AM +0100, Joost Jager wrote:
+</I>&gt;<i> &gt; A different way of mitigating this is to reverse the direction in which
+</I>&gt;<i> the
+</I>&gt;<i> &gt; bond is paid. So instead of paying to offer an htlc, nodes need to pay to
+</I>&gt;<i> &gt; receive an htlc. This sounds counterintuitive, but for the described
+</I>&gt;<i> jamming
+</I>&gt;<i> &gt; attack there is also an attacker node at the end of the route. The
+</I>&gt;<i> attacker
+</I>&gt;<i> &gt; still pays.
+</I>&gt;<i>
+</I>&gt;<i> I think this makes a lot of sense. I think the way it would end up working
+</I>&gt;<i> is that the further the route extends, the greater the payments are, so:
+</I>&gt;<i>
+</I>&gt;<i>   A -&gt; B   : B sends A 1msat per minute
+</I>&gt;<i>   A -&gt; B -&gt; C : C sends B 2msat per minute, B forwards 1msat/min to A
+</I>&gt;<i>   A -&gt; B -&gt; C -&gt; D : D sends C 3 msat, etc
+</I>&gt;<i>   A -&gt; B -&gt; C -&gt; D -&gt; E : E sends D 4 msat, etc
+</I>&gt;<i>
+</I>&gt;<i> so each node is receiving +1 msat/minute, except for the last one, who's
+</I>&gt;<i> paying n msat/minute, where n is the number of hops to have gotten up to
+</I>&gt;<i> the last one. There's the obvious privacy issue there, with fairly
+</I>&gt;<i> obvious ways to fudge around it, I think.
+</I>&gt;<i>
+</I>
+Yes, that is definitely a good point. Otherwise the attacker can hold the
+htlc at the end of the route and pay the hold fee to its predecessor. The
+hold fee will propagate  back to the first node (and increase along the
+way). The first node is also owned by the attacker. Meaning there again is
+no cost for the attacker to jam the channel.
+
+In the mean time, I've been jamming channels on testnet myself. See what
+pathfinding changes are needed to do it efficiently and check out the
+effect. There was the expected outcome of a channel being jammed for as
+long as I wanted. But I also learned something else:
+
+Traversing a path takes time, especially if the path is optimized for
+maximum length and contains loops. In particular when some of the nodes
+and/or network connections are slow, the total round-trip from the sender
+point of view can get seriously long. Even if the final node immediately
+fails the htlc, the nodes at the start of the path still see their outgoing
+htlcs being held for quite some time.
+
+What this means is that the channel jamming attack can also be executed
+without the attacker controlling the final node. The attacker can construct
+long routes for which it doesn't matter where they end. Suppose it takes 1
+minute for the htlc to be released again on the channel that is targeted
+(the round trip from the targeted channel to the final node). The attacker
+just needs to launch htlcs at a rate higher than one per minute to
+(eventually) saturate the channel. In my experiment, I launched many htlcs
+concurrently, which seemed to make the total latency even longer. Probably
+because those htlcs then start competing for limited resources at the route
+hops.
+
+This variation does require more action from the attacker. They need to
+keep refreshing htlcs that return back to them. Therefore it may be easier
+to address this with some form of rate limiting, although that has its own
+downsides.
+
+Joost
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200309/d26ea327/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200309/d26ea327/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002584.html">[Lightning-dev] Refunds without offers
+</A></li>
+	<LI>Next message: <A HREF="002586.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2585">[ date ]</a>
+              <a href="thread.html#2585">[ thread ]</a>
+              <a href="subject.html#2585">[ subject ]</a>
+              <a href="author.html#2585">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

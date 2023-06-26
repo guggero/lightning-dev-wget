@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CCACdvm3Mshb%2BXmj-B-ytFcj1yS3Qyh84SznAhvQ%3Da5JgY4gJr8Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002851.html">
+   <LINK REL="Next"  HREF="002854.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CCACdvm3Mshb%2BXmj-B-ytFcj1yS3Qyh84SznAhvQ%3Da5JgY4gJr8Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself">bastien at acinq.fr
+       </A><BR>
+    <I>Mon Oct 19 15:38:59 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002851.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+        <LI>Next message: <A HREF="002854.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2852">[ date ]</a>
+              <a href="thread.html#2852">[ thread ]</a>
+              <a href="subject.html#2852">[ subject ]</a>
+              <a href="author.html#2852">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I've started summarizing proposals, attacks and threat models on github [1].
+I'm hoping it will help readers get up-to-speed and avoid falling in the
+same pitfalls we already
+fell into with previous proposals.
+
+I've kept it very high-level for now; we can add nitty-gritty technical
+details as we slowly
+converge towards acceptable solutions. I have probably missed subtleties
+from previous proposals;
+feel free to contribute to correct my mistakes. I have omitted for examples
+the details of Rusty's
+previous proposal since he mentioned a new, better one that will be
+described soon.
+
+While doing this exercise, I couldn't find a reason why the `reverse
+upfront payment` proposal
+would be broken (notice that I described it using a flat amount after a
+grace period, not an amount
+based on the time HTLCs are held). Can someone point me to the most obvious
+attacks on it?
+
+It feels to me that its only issue is that it still allows spamming for
+durations smaller than the
+grace period; my gut feeling is that if we add a smaller forward direction
+upfront payment to
+complement it it could be a working solution.
+
+Pasting it here for completeness:
+
+### Reverse upfront payment
+
+This proposal builds on the previous one, but reverses the flow. Nodes pay
+a fee for *receiving*
+HTLCs instead of *sending* them.
+
+```text
+A -----&gt; B -----&gt; C -----&gt; D
+
+B pays A to receive the HTLC.
+Then C pays B to receive the forwarded HTLC.
+Then D pays C to receive the forwarded HTLC.
+```
+
+There must be a grace period during which no fees are paid; otherwise the
+`uncontrolled spam` attack
+allows the attacker to force all nodes in the route to pay fees while he's
+not paying anything.
+
+The fee cannot be the same at each hop, otherwise it's free for the
+attacker when he is at both
+ends of the payment route.
+
+This fee must increase as the HTLC travels downstream: this ensures that
+nodes that hold HTLCs
+longer are penalized more than nodes that fail them fast, and if a node has
+to hold an HTLC for a
+long time because it's stuck downstream, they will receive more fees than
+what they have to pay.
+
+The grace period cannot be the same at each hop either, otherwise the
+attacker can force Bob to be
+the only one to pay fees. Similarly to how we have `cltv_expiry_delta`,
+nodes must have a
+`grace_period_delta` and the `grace_period` must be bigger upstream than
+downstream.
+
+Drawbacks:
+
+* The attacker can still lock HTLCs for the duration of the `grace_period`
+and repeat the attack
+continuously
+
+Open questions:
+
+* Does the fee need to be based on the time the HTLC is held?
+* What happens when a channel closes and HTLC-timeout has to be redeemed
+on-chain?
+* Can we implement this without exposing the route length to intermediate
+nodes?
+
+Cheers,
+Bastien
+
+[1] <A HREF="https://github.com/t-bast/lightning-docs/blob/master/spam-prevention.md">https://github.com/t-bast/lightning-docs/blob/master/spam-prevention.md</A>
+
+Le dim. 18 oct. 2020 &#224; 09:25, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> &gt; We've looked at all kinds of trustless payment schemes to keep users
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; honest, but it appears that none of them is satisfactory. Maybe it is
+</I>&gt;&gt;<i> even
+</I>&gt;&gt;<i> &gt; theoretically impossible to create a scheme that is trustless and has
+</I>&gt;&gt;<i> all
+</I>&gt;&gt;<i> &gt; the properties that we're looking for. (A proof of that would also be
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; useful information to have.)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I don't think anyone has drawn yet a formal proof of this, but roughly a
+</I>&gt;&gt;<i> routing peer Bob, aiming to prevent resource abuse at HTLC relay is seeking
+</I>&gt;&gt;<i> to answer the following question &quot;Is this payment coming from Alice and
+</I>&gt;&gt;<i> going to Caroll will compensate for my resources consumption ?&quot;. With the
+</I>&gt;&gt;<i> current LN system, the compensation is conditional on payment settlement
+</I>&gt;&gt;<i> success and both Alice and Caroll are distrusted yet discretionary on
+</I>&gt;&gt;<i> failure/success. Thus the underscored question is undecidable for a routing
+</I>&gt;&gt;<i> peer making relay decisions only on packet observation.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> One way to mitigate this, is to introduce statistical observation of
+</I>&gt;&gt;<i> sender/receiver, namely a reputation system. It can be achieved through a
+</I>&gt;&gt;<i> scoring system, web-of-trust, or whatever other solution with the same
+</I>&gt;&gt;<i> properties.
+</I>&gt;&gt;<i> But still it must be underscored that statistical observations are only
+</I>&gt;&gt;<i> probabilistic and don't provide resource consumption security to Bob, the
+</I>&gt;&gt;<i> routing peer, in a deterministic way. A well-scored peer may start to
+</I>&gt;&gt;<i> suddenly misbehave.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In that sense, the efficiency evaluation of a reputation-based solution
+</I>&gt;&gt;<i> to deter DoS must be evaluated based based on the loss of the reputation
+</I>&gt;&gt;<i> bearer related to the potential damage which can be inflicted. It's just
+</I>&gt;&gt;<i> reputation sounds harder to compute accurately than a pure payment-based
+</I>&gt;&gt;<i> DoS protection system.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I can totally see the issues and complexity of a reputation-based system.
+</I>&gt;<i> With 'trustless payment scheme' I meant indeed a trustless pure
+</I>&gt;<i> payment-based DoS protection system and the question whether such a system
+</I>&gt;<i> can be proven to not exist. A sender would pay an up-front amount to cover
+</I>&gt;<i> the maximum cost, but with the guarantee that nodes can only take a fair
+</I>&gt;<i> part of the deposit (based on actual lock time). Perhaps the taproot
+</I>&gt;<i> upgrade offers new possibilities with adaptor signatures to atomically swap
+</I>&gt;<i> part of the up-front payment with htlc-received-in-time-signatures from
+</I>&gt;<i> nodes downstream (random wild idea).
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> &gt; What I can see working is a system where peers charge each other a hold
+</I>&gt;&gt;<i> fee
+</I>&gt;&gt;<i> &gt; for forwarded HTLCs based on the actual lock time (not the maximum lock
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; time) and the htlc value. This is just for the cost of holding and
+</I>&gt;&gt;<i> separate
+</I>&gt;&gt;<i> &gt; from the routing fee that is earned when the payment settles
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Yes I guess any solution will work as long as it enforces an asymmetry
+</I>&gt;&gt;<i> between the liquidity requester and a honest routing peer. This asymmetry
+</I>&gt;&gt;<i> can be defined as guaranteeing that the routing peer's incoming/outgoing
+</I>&gt;&gt;<i> balance is always increasing, independently of payment success. Obviously
+</I>&gt;&gt;<i> this increase should be materialized by a payment, while minding it might
+</I>&gt;&gt;<i> be discounted based on requester reputation (&quot;pay-with-your-reputation&quot;).
+</I>&gt;&gt;<i> This reputation evaluation can be fully delegated to the routing node
+</I>&gt;&gt;<i> policy, without network-wise guidance.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That said, where I'm skeptical on any reputation-heavy system is on the
+</I>&gt;&gt;<i> long-term implications.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Either, due to the wants of a subset of actors deliberately willingly to
+</I>&gt;&gt;<i> trade satoshis against discounted payment flow by buying well-scored
+</I>&gt;&gt;<i> pubkeys, we see the emergence of a reputation market. Thus enabling
+</I>&gt;&gt;<i> reputation to be fungible to satoshis, but with now a weird &quot;reputation&quot;
+</I>&gt;&gt;<i> token to care about.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Or, reputation is too hard to make liquid (e.g hard to disentangle
+</I>&gt;&gt;<i> pubkeys from channel ownership or export your score across routing peers)
+</I>&gt;&gt;<i> and thus you now have reputation scarcity which is introducing a bias from
+</I>&gt;&gt;<i> a &quot;purer&quot; market, where agents are only routing based on advertised fees.
+</I>&gt;&gt;<i> IMO, we should strive for the more liquid Lightning market we can, as it
+</I>&gt;&gt;<i> avoids bias towards past actors and thus may contain centralization
+</I>&gt;&gt;<i> inertia. I'm curious about your opinion on this last point.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I am in favor of more liquidity and less centralization, but as far as I
+</I>&gt;<i> know the reality is that we don't have a good solution yet to achieve this
+</I>&gt;<i> without being vulnerable to DoS attacks. If those attacks would happen on a
+</I>&gt;<i> large scale today, what would we do?
+</I>&gt;<i>
+</I>&gt;<i> Also peers can implement these trusted upfront payments without protocol
+</I>&gt;<i> changes. Just stop forwarding when the prepaid forwarding budget is used up
+</I>&gt;<i> and require a top-up. It may have been implemented already in parts of the
+</I>&gt;<i> network, I don't think there is a way to know. I've experimented a bit with
+</I>&gt;<i> the fee model myself (
+</I>&gt;<i> <A HREF="https://twitter.com/joostjgr/status/1317546071984427009">https://twitter.com/joostjgr/status/1317546071984427009</A>). Node operators
+</I>&gt;<i> don't need to wait for permission.
+</I>&gt;<i>
+</I>&gt;<i> To me it seems that the longer it takes to come up with a good anti-DoS
+</I>&gt;<i> system for Lightning, the further the outside world will have developed
+</I>&gt;<i> their trust-based systems and established that potential bias towards
+</I>&gt;<i> centralization.
+</I>&gt;<i>
+</I>&gt;<i> That might be another reason to prioritize this issue. Not just because we
+</I>&gt;<i> want the network to be safe, but also to be able to implement the preferred
+</I>&gt;<i> solution while the opportunity window is still open.
+</I>&gt;<i>
+</I>&gt;<i> - Joost
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201019/93818bf0/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201019/93818bf0/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002851.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+	<LI>Next message: <A HREF="002854.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2852">[ date ]</a>
+              <a href="thread.html#2852">[ thread ]</a>
+              <a href="subject.html#2852">[ subject ]</a>
+              <a href="author.html#2852">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

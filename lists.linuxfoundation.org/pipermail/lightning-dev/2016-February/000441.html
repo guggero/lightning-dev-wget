@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%20OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3C20160210165049.GC8070%40sapphire.erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000442.html">
+   <LINK REL="Next"  HREF="000443.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%20OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3C20160210165049.GC8070%40sapphire.erisian.com.au%3E"
+       TITLE="[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Feb 10 16:50:49 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000442.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+        <LI>Next message: <A HREF="000443.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#441">[ date ]</a>
+              <a href="thread.html#441">[ thread ]</a>
+              <a href="subject.html#441">[ subject ]</a>
+              <a href="author.html#441">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Feb 09, 2016 at 08:48:59PM +0100, CJP wrote:
+
+Reference:
+ <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000361.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000361.html</A>
+
+&gt;<i> Same situation: Alice and Eve, connected with two channels. Eve performs
+</I>&gt;<i> a payment to herself, routed through these two channels.
+</I>
+Okay, so the channels are:
+
+   Eve &lt;-&gt; Alice
+   Evelyn &lt;-&gt; Alice  (Eve's alias)
+
+with the delay (OP_CSV) parameter for both channels set at the value
+&quot;D&quot;. In addition, Alice's commitments include a fee that she expects will
+result in confirmation in less than a delay of &quot;F&quot;, and she's confident
+that a transaction can be spent so long as its been in the blockchain for
+&quot;N&quot; units of time.
+
+The HTLCs are:
+
+   Eve pays Alice $X on receipt of R, CLTV at time T
+   Alice pays Evelyn $X on receipt of R, CLTV at time T'
+
+Per the mail above, when forwarding the HTLC, Alice calculates T' such that
+
+   T' &lt;= T - D - 2*F - N
+
+and
+
+   T' &gt;= now + D + F
+
+&gt;<i> Now, Eve allows the transaction to succeed on the channel where she
+</I>&gt;<i> receives: Eve sends the R value to Alice, and Alice sends Eve a commit
+</I>&gt;<i> transaction update where the HTLC is removed and Eve receives the funds.
+</I>
+Assuming that all works out, and Evelyn reveals R and collects $X straight
+away, the second HTLC is dealt with, and things are fine so far.
+
+&gt;<i> On the other channel, Alice sends the R value to Eve, but Eve does not
+</I>&gt;<i> send Alice a commit transaction update. In fact, Eve becomes completely
+</I>&gt;<i> unresponsive on this channel.
+</I>
+At this point Alice should start the timer ticking. If she doesn't get
+an ack from Eve prior to T-D-F, she must go to the blockchain. Suppose
+she leaves it to the last minute.
+
+&gt;<i> This forces Alice to broadcast her commit
+</I>&gt;<i> transaction, containing the HTLC. She has to do this *before* the CLTV
+</I>&gt;<i> of the HTLC times out, or otherwise Eve can try to claim the HTLC funds.
+</I>
+So she publishes her commitment transaction at T-D-F. The transaction
+gets mined before &quot;F&quot; time units transpire, so the time is now T-D-x.
+After an additional &quot;D&quot; time units, the time is T-x, at which point Alice
+can spend the transaction, but Eve cannot.
+
+&gt;<i> Now, the question is: which times out first, Alice's CSV or Eve's CLTV?
+</I>&gt;<i> The one that times out first will be the first to be able to claim the
+</I>&gt;<i> funds. This *should* of course be Alice, so Alice's CSV should be the
+</I>&gt;<i> first to time out.
+</I>
+So I think that answers the question.
+
+&gt;<i> Let's assume the HTLC timeout is T0 + 1 day on the channel where Eve
+</I>&gt;<i> receives, T0 + 2 days on the channel where Eve sends. 
+</I>
+In that case, from the above inequalities:
+
+   D + 2*F + N &lt;= 1 day
+
+&gt;<i> Eve wants to delay
+</I>&gt;<i> Alice's commit transaction as long as possible, so she sends the R value
+</I>&gt;<i> just before T0 + 1 day.
+</I>
+That doesn't work: if the forwarded HTLC isn't resolved by T'-D-F she
+has to close the channel on the blockchain to be safe. If her fees are
+high enough, D+F could perhaps be as low as an hour, though, so T0+23
+hours might be reasonable.
+
+&gt;<i> That means Alice's CSV should have a delay *less
+</I>&gt;<i> than* one day. If the CSV delay is set to 0.5 day, that means Alice has
+</I>&gt;<i> a remaining 0.5 day time window in which her node must be up and running
+</I>&gt;<i> and connected to the Bitcoin network, to claim the HTLC funds.
+</I>
+Yes, rearranging the inequality above gives D &lt;= (T-T') - 2*F - N, so
+it has to be quite a bit smaller than the delta between timeouts across
+a given node.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000442.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+	<LI>Next message: <A HREF="000443.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#441">[ date ]</a>
+              <a href="thread.html#441">[ thread ]</a>
+              <a href="subject.html#441">[ subject ]</a>
+              <a href="author.html#441">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

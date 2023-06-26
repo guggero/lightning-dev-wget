@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Split payments within one LN invoice
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Split%20payments%20within%20one%20LN%20invoice&In-Reply-To=%3CCAMMBWos4mt9ThJTPuQLzuHPg4Vk%3DNCtaO1zor32%3DVVO2x5OCUw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003418.html">
+   <LINK REL="Next"  HREF="003423.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Split payments within one LN invoice</H1>
+    <B>Ronan McGovern</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Split%20payments%20within%20one%20LN%20invoice&In-Reply-To=%3CCAMMBWos4mt9ThJTPuQLzuHPg4Vk%3DNCtaO1zor32%3DVVO2x5OCUw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Split payments within one LN invoice">Ronan at trelis.com
+       </A><BR>
+    <I>Fri Dec 17 10:21:53 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003418.html">[Lightning-dev] Split payments within one LN invoice
+</A></li>
+        <LI>Next message: <A HREF="003423.html">[Lightning-dev] Split payments within one LN invoice
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3421">[ date ]</a>
+              <a href="thread.html#3421">[ thread ]</a>
+              <a href="subject.html#3421">[ subject ]</a>
+              <a href="author.html#3421">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+So, are you saying there needs to be a new command &quot;signfakeinvoice&quot; at the
+protocol level?
+
+If that was there, how much work/hours would it be to build the poor man's
+rendez-vous at the application level?
+
+If the above were to be implemented, when the payer pays the invoice, it's
+then automatically split and sent to two (or more) recipients?
+
+Lastly, would it make more sense to have split payments at the protocol
+level?
+
+Thanks, Ronan
+
+On Thu, Dec 16, 2021 at 11:44 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning William,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; Has anyone coded up a 'Poor man's rendez-vous' demo yet? How hard would
+</I>&gt;<i> &gt; it be, could it be done with a clightning plugin perhaps?
+</I>&gt;<i>
+</I>&gt;<i> Probably not *yet*; it needs each intermediate payee (i.e. the one that is
+</I>&gt;<i> not the last one) to sign an invoice for which it does not know the
+</I>&gt;<i> preimage.
+</I>&gt;<i> Maybe call such a command `signfakeinvoice`.
+</I>&gt;<i>
+</I>&gt;<i> However, if a command to do the above is implemented (it would have to
+</I>&gt;<i> generate and sign the invoice, but not insert it into the database at all),
+</I>&gt;<i> then intermediate payees can use `htlc_accepted` hook for the &quot;rendez-vous&quot;.
+</I>&gt;<i>
+</I>&gt;<i> So to generate the invoice:
+</I>&gt;<i>
+</I>&gt;<i> * Arrange the payees in some agreed fixed order.
+</I>&gt;<i> * Last payee generates a normal invoice.
+</I>&gt;<i> * From last payee to second, each one:
+</I>&gt;<i>   * Passes its invoice to the previous payee.
+</I>&gt;<i>   * The previous payee then creates its own signed invoice with
+</I>&gt;<i> `signfakeinvoice` to itself, adding its payout plus a fee budget, as well
+</I>&gt;<i> as adding its own delay budget.
+</I>&gt;<i>   * The previous payee plugin stores the next-payee invoice and the
+</I>&gt;<i> details of its own invoice to db, such as by `datastore` command.
+</I>&gt;<i> * The first payee sends the sender the invoice.
+</I>&gt;<i>
+</I>&gt;<i> On payment:
+</I>&gt;<i>
+</I>&gt;<i> * The sender sends the payment to the first hop.
+</I>&gt;<i> * From first payee to second-to-last:
+</I>&gt;<i>   * Triggers `htlc_accepted` hook, and plugin checks if the incoming
+</I>&gt;<i> payment has a hash that is in this scheme stored in the database.
+</I>&gt;<i>   * The plugin gathers `htlc_accepted` hook invocations until they sum up
+</I>&gt;<i> to the expected amount (this handles multipath between payees).
+</I>&gt;<i>   * The plugin marks that it has gathered all `htlc_accepted` hooks for
+</I>&gt;<i> that hash in durable storage a.k.a. `datastore` (this handles a race
+</I>&gt;<i> condition where the plugin is able to respond to some `htlc_accepted`
+</I>&gt;<i> hooks, but the node is restarted before all of them were able to be
+</I>&gt;<i> recorded by C-Lightning in its own database --- this makes the plugin skip
+</I>&gt;<i> the &quot;gathering&quot; step above, once it has already gathered them all before).
+</I>&gt;<i>   * The plugin checks if there is already an outgoing payment for that
+</I>&gt;<i> hash (this handles the case where our node gets restarted in the meantime
+</I>&gt;<i> --- C-Lightning will reissue `htlc_accepted` on startup)
+</I>&gt;<i>     * If the outgoing payment exists and is pending, wait for it to
+</I>&gt;<i> resolve to either success or failure.
+</I>&gt;<i>     * If the outgoing payment exists and succeeded, resolve all the
+</I>&gt;<i> gathered `htlc_accepted` hooks.
+</I>&gt;<i>     * If the outgoing payment exists and failed, fail all the gathered
+</I>&gt;<i> `htlc_accepted` hooks.
+</I>&gt;<i>     * Otherwise, perform a `pay`, giving `maxfeepercent` and `maxdelay`
+</I>&gt;<i> based on its fee budget and delay budget.
+</I>&gt;<i>       When the `pay` succeeds or fails, propagate it to the gathered
+</I>&gt;<i> `htlc_accepted` hooks.
+</I>&gt;<i> * The last payee just receives a normal payment using the normal
+</I>&gt;<i> invoice-receive scheme.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211217/f105a9e5/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211217/f105a9e5/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003418.html">[Lightning-dev] Split payments within one LN invoice
+</A></li>
+	<LI>Next message: <A HREF="003423.html">[Lightning-dev] Split payments within one LN invoice
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3421">[ date ]</a>
+              <a href="thread.html#3421">[ thread ]</a>
+              <a href="subject.html#3421">[ subject ]</a>
+              <a href="author.html#3421">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

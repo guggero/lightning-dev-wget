@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] OP_CHECKSPVPROOFVERIFY
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20OP_CHECKSPVPROOFVERIFY&In-Reply-To=%3CF3399341-050E-4461-8254-ADC45760FC72%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000085.html">
+   <LINK REL="Next"  HREF="000079.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] OP_CHECKSPVPROOFVERIFY</H1>
+    <B>Eric Lombrozo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20OP_CHECKSPVPROOFVERIFY&In-Reply-To=%3CF3399341-050E-4461-8254-ADC45760FC72%40gmail.com%3E"
+       TITLE="[Lightning-dev] OP_CHECKSPVPROOFVERIFY">elombrozo at gmail.com
+       </A><BR>
+    <I>Thu Jul 30 12:18:42 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000085.html">[Lightning-dev] OP_CHECKSPVPROOFVERIFY
+</A></li>
+        <LI>Next message: <A HREF="000079.html">[Lightning-dev] Stealing money from a hub?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#88">[ date ]</a>
+              <a href="thread.html#88">[ thread ]</a>
+              <a href="subject.html#88">[ subject ]</a>
+              <a href="author.html#88">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Let me elaborate more on the way I see this working in practice. I&#8217;ll ignore fees for now. Given that sending the proof on the blockchain is expensive, the parties need to negotiate how they split the risk. Moreover, once revoked, we want to encourage the second outputs to be claimed using the revocation secret, not the SPV proof&#8230;but we&#8217;ll ignore this detail for now.
+
+We have two parties, Prover and Verifier. Verifier wants to pay Prover one currency unit for an SPV proof. Assume they have an open channel with each party having 10 currency units.
+
+
+Here are the commitment transactions:
+
+Verifier Commitment Transaction
+=========================
+10	ProverSig
+1	ProverSig + VerifierRevocation || ProverSig + SPV proof || VerifierSig + timeout
+9	ProverSig + VerifierRevocation || VerifierSig + timeout
+
+Prover Commitment Transaction
+=========================
+9	VerifierSig
+1	VerifierSig + ProverRevocation || ProverSig + SPV proof || VerifierSig + timeout
+10	VerifierSig + ProverRevocation || ProverSig + timeout
+
+
+A script for [ProverSig + VerifierRevocation || ProverSig + SPV proof || VerifierSig + timeout] could look like:
+
+OP_IF
+	OP_IF
+		OP_HASH160 &lt;VerifierRevocation&gt; OP_EQUALVERIFY
+	OP_ELSE
+		&lt;transaction hash&gt; OP_CHECKSPVPROOFVERIFY OP_DROP
+	OP_ENDIF
+	&lt;ProverPubKey&gt; OP_CHECKSIG
+OP_ELSE
+	&lt;timeout&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+	&lt;VerifierPubKey&gt; OP_CHECKSIG
+OP_ENDIF
+
+
+To redeem this output using the SPV proof, the Prover uses:
+
+&lt;ProverSig&gt; &lt;block hash&gt; &lt;partial merkle tree for transaction&gt; &lt;0&gt; &lt;1&gt;
+
+
+Once the commitment transactions are created, the Prover gives the Verifier the SPV proof, then they negotiate settlement transactions and exchange revocations.
+
+Would something like this work?
+
+&gt;<i> On Jul 29, 2015, at 11:38 PM, Eric Lombrozo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">elombrozo at gmail.com</A>&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;<i> I&#8217;m not entirely clear on how you intended to use OP_CAT.
+</I>&gt;<i> 
+</I>&gt;<i> I was thinking something along the lines of
+</I>&gt;<i> 
+</I>&gt;<i> &lt;block hash&gt; &lt;partial merkle tree for transaction&gt; &lt;transaction&gt; OP_CHECKSPVPROOFVERIFY OP_DROP
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> - Eric
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;&gt;<i> On Jul 29, 2015, at 6:19 PM, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Eric Lombrozo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">elombrozo at gmail.com</A>&gt; writes:
+</I>&gt;&gt;&gt;<i> I don&#8217;t know if anyone has done any research or published anything in
+</I>&gt;&gt;&gt;<i> this regard, but one of the major issues with bitcoin I&#8217;ve been trying
+</I>&gt;&gt;&gt;<i> to solve is how to properly incentivize nodes to construct SPV proofs.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> This can almost be done via P2SH, but not quite:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> 1) OP_CAT is disabled :(
+</I>&gt;&gt;<i> 2) The txlen limit might bite, I'd have to do the maths.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Cheers,
+</I>&gt;&gt;<i> Rusty.
+</I>&gt;<i> 
+</I>
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 842 bytes
+Desc: Message signed with OpenPGP using GPGMail
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150730/e29f03b1/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150730/e29f03b1/attachment.sig</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000085.html">[Lightning-dev] OP_CHECKSPVPROOFVERIFY
+</A></li>
+	<LI>Next message: <A HREF="000079.html">[Lightning-dev] Stealing money from a hub?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#88">[ date ]</a>
+              <a href="thread.html#88">[ thread ]</a>
+              <a href="subject.html#88">[ subject ]</a>
+              <a href="author.html#88">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

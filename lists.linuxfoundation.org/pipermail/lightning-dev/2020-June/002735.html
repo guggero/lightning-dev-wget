@@ -1,0 +1,331 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%20make%0A%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%20fixes&In-Reply-To=%3CCAJ5H3Z62HHfmNevEjYbTgfmCAZ%3D%3DYaF5amO4z585DwQKmdgprw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002734.html">
+   <LINK REL="Next"  HREF="002736.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%20make%0A%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%20fixes&In-Reply-To=%3CCAJ5H3Z62HHfmNevEjYbTgfmCAZ%3D%3DYaF5amO4z585DwQKmdgprw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Wed Jun 17 10:29:42 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002734.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+        <LI>Next message: <A HREF="002736.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2735">[ date ]</a>
+              <a href="thread.html#2735">[ thread ]</a>
+              <a href="subject.html#2735">[ subject ]</a>
+              <a href="author.html#2735">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey everyone and of course good morning ZmnSCPxj (:
+
+about 11 months ago I discovered a potential blackmail attack with HTLCs
+after answering this question on stack exchange (c.f
+<A HREF="https://bitcoin.stackexchange.com/questions/89232/why-is-my-spendable-msat-much-lower-than-msatoshi-to-us/89235#89235">https://bitcoin.stackexchange.com/questions/89232/why-is-my-spendable-msat-much-lower-than-msatoshi-to-us/89235#89235</A>).
+This attack is similar to the one that was possible with tx malleability on
+the funding transaction without the segwit upgrade (c.f.
+<A HREF="https://commons.wikimedia.org/w/index.php?title=File:Introduction_to_the_Lightning_Network_Protocol_and_the_Basics_of_Lightning_Technology_(BOLT_aka_Lightning-rfc">https://commons.wikimedia.org/w/index.php?title=File:Introduction_to_the_Lightning_Network_Protocol_and_the_Basics_of_Lightning_Technology_(BOLT_aka_Lightning-rfc</A>).pdf&amp;page=126).
+Meaning an attacker can force a victim to lose money and use this fact to
+blackmail the victim, to potentially gain / steal some of the lost funds.
+
+TL;DR:
+=====
+* Depending on the circumstances this attack allows an attacker to make
+channel partners lose a substantial amount of BTC without substantial costs
+for the attacker.
+* Depending on the exact circumstances this could be for example ~0.15 BTC.
+In particular it demonstrates why opening a channel is not an entirely
+trustless activity.
+* The attacker will reliably only be able to force the victim to lose this
+amount of Bitcoin.
+* It is not clear how in practice the attacker could gain this amount or
+parts of it as this would involve not only game theory but also rather
+quick communication between attacker and victim and customized Lightning
+nodes which at least for the victim would be unlikely to exist.
+* None of the suggested fixes seems to be satisfying though the current
+solution of lowering the maximum amount of HTLCs that can concurrently be
+in flight seems to be a reasonable start for now.
+
+
+Timeline on Disclosure
+=================
+I have disclosed this attack on Sunday July 21st 2019 to Fabrice Drouin
+(and shortly after to Christian Decker) in a phone call who in turn has
+discussed it with people from the other implementations. From his feedback
+I understood that people working on implementations have been more or less
+aware of the possibility of this attack. Fabrice also mentioned that he
+believed implementations currently try to mitigate this by setting low
+limits of allowed / accepted HTLCs in flight. However at that time this was
+only true for e-clair. It is now also true for c-lightning and as far as I
+know still not true for lnd. Fabrice said that the people he talked to have
+suggested that I should eventually describe the attack in public to raise
+awareness (also from the group of node operators) for the problems related
+to this attack. He also suggested that - if I wanted to - I should update
+the rfc with recommendations  and warnings. While I already have in mind
+how to change the rfc I wanted to start the discussion first. Maybe some
+people find better fixes than just a warning that I have in mind. So far I
+didn't do anything because I wanted to also give lnd the chance to handle
+the problem.
+
+There are two reasons I disclose this attack today:
+1.) I think almost 1 year is enough time to do something about it. The only
+implementation that afaik didn't yet is lnd (see below) but I got roasbeefs
+ok last week to go ahead and publish the attack anyway so that we can have
+a broader discussion on mitigation strategies.
+2.) The attack seems actually very similar to the one described in the
+&quot;Flood &amp; Loot: A Systemic Attack On The Lightning Network&quot; - paper which
+came out 2 days ago (c.f.: <A HREF="https://arxiv.org/abs/2006.08513">https://arxiv.org/abs/2006.08513</A> ). I believe
+any person reading that paper will understand the possibility of the attack
+that I describe anyway so I believe it is now more or less public anyway
+and thus time for an open / public discussion.
+
+The main difference between the two attacks (if I understand this novel
+paper correctly) is: In the &quot;flood and loot&quot;-attack one tries to steal the
+HTLC output of the victims. Where in the &quot;flood and blackmail&quot;-attack that
+I describe I try to to force the victim to lose almost all its funds due to
+high on chain fees (Which I could use to blackmail the victim)
+
+Description of the attack
+===================
+Let us assume the victim has funded a channel with an attacker meaning it
+will have to pay the fees for the commitment transaction in case of a force
+close.
+
+During a fee spike (let us assume fee estimators suggest 150 sat / byte)
+the attacker spams this channel with the maximum possible amount of HTLCs
+that the protocol allows. The HTLCs can be of a small value but need to be
+bigger than the dust limit so that additional outputs are actually added to
+the commitment transaction which makes it quite large in Bytes. According
+to the BOLTs these are 483 additional outputs to the commitment
+transaction.
+The direction of HTLCs are chosen so that the amount is taken from the
+`to_remote` output of the attacker (obviously on the victims side it will
+be the `to_local` output) For the actual attack it does not matter in which
+direction the HTLCs are spammed but economically the direction I propose
+makes even more sense for the attacker and can be achieved with circular
+onions.
+
+The attacked channel partner will happily - according to the protocol - use
+a higher fee than the current fee rate. I quote from BOLT 02 which suggests
+a buffer of a factor of 5
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#updating-fees-update_fee:">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#updating-fees-update_fee:</A>
+
+
+&gt;<i> The node responsible for paying the Bitcoin fee [...] SHOULD send
+</I>update_fee to ensure the current fee rate is sufficient (by a significant
+margin) for timely processing of the commitment transaction. [...] Given
+the variance in fees, and the fact that the transaction may be spent in the
+future, it's a good idea for the fee payer to keep a good margin (say 5x
+the expected fee requirement); but, due to differing methods of fee
+estimation, an exact value is not specified.
+
+This overpayment of fees will result in 750 sat / byte for this fee spike
+scenario. This is by the way not completely unrealistic [I recently opened
+a channel with 2.56 sat / byte (c.f.:
+<A HREF="https://www.smartbit.com.au/tx/c0ac6cfe15e0d0c921362ab9fad998a8a8e16cd8d9d4159487dd69141ea2b9b0">https://www.smartbit.com.au/tx/c0ac6cfe15e0d0c921362ab9fad998a8a8e16cd8d9d4159487dd69141ea2b9b0</A>)
+and the channel was force closed a couple minutes later due to an
+implementation bug resulting in fees of 101.17 sat / byte (c.f.:
+<A HREF="https://www.smartbit.com.au/tx/e32135315ec147bb27f771b2e15c7178ea573afd16cd4970bf814c9b18bc46e3">https://www.smartbit.com.au/tx/e32135315ec147bb27f771b2e15c7178ea573afd16cd4970bf814c9b18bc46e3</A>
+)
+
+As far as I understand the appendix of BOLT 03 offered HTLCs are 43 Byte in
+size (c.f.:
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#appendix-a-expected-weights">https://github.com/lightningnetwork/lightning-rfc/blob/master/03-transactions.md#appendix-a-expected-weights</A>)
+resulting in the following additional fees for the spammed commitment
+transaction:
+
+fee (for 483 htlcs)  = 483 * 43 byte * 750 sat / byte = 15576750 sat =
+0.1557675 BTC
+
+Additionally the victim will also have to swipe all offered HTLCs (which
+will be additional costs but could be done once the fees came down) so we
+neglect them.
+
+Once all HTLCs are set up the attacker will stop signing commitment
+transactions. In the beginning this is not suspicious as the HTLCs will
+take some time to settle anyway. But also when fees go down and the victim
+who funded the channel wants to update the fees the attacker will just not
+be responsive. Eventually the victim will dare to force close the channel
+with all those expensive HTLCs.
+
+Knowing that this will happen and that the victim has to spend those funds
+(publishing old state obviously does not work!) the attacker has a time
+window to blackmail the victim outside of the lightning network protocol:
+&quot;Either you will pay those 0.1557675 BTC of fees or we will collaboratively
+close the channel but that will cost you part of the amount you lost.&quot; Game
+theory suggests that the attacker will be able to claim the major fraction
+of the BTC (c.f. <A HREF="https://en.wikipedia.org/wiki/Ultimatum_game">https://en.wikipedia.org/wiki/Ultimatum_game</A> that are
+frozen in tx fees as the victim effectively already has lost that money and
+can only gain something back.
+
+
+Thoughts
+=======
+You might say that the blackmail part of this attack is unrealistic as the
+blackmailing person will not have enough time to successfully do the
+blackmail as the channel that is not operational will fail.
+
+1.) The only thing that lightning nodes might do is a fee update as the
+htlcs stuffed the channel so I believe there is actually some time to
+contact the victim.
+2.) What if the attacker is a mining pool who is just interested in high
+fees who does not even need to do the blackmailing stuff but will just
+force close the channel once the htlcs are set up?
+3.) The attacker might not even be interested in blackmailing the victim.
+The attacker could just be interested in harming the victim. Though it
+might certainly be a challenge to target a specific victim and trick it
+into opening a channel with an attacker.
+
+Also you might say that an attacker needs many incoming channels to execute
+this attack. This can be achieved by gaming the autopilot. an attacker can
+start by creating many channels making him a highly likely channel partner
+for autopilot users (who will also fund the channel). Such a highly
+connected node might also be interesting for non autopilot users.
+
+Implementations
+============
+
+I looked at the code myself. I hope I do oversee things but to me it looks
+like only eclaire was somehow mitigating this attack from being exploited.
+(by a default config of 30 accepted htlcs which will protect the average
+user and is much lower than the 483) and c-lightning has merged a patch
+from me which I provided after I disclosed the attack:
+
+## clightning:
+
+c-lightning did not by default set a hard cap on htlcs before version 0.7.2
+but then merged my patch
+<A HREF="https://github.com/ElementsProject/lightning/pull/2858">https://github.com/ElementsProject/lightning/pull/2858</A> which tried to
+resemble the eclair defaults
+
+## eclaire:
+
+the max accepted htlc value per channel is set as a constant to 483 which
+follows the recommendation of the BOLTs:
+<A HREF="https://github.com/ACINQ/eclair/blob/e62adf2deae213d2cd0f2a6874227dcfc57880ae/eclair-core/src/main/scala/fr/acinq/eclair/channel/Channel.scala#L52">https://github.com/ACINQ/eclair/blob/e62adf2deae213d2cd0f2a6874227dcfc57880ae/eclair-core/src/main/scala/fr/acinq/eclair/channel/Channel.scala#L52</A>
+
+The value is tested against at:
+<A HREF="https://github.com/ACINQ/eclair/blob/f724efaa76b256048de18f706e9cb58ecbebd6aa/eclair-core/src/main/scala/fr/acinq/eclair/channel/Helpers.scala#L99">https://github.com/ACINQ/eclair/blob/f724efaa76b256048de18f706e9cb58ecbebd6aa/eclair-core/src/main/scala/fr/acinq/eclair/channel/Helpers.scala#L99</A>
+
+and:
+<A HREF="https://github.com/ACINQ/eclair/blob/f724efaa76b256048de18f706e9cb58ecbebd6aa/eclair-core/src/main/scala/fr/acinq/eclair/channel/Helpers.scala#L132">https://github.com/ACINQ/eclair/blob/f724efaa76b256048de18f706e9cb58ecbebd6aa/eclair-core/src/main/scala/fr/acinq/eclair/channel/Helpers.scala#L132</A>
+
+and:
+<A HREF="https://github.com/ACINQ/eclair/blob/93d9369f900766171f2ddf579e8b12e28d8f0d25/eclair-core/src/main/scala/fr/acinq/eclair/channel/Commitments.scala#L154">https://github.com/ACINQ/eclair/blob/93d9369f900766171f2ddf579e8b12e28d8f0d25/eclair-core/src/main/scala/fr/acinq/eclair/channel/Commitments.scala#L154</A>
+
+However the default config file specifies a maximum amount of 30 accepted
+htlcs at:
+<A HREF="https://github.com/ACINQ/eclair/blob/9afb26e09c69dd5d6a14732baf5dcdf2b7a9142b/eclair-core/src/main/resources/reference.conf#L62">https://github.com/ACINQ/eclair/blob/9afb26e09c69dd5d6a14732baf5dcdf2b7a9142b/eclair-core/src/main/resources/reference.conf#L62</A>
+
+
+## lnd
+It seems like lnd did not and last time I checked (maybe I oversaw
+something) does not set a hard cap on htlcs by default. The way how I
+understand the code they allow up to 483 htlcs by default:
+
+The test when adding an htlc if it is beyond the maximum accepted values is
+here:
+<A HREF="https://github.com/lightningnetwork/lnd/blob/970d7604071baae227db42d4665ef9d1b56988e8/lnwallet/channel.go#L3795">https://github.com/lightningnetwork/lnd/blob/970d7604071baae227db42d4665ef9d1b56988e8/lnwallet/channel.go#L3795</A>
+
+the default configuration seems to be here (and in the most recent commit
+the line still exists):
+<A HREF="https://github.com/lightningnetwork/lnd/blob/8b04cfbf12f460853e8c55611cd1bba21b1510ef/input/size.go#L187">https://github.com/lightningnetwork/lnd/blob/8b04cfbf12f460853e8c55611cd1bba21b1510ef/input/size.go#L187</A>
+
+the software will accept up to 483 htlcs according to this line:
+<A HREF="https://github.com/lightningnetwork/lnd/blob/111cbeaa990cba78563d6cc8c19b152e2d3042f6/lnwallet/reservation.go#L314">https://github.com/lightningnetwork/lnd/blob/111cbeaa990cba78563d6cc8c19b152e2d3042f6/lnwallet/reservation.go#L314</A>
+
+I could not find any spec lower than that in the suggested sample config
+at:
+<A HREF="https://github.com/lightningnetwork/lnd/blob/master/sample-lnd.conf">https://github.com/lightningnetwork/lnd/blob/master/sample-lnd.conf</A>
+
+
+Ideas for Fixes
+===========
+
+I am completely unhappy with each of the following ideas. I hope you will
+come up with smarter solutions. I believe the solution is not obvious. Thus
+I thought it makes sense in the brainstorm phase to even post some ideas
+with obvious drawbacks.
+
+1. The current solution is to just not use up the max value of
+htlc's. Eclaire and c-lightning by default only use up to 30 htlcs.
+2. Probably the best fix (not sure if I understand the consequences
+correctly) is coming from this PR to bitcoin core (c.f.
+<A HREF="https://github.com/bitcoin/bitcoin/pull/15681">https://github.com/bitcoin/bitcoin/pull/15681</A> by @TheBlueMatt . If I get it
+correctly with that we could always have low fees and ask the person who
+want to claim their outputs to pay fees. This excludes overpayment and
+could happen at a later stage when fees are not spiked. Still the victim
+who offered the htlcs would have to spend those outputs at some time.
+3. Don't overpay fees in commitment transactions. We can't foresee the
+future anyway
+4. Don't add htlcs for which the on chain fee is higher than the HTLCs
+value (like we do with sub dust amounts and sub satoshi amounts. This would
+at least make the attack expensive as the attacker would have to bind a lot
+of liquidity.
+5. Somehow be able to aggregate htlc's. In a world where we use payment
+points instead of preimages we might be able to do so. It would be really
+cool if separate HTLC's could be combined to 1 single output. I played
+around a little bit but I have not come up with a scheme that is more
+compact in all cases. Thus I just threw in the idea.
+6. Split onchain fees differently (now the attacker would also lose fees by
+conducting this attack) - No I don't want to start yet another fee
+bikeshadding debate. (In particular I believe that a different split of
+fees might make the Flood &amp; Loot attack economically more viable which
+relies on the same principle)
+
+Independently I think we should have a hint in our readme file about where
+and how people can disclose attacks and vulnerabilities. Implementations
+have this but the BOLTs do not.
+
+with kind regards Rene
+
+-- 
+
+<A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+
+Skype: rene.pickhardt
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200617/07158fbc/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200617/07158fbc/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002734.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+	<LI>Next message: <A HREF="002736.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2735">[ date ]</a>
+              <a href="thread.html#2735">[ thread ]</a>
+              <a href="subject.html#2735">[ subject ]</a>
+              <a href="author.html#2735">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

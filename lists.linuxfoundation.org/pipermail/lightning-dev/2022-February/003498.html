@@ -1,0 +1,306 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to	Onion Messages
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Proposal%20for%20Adding%20Bandwidth%20Metered%20Payment%20to%0A%09Onion%20Messages&In-Reply-To=%3CCAO3Pvs-L0AK%2Bf1y%3D4ESKEjUpTDyPOWno9wynBMGGAt_MNo0n7Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003497.html">
+   <LINK REL="Next"  HREF="003499.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to	Onion Messages</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Proposal%20for%20Adding%20Bandwidth%20Metered%20Payment%20to%0A%09Onion%20Messages&In-Reply-To=%3CCAO3Pvs-L0AK%2Bf1y%3D4ESKEjUpTDyPOWno9wynBMGGAt_MNo0n7Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to	Onion Messages">laolu32 at gmail.com
+       </A><BR>
+    <I>Thu Feb 24 01:20:28 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003497.html">[Lightning-dev] Future of Atomic Multi-path Payments (AMP)?
+</A></li>
+        <LI>Next message: <A HREF="003499.html">[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment	to Onion Messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3498">[ date ]</a>
+              <a href="thread.html#3498">[ thread ]</a>
+              <a href="subject.html#3498">[ subject ]</a>
+              <a href="author.html#3498">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all,
+
+(TL;DR: a way to nodes to get paid to forward onion messages by adding an
+upfront session creation phase that uses AMP tender a messaging session to a
+receiver, with nodes being paid upfront for purchase of forwarding
+bandwidth, and a session identifier being transmitted alongside onion
+messages to identify paid sessions)
+
+Onion messaging has been proposed as a way to do things like fetch invoices
+directly from a potential receiver _directly_ over the existing LN. The
+current proposal (packaged under the BOLT 12 umbrella) uses a new message
+(`onion_message`) that inherits the design of the existing Sphinx-based
+onion blob included in htlc_add messages as a way to propagate arbitrary
+messages across the network. Blinded paths which are effectively an unrolled
+Sphinx SURB (single use reply block), are used to support reply messages in
+a more private manner. Compared to SURBs, blinded paths are more flexible as
+they don't lock in things like fees or CLTV values.
+
+A direct outcome of widespread adoption of the proposal is that the scope of
+LN is expanded beyond &quot;just&quot; a decentralized p2p payment system, with the
+protocol evolving to also support pseudonymous messaging and arbitrary data
+transfer across the network. This expanded network (payments + arbitrary
+data transfer) enables use cases like streaming video transfer, network
+tunneled VPNs, large file download, popcorn time, etc -- . Depending on
+one's view, the existence of such a combined protocol/network may either
+elicit feelings of dread (can we really do _both_ payments _and_ data
+properly in the same network?) or excitement (I finally have a censorship
+resistant way to watch unboxing videos of all my favorite gadgets!).
+
+Putting aside the discussion w.r.t if such an expanded network is desirable
+and also if the combined functionality fundamentally _needs_ to exist in the
+confines of a single protocol stack (eg: if LN impls packaged tor clients
+would that be enough?), IMO onion messaging as currently proposed has
+a few issues:
+
+ 1. As there's no explicit session creation/acceptance, a node can be
+ spammed with unsolicited messages with no way to deny unwanted messages nor
+ explicitly allow messages from certain senders.
+
+ 2. Nodes that forward these messages (up to 32 KB per message) receive no
+ compensation for the network bandwidth their expend, effectively shuffling
+ around messages for free.
+
+ 3. Rate limiting isn't concretely addressed, which may result in
+ heterogeneous rate limiting policies enforced around the network, which can
+ degrade the developer/user experience (why are my packets being randomly
+ dropped?).
+
+In this email I propose a way to address the issues mentioned above by
+adding explicit onion messaging session creation as well as a way for nodes
+to be (optionally) paid for any onion messages they forward. In short, an
+explicit session creation phase is introduced, with the receiver being able
+to accept/deny the session. If the session is accepted, then all nodes that
+comprise the session route are compensated for allotting a certain amount of
+bandwidth to the session (which is ephemeral by nature).
+
+# High-Level Overview
+
+Inspired by HORNETs two-phase session creation (first phase makes the
+circuit, send allows data transfers), I propose we break up onion messaging
+session creation into two phases. In the first phase a sender purchases
+_forwarding bandwidth_ from a series of intermediate nodes and also requests
+creation of a messaging session to the receiver in a single _atomic_ step.
+In the second phase, assuming the session creation was successful, the
+sender is able to use the purchased forwarding bandwidth to send messages to
+the receiver. The session stays open until either it expires, or the
+receiver runs out of cumulative forwarding bandwidth and needs to repeat the
+first step.
+
+As we'll see shortly, the created onion messaging sessions aren't tightly
+coupled to the nodes that are a part of the initial session creation.
+Instead session creation creates a sort of overlay network from the PoV of
+the sender that can be used to transmit messages. The same route doesn't
+need to be used by subsequent onion message transmissions as the sending
+node may already have existing bandwidth sessions it can put together to
+send a new/existing message.
+
+One trade-off of the current approach is that a small amount of per-session
+state is added to nodes that want to be paid to forward onion messages. The
+current onion messaging proposal takes care to _not_ introduce any extra
+state to nodes in an onion messaging path: they just decrypt/unblinded and
+forward to the next hop. This proposal as it stands adds just 40-bytes-ish
+of storage overhead per session (which are ephemeral so this state can be
+forgotten over time). In practice, as nodes are being paid to forward, they
+can ensure their pricing (more on that later) properly compensates then for
+this added storage per session.
+
+# AMP + Onion Messaging == Paid Onion Messaging
+
+What follows is a concrete-ish sketch of how something like this can be
+implemented in practice. At a high level, we use AMP to extend a push
+payment to a would be receiver (which can actually just be oneself in
+practice to purchase bandwidth sessions). Nodes add a new TLV to their node
+announcement (alongside a new feature bit that says they only accept
+payment for forwarding) that allows them to express a _new_ fee rate for
+forwarding messages (distinct from normal fees as one pay per byte
+transferred). Using another new TLV within the existing HTLC onion blob, the
+sender transmits a 32-byte session identifier (may be distinct for each
+route) to each intermediate hop. The final hop of the HTLC includes yet
+another new TLV in the onion that specifies that this is an AMP payment
+wishing to establish an onion messaging session that terminates at that
+final hop. In the data transfer phase, the `encrypted_data_tlv` for each hop
+is extended with a new type that stores the session identifier, with nodes
+keeping track of the remaining forwarding bandwidth allotted to the,
+rejecting messages if the session has expired or not bandwidth remains.
+
+## Node Announcement TLV Extension
+
+In order to allow nodes to signal that they want to be paid to forward onion
+messages and also specify their pricing, we add two new TLV to the node_ann
+message:
+
+  * type: 1 (`sats_per_byte`)
+   * data:
+      * [`uint64`:`forwarding_rate`]
+  * type: 2 (`sats_per_block`)
+   * data:
+      * [`uint64`:`per_block_rate`]
+
+
+The `sats_per_byte` field allows nodes to price their bandwidth, ensuring
+that they get paid for each chunk of allocated bandwidth. As sessions have a
+fixed time frame and nodes need to store additional data within that time
+frame, the `sats_per_block` allows nodes to price this cost, as they'll hold
+onto the session identifier information until the specified block height
+(detailed below).
+
+As onion messages will _typically_ be fixed sized we may want to use
+coursers
+metering here instead of bytes, possibly paying for 1.3KB or 32 KB chunks
+instead.
+
+## Onion Messaging Identifiers
+
+With the above nodes are able to express that they're willing to forward
+messages for sats, and how much they charge per byte as well as per block.
+Next we add a new TLV in the _existing_ HTLC onion blob that allows a
+sending node to tender paid onion message session creation. A sketch of this
+type would look something like:
+
+  * type: 14 (`onion_session_id`)
+    * data:
+      * [`32*byte`:`session_id`]
+
+After session creation succeeds, nodes will forward onion messages that
+include that `onion_session_id`. The set of `encrypted_data_tlv` for onion
+messages is extended to also specify a new type that stores the session ID:
+
+  * type: 10 (`onion_session_id`)
+    * data:
+      * [`32*byte`:`session_id`]
+
+When forwarding an onion message that includes an `onion_session_id` (a node
+may only forward messages that contain such an ID), nodes do the necessary
+bookkeeping to tally how much bandwidth if left in this session, and also
+check that the session hasn't expired before forwarding.
+
+## Session Creation
+
+During session creation, the sender creates a series of new
+`onion_session_id`'s (or a single one) for all nodes in the messaging route
+it
+doesn't already have an active session with. To initiate session creation,
+the
+node sends an AMP payment to the receiver (a push payment) that drops off
+the
+proper fee (as specified by the `sats_per_byte` and `sats_per_block` rate)
+to
+each intermediate hop along with the proposed `onion_session_id`. We also
+add
+another TLV (to the base onion blob) that specifies the indented lifetime of
+the session:
+
+  * type: 10 (`onion_session_expiry_height`)
+    * data:
+      * [`uint32`:`expiry_height`]
+
+
+To accept a session, the receiver waits until all payment parts have arrived
+(senders can either purchase bandwidth in bulk sessions, or do little by
+little, tit-for-tat style) and pulls the payment. As the receiver needs to
+receive the message in the first place, they're also compensated in a
+similar manner.
+
+Session creation is rejected (I don't want to receive messages) if the
+receiver chooses to fail back _any_ of the AMP HTLC splits (they don't need
+to wait until they all arrive). If a session is rejected, then nodes forget
+that session ID, and its treated like any other failed HTLC. If a session is
+accepted (the pre-image gets pulled and all nodes get their upfront
+bandwidth payment as fees) then nodes are to remember that session ID as
+they need to account for the remaining bandwidth and lifetime.
+
+## Data Transmission + Forwarding
+
+Once a session has been finalized, the sender can use it to send messages to
+the receiver. To do so, in addition to specifying the `next_node_if` field,
+they also specify the purchased `onion_session_id` in the set of
+`encrypted_data_tlv`. Note that a node may already have active sessions
+across the network, so initial session creation may not be required for each
+new destination they want to send a message to. Over time if they're sending
+frequent messages, they'll create what's effectively a personal overlay
+network that they can use to send messages to any node in that set.
+
+When forwarding onion messages, in addition to the normal
+decryption/unblinding, nodes also check that the session hasn't expired and
+the session also has enough bandwidth left.
+
+# Conclusion
+
+With the above sketch, we gain a way for nodes to be compensated for
+forwarding onion messages on the network. This supplements their existing
+fee revenue, potentially making it more sustainable to run a Lightning node,
+depending on the demand for forwarding bandwidth by
+wallets/services/applications.  Onion messaging is left mostly unchained,
+aside from the addition of some new TLV types and an added storage
+requirement. Clients need to keep track of these session identifiers, which
+adds a small storage requirement that scales according to their number of
+established sessions (decays like the node storage requirement as well).
+
+Examining the BOLT 12 use case of using onion messaging to fetch invoices,
+this scheme adds a cost to sending arbitrary messages which includes invoice
+messages. To address this the receiver can do things like include the
+session ID as part of the blinded paths, and prepay forwarding bandwidth for
+nodes along that path. As the session IDs are in the onion itself, the
+sender doesn't learn of them so they can't use them for their own arbitrary
+purposes.
+
+As AMP payments are used to create initial sessions, forwarding paid
+messages across the network requires a channel to exist between all hops in
+the route, unlike base onion messages that specifies one should allow
+messages to nodes you don't have a channel open with.
+
+There're still some details that need to be filled in here (in particular
+how pathfinding is modified by the initial session creation, but I figure
+it's useful to at least throw this out there to add some more nuance to the
+conversation related to onion messaging and the added DoS potential. If
+nodes are given a way to be paid for forwarding onion messages instead of
+doing it for free, from my PoV it's safe to assume that they'll
+overwhelmingly prefer to be paid (other than nodes that use uniform zero
+fees across all channels I guess).
+
+-- Laolu
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220223/e40bf6f2/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220223/e40bf6f2/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003497.html">[Lightning-dev] Future of Atomic Multi-path Payments (AMP)?
+</A></li>
+	<LI>Next message: <A HREF="003499.html">[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment	to Onion Messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3498">[ date ]</a>
+              <a href="thread.html#3498">[ thread ]</a>
+              <a href="subject.html#3498">[ subject ]</a>
+              <a href="author.html#3498">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

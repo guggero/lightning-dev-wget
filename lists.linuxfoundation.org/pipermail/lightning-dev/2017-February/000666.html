@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Anchor transaction for no expiration channels without segwit
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Anchor%20transaction%20for%20no%20expiration%20channels%0A%20without%20segwit&In-Reply-To=%3CCAE-z3OW71F4W%3DHRAuT1F_GVvbNAEPOfkQ4p1zNJmj2CPd6Q-xA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000665.html">
+   <LINK REL="Next"  HREF="000667.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Anchor transaction for no expiration channels without segwit</H1>
+    <B>Tier Nolan</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Anchor%20transaction%20for%20no%20expiration%20channels%0A%20without%20segwit&In-Reply-To=%3CCAE-z3OW71F4W%3DHRAuT1F_GVvbNAEPOfkQ4p1zNJmj2CPd6Q-xA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Anchor transaction for no expiration channels without segwit">tier.nolan at gmail.com
+       </A><BR>
+    <I>Mon Feb  6 10:14:00 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000665.html">[Lightning-dev] Anchor transaction for no expiration channels	without segwit
+</A></li>
+        <LI>Next message: <A HREF="000667.html">[Lightning-dev] Anchor transaction for no expiration channels	without segwit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#666">[ date ]</a>
+              <a href="thread.html#666">[ thread ]</a>
+              <a href="subject.html#666">[ subject ]</a>
+              <a href="author.html#666">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I created a possible step by step protocol with checks that each step is
+safe.
+
+I think your scheme needs a 2nd timeout, so Bob has a time between Alice
+broadcasting AliceSecret and Alice closing the channel with TX2.
+
+TX1
+
+Input
+1 from Alice
+1 from Bob
+
+Output
+1:  (Alice + Bob + timeout(2T)) OR (Bob + AliceSecret)
+1:  (Bob + timeout(T)) OR (Alice + AliceSecret)
+
+TX2
+
+Input
+TX1:1: signed by (Alice + Bob)
+Output
+Initial channel paying Alice 100%
+
+Process:
+
+Step 1
+
+Alice creates TX1, signs it and sends it to Bob.
+
+If Alice refuses this step, then nothing has happened, so it is a safe
+abort.
+
+Step 2
+
+Bob signs it and sends Alice the tx hash.
+
+Bob could sign and broadcast it.  If he does that, then Alice spends her
+output to get her money back, so it is a safe abort.
+
+If Bob refuses to complete this step, Alice should spend her input to
+prevent Bob broadcasting the TX1 later.  This is also a safe abort.
+
+NOTE:
+*  This is an ongoing check Alice must perform.
+*  If (timeout / 2) passes before all the steps are completed, Alice should
+try to
+**    double spend her input into TX1
+**    spend her output from TX1
+
+Step 3
+
+Alice creates TX2, signs it and sends it to Bob.
+
+If Alice refuses to complete this step, then Bob simply discards TX1.
+Alice can't broadcast it since she does not have a fully signed version of
+TX1.
+
+Step 4
+
+Bob signs TX2 and sends it to Alice.
+
+If Bob refuses to complete this step, the Alice should spend her input or
+her output of TX1 (if Bob has broadcast TX1).  This is a safe abort.
+
+Step 5
+
+Bob broadcasts TX1
+
+If Bob refuses to complete this step, the Alice should spend her input.
+This is a safe abort.
+
+Step 6
+
+Alice should make sure TX1 is included in the chain without mutation.
+
+If it is ok, then Alice does nothing.
+
+If it is mutated, then Alice should spend her output immediately.
+
+If Alice refuses to complete this step, then Bob can reclaim his money
+after the timeout and Alice loses access to her money.  Alice has an
+incentive to complete this step.
+
+Step 7 (mutated TX only)
+
+Bob can spend his output using AliceSecret.
+
+If Bob refuses to complete this step, then he doesn't get his money, but
+Alice is not harmed.
+
+Step 7 (valid setup)
+
+Bob spends his output after the timeout.  Once he has spent his output,
+then the channel is setup.
+
+There is a potential race condition here.
+
+After the timeout has expired, Alice could broadcast 2 transactions
+- TX2 (to close the channel paying Alice 100%)
+- transaction to spend TX1/1 (i.e. Alice + Alice secret)
+
+Bob would be broadcasting his transaction to claim TX1/1 at around the same
+time.
+
+The network might accept Alice's 2 transactions, before Bob has a chance to
+claim TX1/0 (with Bob + AliceSecret).
+
+Adding an extra timeout with the later expiry to TX1/0 means that Alice
+cannot broadcast TX2 until Bob has a chance to claim his output.
+
+
+On Mon, Feb 6, 2017 at 2:25 AM, Nicolas Dorier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">nicolas.dorier at gmail.com</A>&gt;
+wrote:
+
+&gt;<i> Alice opening channel of 1BTC
+</I>&gt;<i>
+</I>&gt;<i> Input:
+</I>&gt;<i> 1 BTC From Alice
+</I>&gt;<i> 1 BTC From Bob
+</I>&gt;<i> Output:
+</I>&gt;<i> 1 BTC Alice+Bob OR Bob+AliceSecret
+</I>&gt;<i> 1 BTC Bob+Timeout OR Alice+AliceSecret (aka the bounty)
+</I>&gt;<i>
+</I>&gt;<i> If bob is unresponsive, Alice can get the bounty.
+</I>&gt;<i> If Alice unresponsive, bob can get the bounty after timeout.
+</I>&gt;<i> If Alice takes the bounty, Bob can take the escrow .
+</I>&gt;<i>
+</I>&gt;<i> If Alice responsive, bob wait for getting the bounty. The use of the
+</I>&gt;<i> channel will start after bob get the bounty back.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170206/ea7b8785/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170206/ea7b8785/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000665.html">[Lightning-dev] Anchor transaction for no expiration channels	without segwit
+</A></li>
+	<LI>Next message: <A HREF="000667.html">[Lightning-dev] Anchor transaction for no expiration channels	without segwit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#666">[ date ]</a>
+              <a href="thread.html#666">[ thread ]</a>
+              <a href="subject.html#666">[ subject ]</a>
+              <a href="author.html#666">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

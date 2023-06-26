@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Highly Available Lightning Channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Highly%20Available%20Lightning%20Channels&In-Reply-To=%3C87zg9htwbn.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003843.html">
+   <LINK REL="Next"  HREF="003845.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Highly Available Lightning Channels</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Highly%20Available%20Lightning%20Channels&In-Reply-To=%3C87zg9htwbn.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Highly Available Lightning Channels">decker.christian at gmail.com
+       </A><BR>
+    <I>Mon Feb 13 15:32:44 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003843.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+        <LI>Next message: <A HREF="003845.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3844">[ date ]</a>
+              <a href="thread.html#3844">[ thread ]</a>
+              <a href="subject.html#3844">[ subject ]</a>
+              <a href="author.html#3844">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matt,
+Hi Joost,
+
+let me chime in here, since we seem to be slowly reinventing all the
+research on reputation systems that is already out there. First of all
+let me say that I am personally not a fan of reputation systems in
+general, just to get my own biases out of the way, now on to the why :-)
+
+Reputation systems are great when they work, but they are horrible to
+get right, and certainly the patchworky approach we see being proposed
+today will end up with a system that is easy to exploit and hard to
+understand. The last time I encountered this kind of scenario was during
+my work on Bittorrent, where the often theorized tit-for-tat approach
+failed spectacularly, and leeching (i.e., not contributing to other
+people's download) is rampant even today (BT only works because a few
+don't care about their upload bandwidth).
+
+First of all let's see what types of reputation system exist (and yes,
+this is my very informal categorization):
+
+ - First hand experience
+ - Inferred experience
+ - Hearsay
+
+The first two are likely the setup we all are comfortable with: we ourselves
+experienced something, and make some decisions based on that
+experience. This is probably what we're all doing at the moment: we
+attempt a payment, it fails, we back off for a bit from that channel
+being used again. This requires either being able to witness the issue
+directly (local peer) or infer from unforgeable error messages (the
+failing node returns an error, and it can't point the finger at someone
+else). Notice that this also includes some transitive constructions,
+such as the backpressure mechanism we were discussing for ariard's
+credentials proposal.
+
+Ideally we'd only rely on the first two to make decisions, but here's
+exactly the issue we ran into with Bittorrent: repeat interactions are
+too rare. In addition, our local knowledge gets out of date the longer
+we wait, and a previously failing channel may now be good again, and
+vice-versa. For us to have sufficient knowledge to make good decisions
+we need to repeatedly interact with the same nodes in the network, and
+since end-users will be very unlikely to do that, we might end up in a
+situation were we instinctively fall back to the hearsay method, either
+by sharing our local reputation with peers and then somehow combine that
+with our own view. To the best of my knowledge such a system has never
+been built successfully, and all attempts have ended in a system that
+was either way too simple or is gameable by rational players.
+
+I also object to the wording of penalizing nodes that haven't been as
+reliable in the past. It's not penalizing them if, based on our local
+information, we decide to route over other nodes for a bit. Our goal is
+optimize the payment process, chosing the best possible routes, not
+making a judgement on the honesty or reliability of a node. When talking
+about penalizing we see node operators starting to play stupid games to
+avoid that perceived penalty, when in reality they should do their best
+to route as many payments successfully as possible (the negative fees
+for direct peers &quot;exhausting&quot; a balanced flow is one such example of
+premature optimization in that direction imho).
+
+So I guess what I'm saying is that we need to get away from this
+patchwork mode of building the protocol, and have a much clearer model
+for a) what we want to achieve, b) how much untrustworthy information we
+want to rely on, and c) how we protect (and possibly prove security)
+against manipulation by rational players. For the last question we at
+least have one nice feature (for now), namely that the identities are
+semi-permanent, and so white-washing attacks at least are not free.
+
+And after all this rambling, let's get back to the topic at hand: I
+don't think enshrining the differences of availability in the protocol,
+thus creating two classes of nodes, is a desirable
+feature. Communicating up-front that I intend to be reliable does
+nothing, and penalizing after the fact isn't worth much due to the
+repeat interactions issue. It'd be even worse if now we had to rely on a
+third party to aggregate and track the reliability, in order to get
+enough repeat interactions to build a good model of their liquidity,
+since we're now back in the hearsay world, and the third party can feed
+us wrong information to maximize their profits.
+
+Regards,
+Christian
+
+
+Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+&gt;<i> Hi Joost,
+</I>&gt;<i>
+</I>&gt;<i> I&#8217;m not sure I agree that lightning is &#8220;capital efficient&#8221; (or even close to it), but more generally I don&#8217;t see why this needs a signal.
+</I>&gt;<i>
+</I>&gt;<i> If nodes start aggressively preferring routes through nodes that reliably route payments (which I believe lnd already does, in effect, to some large extent), they should do so by measurement, not signaling.
+</I>&gt;<i>
+</I>&gt;<i> In practice, many channels on the network are &#8220;high availability&#8221; today, but only in one direction (I.e. they aren&#8217;t regularly spliced/rebalanced and are regularly unbalanced). A node strongly preferring a high payment success rate *should* prefer such a channel, but in your scheme would not.
+</I>&gt;<i>
+</I>&gt;<i> This ignores the myriad of &#8220;at what threshold do you signal HA&#8221; issues, which likely make such a signal DOA, anyway.
+</I>&gt;<i>
+</I>&gt;<i> Finally, I&#8217;m very dismayed at this direction in thinking on how ln should work - nodes should be measuring the network and routing over paths that it thinks are reliable for what it wants, *robustly over an unreliable network*. We should absolutely not be expecting the lightning network to be built out of high reliability nodes, that creates strong centralization pressure. To truly meet a &#8220;high availability&#8221; threshold, realistically, you&#8217;d need to be able to JIT 0conf splice-in, which would drive lightning to actually being a credit network.
+</I>&gt;<i>
+</I>&gt;<i> With reasonable volume, lightning today is very reliable and relatively fast, with few retries required. I don&#8217;t think we need to change anything to fix it. :)
+</I>&gt;<i>
+</I>&gt;<i> Matt
+</I>&gt;<i>
+</I>&gt;&gt;<i> On Feb 13, 2023, at 06:46, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; wrote:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> &#65279;
+</I>&gt;&gt;<i> Hi,
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> For a long time I've held the expectation that eventually payers on the lightning network will become very strict about node performance. That they will require a routing node to operate flawlessly or else apply a hefty penalty such as completely avoiding the node for an extended period of time - multiple weeks. The consequence of this is that routing nodes would need to manage their liquidity meticulously because every failure potentially has a large impact on future routing revenue.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> I think movement in this direction is important to guarantee competitiveness with centralised payment systems and their (at least theoretical) ability to process a payment in the blink of an eye. A lightning wallet trying multiple paths to find one that works doesn't help with this.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> A common argument against strict penalisation is that it would lead to less efficient use of capital. Routing nodes would need to maintain pools of liquidity to guarantee successes all the time. My opinion on this is that lightning is already enormously capital efficient at scale and that it is worth sacrificing a slight part of that efficiency to also achieve the lowest possible latency.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> This brings me to the actual subject of this post. Assuming strict penalisation is good, it may still not be ideal to flip the switch from one day to the other. Routing nodes may not offer the required level of service yet, causing senders to end up with no nodes to choose from.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> One option is to gradually increase the strength of the penalties, so that routing nodes are given time to adapt to the new standards. This does require everyone to move along and leaves no space for cheap routing nodes with less leeway in terms of liquidity.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Therefore I am proposing another way to go about it: extend the `channel_update` field `channel_flags` with a new bit that the sender can use to signal `highly_available`. 
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> It's then up to payers to decide how to interpret this flag. One way could be to prefer `highly_available` channels during pathfinding. But if the routing node then returns a failure, a much stronger than normal penalty will be applied. For routing nodes this creates an opportunity to attract more traffic by marking some channels as `highly_available`, but it also comes with the responsibility to deliver.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Without shadow channels, it is impossible to guarantee liquidity up to the channel capacity. It might make sense for senders to only assume high availability for amounts up to `htlc_maximum_msat`.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> A variation on this scheme that requires no extension of `channel_update` is to signal availability implicitly through routing fees. So the more expensive a channel is, the stronger the penalty that is applied on failure will be. It seems less ideal though, because it could disincentivize cheap but reliable channels on high traffic links.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> The effort required to implement some form of a `highly_available` flag seem limited and it may help to get payment success rates up. Interested to hear your thoughts.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Joost
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003843.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+	<LI>Next message: <A HREF="003845.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3844">[ date ]</a>
+              <a href="thread.html#3844">[ thread ]</a>
+              <a href="subject.html#3844">[ subject ]</a>
+              <a href="author.html#3844">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

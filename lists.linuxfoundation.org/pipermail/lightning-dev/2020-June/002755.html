@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%20make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%0A%20fixes&In-Reply-To=%3C20200622141920.5xks3347ybca4xro%40ganymede%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002750.html">
+   <LINK REL="Next"  HREF="002739.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes</H1>
+    <B>David A. Harding</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%20make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%20and%20potential%0A%20fixes&In-Reply-To=%3C20200622141920.5xks3347ybca4xro%40ganymede%3E"
+       TITLE="[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes">dave at dtrt.org
+       </A><BR>
+    <I>Mon Jun 22 14:19:20 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002750.html">[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+</A></li>
+        <LI>Next message: <A HREF="002739.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2755">[ date ]</a>
+              <a href="thread.html#2755">[ thread ]</a>
+              <a href="subject.html#2755">[ subject ]</a>
+              <a href="author.html#2755">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Jun 21, 2020 at 06:09:28PM -0700, Olaoluwa Osuntokun wrote:
+&gt;<i> IMO this is mostly mitigated by anchor commitments.  The impact of this
+</I>&gt;<i> attack is predicated on the &quot;victim&quot; paying 5x on-chain fees (for their
+</I>&gt;<i> confirmation target) to sweep all their HTLCs.  
+</I>
+I think the attack is more clearly stated in absolute terms.  An
+attacker can force a victim to pay for 483 P2WSH outputs (each 43
+vbytes), or a total of about 20,000 vbytes (plus regular overhead).
+
+    20769 = 43 * 483
+
+During the post-halving feerate spike just a few weeks ago, paying 100
+base units (&quot;satoshis&quot;) per vbyte was plausible to ensure the commitment
+transaction confirmed quickly.  At $9,500 USD/BTC, that's almost $200
+USD.
+
+    197.3055 = 20769 * 100 / 1e8 * 9500
+
+With a 5x multiplier, that's horrible, but even with no multiplier, it's
+not good.  Moreover, a patient attacker can wait for a fee spike and
+then attack multiple channels at once so that they compete against each
+other for block space, potentially raising feerates even higher.
+
+&gt;<i> In addition to being able to pay much lower fees (&quot;just enough&quot; to get into
+</I>&gt;<i> the chain), anchor commitments allow second-level HTLC _aggregation_, This
+</I>&gt;<i> means that for HTLCs with the same expiry height, a peer is able to _batch_
+</I>&gt;<i> them all into a single transaction, further saving on fees.
+</I>
+(I was initially confused by this, so for anyone else confused by this,
+the batching being described here is sort of the inverse of normal
+payment batching.  Normally when you batch together multiple payments,
+you use one input to pay more outputs than you would with separate
+transactions.  Here, you still need to use the same number of inputs you
+would to resolve HTLCs in separate ransactions (because each HTLC is a
+separate UTXO), but you pay a single output.  This works and is indeed a
+nice optimization.)
+
+&gt;<i> Alternatively, they could use something like Lightning Loop to gain the
+</I>&gt;<i> _outbound_ bandwidth (Loop In) 
+</I>
+I don't think the attacker needs outbound bandwidth.  As implied in
+Ren&#233;'s post (&quot;achieved with circular onions&quot;), if the attacker is
+Mallory and the victim is Bob, there just needs to be a circuit like:
+
+    Mallory &#8594; Alice &#8594; Bob &#8594; Mallory
+
+Mallory can always settle with Alice offchain after Bob's timeout,
+preventing Mallory from losing any money in the attack or from having to
+pay for liquidity.  IIUC, Mallory's only cost would be paying for LN
+routing fees and the time value of locking up her money until the
+settlement.
+
+&gt;<i> No, the attacker is the one that needs to sweep these HTLCs, since they
+</I>&gt;<i> offered them. This adds to their costs.
+</I>
+As described above, the attacker doesn't need to offer the HTLCs, they
+can simply route a payment through any of the victim's other channels.
+
+If the attacker does that, then the victim needs to pay onchain fees to
+recover any remaining value in those HTLCs, potentially making this
+attack two or three times more costly for the victim.
+
+&gt;<i> &gt; 1. The current solution is to just not use up the max value of htlc's.
+</I>&gt;<i> &gt; Eclaire and c-lightning by default only use up to 30 htlcs.
+</I>&gt;<i> 
+</I>&gt;<i> IMO, this isn't a solution. Lowering the max number of HTLCs in-flight just
+</I>&gt;<i> makes it easier (lowers the capital costs) to jam a channel. 
+</I>
+It looks to me like an easy and effective solution to turn a ~$200
+downside into a ~$20 downside (at 100 base units/vbyte).  It's certainly
+has other downsides too, but I'm personally more concerned about losing
+money than I am about having my channel jammed (and if jamming at 483
+HTLCs is an issue, then hopefully the mitigation for that (e.g. upfront
+fees) will make jamming at HTLCs a non-issue as well).
+
+-Dave
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 833 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200622/77824e91/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200622/77824e91/attachment.sig</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002750.html">[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+</A></li>
+	<LI>Next message: <A HREF="002739.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2755">[ date ]</a>
+              <a href="thread.html#2755">[ thread ]</a>
+              <a href="subject.html#2755">[ subject ]</a>
+              <a href="author.html#2755">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

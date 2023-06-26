@@ -1,0 +1,296 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Blinded channel observation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3C877fbeefoq.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000588.html">
+   <LINK REL="Next"  HREF="000596.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Blinded channel observation</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blinded%20channel%20observation&In-Reply-To=%3C877fbeefoq.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Blinded channel observation">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu Aug 18 06:47:49 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000588.html">[Lightning-dev] Blinded channel observation
+</A></li>
+        <LI>Next message: <A HREF="000596.html">[Lightning-dev] c-lightning 0.4: Wright's Cryptographic Proof	(https://git.io/v6Pzv)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#593">[ date ]</a>
+              <a href="thread.html#593">[ thread ]</a>
+              <a href="subject.html#593">[ subject ]</a>
+              <a href="author.html#593">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Tadge Dryja &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">tadge at lightning.network</A>&gt; writes:
+&gt;<i> There's two approaches with encrypted vs non-encrypted: the non-encrypted
+</I>&gt;<i> design which I kindof like, is to make all the information given to the
+</I>&gt;<i> observer not mean anything on its own.  With encrypted, you achieve the
+</I>&gt;<i> same result, but have some decryption key stuffed somewhere in the observed
+</I>&gt;<i> transaction to reveal meaningful data which identifies the channel, but is
+</I>&gt;<i> encrypted.
+</I>&gt;<i>
+</I>&gt;<i> Non-encrypted can be more efficient, because it's hard to squeeze down
+</I>&gt;<i> compact encrypted data (though see below for an attempt!).  But most things
+</I>&gt;<i> in the channel states can be obfuscated such that even if you tell
+</I>&gt;<i> everything to the observer, they don't learn anything.  (Even in the case
+</I>&gt;<i> where the observer is watching both sides of the channel, they shouldn't be
+</I>&gt;<i> able to match them... well other than timing, which is admittedly a very
+</I>&gt;<i> effective way to do it!)
+</I>&gt;<i>
+</I>&gt;<i> I skipped over HTLCs though because they didn't fit with this model.  And
+</I>&gt;<i> they really don't -- unlike the updating pubkeys in the commit tx, HTLC's
+</I>&gt;<i> are passed though multiple nodes, so information about them can get to the
+</I>&gt;<i> observer pretty easily.  So I think HTLCs would need to be in some kind of
+</I>&gt;<i> encrypted blob to send to the observer.
+</I>
+Yeah, I think that makes the non-encrypted idea a non-starter; we need
+to steal those HTLCs without introducing nasty restrictions.
+
+&gt;<i> I really like txid[0:16] as the truncated txid for the observer and
+</I>&gt;<i> txid[16:32] as the decryption key because it's simple and quite fast.  This
+</I>&gt;<i> would allow constant-time lookups into the observer's database regarless of
+</I>&gt;<i> how many channels it's watching, which HMAC'ing the txid doesn't have.
+</I>&gt;<i>  (You could hash txid[16:32] again for the decryption key if you want 32
+</I>&gt;<i> bytes.)
+</I>
+Yeah; I'd just hash the whole txid again though.  I mean, why not?
+
+&gt;<i> The non-HTLC data can be sent unencrypted -- it's pretty much just a
+</I>&gt;<i> signature and hash from the tree.  If there is a new HTLC (or a few) added
+</I>&gt;<i> in that state, the node can elect to send that to the observer as well.  I
+</I>&gt;<i> think the format can be something like:
+</I>
+You can't send hash in the clear unless you're using variable keys in
+commit txs (since that hash is what makes the previous txids
+unguessable).  But that's OK, encrypting it doesn't hurt us AFAICT.
+
+&gt;<i> htlc #1 expiry (4 bytes)
+</I>&gt;<i> htlc #1 preimage (20 bytes)
+</I>&gt;<i> htlc #2 expiry (4 bytes)
+</I>&gt;<i> htlc #2 preimage (20 bytes)
+</I>&gt;<i> offset to previous blob (2 bytes)
+</I>&gt;<i> decrypt key for previous blob (16 bytes)
+</I>&gt;<i>
+</I>&gt;<i> having pointers to previous states can save a lot of space if HTLCs are
+</I>&gt;<i> added incrementally.  The &quot;blobs&quot; can be kept in a separate data store
+</I>&gt;<i> indexed by state number, so it's quick to see that, e.g, state 471 also has
+</I>&gt;<i> an HTLC from state 465, which has HTLCs from state 442.  This chained
+</I>&gt;<i> decryption may end up revealing more HTLCs than are needed (which are quick
+</I>&gt;<i> for the observer to detect and discard) but if the fraud has occurred then
+</I>&gt;<i> anonymity is gone anyway and it's no big deal if the observer learns a
+</I>&gt;<i> little more -- they already learned all the important stuff.
+</I>
+Hmm, this is more sophisticated that my suggestion, by allowing
+reference to *any* prev blob.
+
+Would that win much though?  If HTLCs have been added then removed, it's
+possible, but I'm not sure how much it saves.
+
+eg.
+                HTLCs
+Commit tx:
+1               1
+2               1       2
+3                       2 
+4                       2       3       4       5
+5                                               5
+6                                                       6       7
+7                                                       6               8
+8                                                       6
+
+Using a heuristic says &quot;don't ever leak more than &lt;current-htlcs&gt;
+unnessary HTLCs&quot; gives:
+
+#1: HTLC1
+#2: (references #1) HTLC2
+#3: (references #2)
+#4: HTLC2 HTLC3 HTLC4 HTLC5
+#5: HTLC5
+#6: HTLC6 HTLC7
+#7: (references #6) HTLC8
+#8: (refefences #6) HTLC6
+
+Assuming 24 bytes per HTLC, and 18 bytes per backref, the naive encoding
+would be 14 * 24 = 336, backref = 11 * 24 + 3 * 18 = 318 bytes.  Not
+much.
+
+OK, let me write a quick simulator, with exponential distribution times
+(because bitcoin!).  Hmm, attached below.  It only references the
+previous HTLC, not any previous, but it does show that it's hard to make
+the savings more than 50% (reduce the chance of an HTLC expiring to 1%,
+for example).
+
+See horrible hacked-up code below.
+
+&gt;<i> Also, yeah, padding (handwave) and timing are what make hiding the channel
+</I>&gt;<i> very tricky, especially for HTLCs.  With non-HTLC updates, it can be hard
+</I>&gt;<i> to know when 2 nodes are updating a channel state, but with HTLCs there are
+</I>&gt;<i> more nodes in the mix with more points for data to leak out to the
+</I>&gt;<i> observer.  That's another reason you might want to omit sending out some
+</I>&gt;<i> portion of HTLC recovery data.
+</I>
+Yes, this is the hard part.
+
+&gt;<i> I will try coding some of this and see, because it seems to work in my head
+</I>&gt;<i> but that's no indication it'll work on the computer :)
+</I>
+For sure!  Here's my hacky simulation results for 1M commitment txs
+with the mean and stddev in the brackets:
+
+Num htlcs:              0-24(3.99+/-2.5)
+Raw-encoding bytes:     0-576(95+/-60)
+Backref-encoding bytes: 16-520(40+/-34)
+Best-encoding bytes:    0-528(65+/-51)
+
+Cheers,
+Rusty.
+
+// 2&gt;/dev/null; set -e; OUT=/tmp/`basename $0 .c`; if [ ! -f &quot;$OUT&quot; ] || [ &quot;$OUT&quot; -ot &quot;$0&quot; ]; then gcc -g -Wall -o &quot;$OUT&quot;.$$ $0 -lm &amp;&amp; mv &quot;$OUT&quot;.$$ &quot;$OUT&quot;; fi; exec &quot;$OUT&quot; &quot;$@&quot;
+#include &lt;stdio.h&gt;
+#include &lt;math.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;assert.h&gt;
+#include &lt;string.h&gt;
+
+/* For convenience, avoid allocation */
+#define MAX_HTLCS 1000
+
+/* Percentage chance of HTLC being removed. */
+#define REMOVE_CHANCE 25
+/* Percentage chance of HTLC being added. */
+#define ADD_CHANCE 50
+
+#define BYTES_PER_HTLC 24
+#define BACKREF_BYTES 16
+
+static void add_some_htlcs(unsigned int htlcs[], size_t *n_htlcs,
+			   size_t *counter)
+{
+	/* Exponential distribution again. */
+	while (random() &lt; (RAND_MAX * (long long)ADD_CHANCE / 100)) {
+		assert(*n_htlcs &lt; MAX_HTLCS);
+		htlcs[*n_htlcs] = *counter;
+		(*counter)++;
+		(*n_htlcs)++;
+	}
+}
+
+static size_t calc_encoding(const unsigned int old_htlcs[], size_t n_old,
+			    const unsigned int new_htlcs[], size_t n_new,
+			    size_t prev_leaks)
+{
+	size_t o, n, num_new = 0, num_old = 0;
+	size_t raw_bytes, bytes_using_backref;
+
+	/* Figure out number only in new, only in old. */
+	for (o = n = 0; o &lt; n_old || n &lt; n_new;) {
+		if (o == n_old) {
+			num_new++;
+			n++;
+		} else if (n == n_new) {
+			num_old++;
+			o++;
+		} else if (old_htlcs[o] == new_htlcs[n]) {
+			o++;
+			n++;
+		} else if (old_htlcs[o] &lt; new_htlcs[n]) {
+			num_old++;
+			o++;
+		} else {
+			num_new++;
+			n++;
+		}	
+	}
+
+	raw_bytes = n_new * BYTES_PER_HTLC;
+	bytes_using_backref = num_new * BYTES_PER_HTLC + BACKREF_BYTES;
+
+	/* Num htlcs, raw-encoding, backref-encoding, encoding-used */
+	printf(&quot;%zu,%zu,%zu,&quot;, n_new, raw_bytes, bytes_using_backref);
+
+	/* Don't use backref if we would leak more than #current. */
+	if (!num_old || num_old + prev_leaks &gt; n_new) {
+		printf(&quot;%zu\n&quot;, raw_bytes);
+		return 0;
+	} else {
+		printf(&quot;%zu\n&quot;, bytes_using_backref);
+		return num_old + prev_leaks;
+	}
+}
+
+static void iterate(unsigned int htlcs[], size_t *n_htlcs, size_t *counter,
+		    size_t *leaks)
+{
+	size_t i, num;
+	unsigned int tmp_htlcs[MAX_HTLCS];
+
+	/* REMOVE_CHANCE percentage chance of HTLC being closed. */
+	for (i = 0, num = 0; i &lt; *n_htlcs; i++) {
+		if (random() &lt; (RAND_MAX * (long long)REMOVE_CHANCE / 100))
+			continue;
+		tmp_htlcs[num++] = htlcs[i];
+	}
+	add_some_htlcs(tmp_htlcs, &amp;num, counter);
+
+	*leaks = calc_encoding(htlcs, *n_htlcs, tmp_htlcs, num, *leaks);
+	memcpy(htlcs, tmp_htlcs, num * sizeof(htlcs[0]));
+	*n_htlcs = num;
+}
+
+int main(int argc, char *argv[])
+{
+	size_t i, n_iter;
+	unsigned int htlcs[MAX_HTLCS];
+	size_t n_htlcs = 0, counter = 0, leaks = 0;
+
+	printf(&quot;Num htlcs, raw-encoding bytes, backref-encoding bytes, best-encoding bytes\n&quot;);
+	n_iter = argv[1] ? atoi(argv[1]) : 100;
+	for (i = 0; i &lt; n_iter; i++)
+		iterate(htlcs, &amp;n_htlcs, &amp;counter, &amp;leaks);
+
+	return 0;
+}
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000588.html">[Lightning-dev] Blinded channel observation
+</A></li>
+	<LI>Next message: <A HREF="000596.html">[Lightning-dev] c-lightning 0.4: Wright's Cryptographic Proof	(https://git.io/v6Pzv)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#593">[ date ]</a>
+              <a href="thread.html#593">[ thread ]</a>
+              <a href="subject.html#593">[ subject ]</a>
+              <a href="author.html#593">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

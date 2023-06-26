@@ -1,0 +1,276 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fee rates as DoS protection (channel spamming and jamming)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fee%20rates%20as%20DoS%20protection%20%28channel%0A%20spamming%20and%20jamming%29&In-Reply-To=%3CCALZpt%2BGW3hmrGrhza560mXG0f6RdRJ1qxArF_soYxXvOeBhCcg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002974.html">
+   <LINK REL="Next"  HREF="002967.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fee rates as DoS protection (channel spamming and jamming)</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fee%20rates%20as%20DoS%20protection%20%28channel%0A%20spamming%20and%20jamming%29&In-Reply-To=%3CCALZpt%2BGW3hmrGrhza560mXG0f6RdRJ1qxArF_soYxXvOeBhCcg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Hold fee rates as DoS protection (channel spamming and jamming)">antoine.riard at gmail.com
+       </A><BR>
+    <I>Mon Feb 15 13:56:45 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002974.html">[Lightning-dev] Hold fee rates as DoS protection (channel spamming and jamming)
+</A></li>
+        <LI>Next message: <A HREF="002967.html">[Lightning-dev] Hold fee rates as DoS protection (channel	spamming and jamming)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2975">[ date ]</a>
+              <a href="thread.html#2975">[ thread ]</a>
+              <a href="subject.html#2975">[ subject ]</a>
+              <a href="author.html#2975">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> The risk of hitting the chain that you mention can be factored into this
+</I>&gt;<i> base part as well. The hold fee rate would then be defined in the form (2
+</I>&gt;<i> sat + 1%) per minute.
+</I>
+I think this works if the base fee is paid at HTLC commitment lock-in.
+Otherwise, you're still exposed to the chain-hit risk, the channel might
+break at any time and the timevalues of the pending forward HTLC set will
+be lost. Note, it's likely the hedge to be probabilistic as you won't make
+HTLC receivers pay for the effective timevalue but only a fragment computed
+from the expected outgoing HTLC traffic during channel lifetime.
+
+A smart channel relay policy will discount chain-hit risks for stable
+links, incentivizing your counterparties to be good peers.
+
+&gt;<i> Is this the same concern as above or slightly different? Or do you mean
+</I>&gt;<i> clock differences between the endpoints of a channel? For that, I'd think
+</I>&gt;<i> that there needs to be some tolerance to smooth out disagreements. But
+</I>yes,
+&gt;<i> in general as long as a node is getting a positive amount, it is probably
+</I>&gt;<i> okay to tolerate a few rounding errors here and there.
+</I>
+This is slightly different concern, HTLC settlement may happen at different
+wall clock time periods between downstream/upstream.
+
+Let's say a HTLC is relayed across Alice, Bob, Caroll. The HTLC is
+successfully settled at N between Bob and Caroll, with N the number of
+minutes since htlc lock-in. Caroll pays N * `hold_fee_rate` to Bob. As
+upstream settlement isn't atomic, it happens at N+1. Bob pays N *
+`hold_fee_rate` to Alice. Bob loss 1 * `hold_fee_rate`.
+
+For normal operations, I concede it should happen rarely enough for this
+being an edge-case.
+
+&gt;<i> Yes, that is a good point. But I do think that it is reasonable that a
+</I>node
+&gt;<i> that can go offline doesn't charge a hodl fee. Those nodes aren't
+</I>generally
+&gt;<i> forwarding htlcs anyway, so it would just be for their own outgoing
+</I>&gt;<i> payments. Without charging a hodl fee for outgoing payments, they risk
+</I>that
+&gt;<i> their channel peer delays the htlc for free. So they should choose their
+</I>&gt;<i> peers carefully. It seems that at the moment mobile nodes are often
+</I>&gt;<i> connected to a known LSP already, so this may not be a real problem.
+</I>
+I think the reasoning holds for mobile clients not charging hold fees. Most
+of the time, your LSP doesn't have an interest to delay your HTLC, better
+to succeed/fail quickly to release the liquidity to potentially earn fees
+on another payment. The only case might be when all the outgoing liquidity
+of your LSPs are already near-busy and they have to select between your
+HTLC to forward and the one from another spoke. Minding this, hold fees
+charged by mobile clients might be a way to prioritize their payments.
+
+&gt;<i> All of this indeed also implies that nodes that do charge hold fees, need
+</I>&gt;<i> to make sure to stay online. Otherwise peers may close channels with them
+</I>&gt;<i> because they are unreliable and charging for their own outage.
+</I>
+And this is the point where it becomes tricky. A malicious upstream node
+mimic offliness to inflate its due hold fee. Considering the long-term
+protocol trend to pour the unilateral closing fee burden on the
+counterparty deciding to go onchain, it won't be economical to do so if the
+extorted hold fees is inferior to channel closing onchain fees. So you
+might have this cat-and-mouse game play many times until it's obvious for a
+channel scoring logic that this peer is malicious and the channel must be
+closed. In-between the accumulated hold fees might have been superior to
+the cost of channel opening...
+
+I can really see a sophisticated attacker able to escape such channel
+blacklist heuristics.
+
+&gt;<i> Yes, we should be careful not to outlaw micropayments. But I don't think
+</I>&gt;<i> the hold fees as described above do this. Because the fees are modeled as
+</I>&gt;<i> close to the real costs as possible, it can only be fair? Tiny amounts
+</I>that
+&gt;<i> settle quickly should need only very small hold fees. But if the tiny
+</I>&gt;<i> amount gets stuck for a week and occupies an htlc slot in each of its 25
+</I>&gt;<i> hops through multi-btc wumbo channels, yes, than it should be costly?
+</I>
+I agree that any packet which holds liquidity for a while should cover slot
+costs and timevalue, even if the value transferred is in fine inferior to
+the final hold fees. In that case, it should be up to the original sender
+to arbitrate between its expected traffic and the opportunity to open a
+channel to shorten its payment paths.
+
+Still, a &quot;very small hold fees&quot; might scope a lot of use-cases, which are
+hard to care about because they might not exist yet. Compared to leveraging
+a resource (channel UTXOs) which is already assumed to be owned by
+Lightning users.
+
+Le dim. 14 f&#233;vr. 2021 &#224; 13:05, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> I've made a first attempt at projecting this idea onto the existing spec:
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/843.">https://github.com/lightningnetwork/lightning-rfc/pull/843.</A> This may also
+</I>&gt;<i> clarify some of the questions that haven't been answered yet.
+</I>&gt;<i>
+</I>&gt;<i> Joost
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Feb 12, 2021 at 2:29 PM Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi Joost,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks for working on this and keeping raising awareness about channel
+</I>&gt;&gt;<i> jamming.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; In this post I'd like to present a variation of bidirectional upfront
+</I>&gt;&gt;<i> payments that uses a time-proportional hold fee rate to address the
+</I>&gt;&gt;<i> limitation above. I also tried to come up with a system that aims &gt; relate
+</I>&gt;&gt;<i> the fees paid more directly to the actual costs incurred and thereby reduce
+</I>&gt;&gt;<i> the number of parameters.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Not considering hold invoices and other long-term held packets was one of
+</I>&gt;&gt;<i> my main concerns in the previous bidirectional upfront payments. This new
+</I>&gt;&gt;<i> &quot;hodl_fee_rate&quot; is better by binding the hold fee to the effectively
+</I>&gt;&gt;<i> consumed timelocked period of the liquidity and not its potential maximum.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That said, routing nodes might still include the risk of hitting the
+</I>&gt;&gt;<i> chain in the computation of their `hodl_fee_rate` and the corresponding
+</I>&gt;&gt;<i> cost of having onchain timelocked funds. Given that HTLC deltas are
+</I>&gt;&gt;<i> decreasing along the path, it's more likely that `hodl_fee_rate` will be
+</I>&gt;&gt;<i> decreasing along the path. Even in case of lawfully solved hodl HTLC,
+</I>&gt;&gt;<i> routing nodes might be at loss for having paid a higher hold_fee on their
+</I>&gt;&gt;<i> upstream link than received on the downstream one.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Is assuming increasing `hodl_fee_rate` along a payment path at odds with
+</I>&gt;&gt;<i> the ordering of timelocks ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; But this would also mean that anyone can send out an htlc and collect
+</I>&gt;&gt;<i> hold fees unconditionally. Therefore routing nodes advertise on the network
+</I>&gt;&gt;<i> their `hold_grace_period`. When routing nodes accept an htl&gt; to forward,
+</I>&gt;&gt;<i> they're willing to pay hold fees for it. But only if they added a delay
+</I>&gt;&gt;<i> greater than `hold_grace_period` for relaying the payment and its response.
+</I>&gt;&gt;<i> If they relayed in a timely fashion, they exp&gt; ect the sender of the htlc
+</I>&gt;&gt;<i> to cover those costs themselves. If the sender is also a routing node, the
+</I>&gt;&gt;<i> sender should expect the node before them to cover it. Of course, routing
+</I>&gt;&gt;<i> nodes can't be trusted. So in&gt; practice we can just as well assume that
+</I>&gt;&gt;<i> they'll always try to claim from the prior node the maximum amount in
+</I>&gt;&gt;<i> compensation.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Assuming `hodl_fee_rate` are near-similar along the payment path, you
+</I>&gt;&gt;<i> have a concern when the HTLC settlement happens at period N on the outgoing
+</I>&gt;&gt;<i> link and at period N+1 on the incoming link due to clock differences. In
+</I>&gt;&gt;<i> this case, a routing node will pay a higher `hodl_fee_rate` than received.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I think this is okay, that's an edge case, only leaking a few sats.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> A more concerning one is when the HTLC settlement happens at period N on
+</I>&gt;&gt;<i> the outgoing link and your incoming counterparty goes offline. According to
+</I>&gt;&gt;<i> the HTLC relay contract, the `hodl_fee_rate` will be inflated until the
+</I>&gt;&gt;<i> counterparty goes back online and thus the routing node is at loss. And
+</I>&gt;&gt;<i> going offline is a really lawful behavior for mobile clients, even further
+</I>&gt;&gt;<i> if you consider mailbox-style of HTLC delivery (e.g Lightning Rod). You
+</I>&gt;&gt;<i> can't simply label such counterparty as malicious.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> And I don't think counterparties can trust themselves about their
+</I>&gt;&gt;<i> onliness to suspend the `hodl_fee_rate` inflation. Both sides have an
+</I>&gt;&gt;<i> interest to equivocate, the HTLC sender to gain a higher fee, the HTLC
+</I>&gt;&gt;<i> relayer to save the fee while having received one on the incoming link ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; Even though the proposal above is not fundamentally different from what
+</I>&gt;&gt;<i> was known already, I do think that it adds the flexibility that we need to
+</I>&gt;&gt;<i> not take a step back in terms of functionality (fair prici&gt; ng for hodl
+</I>&gt;&gt;<i> invoices and its applications). Plus that it simplifies the parameter set.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Minding the concerns raised above, I think this proposal is an
+</I>&gt;&gt;<i> improvement and would merit a specification draft, at least to ease further
+</I>&gt;&gt;<i> reasoning on its economic and security soundness. As a side-note, we're
+</I>&gt;&gt;<i> working further on Stake Certificates, which I believe is better for
+</I>&gt;&gt;<i> long-term network economics by not adding a new fee burden on payments. We
+</I>&gt;&gt;<i> should be careful to not economically outlaw micropayments. If we think
+</I>&gt;&gt;<i> channel jamming is concerning enough in the short-term, we can deploy a
+</I>&gt;&gt;<i> bidirectional upfront payment-style of proposal now and consider a better
+</I>&gt;&gt;<i> solution when it's technically mature.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Antoine
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Le jeu. 11 f&#233;vr. 2021 &#224; 10:25, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; a
+</I>&gt;&gt;<i> &#233;crit :
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Hi ZmnSCPxj,
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Not quite up-to-speed back into this, but, I believe an issue with using
+</I>&gt;&gt;&gt;&gt;<i> feerates rather than fixed fees is &quot;what happens if a channel is forced
+</I>&gt;&gt;&gt;&gt;<i> onchain&quot;?
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> Suppose after C offers the HTLC to D, the C-D channel, for any reason,
+</I>&gt;&gt;&gt;&gt;<i> is forced onchain, and the blockchain is bloated and the transaction
+</I>&gt;&gt;&gt;&gt;<i> remains floating in mempools until very close to the timeout of C-D.
+</I>&gt;&gt;&gt;&gt;<i> C is now liable for a large time the payment is held, and because the
+</I>&gt;&gt;&gt;&gt;<i> C-D channel was dropped onchain, presumably any parameters of the HTLC
+</I>&gt;&gt;&gt;&gt;<i> (including penalties D owes to C) have gotten fixed at the time the channel
+</I>&gt;&gt;&gt;&gt;<i> was dropped onchain.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> The simplicity of the fixed fee is that it bounds the amount of risk
+</I>&gt;&gt;&gt;&gt;<i> that C has in case its outgoing channel is dropped onchain.
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> The risk is bound in both cases. If you want you can cap the variable
+</I>&gt;&gt;&gt;<i> fee at a level that isn't considered risky, but it will then not fully
+</I>&gt;&gt;&gt;<i> cover the actual cost of the locked-up htlc. Also any anti-DoS fee could
+</I>&gt;&gt;&gt;<i> very well turn out to be insignificant to the cost of closing and reopening
+</I>&gt;&gt;&gt;<i> a channel with the state of the mempool these days.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Joost
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210215/2bab1be3/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210215/2bab1be3/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002974.html">[Lightning-dev] Hold fee rates as DoS protection (channel spamming and jamming)
+</A></li>
+	<LI>Next message: <A HREF="002967.html">[Lightning-dev] Hold fee rates as DoS protection (channel	spamming and jamming)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2975">[ date ]</a>
+              <a href="thread.html#2975">[ thread ]</a>
+              <a href="subject.html#2975">[ subject ]</a>
+              <a href="author.html#2975">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

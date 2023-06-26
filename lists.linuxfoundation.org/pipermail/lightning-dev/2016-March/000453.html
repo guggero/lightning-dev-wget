@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] SIGHASH_NOINPUT in Segregated Witness
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20SIGHASH_NOINPUT%20in%20Segregated%0A%20Witness&In-Reply-To=%3C20160302223627.GA4322%40sapphire.erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000451.html">
+   <LINK REL="Next"  HREF="000452.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] SIGHASH_NOINPUT in Segregated Witness</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20SIGHASH_NOINPUT%20in%20Segregated%0A%20Witness&In-Reply-To=%3C20160302223627.GA4322%40sapphire.erisian.com.au%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] SIGHASH_NOINPUT in Segregated Witness">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Mar  2 22:36:27 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000451.html">[Lightning-dev] [bitcoin-dev] SIGHASH_NOINPUT in Segregated	Witness
+</A></li>
+        <LI>Next message: <A HREF="000452.html">[Lightning-dev] Probing final receiver with refund timeout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#453">[ date ]</a>
+              <a href="thread.html#453">[ thread ]</a>
+              <a href="subject.html#453">[ subject ]</a>
+              <a href="author.html#453">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Mar 02, 2016 at 11:14:51AM +1030, Rusty Russell wrote:
+&gt;<i> Yes, with SIGHASH_NOINPUT you only need to send timeout/rval per new
+</I>&gt;<i> HTLC, plus new revocation preimage per new commit tx.  Assuming no
+</I>&gt;<i> batching, so every second new commit tx adds a new HTLC, that's (4 + 32)
+</I>&gt;<i> / 2 + 32 = 50 bytes per commit tx.
+</I>
+Assuming &quot;batching&quot; refers to combining multiple changes in a single
+commitment update, yeah. (I was thinking batching multiple commitment
+updates in a single packet when updating your blockchain contracter)
+
+&gt;<i> Without SIGHASH_NOINPUT, add 64 bytes per commit tx output
+</I>&gt;<i> (2+&lt;num-htlcs&gt;), plus you have to generate those signatures.  That's
+</I>&gt;<i> probably going to be less than 1 TCP packet, though.
+</I>&gt;<i> I'm not convinced it's qualitatively different.
+</I>
+You're adding 70 bytes of signature data for every HTLC for every
+commitment it appears in, all of which have to be stored until the
+channel's closed. That's a 70% increase in storage requirements.
+
+As it turns out, I'm confused as to what size a &quot;TCP packet&quot; actually
+is these days; is it 65kB or 1500B or somewhere in between? 1500 bytes
+only gives you about 14 HTLCs open on a channel simultaneously.
+
+But maybe anyone doing high volume/rate (ie, forwarding other people's
+transactions, or doing many transactions per minute) should just run
+their own bitcoin node anyway. For low volume channels where you only
+do five transactions an hour, every hour, a whole six months of full
+transactions is only 21MB.
+
+Yeah; I think that persuades me: &quot;end users&quot; can outsource just by
+generating a new payment tx and sending that off; high volume users can
+run a bitcoin node themselves and only do the signatures if/when someone
+actually cheats, so SIGHASH_NOINPUT isn't very useful in either case.
+
+That only works because I don't think people running lightning on their
+phone will be forwarding many transactions though :)
+
+&gt;<i> &gt; I don't think there's a big problem with sending that info to a third
+</I>&gt;<i> &gt; party who's doing transaction reclaiming; it might hurt privacy a bit.
+</I>&gt;<i> Thanks for the reminder, re-reading... the result was that all the
+</I>&gt;<i> clever tricks don't win much; you can avoid sending/storing the 4 byte
+</I>&gt;<i> timeout.
+</I>
+You can avoid sending the 4 byte commitment index (ie, what you need
+to recover your shachain seed) by encoding that in the commitment
+transaction's locktime, but you still need to store/send the HTLC
+timeouts aiui.
+
+&gt;<i> &gt; (If by &quot;multiple-choice p2sh&quot; you mean merkelized abstract syntax trees
+</I>&gt;<i> &gt; that would let you exchange 20+4 / 32+4 bytes of R+timeout for 32 bytes
+</I>&gt;<i> &gt; of a merkle path, which would be an improvement, but not huge. Otherwise
+</I>&gt;<i> &gt; I think you'd have to have a new double-length script hash type; which
+</I>&gt;<i> &gt; might not be friendly to UTXO? Though maybe two 160 bit hashes wouldn't
+</I>&gt;<i> &gt; be out of the question, at 40 bytes versus 32 or 64?)
+</I>&gt;<i> No, MAST doesn't do it for you, since you still need the hash of the
+</I>&gt;<i> unknown part.
+</I>
+Yeah, MAST just lets you trade the 32+4 bytes of R+timeout for 32 bytes
+of unknown-AST-hash.
+
+&gt;<i> We'd need a &quot;script is one of these hashes&quot; form, which
+</I>&gt;<i> as you point out, bloats the UTXO set.
+</I>&gt;<i> So not likely to be acceptable until lightning is the main bitcoin user.
+</I>
+Yeah. Of course, an upside is it wouldn't bloat the UTXO set for very
+long -- lightning transactions should get spent pretty quickly, in case
+the other side's CTLV timeout expires.
+
+Cheers,
+aj
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000451.html">[Lightning-dev] [bitcoin-dev] SIGHASH_NOINPUT in Segregated	Witness
+</A></li>
+	<LI>Next message: <A HREF="000452.html">[Lightning-dev] Probing final receiver with refund timeout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#453">[ date ]</a>
+              <a href="thread.html#453">[ thread ]</a>
+              <a href="subject.html#453">[ subject ]</a>
+              <a href="author.html#453">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,295 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Simulating Eltoo Factories using SCU Escrows (aka	SCUE'd Eltoo)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Simulating%20Eltoo%20Factories%20using%20SCU%20Escrows%20%28aka%0A%09SCUE%27d%20Eltoo%29&In-Reply-To=%3CCALGTLwO0PK8bb0Vca2oTM01fJW7CfApD6Sx1VprsY9Mcxxy_YQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002789.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Simulating Eltoo Factories using SCU Escrows (aka	SCUE'd Eltoo)</H1>
+    <B>Nadav Kohen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Simulating%20Eltoo%20Factories%20using%20SCU%20Escrows%20%28aka%0A%09SCUE%27d%20Eltoo%29&In-Reply-To=%3CCALGTLwO0PK8bb0Vca2oTM01fJW7CfApD6Sx1VprsY9Mcxxy_YQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Simulating Eltoo Factories using SCU Escrows (aka	SCUE'd Eltoo)">nadav at suredbits.com
+       </A><BR>
+    <I>Mon Aug 31 23:06:34 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002789.html">[Lightning-dev] Witness asymmetric payment channels
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2790">[ date ]</a>
+              <a href="thread.html#2790">[ thread ]</a>
+              <a href="subject.html#2790">[ subject ]</a>
+              <a href="author.html#2790">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+# Simulating Eltoo / ANYPREVOUT Factories Using SCU Escrows
+
+In this write-up I hope to convince you that it is possible to create some
+weak version of Eltoo channels and channel factories today without
+SIGHASH_ANYPREVOUT (although the version using this sighash is clearly
+superior) using ZmnSCPxj's proposal Smart Contracts Unchained (SCU) which
+Ben Carman has cleverly given the name SCUE'd Eltoo.
+
+## Introduction
+
+### Eltoo / ANYPREVOUT
+
+Eltoo is a proposal for a new (and generally improved) way of doing
+Lightning channels which also allows for multi-party channels (and channel
+factories). I am by no means fluent in the going's on of eltoo and
+anyprevout so I will link <A HREF="https://blockstream.com/eltoo.pdf">https://blockstream.com/eltoo.pdf</A> and
+<A HREF="https://bitcoinops.org/en/topics/sighash_noinput/.">https://bitcoinops.org/en/topics/sighash_noinput/.</A> My understanding is that
+at a high level, rather than using a penalty mechanism to update channel
+states, sighash_anyprevout is used to make any old commitment transaction
+spendable by any newer commitment transaction so that old revoked states
+can be updated on-chain instead of relying on a punishment mechanism.
+Benefits of this scheme include but are not limited to easier watchtower
+implementations, static partial backups, and multi-party channels.
+
+### Smart Contracts Unchained (SCU)
+
+I strongly recommend the reader read this write up by ZmnSCPxj before
+continuing <A HREF="https://zmnscpxj.github.io/bitcoin/unchained.html">https://zmnscpxj.github.io/bitcoin/unchained.html</A>
+
+At a high level the idea is to use a participant-chosen &quot;federation&quot; of
+&quot;escrows&quot; which can be thought of as virtual machines which understand
+contracts written in some language and which enforce said contracts by
+giving users signatures of transactions that are produced by these
+contracts. A general goal of SCU is to be trust-minimizing and as private
+as possible. For example, escrows should not be able to see that they are
+being used if there are no disputes, among other considerations that can be
+made to make SCU Escrows as oblivious as possible (discussed further below).
+
+## Proposal (Un-Optimized)
+
+At a high level, this proposal is to replace the use of ANYPREVOUT with a
+federation of SCU Escrows which will enforce state updates by only
+generating signatures to spend older states with newer ones.
+
+I will work in the general context of multi-party channels but all of this
+works just as well in two-party (Lightning) channels.
+
+Say that we have N parties who wish to enter into a multi-party channel
+(aka channel factory). Each participant has a public key P_i and together
+they do a distributed key generation (DKG) of some kind to reach some
+shared secret x (for example, each party contributes a commitment to a
+random number and then that random number, MuSig style, and the sum of
+these random numbers constitutes the shared secret). This x will be used to
+derive a sequence of (shared) key pairs (x_k, X_k) (for example this can be
+done by having x_k = PRNG(x, k)).
+
+Let State(k) be some agreed upon commitment of the channel state at update
+k (for example, HMAC(k, kth State Tx outputs)). State(0) is a commitment to
+0 and the initial channel balances.
+
+Let Delta be some CSV timelock.
+
+For the sake of simplicity, let us consider the case where only a single
+SCU escrow is used which has public key E, but note that all of the
+following can be extended to a threshold scheme of escrows. E_k will be
+used to denote some tweak of E by State(k) similar to the tweak described
+in SCU.
+
+### Transactions
+
+#### Funding Transaction
+
+Like all such schemes, the funding transaction is some transaction
+containing an N-of-N multi-signature output with keys P_1, ..., P_N called
+the funding output.
+
+#### Commitment Transaction
+
+The commitment transaction spends the funding output and has a single
+output which has two spending conditions: Either E_k and X_k sign OR all N
+parties sign cooperatively after Delta.
+
+#### State Transaction
+
+The state transaction spends the commitment transaction via the cooperative
+branch and has (potentially many) outputs representing the current channel
+state. For example there will be an output for each solvent participant in
+this channel, as well as an output for ever contract living on this channel
+(for instance, other smaller channels).
+
+#### Commitment Update Transaction
+
+Let k2 be some state where k2 &gt; k.
+
+The commitment update transaction spends either a commitment transaction's
+non-cooperative branch (E_k and X_k) or another commitment update
+transaction's non-time-locked branch, and has a single output which has two
+spending conditions: Either E_k2 and X_k2 sign OR E_k2' and X_k2' sign
+after Delta where those are tweaked keys in some way (to avoid signatures
+generated for one case being used in the other).
+
+#### State Update Transaction
+
+The state update transaction spends the commitment update transaction via
+the time-locked branch and has outputs equal to those on the (k2)th state
+transaction.
+
+### Update Mechanism
+
+The update mechanism here is the same as would be expected for a
+multi-party payment channel but with the added step that all parties must
+sign the commitment State(k) before they sign State Transaction k.
+
+### Settlement
+
+#### Cooperative (Normal Close)
+
+As you might expect, cooperative closure is where a transaction is
+cooperatively constructed which directly spends the on-chain funding UTXO
+and outputs the current State Transaction's outputs.
+
+#### Non-Cooperative (Force Close)
+
+In any case where not all parties are able or willing to sign a cooperative
+closing transaction, any party can broadcast the most recent commitment
+transaction, which can then be spent by anyone broadcasting the most recent
+state transaction after Delta.
+
+If, at any time, any party broadcasts an old commitment transaction k &lt; c,
+any other party has until Delta to correct this mistake/attack. They do so
+by going to the SCU Escrow and presenting all signatures of State(k) and of
+State(c) which the Escrow verifies as well as verifying that k &lt; c. Should
+all of these things check out, the Escrow can construct a Commitment Update
+Transaction (for (k, k2) = (k, c)) and the corresponding State Update
+Transaction and sign both of these transactions using E. These signatures
+(along with signatures from the shared keys X_k and X_c) can be used to
+broadcast the commitment update transaction, and after Delta, the state
+update transaction.
+
+If a commitment update transaction is broadcast for an old state c &lt; c',
+then any party has until Delta to correct this mistake/attack. They do so
+by following the same exact steps as in the previous paragraph but with k
+&lt;- c and c &lt;- c' and where the Commitment Update Transaction spends the
+previous Commitment Update Transaction instead of a Commitment Transaction.
+
+In this way any channel participant can unilaterally update the on-chain
+commitment transaction until the most recent state is reached after which
+Delta will pass and a State Update Transaction with the current state will
+be valid to broadcast.
+
+## Optimizations and Open Details
+
+### Multiple Escrows
+
+The above can be done with some user-chosen federation with some threshold
+by replacing E above with a threshold condition using many escrow public
+keys. Doing so with as large and diverse a federation as possible is
+strongly encouraged as it reduces the likelihood that the federation will
+be bribed to spend the non-time-locked branch of the commitment transaction
+along with some channel participant directly. I believe it should
+(hopefully) be possible to make such an attack traceable (i.e. provide
+proof that this happened in an illegal way) so that attacked parties can
+prove that Escrows have been malicious.
+
+### Taproot
+
+As is mentioned in SCU, the escrow scheme is made much better (especially
+in the multi-escrow case) by Taproot and the above scheme using SCU is
+improved even further as all outputs are bi-conditional and these two
+conditions can be separated into different merkle branches to increase
+privacy and fungibility.
+
+### What is given to the Escrow? (aka Blinding / ZKP)
+
+In the above proposal, virtually all information about the channel, as well
+as how to find it on chain, is given to the escrow(s). This is really bad,
+and luckily it is avoidable! In principal we want Escrows to do nothing but
+(potentially many) random looking simple computations on random looking
+inputs to generate random looking outputs. The algorithm given the the
+Escrow is currently:
+
+Inputs =
+
+* output to spend (either a commitment output or a commitment update output)
+* State(k) corresponding to that output
+* signatures of State(k)
+* State(c) with c &gt; k
+* signatures of State(c)
+* N public keys
+* Relevant shared public keys
+* Delta
+
+Output = If any signature is invalid or c &lt;= k, FAIL. Otherwise, generate a
+digital signature using E with some tweak (as a function of inputs) and of
+some hash (as a function of inputs).
+
+As such, I will first note that the verification part of this algorithm's
+execution is linear time and so there must be a way to do it in Zero
+Knowledge. Specifically I believe this should be &quot;as simple as&quot; blinding
+all state inputs with random tweaks and blinding signatures of these states
+in the corresponding way (this may require that the signatures given by all
+parties during updates actually be altered in some way to make this work).
+Furthermore I think it should be possible (at least in theory it seems
+plausible to me) that all inputs can be hidden/blinded/tweaked and the
+Escrow performs some computations on these random looking inputs resulting
+in either a FAIL, or in further random looking computation using E (likely
+requiring some ZKP inputs proving that the calling party has followed some
+set of rules) to generate a blinded signature which can then be unblinded
+by the caller to receive a valid digital signature usable to enforce the
+above proposal.
+
+Please note that I do not have these details worked out in any meaningful
+way (and probably won't be able to do so, would love if someone more apt in
+this area would give this some thought!), but also that while this vastly
+improves the privacy and security of this scheme, it isn't strictly
+speaking a necessary optimization if you are willing to place more trust
+and be less private with Escrows.
+
+### Fees
+
+I have given no thought to transaction fees in the above and I'm sure there
+are a bunch of ways to do them wrong but I'm hoping that it is possible to
+add anchor outputs or whatever other alterations need to occur to allow fee
+considerations to work out.
+
+I hope people find this proposal interesting! In theory it could be
+implemented on today's Bitcoin (though I will not have time to work on this
+in the foreseeable future, but would be happy to help anyone who would want
+to try to do this)!
+
+Best,
+Nadav
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200831/44227008/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200831/44227008/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002789.html">[Lightning-dev] Witness asymmetric payment channels
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2790">[ date ]</a>
+              <a href="thread.html#2790">[ thread ]</a>
+              <a href="subject.html#2790">[ subject ]</a>
+              <a href="author.html#2790">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

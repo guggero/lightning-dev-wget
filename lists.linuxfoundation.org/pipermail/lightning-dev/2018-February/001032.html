@@ -1,0 +1,276 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C87606so4bd.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001030.html">
+   <LINK REL="Next"  HREF="001033.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C87606so4bd.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Feb 20 01:08:54 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001030.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+        <LI>Next message: <A HREF="001033.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1032">[ date ]</a>
+              <a href="thread.html#1032">[ thread ]</a>
+              <a href="subject.html#1032">[ subject ]</a>
+              <a href="author.html#1032">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+        This consumed much of our lightning dev interop call today!  But
+I think we have a way forward, which is in three parts, gated by a new
+feature bitpair:
+
+1. A query message for a particular shortid.
+2. A query message for shortids in a range of blocks.
+3. A gossip_timestamp field in `init`
+
+I think these will still be desirable even when we have a more complex
+scheme in future.
+
+1. query_short_channel_id
+=========================
+
+1. type: 260 (`query_short_channel_id`)
+2. data:
+   * [`32`:`chain_hash`]
+   * [`8`:`short_channel_id`]
+
+This is general mechanism which lets you query for a
+channel_announcement and channel_updates for a specific 8-byte shortid.
+The receiver should respond with a channel_announce and the latest
+channel_update for each end, not batched in the normal 60-second gossip
+cycle.
+
+A node MAY send this if it receives a `channel_update` for a channel it
+has no `channel_announcement`, but SHOULD NOT if the channel referred to
+is not an unspent output (ie. check that it's not closed before sending
+this query!).
+
+IMPLEMENTATION: trivial
+
+2. query_channel_range/reply_channel_range
+==========================================
+This is a new message pair, something like:
+
+1. type: 261 (`query_channel_range`)
+2. data:
+   * [`32`:`chain_hash`]
+   * [`4`:`first_blocknum`]
+   * [`4`:`number_of_blocks`]
+
+1. type: 262 (`reply_channel_range`)
+2. data:
+   * [`32`:`chain_hash`]
+   * [`4`:`first_blocknum`]
+   * [`4`:`number_of_blocks`]
+   * [`2`:`len`]
+   * [`len`:`data`]
+
+Where data is a series of ordered shortids (see Appendix A for various
+encodings).  `number_of_blocks` in the reply may be less than in the
+request of the required data did not fit; it is assumed that we can fit
+a single block per reply, at least.
+
+IMPLEMENTATION: requires channel index by block number, zlib
+
+3. gossip_timestamp.
+====================
+
+This is useful for the simple case of a node reconnecting to a single
+peer, for example.  This is a new field appended to `init`: the
+negotiation of this feature bit overrides `initial_routing_sync` as the
+same results can be obtained by setting the `gossip_timestamp` field to
+the current time (for no initial sync) or 0 (for an initial sync).
+
+Note that a node should allow for some minutes of propagation time, thus
+set the `gossip_timestamp` to sometime before its last seen gossip
+message.  It may also receive `channel_update` messages for which it has
+not seen the `channel_announcement` and thus use 
+
+IMPLEMENTATION: easy.
+
+Appendix A: Encoding Sizes
+==========================
+
+I tried various obvious compression schemes, in increasing complexity
+order (see source below, which takes stdin and spits out stdout):
+
+        Raw = raw 8-byte stream of ordered channels.
+        gzip -9: gzip -9 of raw.
+        splitgz: all blocknums first, then all txnums, then all outnums, then gzip -9
+        delta: CVarInt encoding: blocknum_delta,num,num*txnum_delta,num*outnum.
+        deltagz: delta, with gzip -9
+
+Corpus 1: LN mainnet dump, 1830 channels.[1]
+
+        Raw: 14640 bytes
+        gzip -9: 6717 bytes
+        splitgz: 6464 bytes
+        delta: 6624 bytes
+        deltagz: 4171 bytes
+
+Corpus 2: All P2SH outputs between blocks 508000-508999 incl, 790844 channels.[2]
+
+        Raw: 6326752 bytes
+        gzip -9: 1861710 bytes
+        splitgz: 964332 bytes
+        delta: 1655255 bytes
+        deltagz: 595469 bytes
+
+[1] <A HREF="http://ozlabs.org/~rusty/short_channels-mainnet.xz">http://ozlabs.org/~rusty/short_channels-mainnet.xz</A>
+[2] <A HREF="http://ozlabs.org/~rusty/short_channels-all-p2sh-508000-509000.xz">http://ozlabs.org/~rusty/short_channels-all-p2sh-508000-509000.xz</A>
+
+Appendix B: Encoding Sourcecode
+===============================
+// gcc -g -Wall -o encode-short_channel_ids encode-short_channel_ids.c
+#include &lt;inttypes.h&gt;
+#include &lt;arpa/inet.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+/* BOLT #1:
+ * All data fields are big-endian unless otherwise specified. */
+static void write_bytes(uint32_t val, int n)
+{
+	/* BE, so write out tail */
+	uint32_t v = htonl(val);
+
+	fwrite((char *)&amp;v + (4 - n), n,  1, stdout);
+}
+
+/* CVarInt from bitcoin/src/serialize.h:
+// Copyright (c) 2009-2010 Satoshi Nakamoto
+// Copyright (c) 2009-2016 The Bitcoin Core developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or <A HREF="http://www.opensource.org/licenses/mit-license.php.">http://www.opensource.org/licenses/mit-license.php.</A>
+ */
+static void write_varint(uint32_t n)
+{
+	unsigned char tmp[(sizeof(n)*8+6)/7];
+	int len=0;
+	while (1) {
+		tmp[len] = (n &amp; 0x7F) | (len ? 0x80 : 0x00);
+		if (n &lt;= 0x7F)
+			break;
+		n = (n &gt;&gt; 7) - 1;
+		len++;
+	}
+	do {
+		fwrite(&amp;tmp[len], 1, 1, stdout);
+	} while(len--);
+}
+
+int main(void)
+{
+	size_t n, max = 1024;
+	uint32_t *block = malloc(max * sizeof(uint32_t));
+	uint32_t *txnum = malloc(max * sizeof(uint32_t));
+	uint32_t *outnum = malloc(max * sizeof(uint32_t));
+
+	n = 0;
+	while (scanf(&quot;%u:%u:%u&quot;, &amp;block[n], &amp;txnum[n], &amp;outnum[n]) == 3) {
+		if (++n == max) {
+			max *= 2;
+			block = realloc(block, max * sizeof(uint32_t));
+			txnum = realloc(txnum, max * sizeof(uint32_t));
+			outnum = realloc(outnum, max * sizeof(uint32_t));
+		}
+	}
+	fprintf(stderr, &quot;Got %zu channels\n&quot;, n);
+
+	max = n;
+#ifdef SPLIT
+	for (n = 0; n &lt; max; n++)
+		write_bytes(block[n], 3);
+	for (n = 0; n &lt; max; n++)
+		write_bytes(txnum[n], 3);
+	for (n = 0; n &lt; max; n++)
+		write_bytes(outnum[n], 2);
+#elif defined(DIFFENCODE)
+	uint32_t prev_block = 0, num_channels;
+	for (n = 0; n &lt; max; n += num_channels) {
+		/* Block delta */
+		write_varint(block[n] - prev_block);
+		prev_block = block[n];
+		for (num_channels = 1;
+		     n + num_channels &lt; max &amp;&amp; block[n+num_channels] == block[n];
+		     num_channels++);
+		/* Number of channels */
+		write_varint(num_channels);
+
+		/* num_channels * txnum delta  */
+		uint32_t prev_txnum = 0;
+		for (size_t i = n; i &lt; n + num_channels; i++) {
+			write_varint(txnum[i] - prev_txnum);
+			prev_txnum = txnum[i];
+		}
+		/* num_channels * outnum  */
+		for (size_t i = n; i &lt; n + num_channels; i++)
+			write_varint(outnum[i]);
+	}
+#else
+	for (n = 0; n &lt; max; n++) {
+		/* BOLT #7:
+		 *
+		 * The `short_channel_id` is the unique description of the
+		 * funding transaction.  It is constructed as follows:
+		 *
+		 * 1. the most significant 3 bytes: indicating the block height
+		 * 2. the next 3 bytes: indicating the transaction index within
+		 *    the block
+		 * 3. the least significant 2 bytes: indicating the output index
+		 *    that pays to the channel.
+		 */
+		write_bytes(block[n], 3);
+		write_bytes(txnum[n], 3);
+		write_bytes(outnum[n], 2);
+	}
+#endif
+	return 0;
+}
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001030.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+	<LI>Next message: <A HREF="001033.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1032">[ date ]</a>
+              <a href="thread.html#1032">[ thread ]</a>
+              <a href="subject.html#1032">[ subject ]</a>
+              <a href="author.html#1032">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

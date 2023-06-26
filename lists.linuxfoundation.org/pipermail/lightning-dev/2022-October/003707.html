@@ -1,0 +1,466 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Watchtower-Free Lightning Channels For Casual Users
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Watchtower-Free%20Lightning%20Channels%20For%20Casual%20Users&In-Reply-To=%3CiabRMherxYUEML44yrhM0qqsywnjS7tioqVDksmRzVlXhv9ptZzO2-bmIVRik0FrU-aBMMn6e5kO_gTKyqEdlII0o8SfkV9vyd1Cpmy9ego%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003709.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Watchtower-Free Lightning Channels For Casual Users</H1>
+    <B>jlspc</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Watchtower-Free%20Lightning%20Channels%20For%20Casual%20Users&In-Reply-To=%3CiabRMherxYUEML44yrhM0qqsywnjS7tioqVDksmRzVlXhv9ptZzO2-bmIVRik0FrU-aBMMn6e5kO_gTKyqEdlII0o8SfkV9vyd1Cpmy9ego%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Watchtower-Free Lightning Channels For Casual Users">jlspc at protonmail.com
+       </A><BR>
+    <I>Mon Oct  3 16:55:35 UTC 2022</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003709.html">[Lightning-dev] Watchtower-Free Lightning Channels For Casual Users
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3707">[ date ]</a>
+              <a href="thread.html#3707">[ thread ]</a>
+              <a href="subject.html#3707">[ subject ]</a>
+              <a href="author.html#3707">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>This is the first in a series of posts on ideas to improve the usability
+and scalability of the Lightning Network. This post presents a new channel
+protocol that allows casual users to send and receive Lightning payments
+without having to meet onerous availability requirements or use a
+watchtower service. This new Watchtower-Free (WF) protocol can also be
+used to simplify the reception of Lightning payments for casual users. No
+change to the underlying Bitcoin protocol is required.
+
+A paper with a more complete description of the protocol, including
+figures, is available [5].
+
+Properties
+==========
+
+The user-visible properties of the WF protocol can be expressed using
+two parameters:
+* I_S: a short time interval (e.g., 10 minutes) for communicating with
+  peers, checking the blockchain, and submitting transactions to the
+  blockchain, and
+* I_L: a long time interval (e.g., 1-3 months).
+
+The casual user must be online for up to:
+* I_S every I_L (e.g., 10 minutes every 1-3 months) to safeguard the funds
+  in their Lightning channel.
+
+With the WF protocol, the latency for payments is unchanged from the
+current protocol, but the latency for getting a payment receipt from an
+uncooperative channel partner is increased. In addition, the casual user
+may have to pay their channel partner for the partner's cost of capital
+(which depends on I_L). If the casual user and their channel partner
+follow the protocol, the channel can remain off-chain arbitrarily long.
+
+First Attempt: Use The Current Lightning Protocol
+=================================================
+
+In order to motivate the new protocol, first consider what would happen if
+a casual user attempted to achieve the above properties with the current
+Lightning channel protocol. The casual user would set their
+&quot;to_self_delay&quot; (which controls how quickly their channel partner can
+receive funds from a transaction they put on-chain) and
+&quot;cltv_expiry_delta&quot; (which controls the staggering of timeouts between
+successive hops) parameters to values approaching I_L (because the casual
+user could be unavailable for nearly that long). This would create three
+problems:
+
+* Problem 1: The casual user's proposed channel partner would likely
+  reject the creation of the channel due to the excessive &quot;to_self_delay&quot;
+  value.
+
+* Problem 2: If a channel were created with these parameters, Lightning
+  payments would not be routed through it due to the excessive
+  &quot;cltv_expiry_delta&quot; value.
+
+* Problem 3: If a channel were created with these parameters and if the
+  casual user sent a payment on that channel, their partner could have to
+  go on-chain in order to pull the payment from the casual user. In
+  particular, the casual user could be offline for nearly I_L (e.g., 1-3
+  months) when their partner receives the receipt, thus forcing their
+  partner to go on-chain to receive payment before the expiry of the
+  associated HTLC.
+
+The WF Protocol
+===============
+
+The WF protocol solves these problems by modifying the Lightning protocol
+as follows:
+
+* Problem 1 is solved by having the casual user pre-pay their channel
+  partner for the cost of the partner's capital that's tied up in the
+  channel due to the very large &quot;to_self_delay&quot; value. This pre-payment is
+  included in the initial channel state and is updated at least once every
+  I_L to reflect the additional cost of capital due to the partner not yet
+  going on-chain.
+
+* Problem 2 is solved by allowing casual users to designate themselves as
+  Casual-Lightning-Users (CLUs), while the remaining users are
+  Dedicated-Lightning-Users (DLUs). CLUs can only partner with DLUs to
+  open channels, such channels must be unannounced, and CLUs must not
+  route (as opposed to send or receive) payments. These constraints fit
+  naturally with the desires of casual users who want to send and receive
+  their Lightning payments, but not route payments for others. Support for
+  CLUs is analogous to support for SPV (Simplified-Payment-Verification)
+  nodes in Bitcoin.
+
+* Problem 3 is solved by modifying both users' Commitment transactions in
+  the channel that sends the payment so the CLU can be offline for nearly
+  I_L without forcing their DLU partner to go on-chain. A simple approach
+  would be to delay the expiry of the HTLC for each payment in the sending
+  channel by I_L. This approach works, but it has the downside of delaying
+  (by I_L) the CLU's ability to force production of a payment receipt. A
+  better approach is to add a relative delay before the CLU can time out
+  the HTLC output of a Commitment transaction, thus enabling the DLU to
+  safely stay off-chain even after the expiry of the HTLC. That's the
+  approach taken here.
+
+Let Alice be a CLU who shares a channel with DLU Bob. Bob sets his channel
+parameters as he would in the current Lightning protocol, while Alice sets
+her &quot;to_self_delay&quot; parameter (controlling Bob's payments to himself) to
+I_L greater than it would be in the current Lightning protocol. Consider
+the case where Alice sends a Lightning payment on the channel she shares
+with Bob.
+
+Let:
+  - eAB denote the expiry for this payment in the channel shared by Alice
+    and Bob,
+  - tsdA denote the &quot;to_self_delay&quot; parameter set by Alice, and
+  - tsdB denote the &quot;to_self_delay&quot; parameter set by Bob.
+
+Three changes are made relative to the current Lightning protocol:
+  - a relative delay of tsdB is enforced before Alice can spend the HTLC
+    output for this payment in either Commitment transaction,
+  - after eAB, only Alice's (rather than both parties') signature is
+    required to spend the HTLC output in Alice's Commitment transaction,
+    and that output doesn't need to be spent using an HTLC-timeout
+    transaction that can be revoked (because the relative delay added
+    above guarantees Bob can prevent Alice from spending the HTLC output
+    in a revoked Commitment transaction that she puts on-chain), and
+  - both parties update the channel state off-chain at least once every
+    I_L to reflect Bob's cost of capital, as described above.
+
+The resulting protocol, with a single payment from Alice outstanding, is
+shown below:
+
++-+ AB      +----+ A
+|<i>F|----+---&gt;| CC |---&gt;
+</I>+-+    |    |    |
+       .    |    | B
+       .    |    |---&gt;
+       .    +----+
+       |
+       |
+       |              revkeyBi
+       |            +----------&gt;
+       |            |
+       |    +----+  | tsdB &amp; A
+       +---&gt;|C_Ai|--+----------&gt;
+       |    |    |
+       |    |    |    B
+       |    |    |-------------&gt;
+       |    |    |
+       |    |    |    revkeyBi
+       |    |    |  +----------&gt;
+       |    |    |  |
+       |    |    |  | tsdB &amp; (eAB) &amp; A
+       |    |    |--+-------------------&gt;
+       |    +----+  |
+       |            | Preimage(X) &amp; B
+       |            +-------------------&gt;
+       |
+       |
+       |
+       |              revkeyAi
+       |            +----------&gt;
+       |            |
+       |    +----+  | tsdA &amp; B
+       +---&gt;|C_Bi|--+----------&gt;
+       |    |    |
+       |    |    |    A
+       |    |    |-------------&gt;
+       |    |    |
+       |    |    |    revkeyAi
+       |    |    |  +----------&gt;
+       .    |    |  |
+       .    |    |  | tsdB &amp; (eAB) &amp; A              revkeyAi
+       .    |    |--+-------------------&gt;         +----------&gt;
+       |    +----+  |                             |
+       |            | Preimage(X) &amp; AB   +-----+  | tsdA &amp; B
+       V            +-------------------&gt;|Hs_Bi|--+----------&gt;
+                                         +-----+
+
+where:
+F is the Funding transaction,
+CC is the Cooperative Close transaction,
+C_Ai is Alice's Commitment transaction for state i,
+C_Bi is Bob's Commitment transaction for state i, and
+Hs_Bi is Bob's HTLC-success transaction for state i.
+
+The F transaction is on-chain, while the remaining transactions are
+off-chain during normal protocol operation.
+
+Requirements for output cases are as follows:
+A: Alice's signature,
+B: Bob's signature,
+AB: Alice's and Bob's signatures,
+revkeyAi: a signature using a revocation key that Alice can use to revoke
+          Bob's state i transaction,
+revkeyBi: a signature using a revocation key that Bob can use to revoke
+          Alice's state i transaction,
+tsdA: a relative delay equal to Alice's to_self_delay parameter,
+tsdB: a relative delay equal to Bob's to_self_delay parameter,
+(eAB): an absolute timelock equal to the expiry of the outstanding HTLC
+       offered by Alice, and
+Preimage(X): the hash preimage of X.
+
+Once Bob knows Preimage(X), he sends Preimage(X) to Alice and attempts to
+update both parties' Commitment transactions to show payment of the HTLC.
+If he has spent I_L time unsuccessfully trying to update those Commitment
+transactions, he can submit his Commitment and HTLC-success transactions
+to the blockchain. If at any point he sees Alice's Commitment transaction
+on-chain, he stops trying to update the Commitment transactions off-chain
+and he puts his transaction that reveals Preimage(X) and spends the HTLC
+output in her Commitment transaction on-chain as soon as possible.
+
+Alice implements the WF channel protocol as she would the current
+Lightning channel protocol, except:
+ - she can choose to be intentionally unavailable, provided she is
+   available (or at least not intentionally unavailable) for at least I_S
+   every I_L (to update her pre-payment for Bob's cost of capital and to
+   revoke any old transactions put on-chain by Bob), and
+ - she does not put her Commitment transaction on-chain until she has
+   been available (or at least not intentionally unavailable) for at least
+   a grace period of G following the expiry of her offered HTLC (where G
+   is the same grace period as is used in the current Lightning protocol
+   and G &lt;= I_S).
+
+Correctness
+===========
+
+When Alice sends a payment on the channel she shares with Bob, the WF
+protocol matches the Lightning protocol except the parties stay off-chain
+longer with the WF protocol (to accommodate Alice's intentional
+unavailability). Staying off-chain longer is safe for Alice, as she
+originated the payment and thus does not have to time out the HTLC at any
+specific time in order receive payment in an earlier hop. Staying
+off-chain longer is also safe for Bob, because whenever Alice's (or Bob's)
+Commitment transaction is put on-chain, the tsdB relative delay before
+Alice can time out the HTLC output is long enough to allow Bob to put his
+transaction on-chain that takes payment for the HTLC.
+
+Finally, the WF protocol requires that Alice and Bob stay off-chain long
+enough to guarantee that Alice will be available (or at least not
+intentionally unavailable) for at least G, which is sufficient for both
+parties to update the channel state off-chain. As a result, if both
+parties follow the protocol, the channel will remain off-chain despite
+Alice's intentional unavailability.
+
+A more detailed proof of correctness is given in the paper [5].
+
+One-Shot Receives
+=================
+
+While eliminating watchtowers is helpful for casual users, the protocol
+for receiving Lightning payments could still be awkward for such users.
+With the current Lightning protocol, when a user receives a payment and
+their channel partner is unresponsive, the user must submit their
+Commitment and HTLC-success transactions to the blockchain. However, if
+their partner's conflicting Commitment transaction wins the race and is
+included in the blockchain, the user then has to submit a different
+transaction that reveals the HTLC's secret and spends the HTLC output in
+their partner's Commitment transaction. The requirement to wait and check
+the blockchain for the winning Commitment transaction (which might not be
+determined until multiple blocks have been added to the blockchain) is
+awkward for a casual user. It would be far preferable if the casual user
+could always receive a payment by performing a sequence of off-chain
+message exchanges and at most one submission to the blockchain. A protocol
+that has this property will be said to support &quot;one-shot receives&quot;.
+
+The WF protocol can be made to support one-short receives (and to simplify
+the process of getting a receipt) for CLU Alice by making the following
+change whenever a new Commitment transaction for DLU Bob is signed by
+Alice:
+ - if Bob has one or more outstanding HTLCs offered to Alice, the
+   nLocktime field of Bob's Commitment transaction is set to the expiry of
+   the earliest such HTLC,
+ - otherwise, the nLocktime field of Bob's Commitment transaction is set
+   to I_L in the future (relative to when Bob's Commitment transaction is
+   signed by Alice).
+
+Before examining how this change supports one-shot receives, it's
+important to resolve a technical issue. In the current Lightning protocol,
+the nLocktime field in the Commitment transaction provides 24 bits of the
+channel's state number in order to allow efficient revocation of old
+on-chain Commitments (with the remaining 24 bits being provided by the
+nSequence field of the Commitment transaction's sole input). Because we're
+now using the nLocktime field to enforce an absolute timelock, those 24
+bits of state number can no longer be encoded in the nLocktime field.
+There are two solutions to this problem:
+ - add a second input to Bob's Commitment transaction that spends a UTXO
+   owned by Bob (the value of which is arbitrary and is refunded to Bob in
+   the Commitment transaction) and use the nSequence field of that input
+   to encode 24 bits of state number, or
+ - support only 24-bit state numbers, as 16 million channel states are
+   likely sufficient for most casual users.
+
+In addition, the following constraints are added in order to guarantee
+one-shot receives:
+1. Whenever a new HTLC is offered to Alice, its expiry is set to exactly
+   her min_final_cltv_expiry parameter in the future. This constraint
+   guarantees that new HTLCs have expiries that are monotonically
+   nondecreasing.
+2. Whenever Alice gives Bob a secret for an HTLC, that HTLC has the
+   earliest expiry of all the HTLCs in Alice's current Commitment
+   transaction.
+3. Whenever a new channel state i+1 is created, Alice's partial signature
+   for Bob's Commitment transaction for state i+1 is given to Bob, and the
+   revocation key for Bob's Commitment transaction for state i is given to
+   Alice, before Bob's partial signature for Alice's Commitment
+   transaction for state i+1 is given to Alice.
+
+Given these constraints and the setting of the nLocktime field in Bob's
+Commitment transaction, Alice can always put her Commitment transaction
+on-chain before Bob can put a conflicting current Commitment transaction
+on-chain, thus providing one-shot receives. The details are provided in
+the paper [5].
+
+Finally, it's important to verify that the delay of Bob's Commitment
+transaction (caused by the setting of its nLocktime field) does not create
+any problems for Bob. First, for HTLCs offered to Alice (that is, payments
+received by Alice), the current Lightning protocol requires that Bob wait
+until after the expiry of his offered HTLC before he goes on-chain with
+his Commitment and HTLC-timeout transactions. Therefore, the nLocktime
+field has no impact on Bob's actions regarding HTLCs offered to Alice.
+Second, for HTLCs offered by Alice (that is, payments sent by Alice), the
+WF protocol does not force Bob to put his Commitment and associated
+HTLC-success transactions on-chain before any specific time in order
+guarantee the success of any HTLCs. As a result, Bob's ability to force
+payment for HTLCs offered by Alice is unaffected by the nLocktime field in
+his Commitment transactions. Note that the Lightning protocol does
+require Bob to put his Commitment and associated HTLC-success transactions
+on-chain by a specific time, which is why the changes described here
+cannot be made to the Lightning protocol to support one-shot receives.
+
+Getting A Payment Receipt
+=========================
+
+Consider again the case where casual user Alice has offered an HTLC to
+Bob. At any time after the expiry of the HTLC, if Alice needs to get a
+payment receipt and Bob is uncooperative, Alice can put her Commitment
+transaction on-chain and then attempt to spend the HTLC output of her
+Commitment transaction tsdB later. As was shown above, she is guaranteed
+to win the race in putting her Commitment transaction on-chain due to the
+nLocktime field in Bob's Commitment transaction. Therefore, she will
+either get her receipt before she is able to spend the HTLC output or she
+will not have to make her payment (because she succeeded in spending the
+HTLC output). This procedure for getting a payment receipt isn't one-shot
+and may be awkward for casual users. Fortunately, it's only required when
+there's both a payment dispute (or other need to get a receipt quickly)
+and an uncooperative channel partner.
+
+Asynchronous Payments
+=====================
+
+The WF protocol gives significant flexibility to when CLUs have to be
+online, but it still requires that the sender and receiver are both online
+simultaneously. This requirement can be eliminated by keeping the relative
+delay but removing the absolute delay in Alice's transaction that times
+out an HTLC for a payment that she initiates. The details are given in the
+paper [5].
+
+Related Work
+============
+
+The protocol presented here is based extensively on previously-published
+work, namely the Poon-Dryja Lightning channel protocol [1] and the BOLT
+specifications [2]. The asynchronous payments protocol is based on
+Corallo's proposal for sending tips to an offline receiver [3], but
+differs by using only a relative delay in the sender's HTLC.
+
+The idea of eliminating watchtowers for a casual user by delaying their
+partner's ability to put transactions on-chain was described by Law [4],
+but the interaction of that delay with HTLCs was not analyzed and that
+paper assumed modifications to the underlying Bitcoin protocol.
+
+Conclusions
+===========
+
+This post presents the idea of dividing users into Casual-Lightning-Users
+(CLUs) that only send and receive payments, and Dedicated-Lightning-Users
+(DLUs) that can also route payments. It gives a new protocol that allows
+casual users to send and receive Lightning payments in a trust-free manner
+without requiring a watchtower service. It also allows CLUs to receive
+payments in a one-shot manner (that is, without having to wait for blocks
+to be added to the blockchain). No changes to the Bitcoin protocol are
+required.
+
+The new protocol does have some disadvantages, such as increasing the cost
+of capital for DLUs that partner with CLUs and increasing the latency for
+CLUs to get payment receipts from uncooperative partners. Hopefully, the
+elimination of watchtowers for casual users, and their ability to do
+one-shot receives, will more than make up for these drawbacks.
+
+I'm not an expert in the area, so I might have missed something.
+
+Corrections and comments are greatly appreciated.
+
+Regards,
+John
+
+References
+==========
+
+[1] Poon and Dryja, The Bitcoin Lightning Network, available at
+    <A HREF="https://lightning.network/lightning-network-paper.pdf.">https://lightning.network/lightning-network-paper.pdf.</A>
+[2] BOLT specifications, available at
+    <A HREF="https://github.com/lightningnetwork/lightning-rfc.">https://github.com/lightningnetwork/lightning-rfc.</A>
+[3] Corallo, A Mobile Lightning User Goes to Pay a Mobile Lightning
+    User..., available at <A HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/003307.html.">https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/003307.html.</A>
+[4] Law, Section 3.6 of Scaling Bitcoin With Inherited IDs, available at
+    <A HREF="https://github.com/JohnLaw2/btc-iids.">https://github.com/JohnLaw2/btc-iids.</A>
+[5] Law, Watchtower-Free Lightning Channels For Casual Users, available at
+    <A HREF="https://github.com/JohnLaw2/ln-watchtower-free.">https://github.com/JohnLaw2/ln-watchtower-free.</A>
+
+Sent with [Proton Mail](<A HREF="https://proton.me/">https://proton.me/</A>) secure email.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221003/ee49228d/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221003/ee49228d/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003709.html">[Lightning-dev] Watchtower-Free Lightning Channels For Casual Users
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3707">[ date ]</a>
+              <a href="thread.html#3707">[ thread ]</a>
+              <a href="subject.html#3707">[ subject ]</a>
+              <a href="author.html#3707">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

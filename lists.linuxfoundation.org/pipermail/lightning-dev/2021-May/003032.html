@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Simplified%20%28but%20less%20optimal%29%20HTLC%0A%09Negotiation&In-Reply-To=%3C87y2cv6qfs.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003031.html">
+   <LINK REL="Next"  HREF="003033.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Simplified%20%28but%20less%20optimal%29%20HTLC%0A%09Negotiation&In-Reply-To=%3C87y2cv6qfs.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue May  4 05:03:35 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003031.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+        <LI>Next message: <A HREF="003033.html">[Lightning-dev] On Mempool Funny Games against Multi-Party Funded	Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3032">[ date ]</a>
+              <a href="thread.html#3032">[ thread ]</a>
+              <a href="subject.html#3032">[ subject ]</a>
+              <a href="author.html#3032">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+&gt;<i> On 4/27/21 01:04, Rusty Russell wrote:
+</I>&gt;&gt;<i> Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+</I>&gt;&gt;&gt;&gt;<i> On Apr 24, 2021, at 01:56, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;&gt;<i> &#65279;Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+</I>&gt;&gt;&gt;<i> I promise it&#8217;s much less work than it sounds like, and avoids having to debug these things based on logs, which is a huge pain :). Definitely less work than a new state machine:).
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> But the entire point of this proposal is that it's a subset of the
+</I>&gt;&gt;<i> existing state machine?
+</I>&gt;<i>
+</I>&gt;<i> Compared to today, its a good chunk of additional state machine logic to enforce when a message can or can not be sent, 
+</I>&gt;<i> and additional logic for when we can (or can not) flush any pending
+</I>&gt;<i> changes buffer(s)
+</I>
+Kind of.  I mean, we can add a &quot;update_noop&quot; message which simply
+requests your turn and has no other effects.
+
+&gt;&gt;<i> The only &quot;twist&quot; is that if it's your turn and you receive an update,
+</I>&gt;&gt;<i> you can either reply with a &quot;yield&quot; message, or ignore it.
+</I>&gt;<i>
+</I>&gt;<i> How do you handle the &quot;no changes to make&quot; case - do you send yields back and forth ever Nms all day long or is there 
+</I>&gt;<i> some protocol by which you resolve it when both parties try to claim turn at once?
+</I>
+You don't do anything?
+
+If you want to send an update:
+1. If it is your turn, send it.
+2. If it is not your turn, send it and wait for either a `yield`, or a
+   different update.  In the former case, it's now your turn, in the
+   latter case it's not and your update was ignored.
+
+If you receive an update when it's your turn:
+1. If you've sent an update already, ignore it.
+2. Otherwise, send `yield`.
+
+&gt;&gt;&gt;<i> Isn&#8217;t that pretty similar? Discard one splice proposal deterministically (ok that&#8217;s new) and the loser has to store their proposal in a holding cell for later (which they have to do in turn-based anyway). Logic to check if there&#8217;s unsettled things in RAA handling is pretty similar to turn-based, and logic to reject other messages is the same as shutdown handling today.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Nope, with the simplified protocol you can `update_splice` at any time
+</I>&gt;&gt;<i> instead of your normal update, since both sides are already in sync.
+</I>&gt;<i>
+</I>&gt;<i> Hmm, I'm somewhat failing to understand why its that different - you can only update_splice if its your turn, which is 
+</I>&gt;<i> about exactly the same amount of additional logic to check turn conditions as just flag &quot;want to do splice&quot;. Either way 
+</I>&gt;<i> you have the same pending splice buffer.
+</I>
+No, for turn-taking, this case is exactly like any other update.
+
+For non-turn taking, we need an explicit quiescence protocol, and to
+handle simultanous splicing.
+
+&gt;&gt;&gt;&gt;<i> - MUST use the higher of the two `funding_feerate_perkw` as the feerate for
+</I>&gt;&gt;&gt;&gt;<i>   the splice.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> If we like turn based, why not just deterministic throw out one slice? :)
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Because while I am going to implement turn-based, I'm not sure if anyone
+</I>&gt;&gt;<i> else is.  I guess we'll see?
+</I>&gt;<i>
+</I>&gt;<i> My point was more that its similar in logic - if you throw out the splice deterministically and just keep it in some 
+</I>&gt;<i> &quot;pending slice&quot; buffer on the sending side, you've just done basically what you'd do to implement turns, while keeping 
+</I>&gt;<i> the non-turn slice protocol a bit easier :).
+</I>
+No, you really haven't.  Right now you can have Alice propose a splice
+while Bob proposes at the same time, so we have a tiebreak protocol.
+And you can have Alice propose a splice while Bob proposes a different
+update which needs to be completely resolved before the splice can
+continue.
+
+Whereas in turn taking, when someone proposes a splice, that's what
+you're doing, as soon as it is received.  And when someone wants to
+propose a splice, they can do it as soon as it's their turn.  If it's
+not their turn and the other side proposes a splice, they can jump onto
+that (happy days, since the splice proposer pays for 1 input 1 output
+and the core of the tx!).
+
+Cheers,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003031.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+	<LI>Next message: <A HREF="003033.html">[Lightning-dev] On Mempool Funny Games against Multi-Party Funded	Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3032">[ date ]</a>
+              <a href="thread.html#3032">[ thread ]</a>
+              <a href="subject.html#3032">[ subject ]</a>
+              <a href="author.html#3032">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

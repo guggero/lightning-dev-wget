@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C1460060513.3590.39.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000517.html">
+   <LINK REL="Next"  HREF="000515.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C1460060513.3590.39.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Thu Apr  7 20:21:53 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000517.html">[Lightning-dev] Maintenance service for Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="000515.html">[Lightning-dev] Routing &amp; Beacons
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#514">[ date ]</a>
+              <a href="thread.html#514">[ thread ]</a>
+              <a href="subject.html#514">[ subject ]</a>
+              <a href="author.html#514">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>CJP schreef op di 02-02-2016 om 18:56 [+0100]:
+&gt;<i> 
+</I>&gt;<i> &gt; &gt; * Reserving before locking: this is an optimization, to reduce the risk
+</I>&gt;<i> &gt; &gt; of locking funds in payment channels on a part of the route, and then
+</I>&gt;<i> &gt; &gt; having to undo the locking when it turns out that the remaining part of
+</I>&gt;<i> &gt; &gt; the route doesn't exist (anymore). Reserving is an informal(*),
+</I>&gt;<i> &gt; &gt; temporary locking of funds for use in the transaction, and can be done
+</I>&gt;<i> &gt; &gt; and undone very fast, without any channel operations. It is done
+</I>&gt;<i> &gt; &gt; together with route searching + establishment.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; I think that trades one DoS for another, though.  It saves cryptographic
+</I>&gt;<i> &gt; constructs, but latency is the real cost, and this increases it.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; Of course, we'll have to revisit that if the network in practice proves
+</I>&gt;<i> &gt; subject to these problems...
+</I>&gt;<i> 
+</I>&gt;<i> For one category of channel designs, reserving is absolutely essential:
+</I>&gt;<i> channels where bi-directional payments are made possible with a
+</I>&gt;<i> decrementing lock time. There, you want to make sure that failed routing
+</I>&gt;<i> attempts don't cause lock time decrements, since that would reduce the
+</I>&gt;<i> channel lifetime more than necessary. I'd have to check whether there is
+</I>&gt;<i> still any use case for this channel design, and whether the reserving
+</I>&gt;<i> step is important for some other reason.
+</I>
+After actually implementing some of these things, I'd like to revisit
+this discussion.
+
+The &quot;reserving&quot; stage used to be important for channel types where the
+bi-directional nature of the channel is realized with decreasing lock
+times (see above). Now that a large part of the community has put its
+hope on Lightning, it's more likely that the extensions required for
+better channel types will be included in Bitcoin, so this issue has
+become less important.
+
+Another reason why the &quot;reserving&quot; stage is important, is that it it
+necessary for bi-directional routing. In order to make both payer and
+payee anonymous, we need to provide this feature, where both route to a
+meeting point. For the part between meeting point and payee, routing
+goes from payee to meeting point(*), but locking goes from meeting point
+to payee, so they can't be done in the same stage.
+
+Finally, the &quot;reserving&quot; stage allows you to set a tighter value on the
+HTLC time-outs. If you do routing together with locking, then routing
+has to go in the payer-&gt;payee direction; the time-out has to be reduced
+on every hop. Assuming(**) the payer doesn't know the number of hops in
+advance, the time-out has to be set to a very high value by the payer,
+to maximize chances of a successful transaction. If you do routing in
+the reverse direction (payee-&gt;payer), you can start with a very low
+time-out, and increment it on every hop. This will generally result in
+lower time-out values, which is desirable.
+
+That's about it, for the advantages offered by the separate reserving
+stage in Amiko Pay. Let me finish with an attempt to make an ASCII-art
+sequence diagram of reserving, bi-directional routing and locking in
+Amiko Pay:
+
+H(R) = the transaction hash (also included in other messages)
+MR() = MakeRoute message without time info
+MR(t) = MakeRoute message with time info
+HR() = HaveRoute message without time info
+HR(t) = HaveRoute message
+L(t) = Lock message (adds HTLC to channel)
+A = Alice (payer)
+B = Bob (meeting point)
+C = Carol (intermediate node). There can be many intermediate nodes
+between A and B, and between B and D.
+D = Dave (payee)
+
+A               B               C             D
+|<i>&lt;------------------ H(R) --------------------|
+</I>|<i>------MR()----&gt;|               |&lt;-MR(T0+dt)--|
+</I>                |&lt;-MR(T0+2*dt)--|
+|<i>&lt;-HR(T0+3*dt)--|--HR(T0+2*dt)-&gt;|
+</I>                                |--HR(T0+dt)-&gt;|
+|<i>&lt;------------------ HR() --------------------|
+</I>|<i>--L(T0+3*dt)--&gt;|--L(T0+2*dt)--&gt;|--L(T0+dt)--&gt;|
+</I>
+(...and then the sequence continues with removing the HTLCs and
+releasing funds towards payee-side of each channel.)
+
+
+CJP
+
+(*) It can't go in the other direction, since the meeting point should
+not know the identity (or network address) of the payee.
+
+(**) This is the case for non-source routing. One advantage of
+non-source routing is that nodes don't need a map of the entire network;
+this improves privacy, and could help to keep the network open to new
+participants, even against the will of many powerful existing
+participants. In the end, I imagine a system where a mix of
+source-routing and non-source routing can be used, to get the best of
+both worlds.
+
+
+
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000517.html">[Lightning-dev] Maintenance service for Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="000515.html">[Lightning-dev] Routing &amp; Beacons
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#514">[ date ]</a>
+              <a href="thread.html#514">[ thread ]</a>
+              <a href="subject.html#514">[ subject ]</a>
+              <a href="author.html#514">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

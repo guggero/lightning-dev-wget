@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] More thoughts on NOINPUT safety
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3Cisp2OcX23r-Tfl-WSbybuKnppjVlZV52AM1GGEaQd8uHlkliikUBvK49WOnzgaxOjDuOCNdu6CsmHt6kfK0z_FRrOgYAYWrWaDniZA3EEZQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001924.html">
+   <LINK REL="Next"  HREF="001928.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] More thoughts on NOINPUT safety</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3Cisp2OcX23r-Tfl-WSbybuKnppjVlZV52AM1GGEaQd8uHlkliikUBvK49WOnzgaxOjDuOCNdu6CsmHt6kfK0z_FRrOgYAYWrWaDniZA3EEZQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] More thoughts on NOINPUT safety">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Mar 20 08:07:00 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001924.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+        <LI>Next message: <A HREF="001928.html">[Lightning-dev] [bitcoin-dev]  More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1925">[ date ]</a>
+              <a href="thread.html#1925">[ thread ]</a>
+              <a href="subject.html#1925">[ subject ]</a>
+              <a href="author.html#1925">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi aj,
+
+Re-reading again, I think perhaps I was massively confused by this:
+
+&gt;<i> - alternatively, we could require every script to have a valid signature
+</I>&gt;<i> that commits to the input. In that case, you could do eltoo with a
+</I>&gt;<i> script like either:
+</I>&gt;<i>
+</I>&gt;<i> &lt;A&gt; CHECKSIGVERIFY &lt;B&gt; CHECKSIG
+</I>&gt;<i> or &lt;P&gt; CHECKSIGVERIFY &lt;Q&gt; CHECKSIG
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> where A is Alice's key and B is Bob's key, P is muSig(A,B) and Q is
+</I>&gt;<i> a key they both know the private key for. In the first case, Alice
+</I>&gt;<i> would give Bob a NOINPUT sig for the tx, and when Bob wanted to publish
+</I>&gt;<i> Bob would just do a SIGHASH_ALL sig with his own key. In the second,
+</I>&gt;<i> Alice and Bob would share partial NOINPUT sigs of the tx with P, and
+</I>&gt;<i> finish that when they wanted to publish.
+</I>
+Do you mean that *either* of the above two scripts is OK, *or* do you mean they are alternatives within a single MAST or `OP_IF`?
+
+If you mean that *either* of the above two scripts is OK, then this script:
+
+    &lt;muSig(A,B)&gt; CHECKVERIFY &lt;Q&gt; CHECKSIG
+
+should probably be used for Watchtower-compatibility.
+
+When creating a new state, both A and B would cooperatively sign with `muSig(A,B)` with a `SIGHASH_NOINPUT` that ensures the state transaction is correct.
+Then they somehow derive or share the private key to `Q`.
+
+In the blob sent to Watchtower, A (or B) includes the `SIGHASH_NOINPUT` as well as the `q` private key.
+Would it be safe for Watchtower to know that?
+
+Note that the above `Q` would need to be the same in the &quot;state&quot; trunk of the Decker-Russell-Osuntokun construction.
+
+So, building this, our initial setup transaction pays out to script:
+
+    &lt;muSig(A_u,B_u)&gt; CHECKVERIFY &lt;Q&gt; CHECKSIG
+
+Then each update transaction pays out to:
+
+    OP_IF
+        &lt;csv_delta&gt; OP_CSV OP_DROP
+        &lt;muSig(A_si,B_si)&gt; OP_CHECKSIGVERIFY &lt;Q&gt; OP_CHECKSIG
+    OP_ELSE
+        &lt;i&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+        &lt;muSig(A_u,B_u)&gt; OP_CHECKSIGVERIFY &lt;Q&gt; OP_CHECKSIG
+    OP_ENDIF
+
+The `SIGHASH_NOINPUT` signature for `muSig(A_u,B_u)` would then be sufficient to unlock the setup transaction, or any update transaction with lower `nLockTime`.
+The watchtower would then have to generate the signature for `Q`, committing to a particular UTXO.
+
+Regards,
+ZmnSCPxj
+
+
+Sent with ProtonMail Secure Email.
+
+&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+On Wednesday, March 20, 2019 3:38 PM, ZmnSCPxj via Lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> &gt; Since &quot;must have a non-SIGHASH_NOINPUT&quot; rule addresses the first reuse
+</I>&gt;<i> &gt; scenario (as well as the second), I'd be content with that proposal.
+</I>&gt;<i>
+</I>&gt;<i> How would this work with watchtowers?
+</I>&gt;<i>
+</I>&gt;<i> As I understand it, the current plan for eltoo watchtowers would be to store both `SIGHASH_NOINPUT` signatures from both sides in the blob sent to the watchtower.
+</I>&gt;<i>
+</I>&gt;<i> Then the watchtower can always attach this to whatever is the tipmost available on the chain of transactions.
+</I>&gt;<i>
+</I>&gt;<i> However, if one of the signatures MUST be non-`SIGHASH_NOINPUT` --- how does the watchtower create such a non-`SIGHASH_NOINPUT` signature?
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i> &gt; Future segwit versions may choose to relax it.[1]
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Rusty.
+</I>&gt;<i> &gt; [1] Must be consensus, not standardness; my prev suggestion was bogus.
+</I>&gt;<i> &gt; Rusty Russell <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A> writes:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Anthony Towns <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A> writes:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; If you publish to the blockchain:
+</I>&gt;<i> &gt; &gt; &gt; ...
+</I>&gt;<i> &gt; &gt; &gt; 4 can be dropped, state 5 and finish can be altered). Since the CSV delay
+</I>&gt;<i> &gt; &gt; &gt; is chosen by the participants, the above is still a possible scenario
+</I>&gt;<i> &gt; &gt; &gt; in eltoo, though, and it means there's some risk for someone accepting
+</I>&gt;<i> &gt; &gt; &gt; bitcoins that result from a non-cooperative close of an eltoo channel.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; AJ, this was a meandering random walk which shed very little light.
+</I>&gt;<i> &gt; &gt; I don't find the differentiation between malicious and non-malicious
+</I>&gt;<i> &gt; &gt; double-spends convincing. Even if you trust A, you already have to
+</I>&gt;<i> &gt; &gt; worry about person-who-sent-the-coins-to-A. This expands that set to be
+</I>&gt;<i> &gt; &gt; &quot;miner who mined coins sent-to-A&quot;, but it's very hard to see what
+</I>&gt;<i> &gt; &gt; difference that makes to how you'd handle coins from A.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Beyond that, I think NOINPUT has two fundamental ways to cause problems
+</I>&gt;<i> &gt; &gt; &gt; for the people doing NOINPUT sigs:
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; 1.  your signature gets applied to a unexpectedly different
+</I>&gt;<i> &gt; &gt; &gt;     script, perhaps making it look like you've being dealing
+</I>&gt;<i> &gt; &gt; &gt;     with some blacklisted entity. OP_MASK and similar solves
+</I>&gt;<i> &gt; &gt; &gt;     this.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; ... followed by two paragraphs describing how it's not a &quot;fundamental
+</I>&gt;<i> &gt; &gt; way to cause problems&quot; that you (or I) can see.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; For the second case, that seems a little more concerning. The nightmare
+</I>&gt;<i> &gt; &gt; &gt; scenario is maybe something like:
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; -   naive users do silly things with NOINPUT signatures, and end up
+</I>&gt;<i> &gt; &gt; &gt;     losing funds due to replays like the above
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; As we've never seen with SIGHASH_NONE?
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; -   initial source of funds was some major exchange, who decide it's
+</I>&gt;<i> &gt; &gt; &gt;     cheaper to refund the lost funds than deal with the customer complaints
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; -   the lost funds end up costing enough that major exchanges just outright
+</I>&gt;<i> &gt; &gt; &gt;     ban sending funds to any address capable of NOINPUT, which also bans
+</I>&gt;<i> &gt; &gt; &gt;     all taproot/schnorr addresses
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; I don't find this remotely credible.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; FWIW, I don't have a strong opinion here yet, but:
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; -   I'm still inclined to err on the side of putting more safety
+</I>&gt;<i> &gt; &gt; &gt;     measures in for NOINPUT, rather than fewer
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; In theory, sure. But not feel-good and complex &quot;safety measures&quot; which
+</I>&gt;<i> &gt; &gt; don't actually help in practical failure scenarios.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; -   the &quot;must have a sig that commits to the input tx&quot; seems like it
+</I>&gt;<i> &gt; &gt; &gt;     should be pretty safe, not too expensive, and keeps taproot's privacy
+</I>&gt;<i> &gt; &gt; &gt;     benefits in the cases where you end up needing to use NOINPUT
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; If this is considered necessary, can it be a standardness rule rather
+</I>&gt;<i> &gt; &gt; than consensus?
+</I>&gt;<i> &gt; &gt; Thanks,
+</I>&gt;<i> &gt; &gt; Rusty.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001924.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+	<LI>Next message: <A HREF="001928.html">[Lightning-dev] [bitcoin-dev]  More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1925">[ date ]</a>
+              <a href="thread.html#1925">[ thread ]</a>
+              <a href="subject.html#1925">[ subject ]</a>
+              <a href="author.html#1925">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

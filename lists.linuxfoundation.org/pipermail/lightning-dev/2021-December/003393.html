@@ -1,0 +1,348 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PTLCs early draft specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCAH5Bsr2KB1D6Y%2BOUPUiCFpSXUg1y%3Di-8HJ%2Bp55oWAy0Hbk39MQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003389.html">
+   <LINK REL="Next"  HREF="003394.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PTLCs early draft specification</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCAH5Bsr2KB1D6Y%2BOUPUiCFpSXUg1y%3Di-8HJ%2Bp55oWAy0Hbk39MQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] PTLCs early draft specification">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Thu Dec  9 01:34:00 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003389.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+        <LI>Next message: <A HREF="003394.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3393">[ date ]</a>
+              <a href="thread.html#3393">[ thread ]</a>
+              <a href="subject.html#3393">[ subject ]</a>
+              <a href="author.html#3393">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi thread,
+
+I was indeed mistaken. It does require four rounds for both parties to
+fully transition to the next comimit tx and I don't think there is any easy
+way around this. As you've pointed out there it's still only three rounds
+before the message is forwarded so no performance decrease for forwarding.
+
+I wanted to add a theoretical note that you might be aware of. The final
+message &quot;Bob -&gt; Alice: revoke_and_ack&quot; is not strictly necessary. Alice
+does not care about Bob revoking a commit tx that gives her strictly more
+coins. Bob's new commit tx can use the same revocation key as the previous
+one i.e. only the offerer of the PTLC/HTLC does a revocation and increments
+their revocation key. Not sending messages you don't need to is usually
+both more performant and simpler but given that it introduces some
+asymmetry so I'm not sure if it's worth it. It's also worth noting that
+with fast forwards + symmetric commit tx you will need to do the full four
+rounds always I think.
+
+Cheers,
+
+LL
+
+On Thu, 9 Dec 2021 at 02:03, Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; wrote:
+
+&gt;<i> Hi again AJ and list,
+</I>&gt;<i>
+</I>&gt;<i> I have slightly re-worked your proposal, and came up with the following
+</I>&gt;<i> (I also added the musig2 nonces for completeness):
+</I>&gt;<i>
+</I>&gt;<i> Alice -&gt; Bob: commitment_proposed
+</I>&gt;<i>     channel id
+</I>&gt;<i>     adaptor sigs for PTLCs to Bob in Alice's next commitment
+</I>&gt;<i>     musig nonces for Alice to spend funding tx
+</I>&gt;<i>     musig nonces for Bob to spend funding tx
+</I>&gt;<i>
+</I>&gt;<i> Bob -&gt; Alice: commitment_proposed
+</I>&gt;<i>     channel id
+</I>&gt;<i>     adaptor sigs for PTLCs to Alice in Bob's next commitment
+</I>&gt;<i>     musig nonces for Alice to spend funding tx
+</I>&gt;<i>     musig nonces for Bob to spend funding tx
+</I>&gt;<i>
+</I>&gt;<i> Bob -&gt; Alice: commitment_signed
+</I>&gt;<i>     channel id
+</I>&gt;<i>     signature for Alice to spend funding tx
+</I>&gt;<i>     sigs for Alice to spend HTLCs and PTLCs from her next commitment
+</I>&gt;<i>
+</I>&gt;<i> Alice -&gt; Bob: revoke_and_ack
+</I>&gt;<i>     channel id
+</I>&gt;<i>     reveal previous commitment secret
+</I>&gt;<i>     next commitment point
+</I>&gt;<i>
+</I>&gt;<i> Alice -&gt; Bob: commitment_signed
+</I>&gt;<i>     channel id
+</I>&gt;<i>     signature for Bob to spend funding tx
+</I>&gt;<i>     sigs for Bob to spend HTLCs and PTLCs from his next commitment
+</I>&gt;<i>
+</I>&gt;<i> Bob -&gt; Alice: revoke_and_ack
+</I>&gt;<i>     channel id
+</I>&gt;<i>     reveal previous commitment secret
+</I>&gt;<i>     next commitment point
+</I>&gt;<i>
+</I>&gt;<i> I believe it's exactly the same flow of data between peers as your
+</I>&gt;<i> proposal, but I simply split the data into several messages. Let me
+</I>&gt;<i> know if that's incorrect or if I missed a subtlety in your proposal.
+</I>&gt;<i>
+</I>&gt;<i> This has some small advantages:
+</I>&gt;<i>
+</I>&gt;<i> * commitment_signed and revoke_and_ack are mostly unchanged, we just
+</I>&gt;<i> add a new message before the commit / revoke dance. The only change
+</I>&gt;<i> happens in commitment_signed, where the signatures for PTLC-success
+</I>&gt;<i> transactions will actually become adaptor signatures.
+</I>&gt;<i> * the new adaptor signatures are in commitment_proposed instead of being
+</I>&gt;<i> in commitment_signed, which ensures that we can still have 2*483
+</I>&gt;<i> pending (H|P)TLCs: since the message size is limited to 65kB, we would
+</I>&gt;<i> otherwise decrease our maximum to ~2*335 with your proposal (very rough
+</I>&gt;<i> calculation)
+</I>&gt;<i> * the messages are now symmetrical, which may be easier to reason about
+</I>&gt;<i>
+</I>&gt;<i> One thing to note is that we reversed the order in which participants
+</I>&gt;<i> sign new commitments. We previously had Alice sign first, whereas now
+</I>&gt;<i> if Alice initiates, Bob will sign the updated commitment first. This is
+</I>&gt;<i> why we add only 0.5 RTT instead of 1 RTT compared to the current protocol.
+</I>&gt;<i> I don't think this is an issue, but if someone sees a way to maliciously
+</I>&gt;<i> exploit this, please share it!
+</I>&gt;<i>
+</I>&gt;<i> I updated my article [0], people jumping on the thread now may find it
+</I>&gt;<i> helpful to better understand this discussion.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Bastien
+</I>&gt;<i>
+</I>&gt;<i> [0] <A HREF="https://github.com/t-bast/lightning-docs/pull/16">https://github.com/t-bast/lightning-docs/pull/16</A>
+</I>&gt;<i>
+</I>&gt;<i> Le mer. 8 d&#233;c. 2021 &#224; 11:00, Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; a
+</I>&gt;<i> &#233;crit :
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hi AJ,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I think the problem t-bast describes comes up here as well when you
+</I>&gt;&gt;&gt;<i> collapse the fast-forwards (or, anytime you update the commitment
+</I>&gt;&gt;&gt;<i> transaction even if you don't collapse them).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Yes, exactly.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I think doing a synchronous update of commitments to the channel state,
+</I>&gt;&gt;&gt;<i> something like:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Alice -&gt; Bob: propose_new_commitment
+</I>&gt;&gt;&gt;<i> channel id
+</I>&gt;&gt;&gt;<i> adaptor sigs for PTLCs to Bob
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Bob -&gt; Alice: agree_new_commitment
+</I>&gt;&gt;&gt;<i> channel id
+</I>&gt;&gt;&gt;<i> adaptor sigs for PTLCs to Alice
+</I>&gt;&gt;&gt;<i> sigs for Alice to spend HTLCs and PTLCs to Bob from her own
+</I>&gt;&gt;&gt;<i> commitment tx
+</I>&gt;&gt;&gt;<i> signature for Alice to spend funding tx
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Alice -&gt; Bob: finish_new_commitment_1
+</I>&gt;&gt;&gt;<i> channel id
+</I>&gt;&gt;&gt;<i> sigs for Bob to spend HTLCs and PTLCs to Alice from his own
+</I>&gt;&gt;&gt;<i> commitment tx
+</I>&gt;&gt;&gt;<i> signature for Bob to spend funding tx
+</I>&gt;&gt;&gt;<i> reveal old prior commitment secret
+</I>&gt;&gt;&gt;<i> new commitment nonce
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Bob -&gt; Alice: finish_new_commitment_2
+</I>&gt;&gt;&gt;<i> reveal old prior commitment secret
+</I>&gt;&gt;&gt;<i> new commitment nonce
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> would work pretty well.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I agree, this is better than my naive addition of a `remote_ptlcs_signed`
+</I>&gt;&gt;<i> message in both directions, and even though it changes the protocol
+</I>&gt;&gt;<i> messages
+</I>&gt;&gt;<i> it stays very close to the mechanisms we currently have.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I'll spend some time specifying this in more details, to verify that we're
+</I>&gt;&gt;<i> not missing anything. What I really like about this proposal is that we
+</I>&gt;&gt;<i> can probably bundle that protocol change with `option_simplified_update`
+</I>&gt;&gt;<i> [0]
+</I>&gt;&gt;<i> without the adaptor sigs, and simply add the adaptor sigs as tlvs when we
+</I>&gt;&gt;<i> do PTLCs. That lets us deploy this new update protocol separately from
+</I>&gt;&gt;<i> PTLCs
+</I>&gt;&gt;<i> and ensure it also simplifies the state machine and makes other features
+</I>&gt;&gt;<i> such as splicing [1] and dynamic channel upgrades [2] easier.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks,
+</I>&gt;&gt;<i> Bastien
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [0] <A HREF="https://github.com/lightning/bolts/pull/867">https://github.com/lightning/bolts/pull/867</A>
+</I>&gt;&gt;<i> [1] <A HREF="https://github.com/lightning/bolts/pull/863">https://github.com/lightning/bolts/pull/863</A>
+</I>&gt;&gt;<i> [2] <A HREF="https://github.com/lightning/bolts/pull/868">https://github.com/lightning/bolts/pull/868</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Le mer. 8 d&#233;c. 2021 &#224; 10:29, Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; a &#233;crit :
+</I>&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> On Tue, Dec 07, 2021 at 11:52:04PM +0000, ZmnSCPxj via Lightning-dev
+</I>&gt;&gt;&gt;<i> wrote:
+</I>&gt;&gt;&gt;<i> &gt; Alternately, fast-forwards, which avoid this because it does not
+</I>&gt;&gt;&gt;<i> change commitment transactions on the payment-forwarding path.
+</I>&gt;&gt;&gt;<i> &gt; You only change commitment transactions once you have enough changes
+</I>&gt;&gt;&gt;<i> to justify collapsing them.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> I think the problem t-bast describes comes up here as well when you
+</I>&gt;&gt;&gt;<i> collapse the fast-forwards (or, anytime you update the commitment
+</I>&gt;&gt;&gt;<i> transaction even if you don't collapse them).
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> That is, if you have two PTLCs, one from A-&gt;B conditional on X, one
+</I>&gt;&gt;&gt;<i> from B-&gt;A conditional on Y. Then if A wants to update the commitment tx,
+</I>&gt;&gt;&gt;<i> she needs to
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>   1) produce a signature to give to B to spend the funding tx
+</I>&gt;&gt;&gt;<i>   2) produce an adaptor signature to authorise B to spend via X from his
+</I>&gt;&gt;&gt;<i>      commitment tx
+</I>&gt;&gt;&gt;<i>   3) produce a signature to allow B to recover Y after timeout from his
+</I>&gt;&gt;&gt;<i>      commitment tx spending to an output she can claim if he cheats
+</I>&gt;&gt;&gt;<i>   4) *receive* an adaptor signature from B to be able to spend the Y
+</I>&gt;&gt;&gt;<i> output
+</I>&gt;&gt;&gt;<i>      if B posts his commitment tx using A's signature in (1)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> The problem is, she can't give B the result of (1) until she's received
+</I>&gt;&gt;&gt;<i> (4) from B.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> It doesn't matter if the B-&gt;A PTLC conditional on Y is in the commitment
+</I>&gt;&gt;&gt;<i> tx itself or within a fast-forward child-transaction -- any previous
+</I>&gt;&gt;&gt;<i> adaptor sig will be invalidated because there's a new commitment
+</I>&gt;&gt;&gt;<i> transaction, and if you allowed any way of spending without an adaptor
+</I>&gt;&gt;&gt;<i> sig, B wouldn't be able to recover the secret and would lose funds.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> It also doesn't matter if the commitment transaction that A and B will
+</I>&gt;&gt;&gt;<i> publish is the same or different, only that it's different from the
+</I>&gt;&gt;&gt;<i> commitment tx that previous adaptor sigs committed to. (So ANYPREVOUT
+</I>&gt;&gt;&gt;<i> would fix this if it were available)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> So I think this is still a relevant question, even if fast-forwards
+</I>&gt;&gt;&gt;<i> make it a rare problem, that perhaps is only applicable to very heavily
+</I>&gt;&gt;&gt;<i> used channels.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> (I said the following in email to t-bast already)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> I think doing a synchronous update of commitments to the channel state,
+</I>&gt;&gt;&gt;<i> something like:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>    Alice -&gt; Bob: propose_new_commitment
+</I>&gt;&gt;&gt;<i>        channel id
+</I>&gt;&gt;&gt;<i>        adaptor sigs for PTLCs to Bob
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>    Bob -&gt; Alice: agree_new_commitment
+</I>&gt;&gt;&gt;<i>        channel id
+</I>&gt;&gt;&gt;<i>        adaptor sigs for PTLCs to Alice
+</I>&gt;&gt;&gt;<i>        sigs for Alice to spend HTLCs and PTLCs to Bob from her own
+</I>&gt;&gt;&gt;<i>          commitment tx
+</I>&gt;&gt;&gt;<i>        signature for Alice to spend funding tx
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>    Alice -&gt; Bob: finish_new_commitment_1
+</I>&gt;&gt;&gt;<i>        channel id
+</I>&gt;&gt;&gt;<i>        sigs for Bob to spend HTLCs and PTLCs to Alice from his own
+</I>&gt;&gt;&gt;<i>          commitment tx
+</I>&gt;&gt;&gt;<i>        signature for Bob to spend funding tx
+</I>&gt;&gt;&gt;<i>        reveal old prior commitment secret
+</I>&gt;&gt;&gt;<i>        new commitment nonce
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>    Bob -&gt; Alice: finish_new_commitment_2
+</I>&gt;&gt;&gt;<i>        reveal old prior commitment secret
+</I>&gt;&gt;&gt;<i>        new commitment nonce
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> would work pretty well.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> This adds half a round-trip compared to now:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>    Alice -&gt; Bob: commitment_signed
+</I>&gt;&gt;&gt;<i>    Bob -&gt; Alice: revoke_and_ack, commitment_signed
+</I>&gt;&gt;&gt;<i>    Alice -&gt; Bob: revoke_and_ack
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> The timings change like so:
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>   Bob can use the new commitment after 1.5 round-trips (previously 0.5)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>   Alice can be sure Bob won't use the old commitment after 2 round-trips
+</I>&gt;&gt;&gt;<i>   (previously 1)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>   Alice can use the new commitment after 1 round-trip (unchanged)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i>   Bob can be sure Alice won't use the old commitment after 1.5
+</I>&gt;&gt;&gt;<i> round-trips
+</I>&gt;&gt;&gt;<i>   (unchanged -- note: this is what's relevant for forwarding)
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Making the funding tx a musig setup would mean also supplying 64B
+</I>&gt;&gt;&gt;<i> of musig2 nonces along with the &quot;adaptor sigs&quot; in one direction,
+</I>&gt;&gt;&gt;<i> and providing the other side's 64B of musig2 nonces back along with the
+</I>&gt;&gt;&gt;<i> (now partial) signature for spending the funding tx (a total of 256B of
+</I>&gt;&gt;&gt;<i> nonce data, not 128B).
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Because it keeps both peers' commitments synchronised to a single channel
+</I>&gt;&gt;&gt;<i> state, I think the same protocol should work fine with the revocable
+</I>&gt;&gt;&gt;<i> signatures on a single tx approach too, though I haven't tried working
+</I>&gt;&gt;&gt;<i> through the details.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Fast forwards would then be reducing the 2 round-trip protocol to
+</I>&gt;&gt;&gt;<i> update the state commitment to a 0.5 round-trip update, to reduce
+</I>&gt;&gt;&gt;<i> latency when forwarding by the same amount as before (1.5 round-trips
+</I>&gt;&gt;&gt;<i> to 0.5 round-trips).
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Cheers,
+</I>&gt;&gt;&gt;<i> aj
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211209/dcadd171/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211209/dcadd171/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003389.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+	<LI>Next message: <A HREF="003394.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3393">[ date ]</a>
+              <a href="thread.html#3393">[ thread ]</a>
+              <a href="subject.html#3393">[ subject ]</a>
+              <a href="author.html#3393">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

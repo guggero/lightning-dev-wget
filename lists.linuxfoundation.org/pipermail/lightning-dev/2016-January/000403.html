@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] 2-of-3 Instant Escrow, or How to Do &quot;2-of-3 Multisig Contract&quot; Equivalent on Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%202-of-3%20Instant%20Escrow%2C%0A%20or%20How%20to%20Do%20%222-of-3%20Multisig%20Contract%22%20Equivalent%20on%20Lightning&In-Reply-To=%3C20160117014533.GA26503%40lightning.network%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="000405.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] 2-of-3 Instant Escrow, or How to Do &quot;2-of-3 Multisig Contract&quot; Equivalent on Lightning</H1>
+    <B>Joseph Poon</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%202-of-3%20Instant%20Escrow%2C%0A%20or%20How%20to%20Do%20%222-of-3%20Multisig%20Contract%22%20Equivalent%20on%20Lightning&In-Reply-To=%3C20160117014533.GA26503%40lightning.network%3E"
+       TITLE="[Lightning-dev] 2-of-3 Instant Escrow, or How to Do &quot;2-of-3 Multisig Contract&quot; Equivalent on Lightning">joseph at lightning.network
+       </A><BR>
+    <I>Sun Jan 17 01:45:33 UTC 2016</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="000405.html">[Lightning-dev] 2-of-3 Instant Escrow,	or How to Do &quot;2-of-3 Multisig Contract&quot; Equivalent on Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#403">[ date ]</a>
+              <a href="thread.html#403">[ thread ]</a>
+              <a href="subject.html#403">[ subject ]</a>
+              <a href="author.html#403">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>TL;DR: It's possible to do 2-of-3 party escrow in Lightning,
+functionally the same as the use case for on-chain &quot;2-of-3 multisig&quot;
+escrow systems (without the 3rd party escrow being a custodian for any
+funds! Or anyone else holding custodial ownership of coins for the
+matter). As Lightning uses Bitcoin transactions and scripts (using
+Bitcoins, not 3rdPartyCoins), it'll be possible to do nearly *instant*
+*offchain* multisig &quot;escrow&quot; on decentralized Lightning! This is useful
+for payments for goods and services which needs a 3rd party mediator.
+
+By making multiple R-value hashes supported in HTLCs, you can do
+something equivalent to &quot;multisig&quot; where payments are conditional upon
+2-of-3 parties agreeing. This is to support conditional multiparty
+payments, e.g. 2-of-3 &quot;escrow&quot;, which is one of the biggest use cases of
+bitcoin scripting today. An example use case is a 3rd party escrow
+verifies whether a seller should be paid. This design is such that the
+escrow is not a traditional custodial escrow, but instead determines who
+should get the money in the event of non-cooperation. See the Bitcoin
+Script below for details.
+
+There isn't message integration for 2-of-3 yet, but can work with *very*
+minimal changes. Arbitrary N-of-M can be supported with M values higher
+than 3 and lower than max script size, but let's keep this simple for
+now!
+
+How it works: Require 2-of-3 R-value preimages (from 3 hashes) in order
+for the HTLC to be fulfilled. For each hop in the payment, it requires
+this 2-of-3 condition. The timeout minimum for each hop in the path is
+at least the minimum agreed contractual escrow timeout. The timeouts
+should be fairly long compared to straight payments for security and
+giving enough time for the escrow service. This means each hop consumes
+a higher amount of time-value (due to much longer timeouts along all
+channels in the path, and possibly higher fees to pay for larger scripts
+and greater time-sensitivity for transaction inclusion), which does have
+greater pressure towards lower hop-distances, compared to straight
+payments where it matters a whole lot less.
+
+This is a slightly different way of thinking about things. It's not
+signatures that the escrow produces (or for that matters any of the
+3-parties in the 2-of-3 after the actual Commitment is signed). It's
+some secret which is revealed to authorize payment. So if the escrow
+wants the payment to go through without cooperation of the sender, they
+disclose the secret (R-value) to the recipient. If the recipient is
+unable to produce 2-of-3, after the agreed timeout, the sender will be
+refunded. Sender and receiver can agree to authorize payment in most
+cases where there is cooperation, escrow is only contacted if there is
+non-cooperation.
+
+Assume the order in the stack is Sender, Escrow, Recipient.
+
+For PAID 2-of-3 Escrow+Recipient, the HTLC stack is:
+        &lt;BobSig&gt; &lt;0&gt; &lt;EscrowPreimageR&gt; &lt;RecipientPreimageR&gt; &lt;0&gt;
+
+If it's REFUND because 2-of-3 has not been redeemed in time:
+        &lt;AliceSig&gt; &lt;0&gt; &lt;1&gt;
+
+Bitcoin Script (Alice's, we use OP_1/OP_0 to distinctly show computed
+true/false. 0/1 is for supplied data as part of the
+sigScript/redeemScript stack):
+------------------------------------------------------------------------
+
+//Paid
+OP_IF
+        &lt;CSVDelay&gt; OP_DROP OP_CSV //under rusty's CSV style
+
+        //Stack: &lt;BobSig&gt; &lt;0&gt; &lt;EscrowPreimageR&gt; &lt;RecipientPreimageR&gt;
+        //Recipient must agree to receive funds.
+        OP_HASH160 &lt;RecipientHash&gt; OP_EQUALVERIFY
+
+        //Stack: &lt;BobSig&gt; &lt;0&gt; &lt;EscrowPreimageR&gt;
+        //Either the Sender or Escrow must consent for payment
+        OP_HASH160 &lt;EscrowHash&gt; OP_EQUAL
+        //Stack: &lt;BobSig&gt; &lt;0&gt; &lt;OP_1&gt;
+        OP_SWAP
+        //Stack: &lt;BobSig&gt; &lt;OP_1&gt; &lt;0&gt;
+        OP_HASH160 &lt;SenderHash&gt; OP_EQUAL
+        //Stack: &lt;BobSig&gt; &lt;OP_1&gt; &lt;OP_0&gt;
+        OP_BOOLOR
+        //Stack: &lt;BobSig&gt; &lt;OP_1&gt;
+        OP_VERIFY
+
+        &lt;BobPubKey&gt;
+        //Stack: &lt;BobSig&gt; &lt;BobPubKey&gt;
+//Refund
+OP_ELSE
+        //Stack: &lt;AliceSig&gt; &lt;0&gt;
+        OP_HASH160 OP_DUP
+        &lt;R-HASH&gt; OP_EQUAL
+        OP_NOTIF
+                &lt;CSVDelay&gt; OP_DROP OP_CSV
+        OP_ENDIF
+
+        &lt;HTLCTimeout&gt; OP_DROP OP_CLTV
+
+        //Stack: &lt;AliceSig&gt;
+        &lt;AlicePubKey&gt;
+        //Stack: &lt;AliceSig&gt; &lt;AlicePubKey&gt;
+OP_ENDIF
+OP_CHECKSIG
+------------------------------------------------------------------------
+
+Note: It is possible that Alice and Bob may not be Sender, Recipient,
+nor Escrow! They could be nodes along the routing path. Script might
+have a typo or two or might be able to be optimized a couple bytes
+smaller maybe? Also, the script would be a bit different depending upon
+is broadcasting due to the revocations/R-HASH.
+
+The result? We can do 2-of-3 escrow payments which refund to the sender
+after a timeout! The Sender and Recipient can agree to redeem and they
+only need to go to the Escrow if there's a dispute. All nodes along the
+path gets paid or refunded atomically, the same as a single-HTLC payment
+on Lightning. Escrowed payments can be nearly instant and off-chain (but
+enforced/net-settled ultimately using the blockchain).
+
+Proposed HTLC wire message for the uint8 (two 4-bit N-of-M) determining
+type:
+0x11 (00010001): 1-of-1
+0x22 (00100010): 2-of-2
+0x23 (00100011): 2-of-3 [with Recipient being 1 of the two N parties]
+0x33 (00110011): 3-of-3
+
+I think the only ones that really matter are 1-of-1, 2-of-3, and 2-of-2.
+1-of-2 and 1-of-3 doesn't make sense if the recipient must consent to
+receiving funds anyway (pushing funds w/o consent is tricky due to
+pay-to-contract-hash) so that's basically a 1-of-1.
+
+Possible Resolution States:
+* Recipient paid: Recipient and Sender provide R-values
+* Recipient paid: Recipient and Escrow provide R-values
+* Sender refunded via timeout: Sender is refunded if Recipient cannot
+  convince Escrow or Sender to disclose their R-value before HTLC
+  timeout
+* Payment immediately cancelled and Sender gets refunded: Payment sent
+  in the opposite direction enforced by same R-values (if there is
+  sender &amp; receiver consent/cooperation to cancel payment)
+
+Sender+Escrow isn't going to want to push funds w/o cooperation of
+Recipient. However, it's possible to construct a script that way.
+
+Escrow is only contacted if the recipient needs to redeem and the sender
+is uncooperative so this is still true to the &quot;lazy escrow service&quot; in
+Bitcoin multisig.
+
+Ta-da! &quot;Smart Contract(TM)&quot; meme on Lightning.
+
+P.S. Tadge, Laolu, and I have also put up a repo of our in-progress
+design/code for Lightning here: <A HREF="https://github.com/LightningNetwork/lnd">https://github.com/LightningNetwork/lnd</A>
+
+-- 
+Joseph Poon
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="000405.html">[Lightning-dev] 2-of-3 Instant Escrow,	or How to Do &quot;2-of-3 Multisig Contract&quot; Equivalent on Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#403">[ date ]</a>
+              <a href="thread.html#403">[ thread ]</a>
+              <a href="subject.html#403">[ subject ]</a>
+              <a href="author.html#403">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

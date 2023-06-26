@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DataSig -- Data signatures over Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DataSig%20--%20Data%20signatures%20over%20Lightning&In-Reply-To=%3CCACRHu9irXQEfLLDdTwZg93QsaZnyPjP71O9w24b1LxVkzNaDKA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003606.html">
+   <LINK REL="Next"  HREF="003611.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DataSig -- Data signatures over Lightning</H1>
+    <B>George Tsagkarelis</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DataSig%20--%20Data%20signatures%20over%20Lightning&In-Reply-To=%3CCACRHu9irXQEfLLDdTwZg93QsaZnyPjP71O9w24b1LxVkzNaDKA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] DataSig -- Data signatures over Lightning">george.tsagkarelis at gmail.com
+       </A><BR>
+    <I>Thu Jun 16 15:36:28 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003606.html">[Lightning-dev] [bitcoin-dev] Why OpenTimestamps does not	&quot;linearize&quot; its transactions
+</A></li>
+        <LI>Next message: <A HREF="003611.html">[Lightning-dev] DataSig -- Data signatures over Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3609">[ date ]</a>
+              <a href="thread.html#3609">[ thread ]</a>
+              <a href="subject.html#3609">[ subject ]</a>
+              <a href="author.html#3609">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE># DataSig -- Data signatures over Lightning
+
+## Introduction
+
+Greetings, Lightning devs
+
+This mail serves as an introduction to one of the two specs
+that we want to propose to the community.
+The scope of these specs is transmitting data over the Lightning
+Network (over HTLC custom records). This is a use-case already used
+by a few projects ([1], [2], [3], [4]), and in this context
+we do not intend to debate the validity of it.
+
+As mentioned, DataSig is one of the two specs we aim in proposing:
+  * DataSig: Concerns the authentication of some data with regards to
+    the source and destination of the transmission.
+  * DataStruct: Concerns the outer layer of the data structure,
+    mainly focusing on the data fragmentation aspect of transmission.
+
+We seek feedback on the two specs as we want to improve and tweak
+them before proceeding with a BLIP proposal.
+
+## DataSig
+
+This spec's aim is to describe the format of a structure representing
+a signature over some arbitrary data.
+
+Before proceeding, a few clarifications must be made:
+  * The DataSig structure is placed inside a custom TLV record
+  * DataSig allows the receiving end validate that:
+    * Data were authored by the source node
+    * Data were meant to be received by the receiving node.
+
+The main scope of DataSig is assisting with data verification
+independently of what medium one chooses for data transmission.
+Nevertheless, for simplicity, in the follow-up DataStruct spec
+we assume the data to be transmitted over custom TLV records as well.
+
+We consider a compact encoding to be used for representing the
+DataSig structure over a TLV, so it is expressed as the following
+protobuf message:
+
+```protobuf
+message DataSig {
+  uint32 version = 1;
+  bytes sig      = 2;
+  bytes senderPK = 3;
+}
+```
+
+* `version`: The version of DataSig spec used.
+* `sig`: The bytes of the signature.
+* `senderPK`: The sender's public key.
+
+### Generation
+
+In order to instantiate a DataSig signing the data `D`, one needs
+to follow these steps:
+
+1. Populate `version` with the version that is going to be used.
+2. Prepend the desired destination address (`A`) to `D`,
+   creating a new byte array (`AD`).
+3. Sign the byte array `AD`, generating a signature encoded in
+   fixed-size LN wire format.
+4. Populate the `sig` field with the generated signature.
+5. Populate `senderPK` with own address.
+6. Encode the resulting DataSig structure to wire format
+   (byte array `S`).
+
+### Verification
+
+Assuming that the destination node has retrieved:
+  * The byte array of the data `D`
+  * The byte array of the encoded signature struct `S`
+
+The data should be verified against the signature
+by following the below procedure:
+
+1. Decode bytes `S` according to DataSig protobuf message definition.
+2. If signature `version` is not supported or unknown, consider data
+   to be unsigned.
+3. Prepend own address (`A`) to byte array `D`, generating the byte
+   array `AD`.
+4. Verify the signature provided in `sig` field against the message
+   `AD` and sender public key `senderPK`.
+
+### Notes / Remarks
+
+* The scope of this spec is to deal with the verification
+  of the author and intended recipient of transmitted data.
+  We do not intend to solve the issue of associating a DataSig
+  to the corresponding data (signed by it), in case they are
+  not transmitted in pairs.
+  For now, we assume that data and signature are transmitted
+  over an HTLC's custom records in pairs.
+
+* You can find a formatted version of this document on
+  [hackmd](<A HREF="https://hackmd.io/2pzHLslkRkGytfjKROv3AQ?view">https://hackmd.io/2pzHLslkRkGytfjKROv3AQ?view</A>).
+
+--------------
+
+[1]: <A HREF="https://sphinx.chat">https://sphinx.chat</A>
+[2]: <A HREF="https://github.com/joostjager/whatsat">https://github.com/joostjager/whatsat</A>
+[3]: <A HREF="https://github.com/alexbosworth/balanceofsatoshis">https://github.com/alexbosworth/balanceofsatoshis</A>
+[4]: <A HREF="https://github.com/c13n-io/c13n-go">https://github.com/c13n-io/c13n-go</A>
+
+
+-- 
+George Tsagkarelis | @GeorgeTsag | c13n.io
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220616/b33f8a43/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220616/b33f8a43/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003606.html">[Lightning-dev] [bitcoin-dev] Why OpenTimestamps does not	&quot;linearize&quot; its transactions
+</A></li>
+	<LI>Next message: <A HREF="003611.html">[Lightning-dev] DataSig -- Data signatures over Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3609">[ date ]</a>
+              <a href="thread.html#3609">[ thread ]</a>
+              <a href="subject.html#3609">[ subject ]</a>
+              <a href="author.html#3609">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

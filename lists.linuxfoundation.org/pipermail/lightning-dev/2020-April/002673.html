@@ -1,0 +1,258 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DLC channels and integration in the Lightning	Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DLC%20channels%20and%20integration%20in%20the%20Lightning%0A%09Network&In-Reply-To=%3CCABPZDUy5D_xr_T0X9geA_yxhCcc6%2Bf1oSv3syw0ro_WPwR%3D5EA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002665.html">
+   <LINK REL="Next"  HREF="002675.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DLC channels and integration in the Lightning	Network</H1>
+    <B>LE GUILLY THIBAUT</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DLC%20channels%20and%20integration%20in%20the%20Lightning%0A%09Network&In-Reply-To=%3CCABPZDUy5D_xr_T0X9geA_yxhCcc6%2Bf1oSv3syw0ro_WPwR%3D5EA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] DLC channels and integration in the Lightning	Network">thibaut at cryptogarage.co.jp
+       </A><BR>
+    <I>Tue Apr 28 09:33:35 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002665.html">[Lightning-dev] An update on PTLCs
+</A></li>
+        <LI>Next message: <A HREF="002675.html">[Lightning-dev] DLC channels and integration in the Lightning	Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2673">[ date ]</a>
+              <a href="thread.html#2673">[ thread ]</a>
+              <a href="subject.html#2673">[ subject ]</a>
+              <a href="author.html#2673">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list,
+
+
+First let me introduce myself as this is my first time posting. My name is
+Thibaut and I&#8217;ve been working at Crypto Garage for some time, mainly
+focusing on DLC. With my colleagues Ichiro Kuwahara and Takatoshi Nakagawa, we
+have been researching on how to construct DLC channels, and how such
+channels could be integrated in the Lightning network. As there are
+currently quite some discussions around DLC, we thought that it was a good
+time to share the result of this research. You can find the paper on github
+(
+<A HREF="https://github.com/p2pderivatives/offchain-dlc-paper/blob/master/offchaindlc.pdf">https://github.com/p2pderivatives/offchain-dlc-paper/blob/master/offchaindlc.pdf</A>
+) , and I&#8217;ll try to summarize it here (if you&#8217;re not familiar with DLC I
+recommend going for the paper as I&#8217;ll assume some knowledge in the following
+, also it has nice figures and everything so nice to skim through as a
+support for the description here). We&#8217;d be happy to hear feedback from the
+community on the feasibility of the approach we propose, both theoretically
+and practically.
+
+
+Motivation
+
+==================================
+
+
+At the moment, once a DLC expires, both parties need to close and open a
+new one in order to re-enter in a contract. This is wasteful as it requires
+at the minimum two extra on-chain transactions (one for mutual closing, and
+a new funding tx). So one would like to have a way to have actual DLC
+channels, where two parties can keep establishing contracts between
+themselves as long as the balance in the channel allows it. Creating such
+channels is less trivial than it may seem at first glance, as one tricky
+part is to ensure that no party can ever have the possibility of both
+enforcing the outcome of a previous contract or that of the latest contract
+(so they could pick the most favorable to them). I&#8217;ll refer to this issue
+as the &#8220;free option&#8221; problem hereafter, but it shouldn&#8217;t be confused with
+the free option problem of atomic swaps.
+
+
+In addition, if we are to implement such DLC channels, we would like to
+avoid having to re-do all the work and instead take advantage of the
+existing Lightning Network infrastructure. Note that the integration
+solution we propose is generic and would work to integrate other types of
+layer 2 protocol in LN. It also permits the existence of multiple
+concurrent channels, so two parties could have multiple DLC at the same
+time using a single fund transaction.
+
+
+Note that one of our motivation was also to come up with something that
+doesn&#8217;t require any changes to the Bitcoin transaction structure or SIGHASH
+or any new cryptographic operation, as it is rather trivial to implement in
+an eltoo context for example.
+
+
+Related Work
+
+==================================
+
+
+Juraj Bedn&#225;r and Ren&#233; Pickhardt previously proposed Lightning DLC channels [
+1]. Their construction works by adding an output to a LN commitment
+transaction, from which the regular set of DLC transactions can be
+attached. Our approach differs in two ways:
+
+   1. Our DLC channel construction can be made standalone, meaning they
+   could be deployed outside (or alongside) of the LN
+   2. The integration with LN that we propose allow for more separation of
+   concerns between the channels, as they can be updated separately without
+   influencing each others (their construction requires re-building all
+   transactions for any update, we only require this for opening/closing
+   and re-balancing).
+
+
+Bedn&#225;r and Pickhardt approach is similar to the one briefly described by
+Ben Carman of Suredbit in the first section of [2]. He then proposes routed
+DLC that require PTLC and barrier escrow. While our proposal only works for
+direct channels (so no routing), it also doesn&#8217;t require any intermediary, and
+only basic ECDSA.
+
+
+As already mentioned, both DLC channels and their integration in LN could
+be made much more easily in an eltoo world, as eltoo can be used as a
+generic framework for building off-chain contracts [3].
+
+
+DLC Channels
+
+==================================
+
+I&#8217;ll skip the part about the broken naive construction (that has the free
+option problem), and go directly for the one that actually works. The main
+trick revolves around adding two types of transaction to the regular DLC
+construction:
+
+   1. The first type of transaction is the update transaction. It&#8217;s pretty
+   much the same as an LN commitment transaction, and serves a similar
+   purpose, that is keeping the balance of the channel. It is also revokable
+   , meaning that each party holds a different version.
+   2. The second type is the buffer transaction, which spends both outputs
+   of the update transactions to produce one output that will be consumed by
+   the Contract Execution Transactions (CETs). The main point of the buffer
+   transaction is to solve the free option problem in the protocol.
+
+
+Using these two new transaction types we can now describe the update
+protocol (please refer to figure 2 of the paper for some illustration). I
+skip the establishment protocol here as the update protocol is the crispy
+part, but the establishment is described in the paper as well.
+
+   1. Alice and Bob generate the set of transactions (update, buffer, CETs
+   and refund) for the new contract, with the update transactions having
+   output values equal to the outcome of the previous contract,
+   2. Alice sends her signatures for Bob&#8217;s update transaction, all CETs and
+   the refund transactions,
+   3. Bob sends his signatures for Alice&#8217;s update transaction, all CETs, the
+   refund transactions, as well as the revocation key for his previous
+   update transaction,
+   4. Alice sends the revocation key for her previous update transaction, as
+   well as the signature for her buffer transaction,
+   5. Bob sends his signatures for both buffer transactions.
+   6. Alice sends her signature for Bob&#8217;s buffer transaction.
+
+An informal analysis of the protocol is provided in the paper (Section 3.2.4
+), but the main point is that it&#8217;s always the case that for both
+parties, either
+they can enforce the outcome of the previous contract (and so close the
+channel in case of an uncooperative counter party), either they can force
+their counter party into the new contract, but there is no point at which a
+party can pick which one to enforce (the free option problem).
+
+
+In the non-cooperative case, a DLC channel requires 5 on-chain
+transaction (from
+opening to close), while in the cooperative case it&#8217;s still only two. That
+means two more transactions in the worst case compared to the on-chain
+version, but we believe this is offset by the ability to establish
+consecutive contracts (even with two consecutive contracts, the number of
+transaction is reduced).
+
+
+Integration to the Lightning Network
+
+==================================
+
+
+Our proposed solution to integrate the DLC channels in LN is quite simple, but
+to the best of our knowledge has not been proposed before (apologies if that
+&#8217;s wrong, and happy to be corrected). The idea is to use a &#8220;split&#8221;
+ transaction, which spends the output of the fund transaction, and contains
+a single output for every channel to be created (a basic example would be
+one LN channel and one DLC channel), which works as the new funding for
+these channel. In the paper, we made this split transaction revokable so
+that it&#8217;s possible to reallocate funds between the channels, and close/open
+channels as desired. Writing this I realized it might also be possible to
+not make it revokable, which would make it less flexible but would remove
+the drawback of doubling the number of transactions to be created and
+monitored.
+
+
+The advantage of this construction is that you can support as many
+sub-channels as you want for a single fund transaction, and have the
+ability to rebalance between the channels. The disadvantage is that you
+need to create and keep track of twice as many transactions due to the
+revocation mechanism in the split transaction (though as just mentioned if
+you don&#8217;t want to rebalance and/or add/remove channels this issue is removed
+).
+
+
+Conclusion and Questions
+
+==================================
+
+
+We proposed a way to create DLC channels, and to integrate them in the
+Lightning Network. Both can be done with existing cryptographic constructs
+and Bitcoin transactions. We&#8217;d be happy to hear what people think of this
+approach, whether it is worth pursuing considering the recent development
+of ECDSA adaptor signatures which would enable simpler constructions, and
+how complex it would be to implement in practice.
+
+
+Regards,
+
+
+Thibaut
+
+
+[1] <A HREF="https://hackmd.io/@lpQxZaCeTG6OJZI3awxQPQ/LN-DLC">https://hackmd.io/@lpQxZaCeTG6OJZI3awxQPQ/LN-DLC</A>
+
+[2] <A HREF="https://suredbits.com/discreet-log-contracts-on-lightning-network/">https://suredbits.com/discreet-log-contracts-on-lightning-network/</A>
+
+[3]
+<A HREF="../2019-September/002136.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/002136.html</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200428/2ef726cc/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200428/2ef726cc/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002665.html">[Lightning-dev] An update on PTLCs
+</A></li>
+	<LI>Next message: <A HREF="002675.html">[Lightning-dev] DLC channels and integration in the Lightning	Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2673">[ date ]</a>
+              <a href="thread.html#2673">[ thread ]</a>
+              <a href="subject.html#2673">[ subject ]</a>
+              <a href="author.html#2673">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

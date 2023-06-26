@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20RBF%20Pinning%20with%20Counterparties%20and%20Competing%0A%09Interest&In-Reply-To=%3C20200423095957.ocetcjhevwlonwya%40ganymede%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002652.html">
+   <LINK REL="Next"  HREF="002667.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest</H1>
+    <B>David A. Harding</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20RBF%20Pinning%20with%20Counterparties%20and%20Competing%0A%09Interest&In-Reply-To=%3C20200423095957.ocetcjhevwlonwya%40ganymede%3E"
+       TITLE="[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest">dave at dtrt.org
+       </A><BR>
+    <I>Thu Apr 23 09:59:57 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002652.html">[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+</A></li>
+        <LI>Next message: <A HREF="002667.html">[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2664">[ date ]</a>
+              <a href="thread.html#2664">[ thread ]</a>
+              <a href="subject.html#2664">[ subject ]</a>
+              <a href="author.html#2664">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Apr 22, 2020 at 03:53:37PM -0700, Matt Corallo wrote:
+&gt;<i> if you focus on sending the pinning transaction to miner nodes
+</I>&gt;<i> directly (which isn't trivial, but also not nearly as hard as it
+</I>&gt;<i> sounds), you could still pull off the attack. 
+</I>
+If the problem is that miners might have information not available to
+the network in general, you could just bribe them for that knowledge.
+E.g. as Bob's refund deadline approaches and he begins to suspect that
+mempool shenanigans are preventing his refund transaction from
+confirming, he takes a confirmed P2WPKH UTXO he's been saving for use in
+CPFP fee bumps and spends part of its value (say 1 mBTC) to the
+following scriptPubKey[1],
+
+    OP_SHA256 &lt;hash_whose_preimage_bob_wants&gt; OP_EQUAL
+
+Assuming the feerate and the bribe amount are reasonable, any miner who
+knows the preimage is incentivized to include Bob's transaction and a
+child transation spending from it in their next block.  That child
+transaction will include the preimage, which Bob will see when he
+processes the block.
+
+If any non-miner knows the preimage, they can also create that child
+transaction.  The non-miner probably can't profit from this---miners can
+just rewrite the child transaction to pay themselves since there's no
+key-based security---but the non-miner can at least pat themselves on
+the back for being a good Summaritan.  Again Bob will learn the preimage
+once the child transaction is included in a block, or earlier if his
+wallet is monitoring for relays of spends from his parent transaction.
+
+Moreover, Bob can first create a bribe via LN and, in that case, things
+are even better.  As Bob's deadline approaches, he uses one of his
+still-working channels to send a bunch of max-length (20 hops?) probes
+that reuse the earlier HTLC's &lt;hash&gt;.  If any hop along the path knows
+the preimage, they can immediately claim the probe amount (and any
+routing fees that were allocated to subsequent hops).  This not only
+gives smaller miners with LN nodes an equal chance of claiming the
+probe-bribe as larger miners, but it also allows non-miners to profit
+from learning the preimage from miners.
+
+That last part is useful because even if, as in your example, the
+adversary is able to send one version of the transaction just to miners
+(with the preimage) and another conflicting version to all relay nodes
+(without the preimage), miners will naturally attempt to relay the
+preimage version of the transaction to other users; if some of those
+users run modified nodes that write all 32-byte witness data blobs to a
+database---even if the transaction is ultimately rejected as a
+conflict---then targetted relay to miners may not be effective at
+preventing Bob from learning the preimage.
+
+Obviously all of the above requires people run additional software to
+keep track of potential preimages[2] and then compare them to hash
+candidates, plus it requires additional complexity in LN clients, so I
+can easily understand why it might be less desirable than the protocol
+changes under discussion in other parts of this thread.  Still, with
+lots of effort already being put into watchtowers and other
+enforcement-assistance services, I wonder if this problem can be largely
+addressed in the same general way.
+
+-Dave
+
+[1] Requires a change to standard relay and mining policy.
+[2] Pretty easy, e.g.
+
+    bitcoin-cli getrawmempool \
+    | jq -r .[] \
+    | while read txid ; do
+      bitcoin-cli getrawtransaction $txid true | jq .vout[].scriptPubKey.asm
+    done \
+    | grep -o '\&lt;[0-9a-f]\{64\}\&gt;'
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 833 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200423/9a20bfd7/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200423/9a20bfd7/attachment.sig</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002652.html">[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+</A></li>
+	<LI>Next message: <A HREF="002667.html">[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2664">[ date ]</a>
+              <a href="thread.html#2664">[ thread ]</a>
+              <a href="subject.html#2664">[ subject ]</a>
+              <a href="author.html#2664">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

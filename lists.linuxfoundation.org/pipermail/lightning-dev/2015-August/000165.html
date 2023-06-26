@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A state machine.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C874mjgqne2.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000160.html">
+   <LINK REL="Next"  HREF="000166.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A state machine.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3C874mjgqne2.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] A state machine.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Aug 31 01:04:21 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000160.html">[Lightning-dev] A state machine.
+</A></li>
+        <LI>Next message: <A HREF="000166.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#165">[ date ]</a>
+              <a href="thread.html#165">[ thread ]</a>
+              <a href="subject.html#165">[ subject ]</a>
+              <a href="author.html#165">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> On Fri, Aug 21, 2015 at 03:02:32PM +0930, Rusty Russell wrote:
+</I>&gt;&gt;<i> Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+</I>&gt;&gt;<i> &gt; Yeah.  Let me generate a decent text flowchart for the normal cases...
+</I>&gt;&gt;<i> I've taken out some transitions for simplicity (eg. ERR_ANCHOR_LOST and
+</I>&gt;&gt;<i> ERR_INFORMATION_LEAK, which shouldn't happen):
+</I>&gt;<i>
+</I>&gt;<i> Some thoughs, fwiw.
+</I>&gt;<i>
+</I>&gt;<i> I think the two INIT states is odd. I guess I would have expected
+</I>&gt;<i> something more like:
+</I>&gt;<i>   INIT:
+</I>&gt;<i>     - (cmd_open_my_anchor) -&gt; INIT_WITHANCHOR
+</I>&gt;<i>     - (pkt_propose_channel) -&gt; INIT_NOANCHOR
+</I>&gt;<i>
+</I>&gt;<i> I think the &quot;state&quot; orientation of the dot output isn't great. ie rather
+</I>&gt;<i> than laying it out like how it is in the code with a state then all the
+</I>&gt;<i> transitions from that state:
+</I>&gt;<i>
+</I>&gt;<i>   NORMAL:
+</I>&gt;<i>     - UPDATE_HTLC -&gt; X
+</I>&gt;<i>     - UPDATE_PKT -&gt; Y
+</I>&gt;<i>     - COMPLETE_HTLC -&gt; Z
+</I>&gt;<i>
+</I>&gt;<i> I'd rather see it laid out as the protocol steps:
+</I>&gt;<i>   UPDATE_HTLC
+</I>&gt;<i>     NORMAL -[UPDATE_HTLC]-&gt; X -[ACCEPT]-&gt; X2 -&gt;...
+</I>&gt;<i>
+</I>&gt;<i>   UPDATE_PKT
+</I>&gt;<i>     NORMAL -[UPDATE_PKT]-&gt; Y -&gt;...
+</I>&gt;<i>
+</I>&gt;<i> ie, have multiple graphs, each starting at INIT/NORMAL with a single
+</I>&gt;<i> cmd/pkt and ending at NORMAL'/CLOSED/ERROR. I'd probably prefer
+</I>&gt;<i> including the decision points as nodes too.
+</I>
+Yeah, I plan on eventually creating an RFC-style document which lays
+this out.
+
+At its core, it's fairly simple, and I'm starting to think that diagrams
+more than a simple ASCII flowchart don't add anything.
+
+&gt;<i> A lot of the &quot;an error occurred!&quot; abort paths apply to a whole bunch of
+</I>&gt;<i> states, it would be nice to combine them in the output... Hmm, I think
+</I>&gt;<i> that's doable...
+</I>&gt;<i>
+</I>&gt;<i> I've had a go at doing this with code. C is hard, so I converted to
+</I>&gt;<i> python, and came up with:
+</I>&gt;<i>
+</I>&gt;<i>   <A HREF="http://azure.erisian.com.au/~aj/tmp/lightstate/statepy.svg">http://azure.erisian.com.au/~aj/tmp/lightstate/statepy.svg</A>
+</I>&gt;<i>
+</I>&gt;<i> (source bits in the lightstate/ directory)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> I was thinking it would be possible to update many HTLCs at once, so
+</I>&gt;<i> I was expecting a single PKT_UPDATE_CHANNEL rather than the ADD_HTLC,
+</I>&gt;<i> COMPLETE_HTLC, TIMEOUT_HTLC, etc variants. From a protocol POV, I guess
+</I>&gt;<i> that's something like:
+</I>&gt;<i>
+</I>&gt;<i>   UpdateChannel:
+</I>&gt;<i>      int  n_ops
+</I>&gt;<i>      op   ops[]
+</I>&gt;<i>      int  commitment_len;
+</I>&gt;<i>      byte commitment[]
+</I>&gt;<i>
+</I>&gt;<i> where an op would be ADD_HTLC, COMPLETE_HTLC, TIMEOUT_HTLC,
+</I>&gt;<i> ROUTEFAIL_HTLC, etc. That's a bit more complicated in the protocol,
+</I>&gt;<i> but I think it pays off in simplifying the state diagram and hence the
+</I>&gt;<i> software? (I think it's also kindof necessary for some fee models, and
+</I>&gt;<i> will be useful for batching updates when performance eventually
+</I>&gt;<i> matters)
+</I>
+This is the kind of optimization we may see later, but I really shy away
+from doing it now.  Your diagram looks simpler because you removed all
+the rest of the handshaking.  Try this:
+
+A: ADD_HTLC --&gt; B: DECLINE_HTLC
+  OR
+A: ADD_HTLC --&gt; B: ACCEPT --&gt; A: SIGNATURE --&gt; B: COMPLETE
+
+After success:
+
+B: FULFILL_HTLC -&gt; A: ACCEPT --&gt; B: SIGNATURE --&gt; A: COMPLETE
+  OR
+B: ROUTEFAIL_HTLC -&gt; A: ACCEPT --&gt; B: SIGNATURE --&gt; A: COMPLETE
+  OR
+A: TIMEDOUT_HTLC -&gt; B: ACCEPT --&gt; A: SIGNATURE --&gt; B: COMPLETE
+
+This makes the constraints clearer, eg. you can't DECLINE_HTLC anything
+but an ADD_HTLC.
+
+&gt;<i> Hmm, I find the PRIO stuff pretty klunky. It's only used to choose who
+</I>&gt;<i> wins in the event of simultaneous/overlapping channel updates, no? Why
+</I>&gt;<i> not just have a constant tiebreak in that case, eg, where whoever has the
+</I>&gt;<i> lowest channel balance (or the lowest IP / key id), wins?
+</I>
+That could lead to livelock.
+
+&gt;<i> Or alternatively, just have the high priority be given to whoever last
+</I>&gt;<i> went from WAIT_FOR_UPDATE_SIG -&gt; NORMAL (and low priority to whoever
+</I>&gt;<i> went from WAIT_FOR_UPDATE_COMPLETE -&gt; NORMAL). That way the priority
+</I>&gt;<i> would still swap
+</I>
+Well, that would alternate at least.  But that seems more complex than
+basing priority on the lower bit of the commitment number, which we have
+to remember anyway.
+
+&gt;<i> AFAICS, you still have a potential deadlock atm if you think you're
+</I>&gt;<i> high priority but your counterparty also thinks they're high priority,
+</I>&gt;<i> or just missed your update packet. I think there might be a similar
+</I>&gt;<i> deadlock if both systems think they're low priority.
+</I>
+They can't get into that state.  And that's why it's spelled out in the
+state machine, so I can exhaustively test (and have).
+
+&gt;<i> If the INIT_NOANCHOR is meant to do to single-sided-anchor idea proposed
+</I>&gt;<i> in
+</I>&gt;<i>
+</I>&gt;<i>   <A HREF="https://bitcointalk.org/index.php?topic=1134319.msg11963141">https://bitcointalk.org/index.php?topic=1134319.msg11963141</A>
+</I>&gt;<i>
+</I>&gt;<i> then it would probably be good to have a PKT_REBALANCE_VIA_BLOCKCHAIN
+</I>&gt;<i> option; ie something like:
+</I>&gt;<i>
+</I>&gt;<i>  0. channel is unbalanced: A has many funds, B has no funds
+</I>&gt;<i>  1. B proposes rebalancing by $x.
+</I>&gt;<i>  2. A accepts, chooses R, reveals #(R).
+</I>&gt;<i>  3. B proposes HTLC from A to B of x funds, conditional on R.
+</I>&gt;<i>  4. B posts $x in funds on the blockchain, payable to:
+</I>&gt;<i>       [SIG_B &amp; R | SIG_A &amp; TIMEOUT]
+</I>&gt;<i>  5. B tells A the transaction id (and p2sh details etc).
+</I>&gt;<i>  6. A waits for this to be &quot;deep enough&quot;
+</I>&gt;<i>  7. A claims the blockchain transaction, revealing R.
+</I>&gt;<i>  8. B completes the HTLC, rebalancing the channel.
+</I>
+We want A to be able to increase the channel too, so this doesn't quite
+work.  I think we need to explicitly add a new anchor for that case.
+
+But this idea is a subset of a more general &quot;swap to X&quot; HTLC, which
+comes down to a routing problem, which is a layer up from this state
+machine.
+
+&gt;<i> Not being able to tack on orthogonal state makes things a little clumsy
+</I>&gt;<i> here...
+</I>
+The state machine is hard to work with, but the payoff is exhaustive
+proof that it's sane, and handles all possible cases.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000160.html">[Lightning-dev] A state machine.
+</A></li>
+	<LI>Next message: <A HREF="000166.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#165">[ date ]</a>
+              <a href="thread.html#165">[ thread ]</a>
+              <a href="subject.html#165">[ subject ]</a>
+              <a href="author.html#165">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

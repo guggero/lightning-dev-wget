@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Making (some) channel limits dynamic
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Making%20%28some%29%20channel%20limits%20dynamic&In-Reply-To=%3CCALZpt%2BG-Wam0f56UqMALp7zyc_Yd%2B9cm4t4QT%2BjN6aeG9jTrvw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002803.html">
+   <LINK REL="Next"  HREF="002810.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Making (some) channel limits dynamic</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Making%20%28some%29%20channel%20limits%20dynamic&In-Reply-To=%3CCALZpt%2BG-Wam0f56UqMALp7zyc_Yd%2B9cm4t4QT%2BjN6aeG9jTrvw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Making (some) channel limits dynamic">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Oct  6 16:14:34 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002803.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+        <LI>Next message: <A HREF="002810.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2808">[ date ]</a>
+              <a href="thread.html#2808">[ thread ]</a>
+              <a href="subject.html#2808">[ subject ]</a>
+              <a href="author.html#2808">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello Bastien,
+
+As a first note , I was thinking dynamic policy adjustment would be covered
+by the dynamic commitment mechanism proposed by Laolu as it presents the
+same trade-offs, you need to stop channel HTLC processing before upgrading,
+otherwise it might falsify your whole in-flight HTLC accounting.
+
+&gt;<i> Recent discussions around channel jamming [1] have highlighted again the
+</I>&gt;<i> need to think twice when
+</I>&gt;<i> configuring your channels parameters.
+</I>
+I'm still dubious that straighter channel parameters are the best solution
+to solve channel jamming. As a routing node evaluating a HTLC, I think the
+question you're trying to answer is : &quot;Is this a _honest_ HTLC to relay ?&quot;,
+where honest is defined both as paying more fees that the liquidity lock
+and with high odds of a positive settlement, otherwise you won't get paid.
+
+The first predicate is easy to evaluate, just verify that the HTLC is
+paying more as an incoming packet that you have to send forward.
+
+On the other hand, the second predicate is hard to evaluate. A first lead
+of a solution is to evaluate the packet forwarder instead of the packet
+itself. You may have a web-of-trust/reputation system with a one-level rank
+of trust which would be enforced at the channel opening layer, i.e don't
+open/accept channels with random nodes. A less constraining version is
+still a reputation system but where you statically attribute a HTLC
+forwarding policy based on counterparty reputation (~today).
+
+The more evolved reputation system version you implicitly seem to argue for
+is adapting the forwarding policy based on counterparty past behavior, e.g
+like relaxing channel parameters for a counterparty upstreaming a lot of
+successful HTLCs. IMO, this is still presenting hurdles.
+
+If you have 1 BTC of outgoing bandwidth but your counterparty is enforcing
+a `max_htlc_value_in_flight_msat` of 0.5 BTC, it means you have a
+&quot;sleeping&quot; outgoing liquidity. Rationally, you should only open a channel
+with a capacity somehow equivalent to what is authorized by your
+counterparty relay policy.
+
+A lesson would be to negotiate first a policy then an opening, as of today
+they're still bundled in one message flow. I don't think you can reduce the
+capacity once you learn acceptor policy ? Don't overstake liquidity more
+than you can actually gain from.
+
+That said, if you have a dynamic policy model, at policy relaxation, you
+need to increase channel capacity to profit from relaxation, let's say
+through some kind of splice-in. But now you have on-chain fees at each
+policy/liquidity adjustment.
+
+Under a dynamic policy model based on accumulated reputation, it sounds
+like there is some kind of trade-off between useless off-chain liquidity
+and on-chain fees.
+
+Instead of relying on reputation, the other alternative is just to have an
+upfront payment system, where a relay node doesn't have to account for a
+HTLC issuer reputation to decide acceptance and can just forward a HTLC as
+long it paid enough. More, I think it's better to mitigate jamming with a
+fees-based system than a web-of-trust one, less burden on network newcomers.
+
+This doesn't prevent hybrid models where you might reward your good
+behaving peers with a discount on your upfront payment policy.
+
+What's your opinion ?
+
+Antoine
+
+Le lun. 5 oct. 2020 &#224; 07:54, Bastien TEINTURIER via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i> Good evening list,
+</I>&gt;<i>
+</I>&gt;<i> Recent discussions around channel jamming [1] have highlighted again the
+</I>&gt;<i> need to think twice when
+</I>&gt;<i> configuring your channels parameters. There are currently parameters that
+</I>&gt;<i> are set once at channel
+</I>&gt;<i> creation that would benefit a lot from being configurable throughout the
+</I>&gt;<i> lifetime of the channel
+</I>&gt;<i> to avoid closing channels when we just want to reconfigure them:
+</I>&gt;<i>
+</I>&gt;<i> * max_htlc_value_in_flight_msat
+</I>&gt;<i> * max_accepted_htlcs
+</I>&gt;<i> * htlc_minimum_msat
+</I>&gt;<i> * htlc_maximum_msat
+</I>&gt;<i>
+</I>&gt;<i> Nodes can currently unilaterally udpate these by applying forwarding
+</I>&gt;<i> heuristics, but it would be
+</I>&gt;<i> better to tell our peer about the limits we want to put in place
+</I>&gt;<i> (otherwise we're wasting a whole
+</I>&gt;<i> cycle of add/commit/revoke/fail messages for no good reason).
+</I>&gt;<i>
+</I>&gt;<i> I suggest adding tlv records in `commitment_signed` to tell our channel
+</I>&gt;<i> peer that we're changing
+</I>&gt;<i> the values of these fields.
+</I>&gt;<i>
+</I>&gt;<i> Is someone opposed to that?
+</I>&gt;<i> Are there other fields you think would need to become dynamic as well?
+</I>&gt;<i> Do you think that needs a new message instead of using extensions of
+</I>&gt;<i> `commitment_signed`?
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Bastien
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="https://twitter.com/joostjgr/status/1308414364911841281">https://twitter.com/joostjgr/status/1308414364911841281</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201006/8dc749f6/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201006/8dc749f6/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002803.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+	<LI>Next message: <A HREF="002810.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2808">[ date ]</a>
+              <a href="thread.html#2808">[ thread ]</a>
+              <a href="subject.html#2808">[ subject ]</a>
+              <a href="author.html#2808">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

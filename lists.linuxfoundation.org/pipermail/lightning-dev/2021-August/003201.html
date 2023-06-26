@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] #zerobasefee
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3C20210825125043.GC11158%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003200.html">
+   <LINK REL="Next"  HREF="003202.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] #zerobasefee</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3C20210825125043.GC11158%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] #zerobasefee">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Aug 25 12:50:43 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003200.html">[Lightning-dev] #zerobasefee
+</A></li>
+        <LI>Next message: <A HREF="003202.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3201">[ date ]</a>
+              <a href="thread.html#3201">[ thread ]</a>
+              <a href="subject.html#3201">[ subject ]</a>
+              <a href="author.html#3201">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Aug 24, 2021 at 08:50:42PM -0700, Matt Corallo wrote:
+&gt;<i> I feel like we're having two very, very different conversations here. On one
+</I>&gt;<i> hand, you're arguing that the base fee is of marginal use, and that maybe we
+</I>&gt;<i> can figure out how to average it out such that we can avoid needing it.
+</I>
+I'm not sure about the &quot;we&quot; in that sentence -- I'm saying node operators
+shouldn't bother with it, not that lightning software devs shouldn't offer
+it as a config option or take it into account when choosing routes. The
+only software change that /might/ make sense is changing defaults from
+1sat to 0msat, but it seems a bit early for that too, to me.
+
+(I'm assuming comments like &quot;We'll most definitely support #zerobasefee&quot;
+[0] just means &quot;you can set it to zero if you like&quot; which seems like a
+weird thing to have to say explicitly...)
+
+[0] <A HREF="https://twitter.com/Snyke/status/1418109408438063104">https://twitter.com/Snyke/status/1418109408438063104</A>
+
+&gt;<i> On
+</I>&gt;<i> the other hand, I'm arguing that, yes, maybe you can, but ideally you
+</I>&gt;<i> wouldn't have to, because its still pretty nice to capture those costs
+</I>&gt;<i> sometimes.
+</I>
+I don't really think it captures costs at all, but I do agree it could
+be nice (at least in theory) to have it available since then you might
+be able to better optimise your fee income based on whatever demand
+happens to be. That's to increase profits, not match costs though, and
+I'm not convinced the theory will play out in practice presuming AMP is
+often useful/necessary.
+
+&gt;<i> Also, even if we can maybe do away with the base fee, that still
+</I>&gt;<i> doesn't mean we should start relying on the lack of any
+</I>&gt;<i> not-completely-linear-in-HTLC-value fees in our routing algorithms,
+</I>
+I mean, exprimental/research routing algorithms should totally rely
+on that if they feel like it? I just don't see any evidence that
+anyone's thinking of moving that out of research and into production
+until there's feedback from operators and a lot more results from the
+research in general...
+
+&gt;<i> as maybe
+</I>&gt;<i> we'll want to do upfront payments or some other kind of anti-DoS payment in
+</I>&gt;<i> the future to solve the gaping, glaring, giant DoS hole that is HTLCs taking
+</I>&gt;<i> forever to time out.
+</I>
+Until we've got an even vaguely workable scheme for that, I don't
+think it's relevant to consider. (If my preferred scheme turns out
+to be workable, I don't think it needs to be taken into account when
+(multi)pathfinding at all)
+
+&gt;<i> I'm not even sure that you're trying to argue, here, that we should start
+</I>&gt;<i> making key assumptions about the only fee being a proportional one in our
+</I>&gt;<i> routing algorithms, but that is what the topic at hand is, so I can't help
+</I>&gt;<i> but assume you are?
+</I>
+No, that's not the topic at hand, at all?
+
+I mean, it's related, and interesting to talk about, but it's a digression
+into &quot;wild ideas that might happen in the future&quot;, not the topic... I
+don't think anyone's currently advocating for node software to work that
+way? (I do think having many/most channels have a zero base fee will make
+multipath routing algos work better even when they *don't* assume the
+base fee is zero)
+
+I think I'm arguing for these things:
+
+ a) &quot;everyone&quot; should drop their base fee msat from the default,
+    probably to 0 because that's an easy fixed point that you don't need
+    to think about again as the price of btc changes, but anything at
+    or below 10msat would be much more reasonable than 1000msat.
+
+ b) if people are concerned about wasting resources forwarding super
+    small payments for correspondingly super small fees, they should
+    raise min_htlc_amount from 0 (or 1000) to compensate, instead of
+    raising their base fee.
+
+ c) software should dynamically increase min_htlc_amount as the
+    number of available htlc slots decreases, as a DoS mitigation measure.
+    (presuming this is a temporary increase, probably this wouldn't
+    be gossiped, and possibly not even communicated to the channel
+    counterparty -- just a way of immediately rejecting htlcs? I think
+    if something along these lines were implemented, (b) would almost
+    never be necessary)
+
+ d) the default base fee should be changed to 0, 1, or 10msat instead
+    of 1000msat
+
+ e) trivially: (I don't think anyone's saying otherwise)
+     - 0 base fee should be a supported config option
+     - research/experimental routing algorithms are great and should
+       be encouraged
+     - deploying new algorithms in production should only be done with
+       a lot of care
+     - changing the protocol should only be done with even more care
+     - proportional fees should be rounded up to the next msat and never
+       rounded down to 0
+     - research/experiments on charging for holding htlcs open should
+       continue (likewise research on other DoS prevention measures)
+
+I'm not super sure about (c) or (d), and the &quot;everyone&quot; in (a) could
+easily not really be everyone.
+
+&gt;<i> If you disagree with the above characterization I'm happy to go line-by-line
+</I>&gt;<i> tit-for-tat, but usually those kinds of tirades aren't exactly useful and
+</I>&gt;<i> end up being more about semantics than the thrust of the argument.
+</I>
+Thanks for the lack of a tirade :)
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003200.html">[Lightning-dev] #zerobasefee
+</A></li>
+	<LI>Next message: <A HREF="003202.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3201">[ date ]</a>
+              <a href="thread.html#3201">[ thread ]</a>
+              <a href="subject.html#3201">[ subject ]</a>
+              <a href="author.html#3201">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

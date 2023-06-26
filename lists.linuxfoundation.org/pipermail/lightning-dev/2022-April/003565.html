@@ -1,0 +1,123 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3C87czh8h90j.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003564.html">
+   <LINK REL="Next"  HREF="003566.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3C87czh8h90j.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Sat Apr 23 01:40:44 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003564.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003566.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3565">[ date ]</a>
+              <a href="thread.html#3565">[ thread ]</a>
+              <a href="subject.html#3565">[ subject ]</a>
+              <a href="author.html#3565">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+&gt;&gt;<i> Allowing only 1 a day, ended up with 18% of channels hitting the spam
+</I>&gt;&gt;<i> limit.  We cannot fit that many channel differences inside a set!
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Perhaps Alex should post his more detailed results, but it's pretty
+</I>&gt;&gt;<i> clear that we can't stay in sync with this many differences :(
+</I>&gt;<i>
+</I>&gt;<i> Right, the fact that most nodes don't do any limiting at all and y'all have a *very* aggressive (by 
+</I>&gt;<i> comparison) limit is going to be an issue in any context.
+</I>
+I'm unable to find the post years ago where I proposed this limit
+and nobody had major objections.  I just volunteered to go first :)
+
+&gt;<i> We could set some guidelines and improve 
+</I>&gt;<i> things, but luckily regular-update-sync bypasses some of these issues anyway - if we sync once per 
+</I>&gt;<i> block and your limit is once per block, getting 1000 updates per block for some channel doesn't 
+</I>&gt;<i> result in multiple failures in the sync. Sure, multiple peers sending different updates for that 
+</I>&gt;<i> channel can still cause some failures, but its still much better.
+</I>
+Nodes will want to aggressively spam as much as they can, so I think we
+need a widely-agreed limit.  I don't really care what it is, but
+somewhere between per 1 and 1000 blocks makes sense?
+
+Normally I'd suggest a burst, but that's bad for consensus: better to
+say &quot;just create your update N-6 blocks behind so you can always create a
+new one 6 blocks behind&quot;.
+
+&gt;&gt;&gt;<i> gossip queries  is broken in at least five ways.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Naah, it's perfect if you simply want to ask &quot;give me updates since XXX&quot;
+</I>&gt;&gt;<i> to get you close enough on reconnect to start using set reconciliation.
+</I>&gt;&gt;<i> This might allow us to remove some of the other features?
+</I>&gt;<i>
+</I>&gt;<i> Sure, but that's *just* the &quot;gossip_timestamp_filter&quot; message, there's several other messages and a 
+</I>&gt;<i> whole query system that we can throw away if we just want that message :)
+</I>
+I agree.  Removing features would be nice :)
+
+&gt;&gt;<i> But we might end up with a gossip2 if we want to enable taproot, and use
+</I>&gt;&gt;<i> blockheight as timestamps, in which case we could probably just support
+</I>&gt;&gt;<i> that one operation (and maybe a direct query op).
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;&gt;<i> Like eclair, we don&#8217;t bother to rate limit and don&#8217;t see any issues with it, though we will skip relaying outbound updates if we&#8217;re saturating outbound connections.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Yeah, we did as a trial, and in some cases it's become limiting.  In
+</I>&gt;&gt;<i> particular, people restarting their LND nodes once a day resulting in 2
+</I>&gt;&gt;<i> updates per day (which, in 0.11.0, we now allow).
+</I>&gt;<i>
+</I>&gt;<i> What do you mean &quot;its become limiting&quot;? As in you hit some reasonably-low CPU/disk/bandwidth limit 
+</I>&gt;<i> in doing this? We have a pretty aggressive bandwidth limit for this kinda stuff (well, indirect 
+</I>&gt;<i> bandwidth limit) and it very rarely hits in my experience (unless the peer is very overloaded and 
+</I>&gt;<i> not responding to pings, which is a somewhat separate thing...)
+</I>
+By rejecting more than 1 per day, some LND nodes had 50% of their
+channels left disabled :(
+
+This same problem will occur if *anyone* does ratelimiting, unless
+*everyone* does.  And with minisketch, there's a good reason to do so.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003564.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003566.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3565">[ date ]</a>
+              <a href="thread.html#3565">[ thread ]</a>
+              <a href="subject.html#3565">[ subject ]</a>
+              <a href="author.html#3565">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

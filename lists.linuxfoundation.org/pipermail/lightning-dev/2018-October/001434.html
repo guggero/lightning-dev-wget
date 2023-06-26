@@ -1,0 +1,310 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Feedback please!
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C878t36a2hk.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001432.html">
+   <LINK REL="Next"  HREF="001437.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Feedback please!</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C878t36a2hk.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Feedback please!">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Oct 10 03:45:43 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001432.html">[Lightning-dev] DDoS attacks in the Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="001437.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1434">[ date ]</a>
+              <a href="thread.html#1434">[ thread ]</a>
+              <a href="subject.html#1434">[ subject ]</a>
+              <a href="author.html#1434">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all!
+
+        We've had increasing numbers of c-lightning users get upset they
+can't open multiple channels, so I guess we're most motivated to allow
+splicing of existing channels.  Hence this rough proposal.
+
+For simplicity, I've chosen to only allow a single splice at a time.
+It's still complex :(
+
+Feedback welcome!
+--
+Splice Negotiation:
+
+1. type: 40 (`splice_add_input`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`8`: `satoshis`]
+   * [`32`: `prevtxid`]
+   * [`4`: `prevtxoutnum`]
+   * [`2`: `scriptlen`]
+   * [`scriptlen`: `scriptpubkey`]
+
+1. type: 41 (`splice_add_output`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`8`: `satoshis`]
+   * [`2`: `scriptlen`]
+   * [`scriptlen`: `outscript`]
+
+1. type: 42 (`splice_all_added`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`4`:`feerate_per_kw`]
+   * [`4`:`minimum_depth`]
+
+Each side sends 0 or more `splice_add_input` and 0 or more
+`splice_add_output` followed by `spice_all_added` to complete the splice
+proposal.  This is done either to initiate a splice, or to respond to a
+`splice_*` from the other party.
+
+`splice_add_input` is checked for the following:
+- must not be during a current splice
+- scriptpubkey is empty, or of form 'HASH160 &lt;20-byte-script-hash&gt; EQUAL'
+- `satoshis` doesn't wrap on addition.
+- MAY check that it matches outpoint specified (sig will simply be
+  invalid if so), and that outpoint is segwit.
+
+`splice_add_output` is checked for the following:
+- must not be during a current splice
+- `satoshis` is less than or equal to amount owing to proposer, minus
+  current reserve, and greater than or equal to `dust_limit_satoshis` we
+  sent in our open_channel/accept_channel ,sg.
+- script is one of the approved forms as it is for `shutdown`.
+
+FIXME: Do we disallow splice-out if they specified
+       option_upfront_shutdown_script?
+
+`splice_all_added` is checked for the following:
+- average of `feerate_per_kw` by both sides (round down) is sufficient.
+- average of `feerate_per_kw` by both sides not grossly excessive, if we're
+  paying some of the fees (see below!)
+- both sides can afford the fees from their post-splice funds (see
+  Verification Changes below)
+- maximum of the two `minimum_depth` is not grossly excessive.
+- There is at least one splice_add_input or splice_add_output.
+
+Splice negotiation, like closing negotiation, does not have persistent
+state.  Reconnecting forgets previous negotiation.
+
+
+Splice Signing
+--------------
+
+Once `splice_all_added` is both sent and received, we need to create and
+sign both the splice tx itself, and the first commitment transaction
+which spends it (but not in that order!).
+
+1. One input spends the current funding tx output.
+2. There is one additional input for each splice_add_input.
+3. One output creates the new funding tx.
+4. There is one additional output for each splice_add_output.
+5. The entire transaction is sorted into BIP69 order.
+6. The feerate is the sum of the two `feerate_per_kw` divided by 2,
+   rounded down.
+
+1. type: 43 (`splice_commitment_signature`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`64`:`commitment_signature`]
+   * [`2`:`num_htlcs`]
+   * [`num_htlcs*64`:`htlc_signature`]
+
+1. type: 44 (`splice_signature`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`64`:`splice_signature`]
+
+1. type: 45 (`splice_witness`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`2`: `num_witness_elements`
+   * [`2`:`len`]
+   * [`len`:`witnesses`]
+
+`witnesses` itself is serialized as `num_witness_elements` of:
+* `2`:`len`
+* `len`: `witness_element`
+
+Each side sends `splice_commitment_signature` and waits to receive and
+verify the other side's `splice_commitment_signature` before sending
+`splice_signature` and `splice_witness` for each `splice_add_input` it
+proposed, in BIP69 input order.
+
+Once a node has sent `splice_commitment_signature` it should remember
+the splice proposal across reconnects.  Once it has both sent
+`splice_signature`, the splice is locked in.
+
+
+Splice Announcement
+-------------------
+
+We have to tell the network about the new channel, otherwise there will
+be a distruption when it sees the old funding transaction spent.  This
+is inevitable for older nodes who won't understand splicing anyway.
+
+We can't send out a `channel_announcement` or `channel_update` for the
+new channel until after the new funding transaction has 6 confirmations,
+so we append to the existing `channel_update` for the original channel,
+using a new `message_flags` field:
+
+|<i> Bit Position  | Name                      | Field                            |
+</I>|<i> ------------- | ------------------------- | -------------------------------- |
+</I>|<i> 0             | `option_channel_htlc_max` | `htlc_maximum_msat`              |
+</I>|<i> 1             | `option_channel_moving`   | `moving_txid                     |
+</I>
+The `channel_update` gains the following field:
+    * [`32`: moving_txid`] (option_channel_moving)
+
+If a current `channel_update` for a closing channel contains
+`option_channel_moving` a node SHOULD ignore the channel close for at
+least 100 blocks iff spent by `moving_txid`.
+
+A node SHOULD immediately forward a `channel_update` it sees containing
+`option_channel_moving` if neither previous `channel_update` for the
+channel contains `option_channel_moving`.
+
+Each side of the splice can send these unilaterally, and SHOULD allow a
+few minutes for propagation (remember, average propagation from old
+nodes is still 30 seconds) prior to broadcast of the splice transaction.
+
+
+Message Changes During Splicing
+-------------------------------
+Once you've sent `splice_commitment_signature` each commitment
+transaction is duplicated: one spends the old funding transaction, one
+spends the splice transaction:
+
+1. type: 39 (`closing_signed`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`8`:`fee_satoshis`]
+   * [`64`:`signature`]
+   * [`64`:`splice_signature`] (`option_splice`)
+
+1. type: 132 (`commitment_signed`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`64`:`signature`]
+   * [`2`:`num_htlcs`]
+   * [`num_htlcs*64`:`htlc_signature`]
+   * [`num_htlcs*64`:`htlc_splice_signature`] (`option_splice`)
+
+If a reconnection occurs between between sending and receiving
+`splice_commitment_signature`) the peer's status is uncertain (similarly
+for closing).  This we have a new field in `channel_reestablish` to flag
+that we consider ourselves to be splicing:
+
+1. type: 136 (`channel_reestablish`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`8`:`next_local_commitment_number`]
+   * [`8`:`next_remote_revocation_number`]
+   * [`32`:`your_last_per_commitment_secret`] (`option_data_loss_protect`)
+   * [`33`:`my_current_per_commitment_point`] (`option_data_loss_protect`)
+   * [`32`:`splice_txid`] (`option_splice`)
+
+The splice_txid field indicates that this side considers itself to be
+splicing.
+
+The sender:
+- if it has sent `splice_commitment_signature` and not sent the corresponding
+  `splice_closed`, MUST set `splice_txid` to the txid of the splice tx.
+   - Otherwise MUST NOT.
+
+The recipient:
+- if it has sent `splice_commitment_signature` and not sent the corresponding
+  `splice_closed`:
+  - if `splice_txid` does not exist or does not match the current splice:
+    - SHOULD fail the channel
+  - otherwise:
+    - MUST retransmit `splice_signature`
+- otherwise:
+  - if `splice_txid` field exists and is not all zeroes:
+    - MUST send `splice_closed`
+
+
+Validation Changes During Splicing
+----------------------------------
+We track &quot;post-splice&quot; values as well as current values during
+splicing.
+
+The post-splice reserve is 1% of post-splice capcacity (rounded down).
+
+The fees for the splicing transaction itself are divided into parts by
+the number of `splice_add_input` plus `splice_add_output`, rounded up.
+Each side pays as many parts as it proposed `splice_add_input` plus
+`splice_add_output`.
+
+(So if Alice proposes two and Bob proposes one, and the total fee is 1000
+satoshi, each part is 334 satoshi: Alice pays 668 and Bob pays 334.)
+
+Each side's post-splice funds are debited their `splice_add_output`
+amounts, and credited their `splice_add_input` amounts, a debited the
+splice tx fees.  If any debiting occurs, the funds must be above the
+post-splice reserve (ie. you can have below reserve, but you can't spend
+if you're below reserve).
+
+All update_add_htlc must be valid for the *both* the current and
+post-splice balances.
+
+Completing Splicing
+-------------------
+Once you've seen both side's `minimum_depth` confirmations of the splice
+transaction (ie. the maximum of the two `minimum_depth` values), you can
+complete the splice by sending:
+
+1. type: 46 (`splice_closed`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+
+Once you've sent and received `splice_closed` you can send
+`announcement_signatures` for the new channel as per normal rules (ie. 6
+confirmations, `announce_channel` bit set).
+
+In addition, you can forget everything about the old channel (including
+old HTLCs and revocation requirements).
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001432.html">[Lightning-dev] DDoS attacks in the Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="001437.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1434">[ date ]</a>
+              <a href="thread.html#1434">[ thread ]</a>
+              <a href="subject.html#1434">[ subject ]</a>
+              <a href="author.html#1434">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

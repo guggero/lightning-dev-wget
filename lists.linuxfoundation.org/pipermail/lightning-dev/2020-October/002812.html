@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Witness asymmetric payment channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Witness%20asymmetric%20payment%20channels&In-Reply-To=%3CCAH5Bsr3W-eybAK_zcwo1hgUWTzoMKwMW%2BABn5HdtJg7CVAgPbw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002817.html">
+   <LINK REL="Next"  HREF="002819.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Witness asymmetric payment channels</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Witness%20asymmetric%20payment%20channels&In-Reply-To=%3CCAH5Bsr3W-eybAK_zcwo1hgUWTzoMKwMW%2BABn5HdtJg7CVAgPbw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Witness asymmetric payment channels">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Thu Oct  8 04:58:04 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002817.html">[Lightning-dev] Incremental Routing (Was: Making (some) channel	limits dynamic)
+</A></li>
+        <LI>Next message: <A HREF="002819.html">[Lightning-dev] Partial LND Vulnerability Disclosure,	Upgrade to 0.11.x
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2812">[ date ]</a>
+              <a href="thread.html#2812">[ thread ]</a>
+              <a href="subject.html#2812">[ subject ]</a>
+              <a href="author.html#2812">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>For those interested I've recently integrated the above refinements
+and tried to coherently package the whole idea together here:
+<A HREF="https://github.com/LLFourn/witness-asymmetric-channel">https://github.com/LLFourn/witness-asymmetric-channel</A>
+
+The main difference is that the protocol now uses what I am calling
+&quot;revocable signatures&quot; as the main primitive.
+This allows for O(1) storage complexity in both key aggregated and
+&quot;multisig&quot; constructions.
+
+LL
+
+On Thu, Sep 10, 2020 at 1:56 PM Lloyd Fournier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lloyd.fourn at gmail.com</A>&gt; wrote:
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Fortunately, I am wrong. At least in the case of non-aggregated 2-of-2 you can deterministically produce the encrypted signature by yourself for any commitment transaction as long as you use a deterministic nonce.
+</I>&gt;&gt;<i> But I think if using MuSig you would need to store each two party generated encrypted signature.
+</I>&gt;&gt;<i> Seeing as the likely way forward would be to use MuSig on an output which has a taproot which hides a discrete 2-of-2 this may not be a problem.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Upon further reflection I was missing something obvious when I came to this conclusion. You can't produce the adaptor signature for a commitment transaction deterministically without the encryption key (the other party's publication point).
+</I>&gt;<i> As long as we have to store the other party's per-commitment publication point we still need O(n) storage where n is the number of commitment transactions. Sorry for the confusion.
+</I>&gt;<i>
+</I>&gt;<i> Fortunately I had a bit of a breakthrough which allows us to eliminate publication points altogether and enables O(1) storage when 2-of-2 multi-signatures are instantiated with or without key aggregation (i.e. MuSig or OP_CHECKMULTISIG).
+</I>&gt;<i>
+</I>&gt;<i> ### Eliminating Publication Points In favor of  &quot;revocable signatures&quot; (for OP_CHECKMULTISIG)
+</I>&gt;<i>
+</I>&gt;<i> I propose replacing the publication point with a static key that remains the same with each commitment transaction.
+</I>&gt;<i> The encryption key for each commitment transaction adaptor signature is (Ra + A)  for Alice and (Rb + B) for Bob.
+</I>&gt;<i> Therefore, Alice broadcasting her commitment transaction would reveal the discrete log of Ra + A (and Bob Rb + B).
+</I>&gt;<i> Note that if Alice has not revealed her recvocation key (Ra) for this commitment transaction she is not in trouble since her static key A is blinded by Ra. If she has then Bob will learn her static secret key for A.
+</I>&gt;<i> The intuition here is that the revocation key acts as a blinding factor for the static key in the same way a nonce blinds your secret key in a schnorr signature (more on that later).
+</I>&gt;<i> If you haven't revealed your revocation key then you are free to use that signature. If you have revealed the revocation key then you have in effect &quot;revoked&quot; the signature.
+</I>&gt;<i>
+</I>&gt;<i> Now we need to make sure that if a party learns the secret key of the other they can efficiently punish them so make the following changes to my original proposal:
+</I>&gt;<i>
+</I>&gt;<i> Balance output for Alice is  2-of-2(A , Rb + B)
+</I>&gt;<i> Balance output for Bob is   2-of-2(Ra + A, B)
+</I>&gt;<i>
+</I>&gt;<i> The implication of the above structure is that if you broadcast a commitment transaction the other party can take their balance immediately.
+</I>&gt;<i> If you broadcasted a revoked commitment transaction then they can take their output and yours immediately.
+</I>&gt;<i>
+</I>&gt;<i> PTLC outputs and all subsequent transaction outputs then simplify to 2-of-2(A,B) on every output. Yay!
+</I>&gt;<i> Consider a PTLC paying to Alice. The PTLC-success output can be 2-of-2(A,B). If Alice broadcasted it and it has been revoked then Bob knows A and B so he can punish her.
+</I>&gt;<i> The converse is true for the PTLC-timeout.
+</I>&gt;<i> This elegant uniformity extends to other off-chain protocols hosted in these channels e.g. DLCs
+</I>&gt;<i>
+</I>&gt;<i> Since A and B are static per channel and the secret keys for Ra and Rb can be incrementally derived from subsequent values (as in the present lightning spec) we have O(1) communication.
+</I>&gt;<i> In practice each 2-of-2(A,B) should be randomized so they don't all look the same.
+</I>&gt;<i>
+</I>&gt;<i> ### Revoking key aggregated schnorr signatures (for MuSig)
+</I>&gt;<i>
+</I>&gt;<i> Even with the above improvement there is still O(n) storage if using key aggregation (MuSig) on the funding transaction output.
+</I>&gt;<i> Key aggregation may be desirable here since you may want to not use a taproot spend to broadcast a commitment transaction.
+</I>&gt;<i> Since the two party adaptor signature scheme needs randomness from both parties, you would have to store the other party's nonce and retrieve it to deterministically produce the adaptor signature so you can extract Ra + A (if Alice broadcasts) from the witness of the commitment transaction.
+</I>&gt;<i>
+</I>&gt;<i> Fortunately, there is a natural way to revoke a key aggregated signature you helped produce without using adaptor signatures at all: just reveal the nonce you used for it to the other party.
+</I>&gt;<i> This prevents you from broadcasting it since the other party can now extract your secret key from it!
+</I>&gt;<i> Explicitly, two party signature generate two Schnorr signatures for the key A + B in the form:
+</I>&gt;<i>
+</I>&gt;<i> sa = ra + rb' + H(Ra + Rb' || A + B || m)(a + b)
+</I>&gt;<i> sb = ra' + rb + H(Ra' + Rb || A + B || m)(a + b)
+</I>&gt;<i>
+</I>&gt;<i> - (ra,rb) are the revocation secret keys,
+</I>&gt;<i> - (ra', rb') are typical deterministically produced[1] nonces with Ra' = ra' * G etc.
+</I>&gt;<i> - (a,b) are the static secret keys
+</I>&gt;<i>
+</I>&gt;<i> Only Alice knows sa and only Bob knows sb but they are both signatures on the same commitment transaction.
+</I>&gt;<i> This is the witness asymmetry in the protocol.
+</I>&gt;<i>
+</I>&gt;<i> When revoking the commitment transaction associated with sa Alice reveals ra to Bob and vice versa. If Alice uses sa after that, Bob can deterministically produce rb' and ra (because each revocation key can be derived from the last) and therefore can produce:
+</I>&gt;<i>
+</I>&gt;<i> ra + rb' + H(Ra + Rb' || A + B || m)b
+</I>&gt;<i>
+</I>&gt;<i> which when subtracted from sa and divided by H(Ra + Rb' || A + B || m) will yield b (Bob's static secret key).
+</I>&gt;<i>
+</I>&gt;<i> The advantage of witness asymmetric channels using discrete keys over present lightning seems to boil down to a simpler transaction structure (in favour of using more complicated cryptography).
+</I>&gt;<i> However, for key aggregation there is a measurable improvement in communication complexity: It halves the amount of interactive signatures that need to be computed per payment.
+</I>&gt;<i> This is because each PTLC does not need to be duplicated across the asymmetric state of both parties.
+</I>&gt;<i>
+</I>&gt;<i> Zeeman pointed out in [2] that the number of signing rounds (which this does not improve) may be prohibitive anyway for payment applications at least so it remains to be seen whether this efficiency can be utilised  for payment PTLCs in LN.
+</I>&gt;<i> Thankfully, there are still advancements being made in Schnorr key aggregated signing so the right answer to this might change over time.[3]
+</I>&gt;<i>
+</I>&gt;<i> [1] The caveats about not using deterministic nonces in MuSig can be avoided here since we necessarily have state in LN.
+</I>&gt;<i> [2] <A HREF="../2019-December/002375.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/002375.html</A>
+</I>&gt;<i> [3] <A HREF="https://medium.com/blockstream/musig-dn-schnorr-multisignatures-with-verifiably-deterministic-nonces-27424b5df9d6">https://medium.com/blockstream/musig-dn-schnorr-multisignatures-with-verifiably-deterministic-nonces-27424b5df9d6</A>
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> LL
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002817.html">[Lightning-dev] Incremental Routing (Was: Making (some) channel	limits dynamic)
+</A></li>
+	<LI>Next message: <A HREF="002819.html">[Lightning-dev] Partial LND Vulnerability Disclosure,	Upgrade to 0.11.x
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2812">[ date ]</a>
+              <a href="thread.html#2812">[ thread ]</a>
+              <a href="subject.html#2812">[ subject ]</a>
+              <a href="author.html#2812">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

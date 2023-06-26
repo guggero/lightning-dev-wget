@@ -1,0 +1,238 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Arbitrary Bitcoin Contracts over LN
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Arbitrary%20Bitcoin%20Contracts%20over%20LN&In-Reply-To=%3C877elal2cg.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001388.html">
+   <LINK REL="Next"  HREF="001387.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Arbitrary Bitcoin Contracts over LN</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Arbitrary%20Bitcoin%20Contracts%20over%20LN&In-Reply-To=%3C877elal2cg.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Arbitrary Bitcoin Contracts over LN">decker.christian at gmail.com
+       </A><BR>
+    <I>Wed Aug  1 12:04:47 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001388.html">[Lightning-dev] Arbitrary Bitcoin Contracts over LN
+</A></li>
+        <LI>Next message: <A HREF="001387.html">[Lightning-dev] Arbitrary Bitcoin Contracts over LN
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1385">[ date ]</a>
+              <a href="thread.html#1385">[ thread ]</a>
+              <a href="subject.html#1385">[ subject ]</a>
+              <a href="author.html#1385">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for the excellent writeup ZmnSCPxj, I just have a minor issue
+with your characterization that LN-penalty is to be preferred.
+
+My issue is with the fact that CLTV-branches and nLocktimed spending
+transactions also need to be guarded with a further `OP_CSV` condition,
+since they may leak on-chain, and be immediately valid. This is the
+reason why we introduced the two stage HTLC resolution, with the first
+stage acting as the `OP_CSV` guard, and keeping the second stage clean.
+
+I think therefore the construction of the contract ought to be this:
+
+[/*arbitrary*/, A &amp;&amp; B] -&gt; [signA signB, (revoke) || (CSV &amp;&amp; A &amp;&amp; B &amp;&amp; C)] -&gt; [signA signB witnessCbyA, revoke || A] /* held by A */
+[/*arbitrary*/, A &amp;&amp; B] -&gt; [signA signB, (revoke) || (CSV &amp;&amp; A &amp;&amp; B &amp;&amp; C)] -&gt; [signA signB witnessCbyB, revoke || B] /* held by B */
+
+Namely the CSV belongs in the output script, not the input script (which
+is under the control of the spending party). Notice that I might have
+misgroked your syntax :-) If C now contains a CLTV-branch whose timeout
+expires before we attempt the on-chain mediation, suddenly both branches
+become valid and we have a race.
+
+Take this for example:
+
+```
+OP_IF
+  x OP_CLTV
+  &lt;checksigs&gt;
+OP_ELSE
+  &lt;checksigs&gt;
+OP_END
+```
+
+If we wait until block x was found, we attempt to cheat by publishing
+this state, and suddenly both prepared reaction transactions are valid,
+resulting in a race. This is simply due to the fact that transactions
+can leak. To fix this we'd have to encumber the OP_IF branch with an
+additional CSV. So it's not really like we can just add an OR-clause to
+an arbitrary contract and we're safe, we actually have to weave it into
+the logic, or create a second stage that just disambiguates the cheat
+and the non-cheat unilateral case.
+
+With eltoo this sort of weaving falls away, since we guarantee that the
+old state can never leak on-chain. If we squint at it we can see that
+we have effectively pushed down the second stage into the on-chain state
+resolution, allowing us to keep the contracts clean.
+
+Cheers,
+Christian
+ZmnSCPxj via Lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt;
+writes:
+
+&gt;<i> Good morning list,
+</I>&gt;<i>
+</I>&gt;<i> Recently, somebody on the IRC channel, asked regarding smart contracts
+</I>&gt;<i> being transported via LN.
+</I>&gt;<i>
+</I>&gt;<i> Indeed, this is theoretically possible, provided the &quot;smart contract&quot;
+</I>&gt;<i> is implementable as a Bitcoin SCRIPT.
+</I>&gt;<i>
+</I>&gt;<i> Afterwards, I opined that, for transportation of *arbitrary*
+</I>&gt;<i> contracts, Poon-Dryja is superior to either Decker-Wattenhofer or
+</I>&gt;<i> Decker-Osuntokun-Russell.
+</I>&gt;<i>
+</I>&gt;<i> So, first, my other opinions:
+</I>&gt;<i>
+</I>&gt;<i> 1.  The only smart contract you really want to transport is HTLC (or
+</I>&gt;<i> equivalent in scriptless script).  There really is no point in
+</I>&gt;<i> transporting any other contract on LN.  HTLCs can even be used to
+</I>&gt;<i> implement (nontransferable) swap options, and can be composed (at the
+</I>&gt;<i> cost of increasing CLTV limits on backoff) to create multi-step swaps.
+</I>&gt;<i>
+</I>&gt;<i> 2.  Decker-Osuntokun-Russell &quot;eltoo&quot; is far superior to Poon-Dryja
+</I>&gt;<i> &quot;LN-penalty&quot; in everything else, except transportation of *arbitrary*
+</I>&gt;<i> contracts.
+</I>&gt;<i>
+</I>&gt;<i> Now, ultimately any Bitcoin SCRIPT may be expressed as a Boolean
+</I>&gt;<i> computation whether or not the contract has been fulfilled by the
+</I>&gt;<i> transaction that attempts to claim it.
+</I>&gt;<i>
+</I>&gt;<i> So I introduce, an arbitrary contract C, ostensibly to be transported
+</I>&gt;<i> over LN.
+</I>&gt;<i>
+</I>&gt;<i> And I introduce our transactions, as so: [scriptSig, redeemScript] -&gt;
+</I>&gt;<i> redeeming transaction
+</I>&gt;<i>
+</I>&gt;<i> To transport C over a channel between nodes A and B, under Poon-Dryja,
+</I>&gt;<i> we first have a channel anchoring transaction onchain:
+</I>&gt;<i>
+</I>&gt;<i> [/*arbitrary*/, A &amp;&amp; B] -&gt;
+</I>&gt;<i>
+</I>&gt;<i> Now suppose the entire output is to be put into a contract C. Under
+</I>&gt;<i> Poon-Dryja, we create the below symmetrical series of transactions,
+</I>&gt;<i> with only the anchoring transaction existing onchain:
+</I>&gt;<i>
+</I>&gt;<i> [/*arbitrary*/, A &amp;&amp; B] -&gt; [signA signB, (revoke) || (A &amp;&amp; B &amp;&amp; C)] -&gt;
+</I>&gt;<i> [signA signB witnessCbyA, revoke || (A &amp;&amp; CSV)] /* held by A */
+</I>&gt;<i>
+</I>&gt;<i> [/*arbitrary*/, A &amp;&amp; B] -&gt; [signA signB, (revoke) || (A &amp;&amp; B &amp;&amp; C)] -&gt;
+</I>&gt;<i> [signA signB witnessCbyB, revoke || (B &amp;&amp; CSV)] /* held by B */
+</I>&gt;<i>
+</I>&gt;<i> Where (revoke) is the revocation key, whose derivation requires both A
+</I>&gt;<i> and B, and whose half is kept secret by the A (resp. B) until they
+</I>&gt;<i> both agree to revoke the old state.
+</I>&gt;<i>
+</I>&gt;<i> Of note is that the only additional condition added to C is (A &amp;&amp; B),
+</I>&gt;<i> which makes sense since the contract is between nodes A and B (and
+</I>&gt;<i> which would be implicitly required by the funding transaction anyway).
+</I>&gt;<i> The (revoke) || does not affect the enforcement of C if the revocation
+</I>&gt;<i> key is not yet revealed; once the revocation key is revealed, that
+</I>&gt;<i> revokes the entire sequence of transactions (which is why (revoke) ||
+</I>&gt;<i> appears in both the second and third transactions above).  In
+</I>&gt;<i> particular, the CSV-encumberance does not affect claiming of C; it
+</I>&gt;<i> encumbers the claiming of the money, but does not interact with C
+</I>&gt;<i> itself.  Thus, any CLTV conditions in C will not be interefered with
+</I>&gt;<i> by the CSV-encumberance on the *next* transaction.
+</I>&gt;<i>
+</I>&gt;<i> Note also that only signA and signB for the final transaction needs to
+</I>&gt;<i> be shared; the witnessC can presumably be fulfilled by each side
+</I>&gt;<i> themselves automatically.
+</I>&gt;<i>
+</I>&gt;<i> On the other hand, under Decker-Osuntokun-Russell eltoo, the
+</I>&gt;<i> transaction series is:
+</I>&gt;<i>
+</I>&gt;<i> [/*arbitrary*/, A &amp;&amp; B] -&gt; [signA signB, (CSV &amp;&amp; A &amp;&amp; B) || (CLTV &amp;&amp; A
+</I>&gt;<i> &amp;&amp; B)] -&gt; [nSequence signA signB, C]
+</I>&gt;<i>
+</I>&gt;<i> Now the above is massively simpler with no additional SCRIPT that
+</I>&gt;<i> needs to be written, around the transported contract C --- but the CSV
+</I>&gt;<i> in the second transaction, is now potentially interfering with the
+</I>&gt;<i> operation of the contract C, as the final transaction cannot be
+</I>&gt;<i> enforced onchain until the CSV has been satisfied.  This is in
+</I>&gt;<i> contrast with the Poon-Dryja case, where the contract C appears
+</I>&gt;<i> immediately on the second transaction in the sequence, and can be
+</I>&gt;<i> enforced, as soon as it appears onchain.
+</I>&gt;<i>
+</I>&gt;<i> (In eltoo, the (CTLV &amp;&amp; A &amp;&amp; B) branch of the intermediate contract is
+</I>&gt;<i> the &quot;update&quot; path, and the CLTV required is always a past Unix Epoch
+</I>&gt;<i> time, so this CLTV cannot interfere with the contract C).
+</I>&gt;<i>
+</I>&gt;<i> The above consideration, is why I suppose that, *for arbitrary
+</I>&gt;<i> contracts*, Poon-Dryja is superior.
+</I>&gt;<i>
+</I>&gt;<i> Simply, the conclusion is that Decker-Osuntokun-Russell channels
+</I>&gt;<i> require a CSV that may interfere with the contract C if C is
+</I>&gt;<i> time-sensitive (i.e. has a CLTV or CSV itself), whereas Poon-Dryja
+</I>&gt;<i> requires CSV only for revocability, and the CSV cannot prevent the
+</I>&gt;<i> enforcement of time-sensitive C.
+</I>&gt;<i>
+</I>&gt;<i> Indeed, as I pointed out, even when transporting HTLCs,
+</I>&gt;<i> Decker-Osuntokun-Russell will require consideration of the CSV on top
+</I>&gt;<i> of the CLTV-deltas imposed by intermediary nodes, with weights
+</I>&gt;<i> complicated by the fact that CLTV-deltas are summed together but the
+</I>&gt;<i> highest CSV is added to the CLTV total, which does not mix well with
+</I>&gt;<i> typical route-finding algorithms (most of which assume a simple
+</I>&gt;<i> summing of costs, which CLTV-deltas use but CSVs on
+</I>&gt;<i> Decker-Osuntokun-Russell do not since highest is used).
+</I>&gt;<i>
+</I>&gt;<i> In almost all other ways, Poon-Dryja is inferior:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Does not use nLockTime in a sufficiently clever way.  2.
+</I>&gt;<i> Dangerous &quot;toxic waste&quot; (old revoked transactions) which (1) you
+</I>&gt;<i> should not recover from your backups and (2) you should not let your
+</I>&gt;<i> worst enemy find, because they can publish those onchain and make you
+</I>&gt;<i> LOSE MONEY.  3.  Symmetrical chains of transactions, different for
+</I>&gt;<i> both parties, instead of a single chain.
+</I>&gt;<i>
+</I>&gt;<i> In addition, arbitrary contracts are not really particularly useful.
+</I>&gt;<i> HTLCs seem to me an important building block for digital value
+</I>&gt;<i> transfers, and they (and their equivalents under scriptless) are
+</I>&gt;<i> sufficient for most practical transfers.  Thus, moving forward,
+</I>&gt;<i> Decker-Osuntokun-Russell remains a superior technology over
+</I>&gt;<i> Poon-Dryja.
+</I>&gt;<i>
+</I>&gt;<i> Regards, ZmnSCPxj _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001388.html">[Lightning-dev] Arbitrary Bitcoin Contracts over LN
+</A></li>
+	<LI>Next message: <A HREF="001387.html">[Lightning-dev] Arbitrary Bitcoin Contracts over LN
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1385">[ date ]</a>
+              <a href="thread.html#1385">[ thread ]</a>
+              <a href="subject.html#1385">[ subject ]</a>
+              <a href="author.html#1385">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

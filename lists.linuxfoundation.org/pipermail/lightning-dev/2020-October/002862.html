@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CCACdvm3NOBku2jXs51WhPyg3-_dbhWiiXxeqtfFR6npdxZN2v3A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002861.html">
+   <LINK REL="Next"  HREF="002863.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CCACdvm3NOBku2jXs51WhPyg3-_dbhWiiXxeqtfFR6npdxZN2v3A%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself">bastien at acinq.fr
+       </A><BR>
+    <I>Thu Oct 22 09:47:20 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002861.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+        <LI>Next message: <A HREF="002863.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2862">[ date ]</a>
+              <a href="thread.html#2862">[ thread ]</a>
+              <a href="subject.html#2862">[ subject ]</a>
+              <a href="author.html#2862">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+Sorry in advance for the lengthy email, but I think it's worth detailing my
+hybrid proposal
+(bidirectional upfront payments), it feels to me like a workable solution
+that builds on
+previous proposals. You can safely ignore the details at the end of the
+email and focus only on
+the high-level mechanism at first.
+
+Let's consider the following route: A -----&gt; B -----&gt; C -----&gt; D
+
+We add a `hold_grace_period_delta` field to `channel_update` (in seconds).
+We add two new fields in the tlv extension of `update_add_htlc`:
+
+* `hold_grace_period` (seconds)
+* `hold_fees` (msat)
+
+We add an `outgoing_hold_grace_period` field in the onion per-hop payload.
+
+When nodes receive an `update_add_htlc`, they verify that:
+
+* `hold_fees` is not unreasonable large
+* `hold_grace_period` is not unreasonably small or large
+* `hold_grace_period` - `outgoing_hold_grace_period` &gt;=
+`hold_grace_period_delta`
+
+Otherwise they immediately fail the HTLC instead of relaying it.
+
+For the example we assume all nodes use `hold_grace_period_delta = 10`.
+
+We add a forward upfront payment of 1 msat (fixed) that is paid
+unconditionally when offering an HTLC.
+We add a backwards upfront payment of `hold_fees` that is paid when
+receiving an HTLC, but refunded
+if the HTLC is settled before the `hold_grace_period` ends (see footnotes
+about this).
+
+* A sends an HTLC to B:
+* `hold_grace_period = 100 sec`
+* `hold_fees = 5 msat`
+* `next_hold_grace_period = 90 sec`
+* forward upfront payment: 1 msat is deduced from A's main output and added
+to B's main output
+* backwards upfront payment: 5 msat are deduced from B's main output and
+added to A's main output
+* B forwards the HTLC to C:
+* `hold_grace_period = 90 sec`
+* `hold_fees = 6 msat`
+* `next_hold_grace_period = 80 sec`
+* forward upfront payment: 1 msat is deduced from B's main output and added
+to C's main output
+* backwards upfront payment: 6 msat are deduced from C's main output and
+added to B's main output
+* C forwards the HTLC to D:
+* `hold_grace_period = 80 sec`
+* `hold_fees = 7 msat`
+* `next_hold_grace_period = 70 sec`
+* forward upfront payment: 1 msat is deduced from C's main output and added
+to D's main output
+* backwards upfront payment: 7 msat are deduced from D's main output and
+added to C's main output
+
+* Scenario 1: D settles the HTLC quickly:
+* all backwards upfront payments are refunded (returned to the respective
+main outputs)
+* only the forward upfront payments have been paid (to protect against
+`uncontrolled spam`)
+
+* Scenario 2: D settles the HTLC after the grace period:
+* D's backwards upfront payment is not refunded
+* If C and B relay the settlement upstream quickly (before
+`hold_grace_period_delta`) their backwards
+upfront payments are refunded
+* all the forward upfront payments have been paid (to protect against
+`uncontrolled spam`)
+
+* Scenario 3: C delays the HTLC:
+* D settles before its `grace_period`, so its backwards upfront payment is
+refunded by C
+* C delays before settling upstream: it can ensure B will not get refunded,
+but C will not get
+refunded either so B gains the difference in backwards upfront payments
+(which protects against
+`controlled spam`)
+* all the forward upfront payments have been paid (to protect against
+`uncontrolled spam`)
+
+* Scenario 4: the channel B &lt;-&gt; C closes:
+* D settles before its `grace_period`, so its backwards upfront payment is
+refunded by C
+* for whatever reason (malicious or not) the B &lt;-&gt; C channel closes
+* this ensures that C's backwards upfront payment is paid to B
+* if C publishes an HTLC-fulfill quickly, B may have his backwards upfront
+payment refunded by A
+* if B is forced to wait for his HTLC-timeout, his backwards upfront
+payment will not be refunded
+but it's ok because B got C's backwards upfront payment
+* all the forward upfront payments have been paid (to protect against
+`uncontrolled spam`)
+
+If done naively, this mechanism may allow intermediate nodes to deanonymize
+sender/recipient.
+If the base `grace_period` and `hold_fees` are randomized, I believe this
+attack vector disappears,
+but it's worth exploring in more details.
+
+The most painful part of this proposal will be handling the `grace_period`:
+
+* when do you start counting: when you send/receive `update_add_htlc`,
+`commit_sig` or
+`revoke_and_ack`?
+* what happens if there is a disconnection (how do you account for the
+delay of reconnecting)?
+* what happens if the remote settles after the `grace_period`, but refunds
+himself when sending his
+`commit_sig` (making it look like from his point of view he settled before
+the `grace_period`)?
+I think in that case the behavior should be to give your peers some leeway
+and let them get away
+with it, but record it. If they're doing it too often, close channels and
+ban them; stealing
+upfront fees should never be worth losing channels.
+
+I chose to make the backwards upfront payment fixed instead of scaling it
+based on the time an HTLC
+is left pending; it's slightly less penalizing for spammers, but is less
+complex and introduces less
+potential griefing against honest nodes. With the scaling approach, an
+honest node that has its
+channel unilaterally closed is too heavily penalized IMHO (because it has
+to pay for the maximum
+hold duration).
+
+I also chose to make the forward upfront payment constant (1 msat). Is it
+going to be a pain to
+bikeshed this constant? Do we need to add a mechanism to upgrade it? We
+don't want to make this
+more complex than it should.
+
+Before we dive into the specifics (addressing the implementation concerns),
+can you all please take
+a bit of time to figure out whether the proposed mechanisms would mitigate
+spam or not, and whether
+it introduces griefing attacks against honest nodes. I think it would be a
+waste of your time to
+bikeshed the nuts and bolts details if the proposal is fundamentally
+broken...
+
+Answering to previous emails below.
+
+Your proposal to add a small upfront payment, wouldn't that allow the
+&gt;<i> (arbitrary) grace period to be removed?
+</I>
+
+I think we need a `grace_period` for the backwards upfront payment, to
+encourage nodes to settle
+quickly (otherwise I believe it's too easy to grief honest nodes because
+the backwards upfront payment
+will be bigger than the forward one - because `uncontrolled spam` is based
+on volume so it doesn't
+need a huge fee to mitigate).
+
+Would my inane incremental routing idea also be in scope here?
+
+
+It could potentially be easier to integrate spam mitigation inside
+incremental routing, indeed.
+But I think this proposal is unfortunately very costly in terms of
+latency...
+
+Thanks everyone,
+Bastien
+
+Le mer. 21 oct. 2020 &#224; 05:21, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning t-bast,
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I've started summarizing proposals, attacks and threat models on github
+</I>&gt;<i> [1].
+</I>&gt;<i> &gt; I'm hoping it will help readers get up-to-speed and avoid falling in the
+</I>&gt;<i> same pitfalls we already
+</I>&gt;<i> &gt; fell into with previous proposals.
+</I>&gt;<i>
+</I>&gt;<i> Would my inane incremental routing idea also be in scope here?
+</I>&gt;<i> <A HREF="002811.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/002811.html</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201022/4a7c0856/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201022/4a7c0856/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002861.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+	<LI>Next message: <A HREF="002863.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2862">[ date ]</a>
+              <a href="thread.html#2862">[ thread ]</a>
+              <a href="subject.html#2862">[ subject ]</a>
+              <a href="author.html#2862">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

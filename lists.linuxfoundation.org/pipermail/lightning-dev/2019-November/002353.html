@@ -1,0 +1,820 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BDRAFT%5D%20BOLT%2013%28%3F%29%3A%20WatchTower%20protocol&In-Reply-To=%3CCALZpt%2BEj6vaPT0E_6iqugCH2_qtFwcQ7suoABMqSVvYobWYTnw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002350.html">
+   <LINK REL="Next"  HREF="002351.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BDRAFT%5D%20BOLT%2013%28%3F%29%3A%20WatchTower%20protocol&In-Reply-To=%3CCALZpt%2BEj6vaPT0E_6iqugCH2_qtFwcQ7suoABMqSVvYobWYTnw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol">antoine.riard at gmail.com
+       </A><BR>
+    <I>Fri Nov 29 05:43:32 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002350.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+        <LI>Next message: <A HREF="002351.html">[Lightning-dev] Proof-of-work vs fees (was;	Re:  A proposal for up-front payments)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2353">[ date ]</a>
+              <a href="thread.html#2353">[ thread ]</a>
+              <a href="subject.html#2353">[ subject ]</a>
+              <a href="author.html#2353">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks for working on this, a bunch of interesting ideas!
+
+I think it could be noted in the motivation, that's having an interoperable
+watchtower protocol is really cool, because every watchtower you add is
+a liveness reliability increase (modulo privacy loss), specially if these
+watchtowers are from different implementations in case of a vuln affecting
+breach
+monitoring code of your LN node.
+
+Some generic remarks, you should define another TCP port than the LN one of
+9735
+because this is client-server relationship and you want to avoid leak of
+p2p
+messages to your watchtower.
+
+Messages should also use the TLV format, will remove a lot *_len field and
+each
+QoS could be a tlv_record in `appointment`.
+
+For the init protocol, I was considering the following scheme.
+
+
+                        init
+                ----------------------&gt;
+
+                        version
+                &lt;----------------------
+       Alice                                 Bob
+                    payment protocol
+                -----------------------&gt;
+                         ...
+
+                    appointment hiring
+                -----------------------&gt;
+                         ...
+
+                    appointment firing
+                -----------------------&gt;
+
+The `init` message would contain a method to establish a secure connection
+between client and server. Watchtower shouldn't learn LN pubkey of client
+as it may be a conflict of interest and be leveraged to build more
+sophisticated
+attacks. So client should implement identity contingement properly and use
+the `init` message to start a Noise session or something like BIP324.
+
+After secure connection establishement, `version` would be the reply with
+a features field, wider than only QoS like also the payment protocol
+supported,
+and maybe an invoice for the payment protocol preferred. In a future,
+features may
+extend beyond channel watching, like timing out client HTLC or
+synchronization
+server for multi-party channels...
+
+Client would then execute the one or multiple steps of the payment protocol.
+This one may be complex, i.e include parameters negotiation like update
+rate-limiting, feerate for encrypted blob, storage throttling after time X,
+...
+I do think this kind of parameters belong there compare to
+`appointment_hiring`,
+as they may cover watching operations of one or more channels and secondly
+they
+are DoS protections, and payment scheme and DoS are going to be really tied
+in watchtowers protocol.
+
+Then `appointment_hiring` with QoS and their parameters, is there reasons
+for
+not having them being stable for the lifetime of client-server interaction ?
+
+Finally, some `appointment_firing` to let the client cut its subscription
+and
+authorize the server to clean storage.
+
+
+&gt;<i> * `start_block` is further than one block behind the current chain tip.
+</I>&gt;<i> * `start_block` is further than one block ahead the current chain tip.
+</I>
+Is a 3 block window enough if the client is a mobile which a lot of latency
+and weak
+processing compare to a watchtower's competitive full-node ? I think it's
+only
+a block issuance edge case but maybe could be easier if client set
+start_block to
+current_seen_block_height+6 and server would reject if height already past..
+
+&gt;<i> minimum_viable_transaction_size and maximum_viable_transaction_size refer
+</I>to the minimum/maximum size required to create a valid transaction.
+
+Couldn't these limits be implictly MAX_STANDARD_TX_WEIGHT and
+MAX_STANDARD_TX_NONWITNESS_SIZE, current mempool policy limits ?
+
+Also, nothing is specified on disconnection/reconnection, you want to be
+sure than
+watchtower as ACK every justice tx sent as every one of them maybe
+critical. A client
+doesn't want to assume is channel is covered and finally not due to its
+network
+connection being rotten.
+
+
+&gt;<i> * MUST set `dispute_delta` to the CLTV value specified in the
+</I>&gt;<i> `commitment_transaction`.
+</I>
+What's a dispute delta ? You mean the justice-CSV locktime encumbering
+outputs ?
+Given this one is fixed at channel opening, it should be fixed also for the
+channel
+hiring lifetime. And server should announce a min_dispute_delta at QoS
+`accountability`
+announcement.
+
+&gt;<i> * MUST set `transaction_size` to the size of the serialized
+</I>&gt;<i> `justice_transaction`, in bytes.
+</I>
+I would remove the transaction size, given that all outputs are
+standardized in LN, that would
+be a leak on how much payment traffic is going through the client without
+any channel breach.
+
+&gt;<i> * MUST set `transaction_fee` to the fee set in the `justice_transaction`,
+</I>&gt;<i> in satoshis.
+</I>
+Generally, the idea to provide justice tx with pre-signed fees to a
+watchtower and expect
+this one to do is job reliably somewhere in the future seem a weak
+assumption... Every watchtower
+following this protocol should handle dynamic fees, that's should be a
+basic service not even
+a QoS. It may through CPFP (but won't be reliable until package relay( or
+RBF'ing the justice
+tx through usage of SIGHASH_ANYONECANPAY, no need interactivity with the
+user at broadcast,
+but you may need a populated input mempool.
+
+&gt;<i> While a customer can always fake this values, it should break ToS between
+</I>the client and the
+server and, therefore, release the WatchTower of any liability
+
+I can imagine with machine-readable proofs a bot fetching proofs servers,
+verifying them
+on the blockchain and scoring in consequence watchtowers. Good marks could
+be done via
+some tagging of justice tx (like setting nLocktime in the past to some
+value). You would
+negotiate a different tag for everyone of your watchtower. Removing feerate
+from the equation
+would simplify scoring as now you don't have to guess if mempool was
+congestionned or not for
+the client-provided fee.
+
+&gt;<i> On top of that, the onchain bounty allows a network-wise DoS attack for
+</I>free.
+
+A good point of the onchain bounty is the user doesn't pay for inefficient
+watchtower or
+suppleous watchtower. But seems hard to implement DoS-wise and at the same
+time keep the
+requirement of pseudonymous clients. Nevertheless a note maybe said on a LN
+node implementing
+some kind of anyone-can-spend on top of its txn and let the vigilant crowd
+bid with fees
+and confirm your punishment, that's would be the &quot;watchtowerless watchtower
+protocol&quot; :p
+
+&gt;<i> That would break appointment unlinkability but would ease the data
+</I>&gt;<i> management for the tower.
+</I>
+Unlinkability should be far higher in the BOLT design decisions, I think
+people may don't
+care about unlinkability in case of all watchtowers servers are running
+under same
+organization but they are interested by some building blocks of this spec
+like tracking ACK
+or fees management delegation. So we may have multiple formats for the
+transaction
+locator/encryption and one of them being the empty one ?
+
+&gt;<i> The `customer_signature` could be optional if the client does not care
+</I>&gt;<i> that much about the worst case. Dicuss whether that makes sense.
+</I>
+I think you're right it can be skipped as client has provided a signed
+justice
+tx as an implicit commitment ?
+
+Okay that's a lot and it's really IMO, I do think that's important to have
+a flexible protocol
+with a lot of room for further privacy/efficiency/services upgrades and
+circumvent non-seen now
+complexity. If watchtowers are economically/sociably viable it maybe a
+layer of its own!
+
+Le mer. 27 nov. 2019 &#224; 15:20, Sergi Delgado Segura &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">sergi.delgado.s at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> Patrick McCorry and I have been working on putting together a BOLT draft
+</I>&gt;<i> for WatchTowers. So far we've seen a couple of implementation of
+</I>&gt;<i> WatchTowers in the wild (lnd and Electrum) based on Tadge's Monitor
+</I>&gt;<i> approach and we are also working on our own one. While all are similar,
+</I>&gt;<i> they differ in some points that may make then non interoperable, so it felt
+</I>&gt;<i> right time to put some effort and try to standardise this. We've borrowed
+</I>&gt;<i> ideas from all implementations as well as from the original approach and
+</I>&gt;<i> added some additional bits to extended with different quality of service.
+</I>&gt;<i> The draft is still rough on the edges and have several open discussion
+</I>&gt;<i> topics at the very end (#FIXME section).
+</I>&gt;<i>
+</I>&gt;<i> Best,
+</I>&gt;<i>
+</I>&gt;<i> # WatchTower protocol specification (BOLT DRAFT)
+</I>&gt;<i>
+</I>&gt;<i> ## Overview
+</I>&gt;<i>
+</I>&gt;<i> All off-chain protocols assume the user remains online and synchronised
+</I>&gt;<i> with the network. To alleviate this assumption, customers can hire a third
+</I>&gt;<i> party watching service (a.k.a WatchTower) to watch the blockchain and
+</I>&gt;<i> respond to channel breaches on their behalf.
+</I>&gt;<i>
+</I>&gt;<i> At a high level, the client sends an encrypted justice transaction
+</I>&gt;<i> alongside a transaction locator to the WatchTower. Both the encryption key
+</I>&gt;<i> and the transaction locator are derived from the breach transaction id,
+</I>&gt;<i> meaning that the WatchTower will be able to decrypt the justice transaction
+</I>&gt;<i> only after the corresponding breach is seen on the blockchain. Therefore,
+</I>&gt;<i> the WatchTower does not learn any information about the client's channel
+</I>&gt;<i> unless there is a channel breach (channel-privacy).
+</I>&gt;<i>
+</I>&gt;<i> Due to replace-by-revocation Lightning channels, the client should send
+</I>&gt;<i> data to the WatchTower for every new update in the channel, otherwise the
+</I>&gt;<i> WatchTower may not be able to respond to specific breaches.
+</I>&gt;<i>
+</I>&gt;<i> Finally, optional QoS can be offered by the WatchTower to provide stronger
+</I>&gt;<i> guarantees to the client, such as a signed receipt for every new job. The
+</I>&gt;<i> rationale for the receipt is to build an _accountable_ WatchTower as the
+</I>&gt;<i> customer can later use it as publicly verifiable evidence if the WatchTower
+</I>&gt;<i> fails to protect them.
+</I>&gt;<i>
+</I>&gt;<i> The scope of this document includes:
+</I>&gt;<i>
+</I>&gt;<i> - A protocol for client/server communication.
+</I>&gt;<i> - How to build appointments for the WatchTower, including key/locator
+</I>&gt;<i> derivation and data encryption.
+</I>&gt;<i> - A format for the signed receipt.
+</I>&gt;<i>
+</I>&gt;<i> The scope of this bolt does not include:
+</I>&gt;<i>
+</I>&gt;<i>  - A payment protocol between the customer and WatchTower.
+</I>&gt;<i>  - WatchTower server discovery.
+</I>&gt;<i>
+</I>&gt;<i> For the rest of this document we will refer to the WatchTower as server,
+</I>&gt;<i> and the user/Lightning node as client.
+</I>&gt;<i>
+</I>&gt;<i> ## Table of Contents
+</I>&gt;<i> * [WatchTower discovery](#watchtower-discovery)
+</I>&gt;<i> * [WatchTower services](#watchtower-discovery)
+</I>&gt;<i> * [Basic Service](#basic-service)
+</I>&gt;<i> * [Quality of Service](#quality-of-service)
+</I>&gt;<i> * [Sending and receiving appointments](#sending-and-receiving-appointments)
+</I>&gt;<i>   * [The `appointment` message](#the-appointment-message)
+</I>&gt;<i>   * [The `appointment_accepted` message](#the-appointment_accepted-message)
+</I>&gt;<i>   * [The `appointment_rejected` message](#the-appointment_rejected-message)
+</I>&gt;<i> * [Quality of Service data](#quality-of-service-data)
+</I>&gt;<i> * [`accountability`](#accountability)
+</I>&gt;<i> * [Transaction Locator and Encryption
+</I>&gt;<i> Key](#transaction-locator-and-encryption-key)
+</I>&gt;<i> * [Encryption Algorithms and
+</I>&gt;<i> Parameters](#encryption-algorithms-and-parameters)
+</I>&gt;<i> * [Payment Modes](#payment-modes)
+</I>&gt;<i> * [No compression of justice
+</I>&gt;<i> transaction](#no-compression-of-justice-transaction)
+</I>&gt;<i>
+</I>&gt;<i> ## WatchTower discovery
+</I>&gt;<i>
+</I>&gt;<i> We have not defined how a client can find a list of servers to hire yet.
+</I>&gt;<i> We assume the client has found a server and the server is offering a
+</I>&gt;<i> watching service. The service can either be the basic service or an
+</I>&gt;<i> accountable quality of service. To deal with pre-payments (when necessary),
+</I>&gt;<i> the client may have an authentication token that the server can verify when
+</I>&gt;<i> accepting the job (e.g. a blinded token).
+</I>&gt;<i>
+</I>&gt;<i> ## WatchTower services
+</I>&gt;<i>
+</I>&gt;<i> ### Basic Service
+</I>&gt;<i> The customer can hire the WatchTower to watch for breaches on the
+</I>&gt;<i> blockchain and relay a justice transaction on their behalf. The customer
+</I>&gt;<i> receives an acknowledgement when the WatchTower has accepted the job, but
+</I>&gt;<i> the hiring protocol does not guarantee the transaction inclusion.
+</I>&gt;<i>
+</I>&gt;<i> ### Quality of Service
+</I>&gt;<i> Quality of Service (`qos`) builds on top of the basic service provided by
+</I>&gt;<i> a tower and it's optionally provided. Different kinds of QoS can be offered
+</I>&gt;<i> by the tower.
+</I>&gt;<i>
+</I>&gt;<i> For now we are defining a single type of `qos`: `accountability`.
+</I>&gt;<i>
+</I>&gt;<i> #### `accountability`
+</I>&gt;<i>
+</I>&gt;<i> A WatchTower provides a signed receipt to the customer. This is considered
+</I>&gt;<i> reputational accountability as the customer has publicly verifiable
+</I>&gt;<i> cryptographic evidence the WatchTower was hired. The receipt can be used to
+</I>&gt;<i> prove the WatchTower did not relay the justice transaction on their behalf
+</I>&gt;<i> and/or request a refund.
+</I>&gt;<i>
+</I>&gt;<i> ## Sending and receiving appointments
+</I>&gt;<i>
+</I>&gt;<i> Once the client is aware of the services provided by the server, the
+</I>&gt;<i> former can start sending appointments to the latter.
+</I>&gt;<i>
+</I>&gt;<i> +-------+                                    +-------+
+</I>&gt;<i> |   A   |--(1)---      appointment      ----&gt;|   B   |
+</I>&gt;<i> |       |&lt;-(2)---   accepted/rejected   -----|       |
+</I>&gt;<i> +-------+                                    +-------+
+</I>&gt;<i>
+</I>&gt;<i> - where node A is 'client' and node B is 'server'
+</I>&gt;<i>
+</I>&gt;<i> ### The `appointment` message
+</I>&gt;<i>
+</I>&gt;<i> This message contains all the information regarding the appointment that
+</I>&gt;<i> the client wants to arrange with the server.
+</I>&gt;<i>
+</I>&gt;<i> 1. type: ? (`appointment`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`16*byte`:`locator`]
+</I>&gt;<i>    * [`u64 `:`start_block`]
+</I>&gt;<i>    * [`u64 `:`end_block`]
+</I>&gt;<i>    * [`u16`: `encrypted_blob_len`
+</I>&gt;<i>    * [`encrypted_blob_len*byte`:`encrypted_blob`]
+</I>&gt;<i>    * [`u16`:`cipher`]
+</I>&gt;<i>    * [`u16`: `auth_token_len`]
+</I>&gt;<i>    * [`auth_token_len*byte`: `auth_token`]
+</I>&gt;<i>    * [`u16`: `qos_len`]
+</I>&gt;<i>    * [`qos_len*byte`: `qos_data`]
+</I>&gt;<i>
+</I>&gt;<i> #### Requirements
+</I>&gt;<i>
+</I>&gt;<i> The client:
+</I>&gt;<i>
+</I>&gt;<i> * MUST set `locator` as specified in [Transaction Locator and Encryption
+</I>&gt;<i> Key](#transaction-locator-and-encryption-key).
+</I>&gt;<i> * MUST set `start_block` to the current chain tip height.
+</I>&gt;<i> * MUST set `end_block` to the block height at which he requests the server
+</I>&gt;<i> to stop watching for breaches.
+</I>&gt;<i> * MUST set `encrypted_blob` to the encryption of the `justice_transaction`
+</I>&gt;<i> as specified in [Transaction Locator and Encryption
+</I>&gt;<i> Key](#transaction-locator-and-encryption-key).
+</I>&gt;<i> * MUST set `cipher` to the cipher used to create the `encrypted_blob`.
+</I>&gt;<i> * MAY send an empty `auth_token` field.
+</I>&gt;<i> * MUST set `auth_token_len` to the length of `auth_token`.
+</I>&gt;<i> * MAY send an empty `qos_data` field.
+</I>&gt;<i> * if `qos_data` is not empty:
+</I>&gt;<i> *  MUST set `qos_data` according to [Quality of Service
+</I>&gt;<i> data](#quality-of-service-data).
+</I>&gt;<i> * MUST set `qos_len` equal to the length of `qos_data`.
+</I>&gt;<i>
+</I>&gt;<i> The server:
+</I>&gt;<i>
+</I>&gt;<i> * MUST reject the appointment if:
+</I>&gt;<i> * Authentication is required and `auth_token` is not provided.
+</I>&gt;<i> * Authentication is required and `auth_token` is invalid.
+</I>&gt;<i> * `locator` is not a `16-byte` value.
+</I>&gt;<i> * `start_block` is further than one block behind the current chain tip.
+</I>&gt;<i> * `start_block` is further than one block ahead the current chain tip.
+</I>&gt;<i> * `encrypted_blob` has unreasonable size.
+</I>&gt;<i> * `cipher` is not among the ones he implements.
+</I>&gt;<i>
+</I>&gt;<i> * SHOULD reject the appointment if`end_block` is too far away in the
+</I>&gt;<i> future.
+</I>&gt;<i>
+</I>&gt;<i> * MUST:
+</I>&gt;<i> * truncate the remainder of the package to `qos_len`.
+</I>&gt;<i> * process `qos_data` according to [Quality of Service
+</I>&gt;<i> data](#quality-of-service-data) if `qos_len` is not 0.
+</I>&gt;<i>
+</I>&gt;<i> * MAY accept the appointment otherwise.
+</I>&gt;<i>
+</I>&gt;<i> #### Rationale
+</I>&gt;<i>
+</I>&gt;<i> We define appointment as the way that the WatchTower is hired / requested
+</I>&gt;<i> by a client to do it's watching services.
+</I>&gt;<i>
+</I>&gt;<i> WatchTowers may offer their services for free (`altruistic`) or they may
+</I>&gt;<i> require a payment when accepting the job (`non-altruistic`). We have
+</I>&gt;<i> defined `auth_token` as an authentication mechanism between the client and
+</I>&gt;<i> server, so the client can prove they are entitled to the service. The
+</I>&gt;<i> tokens are not required to be linked to any kind of identity (e.g. blinded
+</I>&gt;<i> tokens), but their sole purpose is to confirm the client has already paid
+</I>&gt;<i> for the service.
+</I>&gt;<i>
+</I>&gt;<i> The transaction `locator` can be deterministically computed by both the
+</I>&gt;<i> client and the server. Locators of wrong size are therefore invalid.
+</I>&gt;<i>
+</I>&gt;<i> `start_block` can be either one block ahead or behind the tower tip due to
+</I>&gt;<i> network delays. A tower must not accept appointments arbitrarily ahead or
+</I>&gt;<i> behind the current tip since it could increase DoS vectors. A `start_block`
+</I>&gt;<i> long behind would force the tower to rescan block data for those
+</I>&gt;<i> appointments instead of watching block by block. On the other hand, a
+</I>&gt;<i> `start_time` long ahead would imply storing information way before it being
+</I>&gt;<i> needed.
+</I>&gt;<i>
+</I>&gt;<i> Regarding the `end_block`, too far away is a subjective concept. The
+</I>&gt;<i> further away a tower accepts appointment ends, the higher the potential
+</I>&gt;<i> storage requirements may be, and the easier, and cheaper, it my be to
+</I>&gt;<i> perform DoS.
+</I>&gt;<i>
+</I>&gt;<i> The `encrypted_blob` should have been encrypted using `cipher`. Block
+</I>&gt;<i> ciphers have a size multiple of the block length, which depends on the key
+</I>&gt;<i> size. Therefore the `encrypted_blob` have to be at least as big as:
+</I>&gt;<i>
+</I>&gt;<i> `cipher_block_size * ceil(minimum_viable_transaction_size /
+</I>&gt;<i> cipher_block_size)`
+</I>&gt;<i>
+</I>&gt;<i> and at most as big as:
+</I>&gt;<i>
+</I>&gt;<i> `cipher_block_size * ceil(maximum_viable_transaction_size /
+</I>&gt;<i> cipher_block_size`)
+</I>&gt;<i>
+</I>&gt;<i> `minimum_viable_transaction_size` and `maximum_viable_transaction_size`
+</I>&gt;<i> refer to the minimum/maximum size required to create a valid transaction.
+</I>&gt;<i> Accepting `encrypted_blob` outside those boundaries will increase DoS
+</I>&gt;<i> attacks on the server.
+</I>&gt;<i>
+</I>&gt;<i> The client should have learn about the `ciphers` implemented by the
+</I>&gt;<i> WatchTower and the `qos` that the tower is offering during the peer
+</I>&gt;<i> discovery.
+</I>&gt;<i>
+</I>&gt;<i> A tower must not accept appointments using a cipher it does not implement,
+</I>&gt;<i> otherwise the decryption of the `encrypted_blob` will not be possible.
+</I>&gt;<i>
+</I>&gt;<i> `qos` is optional and can include multiple services.
+</I>&gt;<i>
+</I>&gt;<i> ### The `appointment_accepted` message
+</I>&gt;<i>
+</I>&gt;<i> This message contains information about the acceptance of an appointment
+</I>&gt;<i> by the WatchTower.
+</I>&gt;<i>
+</I>&gt;<i> 1. type: ? (`appointment_accepted `)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`16*byte `:`locator`]
+</I>&gt;<i>    * [`u16`: `qos_len`]
+</I>&gt;<i> * [`qos_len*byte`: `qos_data`]
+</I>&gt;<i>
+</I>&gt;<i> The server:
+</I>&gt;<i>
+</I>&gt;<i> * MUST receive `appointment` before sending an `appointment_accepted`
+</I>&gt;<i> message.
+</I>&gt;<i> * MUST set the `locator` to match the one received in `appointment`.
+</I>&gt;<i> * if `qos_data` was requested in `appointment`:
+</I>&gt;<i> *  MUST set `qos_data` according to [Quality of Service
+</I>&gt;<i> data](#quality-of-service-data).
+</I>&gt;<i> * MUST set `qos_len` equal to the length of `qos_data`.
+</I>&gt;<i>
+</I>&gt;<i> The client:
+</I>&gt;<i>
+</I>&gt;<i> * MUST fail the connection  if `locator` does not match any of locators
+</I>&gt;<i> the previously sent to the server:
+</I>&gt;<i>
+</I>&gt;<i> * if `qos` was requested in `appointment`:
+</I>&gt;<i> * MUST fail the connection if `qos_len` is 0.
+</I>&gt;<i> * MUST process `qos_data` according to [Quality of Service
+</I>&gt;<i> data](#quality-of-service-data).
+</I>&gt;<i>
+</I>&gt;<i> ### The `appointment_rejected` message
+</I>&gt;<i>
+</I>&gt;<i> This message contains information about the rejection of an appointment by
+</I>&gt;<i> the WatchTower.
+</I>&gt;<i>
+</I>&gt;<i> 1. type: ? (`appointment_rejected `)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`16*byte `:`locator`]
+</I>&gt;<i>    * [`u16`: `rcode`]
+</I>&gt;<i>    * [`u16`: `reason_len`
+</I>&gt;<i>    * [`reason_len*byte`: `reason`]
+</I>&gt;<i>
+</I>&gt;<i> The server:
+</I>&gt;<i>
+</I>&gt;<i> * MUST receive `appointment` before sending an `appointment_rejected`
+</I>&gt;<i> message.
+</I>&gt;<i> * MUST set the `locator` to match the one received in `appointment`.
+</I>&gt;<i> * MUST set `rcode` to the rejection code.
+</I>&gt;<i> * MAY set and empty `reason` field.
+</I>&gt;<i> * MUST set `reason_len` to length of `reason`.
+</I>&gt;<i>
+</I>&gt;<i> #### Rationale
+</I>&gt;<i>
+</I>&gt;<i> The `appointment_rejected` message follows the approach taken by the
+</I>&gt;<i> `error` message defined in [BOLT#1](
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/01-messaging.md#the-error-message">https://github.com/lightningnetwork/lightning-rfc/blob/master/01-messaging.md#the-error-message</A>):
+</I>&gt;<i> error codes are mandatory, whereas reasons are optional and implementation
+</I>&gt;<i> dependant.
+</I>&gt;<i>
+</I>&gt;<i> ## Quality of Service data
+</I>&gt;<i>
+</I>&gt;<i> `qos_data` is a list where each field specifies they type and associated
+</I>&gt;<i> data of the offered/requested `qos`. The format is defined as follows:
+</I>&gt;<i>
+</I>&gt;<i> * [`u16`: `qos_type`]
+</I>&gt;<i> * [`u16`: `data_len`]
+</I>&gt;<i> * [`data_len*byte`: `data`]
+</I>&gt;<i>
+</I>&gt;<i> So far, only `accountability` is defined.
+</I>&gt;<i>
+</I>&gt;<i> ### `accountability`
+</I>&gt;<i>
+</I>&gt;<i> The accountability `qos` defines a pair `qos_data` blobs, associated to a
+</I>&gt;<i> pair of messages: The first one is `customer_evidence` and it is provided
+</I>&gt;<i> by the `client` in the `appointment` message. The second one is
+</I>&gt;<i> `tower_evidence`, and is provided by the WatchTower in the
+</I>&gt;<i> `appointment_accepted` message.
+</I>&gt;<i>
+</I>&gt;<i> #### `customer_evidence`
+</I>&gt;<i>
+</I>&gt;<i> The format for the `customer_evidence` is defined as follows:
+</I>&gt;<i>
+</I>&gt;<i> 1. type: ? (`customer_evidence`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i> * [`u64 `:`dispute_delta`]
+</I>&gt;<i> * [`u64`: `transaction_size`]
+</I>&gt;<i> * [`u64`: `transaction_fee`]
+</I>&gt;<i>
+</I>&gt;<i> If `accountability` is being requested, the client:
+</I>&gt;<i>
+</I>&gt;<i> * MUST set `dispute_delta` to the CLTV value specified in the
+</I>&gt;<i> `commitment_transaction`.
+</I>&gt;<i> * MUST set `transaction_size` to the size of the serialized
+</I>&gt;<i> `justice_transaction`, in bytes.
+</I>&gt;<i> * MUST set `transaction_fee` to the fee set in the `justice_transaction`,
+</I>&gt;<i> in satoshis.
+</I>&gt;<i> * MUST set the `customer_signature_algorithm` to one of the signature
+</I>&gt;<i> algorithms supported by the tower.
+</I>&gt;<i> * MUST set `customer_signature` to the signature of the appointment using
+</I>&gt;<i> `op_customer_signature_algorithm`.
+</I>&gt;<i> * MUST set `customer_public_key` to the public key that matches the
+</I>&gt;<i> private key used to create `op_customer_signature`.
+</I>&gt;<i>
+</I>&gt;<i> If `accountability` is being offered, the server:
+</I>&gt;<i>
+</I>&gt;<i> * MUST compute the `customer_signature` verification using
+</I>&gt;<i> `customer_public_key`.
+</I>&gt;<i> * SHOULD compute the `fee_rate` set in the `justice_tx` using
+</I>&gt;<i> `transaction_size` and `transaction_fee`.
+</I>&gt;<i>
+</I>&gt;<i> * MUST reject the appointment if:
+</I>&gt;<i> * Any of the fields is missing.
+</I>&gt;<i> * `transaction_size` is unreasonable.
+</I>&gt;<i> * `customer_signature_algorithm` does not match any of the supported
+</I>&gt;<i> signing algorithms.
+</I>&gt;<i> * `customer_signature` cannot be verified using `customer_public_key`.
+</I>&gt;<i>
+</I>&gt;<i> * SHOULD reject the appointment if:
+</I>&gt;<i> * `dispute_delta` is too small.
+</I>&gt;<i> * `fee_rate` is too low.
+</I>&gt;<i>
+</I>&gt;<i> If `accountability` is NOT being offered:
+</I>&gt;<i>
+</I>&gt;<i> * The server MUST reject the appointment.
+</I>&gt;<i>
+</I>&gt;<i> Otherwise:
+</I>&gt;<i>
+</I>&gt;<i> * The server SHOULD accept the appointment.
+</I>&gt;<i>
+</I>&gt;<i> #### Rationale
+</I>&gt;<i>
+</I>&gt;<i> The concept of too small for `dispute_delta` is subjective. The
+</I>&gt;<i> `dispute_delta` defines the time (in blocks) that the tower has in order to
+</I>&gt;<i> respond after a breach is seen. The smaller the value, the more the server
+</I>&gt;<i> risks to fail the appointment.
+</I>&gt;<i>
+</I>&gt;<i> `transaction_size` and `transaction_fee` help the WatchTower to decide on
+</I>&gt;<i> the likelihood of an appointment being fulfilled. Appointments with
+</I>&gt;<i> `fee_rate` too low may be rejected by the WatchTower. While a customer can
+</I>&gt;<i> always fake this values, it should break ToS between the client and the
+</I>&gt;<i> server and, therefore, release the WatchTower of any liability.
+</I>&gt;<i>
+</I>&gt;<i> By accepting the request, the tower is offering a reputationally
+</I>&gt;<i> accountable watching service. If `accountability` is not offered, then the
+</I>&gt;<i> tower will not accept appointments requesting for it.
+</I>&gt;<i>
+</I>&gt;<i> As well, the WatchTower must check the transaction details before deciding
+</I>&gt;<i> whether it will accept it. If the decrypted justice transaction does not
+</I>&gt;<i> satisfy the job details (e.g. too low fee), then the tower is not obliged
+</I>&gt;<i> to fulfil the appointment.
+</I>&gt;<i>
+</I>&gt;<i> #### `tower_evidence`
+</I>&gt;<i>
+</I>&gt;<i> The format for the `tower_evidence` is defined as follows:
+</I>&gt;<i>
+</I>&gt;<i> 1. type: ? (`tower_evidence`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i> * [`u16 `:`receipt_len`]
+</I>&gt;<i> * [`receipt_len*byte `: `receipt`]
+</I>&gt;<i> * [`u16`: `wt_signature_algorithm`]
+</I>&gt;<i> * [`u16`: `wt_signature_len`
+</I>&gt;<i> * [`wt_signature_len*byte`: `wt_signature`]
+</I>&gt;<i> * [`u16`: `wt_public_key_len`]
+</I>&gt;<i> * [`wt_public_key_len*byte`: `wt_public_key`]
+</I>&gt;<i>
+</I>&gt;<i> The server:
+</I>&gt;<i>
+</I>&gt;<i> * MUST set `receipt` to a receipt built according to
+</I>&gt;<i> [Receipt-Format](#receipt-format).
+</I>&gt;<i> * MUST set `wt_signature_algorithm` to one of the signature algorithms he
+</I>&gt;<i> has announced.
+</I>&gt;<i> * MUST set `wt_signature` to the signature of the appointment using
+</I>&gt;<i> `wt_signature_algorithm`.
+</I>&gt;<i> * MUST set `wt_public_key` to the public key that matches the private key
+</I>&gt;<i> used to create `wt_signature`.
+</I>&gt;<i>
+</I>&gt;<i> The client:
+</I>&gt;<i>
+</I>&gt;<i> * MUST compute the `wt_signature` verification using `wt_public_key`.
+</I>&gt;<i>
+</I>&gt;<i> * MUST fail the connection if:
+</I>&gt;<i> * Any of the fields is missing.
+</I>&gt;<i> * `receipt` does not matches the format specified at
+</I>&gt;<i> [Receipt-Format](#receipt-format)
+</I>&gt;<i> * `receipt` fields do not match the ones sent in the `appointment` message.
+</I>&gt;<i> * `wt_signature_algorithm` does not match any of the ones offered by the
+</I>&gt;<i> server.
+</I>&gt;<i> * `wt_signature` cannot be verified using `wt_public_key`.
+</I>&gt;<i>
+</I>&gt;<i> #### Receipt Format
+</I>&gt;<i>
+</I>&gt;<i> The server MUST create the receipt containing the following information:
+</I>&gt;<i>
+</I>&gt;<i> txlocator
+</I>&gt;<i> start_block
+</I>&gt;<i> end_block
+</I>&gt;<i> dispute_delta
+</I>&gt;<i> encrypted_blob
+</I>&gt;<i> transaction_size
+</I>&gt;<i> transaction_fee
+</I>&gt;<i> cipher
+</I>&gt;<i> customer_signature
+</I>&gt;<i> wt_public_key
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> #### Rationale
+</I>&gt;<i>
+</I>&gt;<i> We assume the client has a well-known public key for the WatchTower.
+</I>&gt;<i>
+</I>&gt;<i> The receipt contains, mainly, the information provided by the user. The
+</I>&gt;<i> WatchTower will need to sign the receipt to provide evidence of agreement.
+</I>&gt;<i>
+</I>&gt;<i> The `customer_signature` is included in the receipt to link both the
+</I>&gt;<i> client request and the server response. Otherwise, the tower could sign a
+</I>&gt;<i> receipt with different data that the one sent by the user, and the user
+</I>&gt;<i> would have no way to prove whether that's true or not. By signing the
+</I>&gt;<i> customer signature there the tower creates evidence of what the user sent,
+</I>&gt;<i> since the tower cannot forge the client's signature.
+</I>&gt;<i>
+</I>&gt;<i> #### Receipt serialization and signature
+</I>&gt;<i>
+</I>&gt;<i> [FIXME: TBD]
+</I>&gt;<i>
+</I>&gt;<i> ## Transaction Locator and Encryption Key
+</I>&gt;<i>
+</I>&gt;<i> Implementations MUST compute the `locator`, `encryption_key` and
+</I>&gt;<i> `encryption_iv` from the commitment transaction as defined below:
+</I>&gt;<i>
+</I>&gt;<i> - `locator`: first half of the commitment transaction id
+</I>&gt;<i> (`commitment_txid(0,16]`)
+</I>&gt;<i> - `master_key`: Hash of the second half of the commitment transaction id
+</I>&gt;<i> (`SHA256(commitment_txid(16,32])`)
+</I>&gt;<i> - `encryption_key`: first half of the master key (`master_key(0,16]`)
+</I>&gt;<i> - `encryption_iv`: second half of the master key (`master_key(16,32]`)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The server relies on both the encryption key and iv to decrypt the justice
+</I>&gt;<i> transaction. Furthermore, the transaction locator helps the WatchTower
+</I>&gt;<i> identify a breach transaction on the blockchain.
+</I>&gt;<i>
+</I>&gt;<i> ## Encryption Algorithms and Parameters
+</I>&gt;<i>
+</I>&gt;<i> All clients and servers MUST use one of the following encryption
+</I>&gt;<i> algorithms:
+</I>&gt;<i>
+</I>&gt;<i> - ChaCha20 (<A HREF="https://tools.ietf.org/html/rfc7539">https://tools.ietf.org/html/rfc7539</A>)
+</I>&gt;<i> - AES-GCM-256 (<A HREF="https://tools.ietf.org/html/rfc5288">https://tools.ietf.org/html/rfc5288</A>)
+</I>&gt;<i>
+</I>&gt;<i> Sample code (python) for the client to prepare the `encrypted_blob`:
+</I>&gt;<i>
+</I>&gt;<i> from hashlib import sha256
+</I>&gt;<i> from binascii import hexlify
+</I>&gt;<i>
+</I>&gt;<i> def encrypt(justice_tx, commitment_txid):
+</I>&gt;<i>    # master_key = SHA256(commitment_txid(16, 32])
+</I>&gt;<i>    master_key = sha256(commitment_txid[16:]).digest()
+</I>&gt;<i>
+</I>&gt;<i>    # The 16 MSB of the master key will serve as the AES-GCM-256 secret
+</I>&gt;<i> key. The 16 LSB will serve as the IV.
+</I>&gt;<i>    sk = master_key[:16]
+</I>&gt;<i>    nonce = master_key[16:]
+</I>&gt;<i>
+</I>&gt;<i>    # Encrypt the data
+</I>&gt;<i>    aesgcm = AESGCM(sk)
+</I>&gt;<i>    encrypted_blob = aesgcm.encrypt(nonce=iv, data=tx, associated_data=None)
+</I>&gt;<i>    encrypted_blob = hexlify(encrypted_blob).decode()
+</I>&gt;<i>
+</I>&gt;<i>    return encrypted_blob
+</I>&gt;<i>
+</I>&gt;<i> ## Payment modes
+</I>&gt;<i>
+</I>&gt;<i> Although this BOLT does not enforce any specific payment method to be
+</I>&gt;<i> adopted, it is worth mentioning the three most common ones:
+</I>&gt;<i>
+</I>&gt;<i> **On-chain bounty**. An additional output is created in the justice
+</I>&gt;<i> transaction that will reward the WatchTower.
+</I>&gt;<i>
+</I>&gt;<i> **Micropayments**. A small payment is sent to the WatchTower for every new
+</I>&gt;<i> job (e.g. over the lightning network)
+</I>&gt;<i>
+</I>&gt;<i> **Subscription**. WatchTower is periodically rewarded / paid for their
+</I>&gt;<i> service to the customer. (e.g. over the lightning network or fiat
+</I>&gt;<i> subscription).
+</I>&gt;<i>
+</I>&gt;<i> Both micropayments and subscriptions are favourable for a WatchTower. The
+</I>&gt;<i> on-chain bounty approach is not ideal for a watching network, it lets the
+</I>&gt;<i> customer hire many WatchTowers (O(N) storage for each tower) and only one
+</I>&gt;<i> WatchTower will be rewarded upon collecting the bounty. On top of that, the
+</I>&gt;<i> onchain bounty allows a network-wise DoS attack for free.
+</I>&gt;<i>
+</I>&gt;<i> ## No compression of justice transaction
+</I>&gt;<i>
+</I>&gt;<i> The storage requirements for a WatchTower can be reduced (linearly) by
+</I>&gt;<i> implementing [shachain](
+</I>&gt;<i> <A HREF="https://github.com/rustyrussell/ccan/blob/master/ccan/crypto/shachain/design.txt">https://github.com/rustyrussell/ccan/blob/master/ccan/crypto/shachain/design.txt</A>),
+</I>&gt;<i> therefore storing the parts required to build the transaction and the
+</I>&gt;<i> corresponding signing key instead of the full transaction. For now, we have
+</I>&gt;<i> decided to keep the hiring protocol simple. Storage is relatively cheap and
+</I>&gt;<i> we can revisit this standard if it becomes a problem.
+</I>&gt;<i>
+</I>&gt;<i> ## FIXMES
+</I>&gt;<i>
+</I>&gt;<i> - Define a proper tower discovery.
+</I>&gt;<i> - Define authentication mechanism (macaroons maybe?).
+</I>&gt;<i> - None of the message types have been defined (they have been left with ?).
+</I>&gt;<i> - Define receipt serialization format.
+</I>&gt;<i> - `qos_type` can be defined by ranges, in the same way that error messages
+</I>&gt;<i> are. In that way a range of values can belong to a specific `qos`.
+</I>&gt;<i> - Define an optional way of doing batch appointments / appointments in
+</I>&gt;<i> bulk? That would break appointment unlinkability but would ease the data
+</I>&gt;<i> management for the tower.
+</I>&gt;<i> - The `customer_signature` could be optional if the client does not care
+</I>&gt;<i> that much about the worst case. Dicuss whether that makes sense.
+</I>&gt;<i> - Discuss whether to extend it with shachain.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> The document can also be found here:
+</I>&gt;<i> <A HREF="https://github.com/PISAresearch/pisa/blob/master/13-watchtower-API.md">https://github.com/PISAresearch/pisa/blob/master/13-watchtower-API.md</A>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Sergi.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191129/cc00825d/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191129/cc00825d/attachment-0001.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002350.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+	<LI>Next message: <A HREF="002351.html">[Lightning-dev] Proof-of-work vs fees (was;	Re:  A proposal for up-front payments)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2353">[ date ]</a>
+              <a href="thread.html#2353">[ thread ]</a>
+              <a href="subject.html#2353">[ subject ]</a>
+              <a href="author.html#2353">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

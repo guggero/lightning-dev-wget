@@ -1,0 +1,607 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%0A%09Eltoo-Penalty&In-Reply-To=%3CCALZpt%2BH3-XkN6B3gaYsXUpbDmQ9b7pNjyLvTq%3Dn5t29HK3JSkw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002074.html">
+   <LINK REL="Next"  HREF="002076.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%0A%09Eltoo-Penalty&In-Reply-To=%3CCALZpt%2BH3-XkN6B3gaYsXUpbDmQ9b7pNjyLvTq%3Dn5t29HK3JSkw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Jul 16 17:04:20 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002074.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+        <LI>Next message: <A HREF="002076.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2073">[ date ]</a>
+              <a href="thread.html#2073">[ thread ]</a>
+              <a href="subject.html#2073">[ subject ]</a>
+              <a href="author.html#2073">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+Deep thanks for your review.
+
+Biggest gains with Eltoo are of course transaction symmetry and removing
+toxic waste. Reintroducing penalty on top of
+this shouldn't affect this two goals, that's why I'm trying to play with
+witnesses asymmetry and signatures committed
+to a state number with my proposal
+
+&gt;<i> In particular, it seems to me that it would be trivial for Alice to avoid
+</I>punishment by first creating a fake &quot;Mallory&quot;, then taking whatever path
+would let Alice &quot;off the hook&quot; for a framing Mallory when at risk of
+getting caught, thus returning the &quot;reduced cost for trying to steal
+channel funds&quot;.
+
+By creating a fake &quot;Mallory&quot; you mean being another party in the channel ?
+With current design to kick-off unilateral
+closing you need to reveal your signature to spend the funding output to
+the Update tx, so you can't equivocate after
+first step. You can be both Alice and Bob, try to cheat with Alice and
+don't broadcast Litigation as Bob, if Caroll is
+honest she should be able to punish you on Alice funds.
+
+&gt;<i> Could a hash preimage be used instead, with revocation?
+</I>&gt;<i> We would require that the hash preimage be unique per-update, but the
+</I>same technique used in current Poon-Dryja (Russell shachain) can be used to
+store the preimages of revoked states.
+
+There is few issues with preimages, if you use per-update preimages, you
+need to keep a Hostile Settlement tx for
+every update because preimages are paired with a given Hostile Settllement
+tx and can't be used to punish on any Hostile
+Settlement tx. Plus, in multiparty channels, Hostile Settlement tx at state
+N - 2, doesn't reflect the correct balance between
+honest participants at state N. If you go with one unique preimage, which
+stays the same for every update, you're not safe
+against reorg or mempool snooping, where a malicious party take your
+preimage and replays it on a lower state Update tx.
+
+&gt;<i> I am uncertain if some of the alignment has gotten lost above, but
+</I>currently your graph is somewhat confusing.
+
+Friendly Settlement Tx must spend the Update Tx after some delay.
+We have one Challenge Tx per-party and it must spend the to_party output on
+Hostile Settlement Tx.
+(transactions graph by mail are an uncertain art, sorry about that)
+
+&gt;<i> This branch seems pointless --- could you not just use the non-taproot
+</I>path?
+&gt;<i> You do not describe the friendly-settlement transaction anywhere.
+</I>&gt;<i> Is the friendly-settlement have `nSequence` delay?
+</I>&gt;<i> When is it created?
+</I>
+Oh you're right, you can use the taproot key spend path there.
+Friendly Settlement transaction is spending the Update tx and supports one
+output per party as return fund and
+HTLC outputs for every pending one. E.g to_Alice output is just encumbered
+by a Alice pubkey and HTLC outputs
+have timeout/preimage_fulfill branches. None of these outputs is encumbered
+by a punishment path.
+It should be created with every Update tx, it's symmetric for every channel
+party and yes should have nSequence
+set to some delay to let someone broadcast a Litigation tx on the Update tx.
+
+&gt;<i> It looks to me that you cannot use a later update transaction to replace
+</I>an older update transaction, as the shared signature does not use
+`SIGHASH_ANYPREVOUT`?
+
+Yes that's intentional, IMO a current flaw of Eltoo is if you share an
+Update tx with watchtowers, any of them can close
+the channel on your behalf, of course if at least one of them is honest it
+will broadcast the latest Update tx and your funds
+are safe minus transaction fees. But you have lost a channel. Splitting
+unilateral channel closing and enforcement of correct
+state on two different transactions should avoid this issue. Know you just
+give the Justice tx to everyone of your watchtower
+and keep the Update tx on your local client. If you don't have HTLCs in the
+flight that should be secure.
+
+&gt;<i> You mentions later that &quot;if anyone has a highest Litigation tx, he can
+</I>use it&quot;, but it does not look like that the litigation script path enforces
+this, did you forget to add some `OP_CHECKLOCKTIMEVERIFY` here?
+
+Oh yes, thanks again I forgot to add an OP_CLTV in litigation script path.
+
+&gt;<i> `P` here is `muSig(A,B,C)`?
+</I>&gt;<i> Why would Alice willingly sign a `SIGHASH_ALL` signature (meaning the
+</I>transaction IDs are known at this point and have been confirmed deeply
+onchain, so this is after Alice has gone and performed any attempts at
+theft) that would punish her?
+&gt;<i> What happens when the Litigation Tx is later than the initial Update Tx?
+</I>
+Yes P is muSig(A,B,C).
+If she has misbehaved, she is not going to be willingly to sign the
+Challenge tx, and let anyone use the signature comparison as
+a proof of cheat. So you're again right, a timelocked script spend path
+should be added on the to_Alice output where after some
+delay any honest channel party can spend it with the Justice tx.
+At initial state, there shouldn't be any Litigation tx, if you have a
+Litigation tx with a highest state number than an Update tx
+it means the Update tx has been revoked (and shouldn't be broadcast).
+
+&gt;<i> Maybe this should instead be a revocation key whose privkey Alice reveals
+</I>as part of the update ritual?
+
+Hmmm I think if it's a private key revealed at update ritual, it means
+anyone can use it to spend the funding_output while
+counterfeiting being Alice.
+
+&gt;<i> If a later Litigation Tx is used, than the Update Tx that was put
+</I>onchain, is the signature from the Update Tx valid on the same transaction
+where the Challenge Tx is valid?
+
+Main idea of this scheme is to used Per-Update Commitment to solve the
+assignment problem in a safe way. What we need
+on a higher-level are messages tied to a specific party and committed to a
+given state number. If anyone can prove to the
+blockchain you have broadcast 2 messages with different state number it
+means you breach the contract.
+
+Now how to do that with Script ? Only messages interpreted by the
+blockchain are bitcoin transactions.
+
+If we follow Taproot current transaction digest algorithm, without sighash
+flags set, assuming we spend a taproot output
+we have the following hashed elements : epoch, hash_type, nVersion,
+nLockTime, sha_prevouts, sha_amounts,
+sha_sequences, sha_outputs, spend_type, input_index, sha_annex.
+
+If we use SIGHASH_ANYPREVOUTANYSCRIPT + SIGHASH_NONE, we get the following
+hashed elements :
+epoch, hash_type, nVersion, nLocktime, spend_type, amount, nSequence,
+sha_annex.
+
+If we force to sign 2 different transactions with these both sighashes
+against same pubkey, and assuming there are
+spending the same amount and nSequences are equals, we should get identical
+signatures. If they are not,
+the only difference element is the nLocktime.
+
+That could be a way to make script aware of committed per-party state
+number.
+
+Using this in a Eltoo-Penalty scheme, the Challenge tx script is encumbered
+by a branch where if you show up
+with 2 valid signatures but non-identical, that's a proof the challenged
+party has tried to cheat. Of course, I guess
+you need a bit of expansion on script primitives, like
+SIGHASH_ANYPREVOUTANYSCRIPTANYAMOUNT and
+an  OP_CHECKSIG_WITH_STATE_NUMBER with following syntax &lt;sig&gt;
+&lt;state_number&gt; &lt;pubkey&gt; OP_CSWSN
+and following semantic &quot;verify this signature against this pubkey but first
+mask nLocktime of transaction with the
+second-to-top stack item&quot;. Because signatures need to be both valid on same
+transaction but they have committed
+to different nLocktime, Justice tx need to have a mutable nLocktime field
+at verification.
+
+I didn't think about the need of something like OP_CSWSN in first mail,
+some people pointed me the issue, so here
+the updated scripts.
+
+CHALLENGE TX: (Alice case)
+nLocktime: 500e6n
+nSequence: 0
+output 0:
+P = muSig(A,B,C)
+scripts = [
+&quot;OP_1 CHECKSIGVERIFY OP_DUP &lt;2&gt; OP_ROLL &lt;Alice_key&gt;
+CHECKSIGVERIFY_WITH_STATE_NUMBER
+OP_SWAP OP_DUP &lt;3&gt; OP_ROLL &lt;Alice_key&gt; CHECKSIGVERIFY_WITH_STATE_NUMBER
+OP_EQUAL
+OP_NOT OP_VERIFY&quot;  (proof-of-Alice-fraud script path)
+&quot;&lt;n&gt; OP_CSV &lt;Alice refund_key&gt; (refund Alice script path)
+ ]
+ witness:
+&quot;sig(A, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P, hash_type=ALL)&quot;
+
+JUSTICE TX: (Alice punishment)
+nLocktime: 500e6n
+nSequence: 0
+output 0: (to_Caroll)
+output 1: (to_Bob)
+witness:
+&quot;&lt;state_number_update_tx&gt; &lt;sig_Alice_from_update_tx&gt;
+&lt;state_number_challenge_tx&gt;
+&lt;sig_Alice_from_challenge_tx&gt; &lt;sig(P, hash_type=ALL)&gt;&quot;
+
+To say it again, it's more a thought experiment, so if you hold so far, I
+thank you again :)
+
+Best,
+Antoine
+
+
+Le dim. 14 juil. 2019 &#224; 00:48, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning Atoine,
+</I>&gt;<i>
+</I>&gt;<i> Thank you for your proposal.
+</I>&gt;<i>
+</I>&gt;<i> &gt; Eltoo has been criticized to lower the cost for a malicious party to
+</I>&gt;<i> &gt; test your monitoring of the chain. If we're able to reintroduce some
+</I>&gt;<i> &gt; form of punishment without breaking transaction symmetry that would be
+</I>&gt;<i> great.
+</I>&gt;<i>
+</I>&gt;<i> The primary advantage of Decker-Russell-Osuntokun is that it eliminates
+</I>&gt;<i> &quot;toxic waste&quot;.
+</I>&gt;<i>
+</I>&gt;<i> By this we mean, older version of your channel database are &quot;toxic&quot; in
+</I>&gt;<i> that you, ***or someone who wants to attack you***, can use it
+</I>&gt;<i> (accidentally in your case, deliberately in the attacker case), and then
+</I>&gt;<i> you will lose all funds in the channel.
+</I>&gt;<i>
+</I>&gt;<i> Note that access to your channel database, without necessarily accessing
+</I>&gt;<i> your node private keys, is often easier.
+</I>&gt;<i> For example, C-Lightning stores channel data into an SQLITE database and
+</I>&gt;<i> exposes every transaction it makes to a `db_hook` that plugins can use to
+</I>&gt;<i> replicate the database elsewhere.
+</I>&gt;<i> If you were to use an insufficiently secured plugin to replicate your
+</I>&gt;<i> database, an attacker might be able to access your channel data, replicate
+</I>&gt;<i> your database, and use an older version to frame you for theft and make you
+</I>&gt;<i> lose all your channel funds.
+</I>&gt;<i>
+</I>&gt;<i> Thus, Decker-Russell-Osuntokun removes the punitive consideration so that
+</I>&gt;<i> you being framed for theft does not lose all your funds, it merely closes
+</I>&gt;<i> your channels.
+</I>&gt;<i>
+</I>&gt;<i> However, it look to me that you attempt to fix the toxic waste issue, as
+</I>&gt;<i> you mention a &quot;Mallory&quot; later that attempts to frame Alice (possibly by
+</I>&gt;<i> broadcasting old state).
+</I>&gt;<i> On the other hand, it seems, there is no description of how Alice might go
+</I>&gt;<i> about protecting herself from Mallory.
+</I>&gt;<i>
+</I>&gt;<i> In particular, it seems to me that it would be trivial for Alice to avoid
+</I>&gt;<i> punishment by first creating a fake &quot;Mallory&quot;, then taking whatever path
+</I>&gt;<i> would let Alice &quot;off the hook&quot; for a framing Mallory when at risk of
+</I>&gt;<i> getting caught, thus returning the &quot;reduced cost for trying to steal
+</I>&gt;<i> channel funds&quot;.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Transaction symmetry implies that we can't deduce from observing
+</I>&gt;<i> &gt; txid which party broadcast a previous state. How to assign the
+</I>&gt;<i> &gt; faulty broadcast to the right party to punish it in consequence ?
+</I>&gt;<i> &gt; Thanks to taproot we have cheap witness asymmetry.
+</I>&gt;<i> &gt; Witness asymmetry can be used as a way to force the broadcaster to reveal
+</I>&gt;<i> &gt; a secret, and so committing thatn the transaction is the latest one.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If the party misbehaves, we wish to use the revealed secret to punish
+</I>&gt;<i> &gt; him on a second stage transaction. Doing so would be really insecure
+</I>&gt;<i> &gt; in case of reorg or even mempool monitoring by enabling a replay attack
+</I>&gt;<i> &gt; of your committed secret on a lower state update tx. i.e Mallory
+</I>&gt;<i> &gt; would counterfeit being Alice, and so enable the use of a punishment tx
+</I>&gt;<i> &gt; against an honest peer.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; To solve the assignment problem, we need to have per-update credentials,
+</I>&gt;<i> &gt; a secret committed to a state number. You need a scheme were both your
+</I>&gt;<i> &gt; highest credential can't be used against you while at the same time if
+</I>&gt;<i> some
+</I>&gt;<i> &gt; attacker broadcast a transaction with a lower credential you are able to
+</I>&gt;<i> &gt; punish him.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; How to make Bitcoin Script aware of a secret committed to
+</I>&gt;<i> &gt; a lower state number ? To do so, we may use some SIGHASH magic, if you
+</I>&gt;<i> sign
+</I>&gt;<i> &gt; two messages with the same key and we can be sure thatn the only
+</I>&gt;<i> difference between
+</I>&gt;<i> &gt; them is the nLocktime (encoding the state-number in eltoo), that means
+</I>&gt;<i> you
+</I>&gt;<i> &gt; tried to breach the contract.
+</I>&gt;<i>
+</I>&gt;<i> Could a hash preimage be used instead, with revocation?
+</I>&gt;<i> We would require that the hash preimage be unique per-update, but the same
+</I>&gt;<i> technique used in current Poon-Dryja (Russell shachain) can be used to
+</I>&gt;<i> store the preimages of revoked states.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Without access to arbitrary messages on the stack, the only messages we
+</I>&gt;<i> can
+</I>&gt;<i> &gt; enforce signatures on are Bitcoin transactions. We force a party
+</I>&gt;<i> &gt; broadcasting an Update tx to sign it with
+</I>&gt;<i> &gt; SIGHASH_ANYPREVOUTSCRIPT|SIGHASH_NONE|SIGHASH_SINGLE. If someone can
+</I>&gt;<i> shows a
+</I>&gt;<i> &gt; Litigation Tx with a higher state than the Update, we know that this one
+</I>&gt;<i> has
+</I>&gt;<i> &gt; been revoked, and someone is cheating among channel parties. We enter in
+</I>&gt;<i> a
+</I>&gt;<i> &gt; Litigation phase, the Settlement Tx will be encumbered by a Challenge Tx
+</I>&gt;<i> against
+</I>&gt;<i> &gt; which you will need to produce a signature with the same SIGHASH flags
+</I>&gt;<i> as the Update Tx.,
+</I>&gt;<i> &gt; The only difference will be the nLocktime inherited from Litigation.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Assume Alice is trying to cheat, now Bob can take the signature from her
+</I>&gt;<i> broadcast Update tx
+</I>&gt;<i> &gt; and Alice&#8217;s signature on the Challenge tx, pass it as witness to a
+</I>&gt;<i> script verifying their validity
+</I>&gt;<i> &gt; and identity. If their validity is true and identity is false, you can
+</I>&gt;<i> spend with a Justice tx,
+</I>&gt;<i> &gt; splitting Alice&#8217;s funds between the other parties. If validity is true
+</I>&gt;<i> and identity is true, then the script should fail. After timelock
+</I>&gt;<i> expiration, if no one has proven Alice misbehaved,
+</I>&gt;<i> &gt; she can redeem her funds.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Eltoo-Penalty Transaction Tree
+</I>&gt;<i> &gt; ==============================
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;                                Friendly Settlement Tx
+</I>&gt;<i>                     Challenge Tx -- Justice Tx
+</I>&gt;<i> &gt;                                  /
+</I>&gt;<i>                             /
+</I>&gt;<i> &gt;                                 /
+</I>&gt;<i>                            /
+</I>&gt;<i> &gt; Funding-Output -- Update Tx -- Litigation Tx -- .. -- Hostile Settlement
+</I>&gt;<i> Tx --  Challenge Tx -- Justice Tx
+</I>&gt;<i> &gt;
+</I>&gt;<i>                           \
+</I>&gt;<i> &gt;
+</I>&gt;<i>                            \  Challenge Tx -- Justice Tx
+</I>&gt;<i> &gt;
+</I>&gt;<i>
+</I>&gt;<i> I am uncertain if some of the alignment has gotten lost above, but
+</I>&gt;<i> currently your graph is somewhat confusing.
+</I>&gt;<i>
+</I>&gt;<i> &gt; Eltoo-Penalty Scripts
+</I>&gt;<i> &gt; ================
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; (I've omitted chaperon signatures)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; FUNDING_OUTPUT:
+</I>&gt;<i> &gt; output 0:
+</I>&gt;<i> &gt; Q = P + tG
+</I>&gt;<i> &gt; P = muSig(A,B,C)
+</I>&gt;<i> &gt; scripts = [
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSIGVERIFY &lt;Alice_key&gt; CHECKSIGVERIFY&quot; (Alice script path)
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSIGVERIFY &lt;Bob_key&gt; CHECKSIGVERIFY&quot; (Bob script path)
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSIGVERIFY &lt;Caroll_key&gt; CHECKSIGVERIFY&quot; (Caroll script path)
+</I>&gt;<i> &gt; ]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; UPDATE TX:
+</I>&gt;<i> &gt; nLocktime: 500e6 + n
+</I>&gt;<i> &gt; output 0:
+</I>&gt;<i> &gt; P = muSig(A,B,C)
+</I>&gt;<i> &gt; scripts = [
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSIGVERIFY&quot; (friendly settlement script path)
+</I>&gt;<i>
+</I>&gt;<i> This branch seems pointless --- could you not just use the non-taproot
+</I>&gt;<i> path?
+</I>&gt;<i> You do not describe the friendly-settlement transaction anywhere.
+</I>&gt;<i> Is the friendly-settlement have `nSequence` delay?
+</I>&gt;<i> When is it created?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSGIVERIFY 500e6+n OP_CLTV OP_DROP&quot; (litigation script path)
+</I>&gt;<i> &gt; witness:
+</I>&gt;<i> &gt; &quot;sig(A, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P,
+</I>&gt;<i> hash_type=SINGLE)&quot;  (Alice commitment signature)
+</I>&gt;<i> &gt; &quot;sig(B, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P,
+</I>&gt;<i> hash_type=SINGLE)&quot;  (Bob commitment signature)
+</I>&gt;<i> &gt; &quot;sig(C, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P,
+</I>&gt;<i> hash_type=SINGLE)&quot;  (Caroll commitment signature)
+</I>&gt;<i>
+</I>&gt;<i> It looks to me that you cannot use a later update transaction to replace
+</I>&gt;<i> an older update transaction, as the shared signature does not use
+</I>&gt;<i> `SIGHASH_ANYPREVOUT`?
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; LITIGATION TX:
+</I>&gt;<i> &gt; nLocktime: 500e6 + n
+</I>&gt;<i> &gt; nSequence: [delay]
+</I>&gt;<i> &gt; output 0:
+</I>&gt;<i> &gt; P = muSig(A,B,C)
+</I>&gt;<i> &gt; scripts = [
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSIG&quot; (litigation script path)
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSIGVERIFY&quot; (hostile settlement script path)
+</I>&gt;<i> &gt; witness:
+</I>&gt;<i> &gt; &quot;sig(P, hash_type=SINGLE|ANYPREVOUTANYSCRIPT)
+</I>&gt;<i>
+</I>&gt;<i> You mentions later that &quot;if anyone has a highest Litigation tx, he can use
+</I>&gt;<i> it&quot;, but it does not look like that the litigation script path enforces
+</I>&gt;<i> this, did you forget to add some `OP_CHECKLOCKTIMEVERIFY` here?
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; HOSTILE SETTLEMENT TX:
+</I>&gt;<i> &gt; nLocktime: 0
+</I>&gt;<i> &gt; nSequence: [delay]
+</I>&gt;<i> &gt; output 0: (to_Alice)
+</I>&gt;<i> &gt; P = muSig(A,B,C)
+</I>&gt;<i> &gt; scripts = [
+</I>&gt;<i> &gt; &quot;OP_1 CHECHSIGVERIFY &lt;Alice_key&gt; CHECKSIGVERIFY 500e6n OP_CLTV OP_DROP&quot;
+</I>&gt;<i> (Alice challenge script path)
+</I>&gt;<i> &gt; ]
+</I>&gt;<i> &gt; output 1: (to_Bob)
+</I>&gt;<i> &gt; P = muSig(A,B,C)
+</I>&gt;<i> &gt; scripts = [
+</I>&gt;<i> &gt; &quot;OP_1 CHECHSIGVERIFY &lt;Bob_key&gt; CHECKSIGVERIFY 500e6n OP_CLTV OP_DROP&quot;
+</I>&gt;<i> (Bob challenge script path)
+</I>&gt;<i> &gt; ]
+</I>&gt;<i> &gt; output 2: (to_Caroll)
+</I>&gt;<i> &gt; P = muSig(A,B,C)
+</I>&gt;<i> &gt; scripts = [
+</I>&gt;<i> &gt; &quot;OP_1 CHECHSIGVERIFY &lt;Caroll_key&gt; CHECKSIGVERIFY 500e6n OP_CLTV OP_DROP&quot;
+</I>&gt;<i> (Caroll challenge script path)
+</I>&gt;<i> &gt; ]
+</I>&gt;<i> &gt; output N (pending HTLCs)
+</I>&gt;<i> &gt; witness:
+</I>&gt;<i> &gt; &quot;sig(P, hash_type=ALL)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; CHALLENGE TX: (Alice case)
+</I>&gt;<i> &gt; nLocktime: 500e6n
+</I>&gt;<i> &gt; nSequence: 0
+</I>&gt;<i> &gt; output 0:
+</I>&gt;<i> &gt; P = muSig(A,B,C)
+</I>&gt;<i> &gt; scripts = [
+</I>&gt;<i> &gt; &quot;OP_1 CHECKSIGVERIFY OP_DUP &lt;Alice_key&gt; CHECKSIGVERIFY OP_DUP OP_SWAP
+</I>&gt;<i> &lt;Alice_key&gt; CHECKSIGVERIFY
+</I>&gt;<i> &gt;     OP_EQUAL OP_NOT OP_VERIFY&quot;  (proof-of-Alice-fraud script path)
+</I>&gt;<i> &gt; &quot;&lt;n&gt; OP_CSV &lt;Alice refund_key&gt; (refund Alice script path)
+</I>&gt;<i> &gt; ]
+</I>&gt;<i> &gt; witness:
+</I>&gt;<i> &gt; &quot;sig(A, hash_type=SINGLE|ANYPREVOUTANYSCRIPT|NONE) sig(P, hash_type=ALL)&quot;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; JUSTICE TX: (Alice punishment)
+</I>&gt;<i> &gt; nLocktime: 500e6n
+</I>&gt;<i> &gt; nSequence: 0
+</I>&gt;<i> &gt; output 0: (to_Caroll)
+</I>&gt;<i> &gt; output 1: (to_Bob)
+</I>&gt;<i> &gt; witness:
+</I>&gt;<i> &gt; &quot;sig_Alice_from_update_tx sig_Alice_from_challenge_tx sig(P,
+</I>&gt;<i> hash_type=ALL)&quot;
+</I>&gt;<i>
+</I>&gt;<i> `P` here is `muSig(A,B,C)`?
+</I>&gt;<i> Why would Alice willingly sign a `SIGHASH_ALL` signature (meaning the
+</I>&gt;<i> transaction IDs are known at this point and have been confirmed deeply
+</I>&gt;<i> onchain, so this is after Alice has gone and performed any attempts at
+</I>&gt;<i> theft) that would punish her?
+</I>&gt;<i> What happens when the Litigation Tx is later than the initial Update Tx?
+</I>&gt;<i>
+</I>&gt;<i> Maybe this should instead be a revocation key whose privkey Alice reveals
+</I>&gt;<i> as part of the update ritual?
+</I>&gt;<i>
+</I>&gt;<i> If a later Litigation Tx is used, than the Update Tx that was put onchain,
+</I>&gt;<i> is the signature from the Update Tx valid on the same transaction where the
+</I>&gt;<i> Challenge Tx is valid?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Explicitly stating what transaction outputs are spent by each transaction
+</I>&gt;<i> input would be better, especially since your graph is unclear.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; State Update
+</I>&gt;<i> &gt; ============
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Alice, Bob and Caroll build new friendly Settlement tx N, new Update Tx
+</I>&gt;<i> and revoke old one by
+</I>&gt;<i> &gt; generating a Justice tx with state higher than the previous one, a
+</I>&gt;<i> hostile Settlement tx plus
+</I>&gt;<i> &gt; Y challenge txn and Y justice txn with Y number of parties.
+</I>&gt;<i>
+</I>&gt;<i> You do not describe the friendly settlement transaction.
+</I>&gt;<i> I assume it has some `nSequence` somewhere.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cooperative Case
+</I>&gt;<i> &gt; ================
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; After X updates, Alice, Bob, Caroll, cooperate to closing transaction
+</I>&gt;<i> using key path
+</I>&gt;<i> &gt; spending of funding Taproot output, the spending transactions contains
+</I>&gt;<i> accurate balances.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Unilateral Case
+</I>&gt;<i> &gt; ================
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; After X updates, Alice broadcast the last Update tx N, by signing it
+</I>&gt;<i> with her private key with
+</I>&gt;<i> &gt; SIGHASH_NONE,SIGHASH_ANYPREVOUTANYSCRIPT,SIGHASH_SINGLE and use MuSig
+</I>&gt;<i> previously distributed
+</I>&gt;<i> &gt; between parties at state update. Her signature doesn't protect anything
+</I>&gt;<i> except commitment to
+</I>&gt;<i> &gt; the latest state number.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; After finalization of the friendly settlement tx, she can redeem her
+</I>&gt;<i> balance, and timeout/fulfill
+</I>&gt;<i> &gt; her outputs.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If she has broadcast the latest state, none of the parties should be
+</I>&gt;<i> able to broadcast a Litigation
+</I>&gt;<i> &gt; tx with a highest state number. Her signature committing to the
+</I>&gt;<i> locktime, no one is able to
+</I>&gt;<i> &gt; counterfeit her identity by spending the funding taproot output with a
+</I>&gt;<i> lowest update tx.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Malicious Case
+</I>&gt;<i> &gt; ==============
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Bob is broadcasting a lowest Update tx with his signature committing to
+</I>&gt;<i> it. Alice use Litigation tx
+</I>&gt;<i> &gt; to spend it, if anyone has a highest Litigation tx, he can use it. After
+</I>&gt;<i> Litigation tx finalization,
+</I>&gt;<i> &gt; hostile settlement transaction is used. Each output returning to a
+</I>&gt;<i> channel party, is encumbered
+</I>&gt;<i> &gt; by a &quot;challenge&quot;. To unlock your funds, you must provide a signature
+</I>&gt;<i> against same pubkey and same
+</I>&gt;<i> &gt; SIGHASH flags than the one encumbering your tapscript for funding output.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Challenge tx is using a taproot output, one leaf returning fund to Alice
+</I>&gt;<i> after some timelock,
+</I>&gt;<i> &gt; The other one, let anyone with a MuSig and two valid signatures
+</I>&gt;<i> committing to different nLocktime
+</I>&gt;<i> &gt; to send challenged fund to a Justice tx, doing an equal split between
+</I>&gt;<i> other channel parties.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; You need signatures to be safe against third-party malleability, i.e
+</I>&gt;<i> being able to tweak
+</I>&gt;<i> &gt; your signatures to be still valid but diff being interpreted as a proof
+</I>&gt;<i> of commitment on lowest state number. On the Justice tx, you need a new key
+</I>&gt;<i> type to enforce that every signature must have sighash
+</I>&gt;<i> SIGHASH_MASKLOCKTIMEWITH, where you expect the signature to be followed by
+</I>&gt;<i> the state number which is going to be used as locktime in transaction
+</I>&gt;<i> digest algorithm. So in this way state number are provided in witness and
+</I>&gt;<i> you can equivocate Justice tx as both revoked Update Tx and Challenge Tx.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Okay, I'm quite sure that Script gurus on this list are going to point
+</I>&gt;<i> flaws of this scheme.
+</I>&gt;<i> &gt; It's more a thought experiment and I was curious if anyone has other
+</I>&gt;<i> ideas to get Eltoo + penalties,
+</I>&gt;<i> &gt; if yes let it know !
+</I>&gt;<i>
+</I>&gt;<i> The descriptions of the transactions and scripts involved are confusing
+</I>&gt;<i> and I am uncertain if you actually achieve your target.
+</I>&gt;<i> Could you clarify?
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190716/809b038a/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190716/809b038a/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002074.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+	<LI>Next message: <A HREF="002076.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2073">[ date ]</a>
+              <a href="thread.html#2073">[ thread ]</a>
+              <a href="subject.html#2073">[ subject ]</a>
+              <a href="author.html#2073">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%22Updates%20Overflow%22%20Attacks%20against%20Two-Party%20Eltoo%20%3F&In-Reply-To=%3CCALZpt%2BG8ofdB8f7ShVRuRKqDC80xeGL3nHpqcFLZ_5cr44AEMQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003797.html">
+   <LINK REL="Next"  HREF="003800.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%22Updates%20Overflow%22%20Attacks%20against%20Two-Party%20Eltoo%20%3F&In-Reply-To=%3CCALZpt%2BG8ofdB8f7ShVRuRKqDC80xeGL3nHpqcFLZ_5cr44AEMQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Dec 13 01:38:43 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003797.html">[Lightning-dev] Jamming mitigation call
+</A></li>
+        <LI>Next message: <A HREF="003800.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3798">[ date ]</a>
+              <a href="thread.html#3798">[ thread ]</a>
+              <a href="subject.html#3798">[ subject ]</a>
+              <a href="author.html#3798">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list,
+
+The following post describes a potential attack vector against eltoo-based
+Lightning channels, from my understanding also including the recent
+two-party eltoo w/ punishment construction. While I think this concern has
+been known for a while among devs, and I believe it's mitigable by adopting
+an adequate fee-bumping strategy, I still wonder how exactly it affects
+eltoo-based constructions.
+
+AFAICT, the eltoo 2-stage proposal relies on a serie of pre-signed update
+transactions, of which in the optimistic case only one of them confirms.
+There is a script-spend path, where an update transaction N can spend an
+update transaction K, assuming K&lt;N and an aggregated musig for the
+checksigverify.
+
+The attack purpose is to delay the confirmation of the final settlement
+transaction S, to double-spend a HTLC forwarded by a routing hop. I.e you
+have Ned the routing hop receiving the HTLC from Mallory upstream and
+sending the HTLC to Malicia downstream. Thanks to the cltv_expiry_delta,
+the HTLC forward should be safe as Ned can timeout the HTLC on the
+Ned-Malicia link before it is timed-out by Mallory on the Mallory-Ned link.
+In case of timeout failure, Malicia can claim the HTLC forward with the
+corresponding preimage, at the same block height than Mallory timeout the
+HTLC, effectively double-spending Ned.
+
+The cltv_expiry_delta requested by Ned is equal to N=144.
+
+The attack scenario works in the following way: Malicia updates the Eltoo
+channel N time, getting the possession of N update transactions. At block
+A, she breaks the channel and confirms the update transaction 0 by
+attaching a feerate equal to or superior to top mempool block space + 1
+sat. At each new block, she iterates by confirming the next update
+transaction, i.e update transaction 1 at block A+1, update transaction
+transaction 2 at block A+2, update transaction 3 at block A+3, ...
+
+&gt;<i>From Ned's viewpoint, there is limited rationality of the network mempools,
+</I>as such each punishment transaction R, as it's confirmation could have been
+delay due to &quot;honest&quot; slow propagation on the network is likely to be
+pre-signed with top mempool block space feerate, but not more to save on
+fees. Therefore, transaction RN.0 should fail to punish update transaction
+0 as it's double-spent by update transaction 1, transaction RN.1 should
+fail to punish update transaction 1 as it's double-spent by update
+transaction 2, transaction RN.2 should fail to punish update transaction 2
+as it's double-spent by update transaction 3...
+
+While there is a RBF-race, I think this can be easily won by Malicia by
+mass-connecting on the transaction-relay network and ignoring the Core
+transaction-relay delay timers (here for privacy purposes iirc).
+
+If it holds, I think the attack is economically opportun as long as the sum
+of the chain of update transactions weight multiplied by the spent feerate
+is inferior to the sum of HTLC values stolen (upper bounded to
+`max_htlc_value_in_flight_msat`, not `funding_satoshis`). The attack could
+be more sound in periods of low-fee, as the number of HTLC exploitable is
+higher.
+
+A mitigation could be for a fee-bumping strategy to adopt a scorched
+approach when the HTLC-timeout is approaching, and there is a corresponding
+incoming HTLC. When the HTLC-timeout is near expiration (e.g X blocks from
+incoming HTLC expiry), probably 100% of the HTLC value should be burnt in
+update transaction fees.
+
+I think some implementations in the LN-penalty are already doing &quot;upward&quot;
+fee-bumping frequency, while I believe it reduces the attack surface, I
+still think there is an exploitable window for &quot;update overflow&quot; attack.
+E.g in LDK justice transactions are bumped by 25% every block according to
+a height timer schedule [0].
+
+Assuming the attack holds, and scorched approach are adopted by default to
+mitigate this concern, there is a second-order concern, we might open
+Lightning channels to miner-harvesting attacks, where the confirmation of
+the update transactions are deferred to kick-out the scorched earth
+reaction of the fee-bumping engine. In my opinion, this would be still an
+improvement, as we're moving a (plausible) security risk triggerable by a
+Lightning counterparty to (hypothetical) one triggerable by a wide
+coalition of miners.
+
+There is another caveat, it sounds if the update transaction can be
+malleable (i.e SIGHASH_SINGLE|ANYONECANPAY), update transactions across
+Lightning channels could be aggregated by the attacker, changing the
+economy there in a way defavorable to the victims. I.e the attacker can
+select the targeted channels, but the victim cannot coordinate with each
+other to respond with a collective fee-bumping.
+
+Is the understanding of the two-party eltoo construction correct, and this
+&quot;update overflow&quot; attack is sound and economically opportun ? If it holds,
+I still wonder if we have variants playing with mempool descendant limits.
+In all cases, it sounds to me the implications are more in the way
+fee-bumping is implemented by Lightning softwares rather than directly on
+eltoo-based constructions, I don't see an immediate way to address it by
+the construction itself.
+
+Mistakes and confusions are my own.
+
+Antoine
+
+[0]
+<A HREF="https://github.com/lightningdevkit/rust-lightning/blob/5e14c24a11f610ab8c402f788ec5bd637e9e24af/lightning/src/chain/onchaintx.rs#L505">https://github.com/lightningdevkit/rust-lightning/blob/5e14c24a11f610ab8c402f788ec5bd637e9e24af/lightning/src/chain/onchaintx.rs#L505</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221212/d9abd7ad/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221212/d9abd7ad/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003797.html">[Lightning-dev] Jamming mitigation call
+</A></li>
+	<LI>Next message: <A HREF="003800.html">[Lightning-dev] &quot;Updates Overflow&quot; Attacks against Two-Party Eltoo ?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3798">[ date ]</a>
+              <a href="thread.html#3798">[ thread ]</a>
+              <a href="subject.html#3798">[ subject ]</a>
+              <a href="author.html#3798">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,215 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Channel top-up
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Channel%20top-up&In-Reply-To=%3C20170504175329.GA4125%40nex%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000698.html">
+   <LINK REL="Next"  HREF="000700.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Channel top-up</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Channel%20top-up&In-Reply-To=%3C20170504175329.GA4125%40nex%3E"
+       TITLE="[Lightning-dev] Channel top-up">decker.christian at gmail.com
+       </A><BR>
+    <I>Thu May  4 17:53:29 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000698.html">[Lightning-dev] Channel top-up
+</A></li>
+        <LI>Next message: <A HREF="000700.html">[Lightning-dev] Channel top-up
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#699">[ date ]</a>
+              <a href="thread.html#699">[ thread ]</a>
+              <a href="subject.html#699">[ subject ]</a>
+              <a href="author.html#699">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+thanks for the clarification, I think I understand the proposal a bit
+better now.
+
+&gt;<i> I'm not sure why it's complicated apparently.
+</I>&gt;<i> 
+</I>&gt;<i> Actually, this reuses the same mechanism as onion routing. The only
+</I>&gt;<i> difference is that the first &quot;hop&quot; of the route is performed via an
+</I>&gt;<i> on-chain transaction.
+</I>&gt;<i> 
+</I>&gt;<i> Once the usual onion-routing mechanims has settled with
+</I>&gt;<i> update_fulfill_htlc, the channel state settles to a new topped-up
+</I>&gt;<i> state. The &quot;side funds&quot; are definitely in the possession of Bob, and
+</I>&gt;<i> do not affect the channel state and are not considered in the
+</I>&gt;<i> channel state.
+</I>
+I see, so you're not actually modifying the total amount in the
+channel, Alice is just buying back some capacity on the channel using
+an on-chain transaction.
+
+&gt;<i> &gt;At the Scaling Bitcoin workshop I proposed a mechanism that I called
+</I>&gt;<i> &gt;splice-in/-out that would also solve the top-up problem, but I never
+</I>&gt;<i> &gt;got around to write it up, mea culpa. Splicing is just a clever way of
+</I>&gt;<i> &gt;closing a channel and reopening a new one right from the settlement,
+</I>&gt;<i> &gt;and the new one does not need to be confirmed before we can perform
+</I>&gt;<i> &gt;further updates.
+</I>&gt;<i> 
+</I>&gt;<i> I'd considered something similar at first, but realized that some
+</I>&gt;<i> risks were involved.
+</I>
+I don't think we are incurring in any exceptional risks, and we are
+actually reusing the same machinery we already have for the initial
+establishment of the channel.
+
+&gt;<i> &gt;Splice-in
+</I>&gt;<i> &gt;---------
+</I>&gt;<i> &gt;So let's say that Alice would like to top-up here channel with
+</I>&gt;<i> &gt;Bob. She will take some of her funds and create a new 2-of-2 output
+</I>&gt;<i> &gt;with requiring both Alice and Bob's signature, this is preparing funds
+</I>&gt;<i> &gt;to be added to the channel. We let the transaction creating that
+</I>&gt;<i> &gt;2-of-2 output confirm. Once that output is securely confirmed Alice
+</I>&gt;<i> &gt;asks Bob to splice-in,
+</I>&gt;<i> 
+</I>&gt;<i> Bob then creates the following message: &quot;Heya Alice! I see you made
+</I>&gt;<i> a 0.25 btc output requiring a 2-of-2 multisig. One of the signatures
+</I>&gt;<i> on that multisig happens to be my signature. Because of this
+</I>&gt;<i> unauthorized requirement of my signature, I want you to make another
+</I>&gt;<i> transaction spending that transaction, sending 0.13 btc to
+</I>&gt;<i> 18X5NsJrrqgjprXucYTTshjHm3ETYgqk8z. You can transfer 0.12btc minus
+</I>&gt;<i> transaction fees to someone else if you like. Please sign that
+</I>&gt;<i> transaction and send it to me. Love, kisses, hope that helps, Bob.&quot;
+</I>&gt;<i> Bob then cryptographically signs the message and sends it
+</I>&gt;<i> off-channel to Alice. Bob then refuses to cooperate with the rest of
+</I>&gt;<i> the splice-in protocol.
+</I>
+This is not different from how we are establishing channels
+initially. Alice would only ever lock in the funds with a guarantee
+that she can retrieve the funds if Bob decides not to cooperate. We
+can implement this with locktimes or CSV, and disarm that mechanism
+later using a re-anchor. So the script is (A+B || A+timeout) if the
+splice goes well we re-anchor, and the righthand side of the || is
+disarmed.
+
+&gt;<i> &gt;so they collaboratively close the channel by
+</I>&gt;<i> &gt;spending the funding TX output and the prepared top-up output into a
+</I>&gt;<i> &gt;new 2-of-2 output. On that final 2-of-2 output we will create the new
+</I>&gt;<i> &gt;channel, i.e., the settlement transaction is automatically the funding
+</I>&gt;<i> &gt;transaction of the new channel.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;Alice and Bob can use the existing channel right up to the splice-in
+</I>&gt;<i> &gt;operation, Alice may just be pre-allocating some funds in
+</I>&gt;<i> &gt;parallel. During the splice-in we need to stop forwarding HTLCs for a
+</I>&gt;<i> &gt;few seconds, so we can settle cleanly. Directly after the splice-in
+</I>&gt;<i> &gt;the channel is functional again, no need to let the settlement/funding
+</I>&gt;<i> &gt;transaction confirm. That is because the funds in the channel never
+</I>&gt;<i> &gt;touched an unconfirmed singlesig output, hence they can never be
+</I>&gt;<i> &gt;doublespent without the collaboration of the counterparty.
+</I>&gt;<i> 
+</I>&gt;<i> ^^ counterparty hostage risk, Bob didn't follow it ^^
+</I>
+Counterparty hostage risk disarmed ^^
+
+&gt;<i> &gt;Splice-out
+</I>&gt;<i> &gt;----------
+</I>&gt;<i> 
+</I>&gt;<i> In the above, it's safe to abort at any time, with the money
+</I>&gt;<i> remaining in the channel.
+</I>&gt;<i> 
+</I>&gt;<i> Note however a potential hostage situation: Alice wants to move
+</I>&gt;<i> money out of the channel expeditiously without closing the
+</I>&gt;<i> channel. Bob may refuse to cooperate on a splice-out. Thus, this is
+</I>&gt;<i> the same risk as Alice requesting to close the channel and Bob not
+</I>&gt;<i> cooperating, forcing Alice to use her commitment transaction, which
+</I>&gt;<i> has a time delay.
+</I>&gt;<i> 
+</I>&gt;<i> Thus, it's not safe to think of the channel's fund as anything but
+</I>&gt;<i> locked in, since uncooperation means the channel's funds are
+</I>&gt;<i> returned to you after a timeout.
+</I>
+Right, there remains that risk, but hopefully that wouldn't happen too
+often ;-)
+
+&gt;<i> &gt;We might even go a step further and not need to drain the HTLCs from a
+</I>&gt;<i> &gt;channel before performing a splice operation, assuming we can get the
+</I>&gt;<i> &gt;setup procedure to include all HTLCs that were present before the
+</I>&gt;<i> &gt;splice operation.
+</I>&gt;<i> 
+</I>&gt;<i> Sorry, the interaction of CSV (in commitment transaction timeouts)
+</I>&gt;<i> and CLTV (in HTLC's) still escapes me.
+</I>
+If we are able to recreate the same HTLCs on the re-anchored channel
+in a safe way then we can avoid draining them off of the channel
+before splicing. Even if we don't do that we may simply hold back on
+adding new HTLCs, drain, re-anchor and then add the held back HTLCs
+once the splice is completed. And finally this could allow us to
+perform a partial drop to the chain, splicing out just the HTLCs which
+are about to expire and maintaining the rest of the channel intact.
+
+&gt;<i> &gt;I'd love feedback and comparisons of both proposals :-)
+</I>&gt;<i> 
+</I>&gt;<i> As for my top-up proposal, I realized also, that it's actually an
+</I>&gt;<i> onion route where part of the hop is done on-chain rather than
+</I>&gt;<i> on-Lightning.
+</I>&gt;<i> 
+</I>&gt;<i> Thus, while the top-up procedure is expected to be used by Alice to
+</I>&gt;<i> top up her channel funds, it's actually the first hop of an onion
+</I>&gt;<i> route. The onion route just happens to route from off-LN Alice, to
+</I>&gt;<i> on-LN Bob, to on-LN Alice.
+</I>&gt;<i> 
+</I>&gt;<i> This may be used by someone off-LN to pay into an LN node without
+</I>&gt;<i> committing funds to open a channel, for example for a one-off
+</I>&gt;<i> transaction to a Lightning node. That someone may use onion routing
+</I>&gt;<i> to ensure that it becomes untraceable on LN. Alternatively, a
+</I>&gt;<i> non-Lightning user can claim he or she did an off-LN onion route,
+</I>&gt;<i> but actually just sent the funds to himself/herself to throw off
+</I>&gt;<i> trackers.
+</I>
+That's very clever, I like the combination of on-chain and off-chain
+payments. I still like my splicing approach better (yes, I'm pretty
+biased in this case ^^) but being able to combine on-chain and
+off-chain is a great feature, let's see how far we can push it.
+
+Cheers,
+Christian
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000698.html">[Lightning-dev] Channel top-up
+</A></li>
+	<LI>Next message: <A HREF="000700.html">[Lightning-dev] Channel top-up
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#699">[ date ]</a>
+              <a href="thread.html#699">[ thread ]</a>
+              <a href="subject.html#699">[ subject ]</a>
+              <a href="author.html#699">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

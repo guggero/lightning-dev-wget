@@ -1,0 +1,379 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] On Path Privacy
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20On%20Path%20Privacy&In-Reply-To=%3CpmZF6PMBHmqzMbp93eA_22_Ky11jQkv0i79Vxku-JuRdFXh8_uRK0EfTegOkoqqGsWELW5fEnoMwg1pN6JIkRIiwJIWfOS0CSvyF1aC5N78%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002407.html">
+   <LINK REL="Next"  HREF="002409.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] On Path Privacy</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20On%20Path%20Privacy&In-Reply-To=%3CpmZF6PMBHmqzMbp93eA_22_Ky11jQkv0i79Vxku-JuRdFXh8_uRK0EfTegOkoqqGsWELW5fEnoMwg1pN6JIkRIiwJIWfOS0CSvyF1aC5N78%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] On Path Privacy">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Dec 26 03:03:13 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002407.html">[Lightning-dev] Research on proactive fee free channel	rebalancing in the friend of a friend network / and roadmap	for a protocol extension
+</A></li>
+        <LI>Next message: <A HREF="002409.html">[Lightning-dev] On Path Privacy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2408">[ date ]</a>
+              <a href="thread.html#2408">[ thread ]</a>
+              <a href="subject.html#2408">[ subject ]</a>
+              <a href="author.html#2408">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Privacy Loss Models
+===================
+
+Shortest Path Heuristic
+-----------------------
+
+First, let us presuppose a network connected as below:
+
+
+        B --- C
+       /       \
+      /         \
+     A           D
+      \         /
+       \       /
+        F --- E
+
+Now, let us suppose that some evil surveillor insinuates itself into the network:
+
+        B --- C
+       / \   / \
+      /   \ /   \
+     A --- S --- D
+      \   / \   /
+       \ /   \ /
+        F --- E
+
+The strategy of the surveillor is thus the below:
+
+* It makes itself more central to the network by creating large numbers of channels, especially to distant nodes.
+* It lowers its channel fees relative to the other nodes, making its channels attractive to pathfinders that consider channel fees.
+* It uses the &quot;shortest path heuristic&quot;.
+  That is:
+  * Suppose in the given example, S receives a forward via the B-S channel, to the S-D channel.
+  * Then it knows the payer is B and the payee is D.
+
+More precisely, the &quot;shortest path heuristic&quot; simply means performing the below precomputation:
+
+* Take the entire routemap.
+* Create a mapping of the tuple of an incoming channel and an outgoing channel (of the surveillor node), to a set of pairs of payers and payees.
+* For each possible payer in all nodes:
+  * For each each possible payee in all nodes:
+    * Take the shortest path from payer to payee.
+    * If the surveillor node is in that path, determine the incoming channel and outgoing channel, then add the payer and payee to the corresponding entry in the mapping.
+
+Then, whenever the surveillor node has to perform a forward, it only needs to look up the incoming channel and outgoing channel in the mapping.
+This results in a set of possible payer/payee pairs.
+
+This analysis becomes more powerful when the surveillor has acquired forwarding logs from multiple nodes on the network.
+If a payment is determined to have passed through multiple nodes, whose forwarding logs the surveillor has acquired, then the surveillor can simply perform the above precomputation for each node, then take the intersection of the sets in each mapping entry.
+
+Much of the privacy loss is effectively due to forwarding nodes being able to create &quot;reverse&quot; routing tables.
+That is, instead of a routing table that inputs a source and destination and outputs a (set of) likely direction(s) to send packets to, a reverse routing table inputs a direction from sent and to sent and outputs a (set of) likely source(s)/destination(s).
+
+Unremovable Forwarding Data
+---------------------------
+
+As we know, switching Lightning from HTLCs to PTLCs (i.e. from payment hash + preimage to payment point + scalar) enables many new features, including the so-called &quot;path decorrelation&quot;.
+The theory is that by changing the payment point at each hop, multiple coordinating surveillor nodes will be unable to determine if the same payment passed through them.
+
+However, this is not sufficient, as the data below cannot be removed or hidden:
+
+* The sidereal time at which `update_add_htlc` messages are sent
+  * This can be used to determine if two forwards are possibly on the same payment path.
+  * Worse, the sidereal time between the outgoing `update_add_htlc` and the `update_fail_htlc` /  `update_fulfill_htlc` response can be measured to help characterize the distance, in nodes, to the payee.
+  * We cannot change or mask this time, unless we are willing to add random, potentially-large latencies to forwards, which we do not want to do since the entire point of Lightning Network is fast payments.
+* The value being transmitted cannot be hidden from the forwarding node.
+  * While we know how to send homomorphically encrypted values that can be summed up, the forwarding node has to know the value of its own channels, and would know how much a forward changes its own channel values in order to determine if it has enough capacity on a channel to actually offer the outgoing HTLC.
+* The timelock of the payment cannot be hidden from the forwarding node.
+  * The forwarding node is liable for the timelock of any HTLCs it offers, and it has to know about the exact timelock in order to force a channel onchain when any HTLCs pending on it have a timelock that is expiring very soon.
+
+The above data helps two cooperating surveilling nodes to determine if two forwards on their nodes belong to the same logical payment, even if path decorrelation masks the payment point along the entire path:
+
+* The two nodes can determine:
+  * How long a shortest-path payment takes to reach from one to the other.
+  * How much fees the shortest path between them costs.
+  * How much CLTV-delta the shortest path between them costs.
+
+By deriving the above data, two nodes can have a very good guess of which forwards passing through them are likely to belong to the same payment, which helps them triangulate better the payer and payee, especially given the shortest path heuristic.
+Thus, even *with* path decorrelation, two cooperating surveilling nodes can still correlate forwards across them (they just will not be able to execute a wormhole attack).
+
+Now, of note is that the the timelock is particularly leaky in terms of privacy.
+The timelock gives an upper bound on the distance of the forwarding node to the ultimate payee.
+In combination with another privacy loss, this can allow a forwarding node to precisely identify the ultimate payee of a payment.
+
+Both value and timelock can be randomized somewhat by use of &quot;shadow routes&quot;, as implemented in C-Lightning.
+However, the current C-Lightning implementation only inserts shadow routes at the end of the route; it should also insert shadow routes at random points in the route, and mildly overpay fees along the way (not just give extra value+cltv-delta to the last node), to reduce the ability of multiple cooperating surveillors to determine if their forwards are the same payment.
+
+REDACTED SECTION
+----------------
+
+REDACTED TEXT.
+
+Non-Solutions to Privacy Loss
+=============================
+
+Unpublished Channels Delenda Est
+--------------------------------
+
+Unpublished channels are becoming popular for some reason, and even section 4.1 of [this paper](<A HREF="https://arxiv.org/pdf/1909.02717">https://arxiv.org/pdf/1909.02717</A>) gives it as a solution for improving privacy without sacrificing utility.
+
+Unfortunately for that paper, this is wrong, and unpublished channels must be destroyed.
+
+Unpublished channels do not improve privacy, but instead move the privacy risks from shared to concentrated on specific nodes, which become targets for surveillors.
+Further, because it moves risk to fewer high-value targets (a symptom of centralization), it violates [Risk Sharing Principle](<A HREF="https://github.com/libbitcoin/libbitcoin-system/wiki/Risk-Sharing-Principle">https://github.com/libbitcoin/libbitcoin-system/wiki/Risk-Sharing-Principle</A>).
+
+As I noted [here](<A HREF="../2019-October/002241.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/002241.html</A>), the Axiom of Terminus means that I can have the heuristic:
+
+* If I receive a forwarding request:
+  * If the incoming channel is unpublished, the node on the other end is the payer.
+  * If the outgoing channel is unpublished, the node on the other end is the payee.
+
+This gives very precise information about who the payer and payee is, and is not fixable by e.g. shadow routing or [REDACTED TEXT].
+
+Now, of course the above heuristic is only doable by primarily-forwarding nodes with a mix of unpublished and published channels, and only to nodes that use the unpublished channels.
+Otherwise, independent third parties cannot even know about nodes that *only* use unpublished channels, so that should be good, right?
+
+Unfortunately:
+
+* Payers have pretty good privacy otherwise: the (unremovable) timelock is a hint to the distance to the payee, not payer, and the payer could always claim that it received the payment via other published channels.
+  * Thus, ***the fact that with unpublished channels some nodes can now identify the payer precisely is a major privacy loss for payers***.
+* Those nodes with a mix of unpublished channels and published channels become major targets for surveillance.
+  * They may be tempted by the dark side to defray their operating costs by actively selling the payment information they have acquired.
+  * Their backups and persistent storage can be hacked and copies of forwarding logs acquired, even if they are strongly committed to privacy for their clients.
+  * Competitors who *do* sell their payment information can outcompete them, undercutting their fees (which also has the effect that payments are more likely to be routed to them due to the lower fees, increasing their ability to surveill further).
+* The existence of unpublished channels is still attested on the blockchain, and onchain analysis can give hints on which unpublished users ended up making channels with specific published nodes.
+  * Lightning is practically the only use of 2-of-2 P2WSH, since most HODL usages will be either 1-of-1 or 2-of-3 (&quot;never take two chronometers to sea: take one or three&quot;).
+  * Since current Bitcoin requires revealing a 2-of-2 script in P2WSH, even mutual closes of unpublished channels are visible publicly on the blockchain anyway, and subsequent use of that money can be traceable to specific servers.
+    * Taproot fixes this.
+    * CoinJoin fixes this.
+
+If all channels were published, then this spreads out the information that forwarding nodes can keep.
+Surveillors capable of stealing forwarding logs of nodes will need to gather the forwarding nodes of large numbers of nodes.
+This is risk sharing: privacy-leaking information is spread out and no single node is a particularly juicy target for acquisition of control.
+
+Note that nodes can publish themselves without publishing their IP addresses; thus they can at least hide their locations at the IP layer while revealing their locations at the Lightning layer.
+Nodes can also use Tor, at the cost of increased latency with the rest of the network, which behooves us to design our protocol to minimize bandwidth and turnaroud.
+
+Refusal to Log
+--------------
+
+Now, a forwarding node operator may not necessarily be an evil surveillor, and may even have a desire to be (seen as) good.
+Such a node operator might, as protection against hacks, and protection against evil surveillors who might hack their node and snoop their data, refuse to maintain a log of forwards.
+
+Let us presuppose that there exists some magic spell, that ensures that a node operator is in fact performing (or not performing) some promised act (or disavowed act).
+I will now show that, even if such a spell could exist, a node operator cannot promise to not keep a log of forwards, at least with the current HTLCs being sent via Poon-Dryja channels.
+
+First:
+
+* Poon-Dryja requires transaction revocation.
+* Transaction revocation requires that nodes be able to recognize old state and revoke them.
+* Revoking a transaction means spending it using a special revocation branch of a special modified script.
+* Special scripts in Bitcoin must be encoded in P2SH/P2WSH.
+* To spend a P2SH/P2WSH, we need to show the whole encoded script, even those branches that are not taken.
+* Thus, to spend a revocable HTLC output, a node has to store the hash and timelock, even if it is taking the revocation path.
+  * While HTLCs currently used have yet another transaction (HTLC-timeout or HTLC-success) to actually claim the funds, both the HTLC and the claim transactions have to be revocable, else an attacker might publish an old state that has all channel funds in HTLCs.
+    If the victim is unable to publish the HTLC script in order to spend (and revoke) the plain HTLC output without an HTLC-timeout or HTLC-success transaction being published, then the attacker can simply refuse to publish the HTLC-timeout/HTLC-success and the victim still loses access to the funds (though the attacker will still not be able to claim it, the attacker might just want to make the victim lose funds).
+    Thus, every node must be able to publish the HTLC script in order to revoke it (even without the attacker publishing HTLC-success/HTCL-timeout), which means it has to keep every old state hash and timelock.
+
+Then, secondly:
+
+* The hashes used in forwarding have to be the same in both the incoming HTLC and the outgoing HTLC.
+
+Thus:
+
+* Nodes have to keep all hashes and timelocks for all HTLCs of all older channel states of all channels, otherwise they are insecure.
+* Third parties acquiring the above data from nodes can correlate forwards by checking for HTLCs that exist in two channels.
+  * Indeed, because HTLC scripts are different based on whether it is the local or the remote side that offered them, third parties can determine as well which HTLC is incoming and which it outgoing.
+  * Further, the stored timelock gives an upper bound on the time an HTLC was created, giving hints on timing of a payment as well.
+* Therefore all current secure nodes are required to store data that is enough to derive a log of forwards.
+
+Of course, this is not so dire.
+In the (close?) future, improvements to base layer will allow nodes to elide enough information from its stored data, so that a log of forwards can no longer be derived:
+
+* Schnorr means we can use pointlocked timelocked contracts with payment decorrelation, thus allowing breaking of the link between incoming and outgoing PTLCs even in the data stored by nodes.
+  * Once an outgoing PTLC has been claimed and we have determined the incoming PTLC, we can delete the delta between the two contracts from persistent storage, thus preventing from linking incoming from outgoing PTLCs.
+* Taproot means we can put the revocation branch of revocable HTLCs in a separate tapleaf.
+  * Thus, nodes can store only the Merkle path to the revocation script, and thus no longer store the hash and timelock for all HTLCs on all older states.
+* `SIGHASH_NOINPUT` means we can implement Decker-Russell-Osuntokun.
+  * Thus, honest nodes no longer need to store data from previous states of the channel.
+
+Against the above, however, I must remind:
+
+* We still need to create a magic spell that allows third parties to actually believe, without tr\*st, the promises of node operators that they will not store a plain log of forwards of their node, and that they will not modify the available open-source software to do so and run their locally-modified versions.
+* Even if the above magic spell were created, at ***some*** point in the past the node knew an incoming HTLC/PTLC and its link to an outgoing HTLC/PTLC.
+  * Lower layers beneath the node software may betray the above magic spell nevertheless:
+    * &quot;Deleted&quot; data might be implemented by a database layer by simply marking some record as unused, and then reuse of that record might take a long time, meaning that old data may still exist in &quot;deleted&quot; records.
+    * The filesystem layer might implement recovery logs or other techniques where &quot;overwritten&quot; data is kept, as a simple function of reliability, and that data may remain validly readable outside the filesystem (i.e. deleted data might not be overwritten).
+    * The spinning rust / floating gate lower layers may, even with data overwritten, retain transient inductive / capacitive charge that can be read by specialized equipment, or may not overwrite data from sectors / blocks marked bad and then remapped elsewhere.
+  * In short, we cannot &quot;refuse to log&quot;: we have to write the link between an outgoing HTLC/PTLC to an incoming HTLC/PTLC somewhere persistent *first* (in case our node gets randomly shut down while a forward is not yet claimed), wait for the outgoing HTLC/PTLC to be claimed, and *then* delete it later.
+    And &quot;delete&quot; is not necessarily an operation that is possible in the presence of attackers that want to retain your data.
+
+Possible Solutions
+==================
+
+Avoiding Shortest Path
+----------------------
+
+The shortest path heuristic is key in analyzing payments on the Lightning network.
+Thus, breaking this heuristic is important.
+
+* One way is to `permuteroute` the shortest-path.
+  * For reference, `permuteroute` is described here: <A HREF="../2019-August/002095.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/002095.html</A>
+    * Briefly: It is an algorithm where you input an existing route, plus a &quot;breakage&quot; (a channel or node that is failing) on that route.
+      The algorithm then makes a short-range pathfinding to heal the break, or fails if it takes too long for it to find a way to heal the break.
+  * Start with a shortest path via normal shortest-path pathfinding algorithms, then randomly select one intermediate node on that path and treat it as a &quot;breakage&quot; with `permuteroute`.
+    * If that succeeds, try it a few more times until it fails or you are satisfied with the additional path length, then just use the latest randomized path.
+* Add random tweaks to your channel traversal costs.
+  * This is done currently by the C-Lightning route randomization feature, but note that it is currently set to up to a +/-5% tweak.
+    * [This paper](<A HREF="https://arxiv.org/pdf/1909.06890">https://arxiv.org/pdf/1909.06890</A>) evaluates the C-Lightning route randomization as well.
+      It suggest adding random tweaks to the costs of entire routes instead, though it may not be easy for normal pathfinding algorithms to implement this.
+* Rusty Russell Random Route Ralgorithm.
+  * Alluded to in [SLP134](<A HREF="https://stephanlivera.com/episode/134/">https://stephanlivera.com/episode/134/</A>).
+  * In a private email, Rusty recounted the random routing routine; roughly reworded:
+    * Start with a Dijkstra starting from the payer node and completing over the entire routemap.
+      * Store the distance from each node to the payer.
+      * This step can be precomputed, rather than performed each time we need a path.
+    * Then the algorithm proper:
+      * Start at the destination. payee node.
+      * Toss a biased coin (bias controlled by how much you want to overpay fees):
+        * If it is heads, pick a channel at random and extend the route to it.
+        * If it is tails, find which channel goes to the node with lowest-distance-to-payer and extend the route to it.
+      * Keep doing the above until we reach the payer node.
+    * Then apply shadow routing afterwards.
+  * Note that the above algorithm is roughly similar to the Greedy Best First Search with precomputed distance heuristic (a.k.a. `getroutequick`, which I presented in LNConf 2019).
+    * The only difference is that there is a random coin toss between selecting a random channel and going towards the source node, where `getroutequick` just goes towards the source node.
+    * We can approximate the Rusty Russell Random Routing Ralgorithm by applying a random tweak to the distance heuristic in a Greedy Best First Search!
+  * The algorithm as described has a chance of creating small loops, which should be avoided.
+    * Small loops that curl (i.e. pass multiple times) through a surveillor node are equivalent to a payment passing through multiple surveillor-controlled nodes, and can be identified even post-payment-decorrelation as being the same payment.
+      * Thus you end up paying for routing through the loop, but do not gain much privacy from that extra payment because now you are giving more accurate data to a specific node (where the payment curled through).
+    * A proper Greedy Best First Search avoids loops due to marking nodes as they are visited, so I think basing the algorithm around Greedy Best First Search plus random tweak on the heuristic is better.
+* Usage discounting.
+  * When a base pathfinder returns a path, increment a &quot;usedness&quot; counter on each node on that path.
+  * On future pathfinding calls, consider those nodes to have higher than normal cost, according to their usedness.
+    * Of note is that pathfinding algorithms do NOT actually need a single numeric cost.
+      * Instead, they need a mathematical group and group operation, with an additional &quot;comparison&quot; operation to determine which of two group elements is smaller.
+      * Integer costs are a group with a comparison operation.
+      * Instead of integer cost, we can have a pair of `(usedness, fee)`.
+        * Add each tuple element separately, e.g. `(usedness_a, fee_a) + (usedness_b, fee_b) = (usedness_a + usedness_b, fee_a + fee_b)`.
+        * To compare, e.g. `(usedness_a, fee_a) &lt; (usedness_b, fee_b)`, we first compare by `usedness`, then if they are equal, compare `fee`.
+  * This gives good diversity over multiple calls of the pathfinder, which is useful for:
+    * Multipath, since we want each candidate path to have different nodes as much as possible, without completely discounting those nodes in case of bottlenecks in the network.
+    * Ensures your payment data is distributed to multiple nodes rather than reusing the same nodes again and again, improving Risk Sharing since your data is spread out over more nodes.
+  * The `usedness` needs to persist across node restarts.
+
+Direct Path Exemption
+---------------------
+
+As mentioned above, avoiding the shortest path breaks the shortest path heuristic, adding uncertainty to analyses and thus improving privacy.
+
+However, we should note an important exception to avoiding the shortest path:
+
+* If the shortest path is a single hop, directly from the payer to the payee without intervening nodes, then we should prefer that path rather than avoid it.
+
+The reason why we have this exception is that ***not telling any other nodes gives us the best privacy***.
+This is achievable only by having direct channels with a payee, thus it ***does not scale***, since it would not be practical to have direct channels between every payer and payee.
+However, if we find that the payment is to a direct peer, taking this exception should be a massive, low-hanging privacy win.
+
+This brings up the following observation:
+
+* In order to avoid the shortest path, we may need to add more nodes to the path we use.
+  * By adding more nodes to the path we use, we increase the number of nodes that know our payment, increasing our chances of informing some surveillor.
+
+Extended Shadow Routing
+-----------------------
+
+Another apropos observation is that having more nodes on a path reduces the reliability of payments along the path.
+Every node on that path is a possible failure point in forwarding.
+
+Worse, paths that are longer in terms of hops are more likely to have the below failure mode:
+
+* A forwarding node is able to accept and irrevocably forward an HTLC.
+* Before the outgoing HTLC can be claimed offchain, the forwarding node shuts down.
+* The payment is now &quot;stuck&quot; until the incoming HTLC of the node reaches timeout.
+
+Basically, if a forwarding node fails between the time it forwards the HTLC and the time the next node is able to claim it, payments get stuck for durations that can be counted in entire blocks.
+As path length increases, this failure mode becomes more likely:
+
+* There are more possible nodes to fail.
+* The time between when a node is able to forward and the next node is able to claim becomes longer, making it more likely that an individual node fails during this time.
+
+Of course, taking the shortest path in terms of node hops is precisely what reverse routing tables can break.
+This is the core of the observation that privacy and usability are apparently at odds with one another.
+
+Reverse routing tables cannot precisely identify the payer and payee.
+However, the timelock, as well as the time it takes for an HTLC to be forwarded and then claimed, can give hints as to the distance between the forwarding node and the payee.
+We cannot do anything about the sidereal time at which events occur, but we *can* do something about timelocks, i.e. shadow routing as already implemented in C-Lightning.
+
+A secondary concern is that, after path decorrelation is implemented, the *delta* in value, timelock, and sidereal time between two cooperating surveilling nodes can be used to determine if two forwards on those nodes belong to the same overall payment.
+Shadow routing does not help this, since it only adds timelock and value tweaks to the *end* of the path, and any *delta* between two surveilling nodes remains the same.
+
+Avoiding the shortest path has a chance that the sub-path between the two surveilling nodes is not the delta of the shortest path between them, which helps remove payment correlation in a post-decorrelation world.
+However, it does have the drawback that increasing the actual path length tends to increase the number of nodes along the path, reducing reliability.
+
+By inserting shadow routes in the middle of the path instead of just the payee end, we can gain some of the above advantage of removing payment correlation in a post-decorrelation world, without having to incur the reduced reliability of actually increasing the number of hops along a path.
+This is only useful in a post-decorrelation world, as use of HTLCs means that two cooperating surveilling nodes can determine if two forwards between them belong to the same overall payment.
+
+Inserting such shadow routes basically amounts to overpaying fees and giving more timelock slack to forwarding nodes.
+
+Multipath Value Obfuscation
+---------------------------
+
+An observation we can have is that, the difference between a fixed known value and a random value will be indistinguishable from a random value.
+The same observation underlies adaptor signatures and payment decorrelation.
+
+Thus, one way to obfuscate the unremovable data of the payment value is to always start with payments split into two subpayments.
+
+* Take a random value from 1 to the total payment minus 1 and use it on one subpayment.
+* Take the difference between the total payment amount and the above random value and use it as the other subpayment.
+
+Both numbers will look like random values, and only together can they be used to identify the actual value.
+
+The value obfuscation only works to obfuscate the final payee value.
+Without &quot;avoiding shortest path&quot; or &quot;extended shadow route&quot;, the value of the payment can still be used by two cooperating surveilling nodes to identify if two forwards belong to the same (sub)payment, even in a post-decorrelation world.
+
+With HTLCs, two cooperating surveilling nodes that happen to be on separate subpayments can still identify the total payment and thereby have a guess on what is being bought.
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002407.html">[Lightning-dev] Research on proactive fee free channel	rebalancing in the friend of a friend network / and roadmap	for a protocol extension
+</A></li>
+	<LI>Next message: <A HREF="002409.html">[Lightning-dev] On Path Privacy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2408">[ date ]</a>
+              <a href="thread.html#2408">[ thread ]</a>
+              <a href="subject.html#2408">[ subject ]</a>
+              <a href="author.html#2408">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Single Round Trustless Schnorr-based PTLC Idea + Offline LN Payment Demo
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%3D%3Futf-8%3Fq%3FSingle_Round_Trustless_Schnorr-based_PT%3F%3D%0A%20%3D%3Futf-8%3Fq%3FLC_Idea_%2B_Offline_LN_Payment_Demo%3F%3D&In-Reply-To=%3C29cb518b-c1c3-491c-9099-2c3d9d68702c%40www.fastmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002982.html">
+   <LINK REL="Next"  HREF="002984.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Single Round Trustless Schnorr-based PTLC Idea + Offline LN Payment Demo</H1>
+    <B>Matheus Degiovani</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%3D%3Futf-8%3Fq%3FSingle_Round_Trustless_Schnorr-based_PT%3F%3D%0A%20%3D%3Futf-8%3Fq%3FLC_Idea_%2B_Offline_LN_Payment_Demo%3F%3D&In-Reply-To=%3C29cb518b-c1c3-491c-9099-2c3d9d68702c%40www.fastmail.com%3E"
+       TITLE="[Lightning-dev] Single Round Trustless Schnorr-based PTLC Idea + Offline LN Payment Demo">lndev at matheusd.com
+       </A><BR>
+    <I>Tue Mar 16 14:19:47 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002982.html">[Lightning-dev] Funding Timeout Recovery proposal
+</A></li>
+        <LI>Next message: <A HREF="002984.html">[Lightning-dev] Towards more reliable payment path finding via probabilistic modeling the uncertainty of channel balance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2983">[ date ]</a>
+              <a href="thread.html#2983">[ thread ]</a>
+              <a href="subject.html#2983">[ subject ]</a>
+              <a href="author.html#2983">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello List! 
+
+I've been working on a Proof-of-Work, Schnorr-based PTLC demo for Decred's LN and stumbled upon an interesting hack that may be of interest, as another point in design space for a full blown PTLC impl.
+
+As it happens, this hack was in fact so simple to implement that I was able to also code up an interesting PTLC-backed construct (what I'm calling a Multi-Redeemer Transaction Tree - MRTTREE) and a demo for offline lightning payments over it.
+
+Quick details following below. I have a (crappy) video of the concepts and demo here (demo starts at around the 15 min mark): <A HREF="https://www.youtube.com/watch?v=m1sQGHUKU7I">https://www.youtube.com/watch?v=m1sQGHUKU7I</A>
+
+# Single Round, Trustless Schnorr-based PTLCs
+
+By &quot;single round&quot; I mean it doesn't require additional comms rounds to irrevocably commit to a PTLC (the current `update_add_htlc()` -&gt; `commit_signed()` -&gt; `revoke_and_ack()` protocol is preserved).
+
+For the following, assume a {H,P}TLC being added from Alice -&gt; Bob (i.e. Alice is offering, Bob is accepting; Alice has the Sender{H,P}TLC output script and Bob has the Receiver{H,P}TLC script).
+
+Recall that Schnorr-based PTLCs are constructed by way of adaptor signatures: a party that knows the adaptor sig can extract the secret scalar that corresponds to some public point after seeing the full signature (potentially on-chain). The secret scalar is encoded as an additive component of the full Schnorr sig (i.e., `s = (u+t) + ex` where `t` is the target secret nonce and `u` is the random nonce). 
+
+Also recall that in the standard protocol to commit a channel to an HTLC, the `commit_signed()` msg sends the signatures to the _other_ party's commitment tx.
+
+The most naive way to switch from HTLC to a PTLC is to have the {Sender,Receiver}PTLCScript commit to a Schnorr sig instead of a hash preimage.
+
+This is easy to do, however it's not trustless for Alice.
+
+Recall that the point of the preimage redeeming branch in the SenderHTLCScript is so that Alice can figure out the preimage if Bob redeems her commitment tx onchain (so that if she's forwarding the HTLC she can redeem her upstream accepted HTLC).
+
+That's not safe in a naive PTLC setting because the secret scalar contained in the full Schnorr sig for Alice's commitment tx (i.e. the receiver-redeeming branch of SenderPTLCScript) is under control of Bob (because `r=(u+t)` i.e. the standard nonce of a Schnorr sig).
+
+And thus ordinarily, even if Bob sent a valid adaptor sig to Alice during the `commit_signed()` msg, he could freely modify the sig once Alice's tx actually hits onchain (thus denying Alice the ability to find out the secret scalar).
+
+My first imaginable solution to _that_ would be to have the receiver-redeem, scalar-revealing branch of the SenderPTLCScript require a signature from Alice as well. However, this breaks the current LN protocol, in that Bob would require a signature from Alice to redeem from her commitment _before_ sending his `commit_signed()` msg.
+
+So you'd need an additional comms round before `commit_signed` for both parties to agree on the layout of the commitment tx and for Alice to send Bob the required sigs.
+
+(doing this in the revoke_and_ack msg isn't safe for Bob because in the timeframe between his sending of `commit_signed()` and receiving Alice's `revoke_and_ack()` he wouldn't be able to redeem from Alice's commitment by presenting the secret scalar)
+
+Thus, my hack: riffing off ZmnSCPxj's OP_CAT trick[1] for single-show signatures, we modify the secret-scalar-redeeming branch of the SenderPTLCScript to commit to a specific R point by encoding it **directly in the script**, then having Bob present _only_ the s scalar of the `(R, s)` fully valid Schnorr sig in the Signature Script of the redeeming tx, using OP_CAT to join both for consumption by the opcode that checks for Schnorr txs (OP_CHECKSIGALT in decred's case, not sure what will do that in bitcoin's taproot).
+
+In short, that specific branch SenderPTLCScript looks like this (for decred): 
+
+  &lt;ptlc R point&gt; OP_SWAP OP_CAT &lt;ptlc key&gt; 2 OP_CHECKSIGALTVERIFY
+  
+Thus, Bob is committed to a specific `r = (u+t)`, Alice has verified, upon receiving the corresponding adaptor sig `(R, s')` that in fact `R = U+T` (T is the original target payment point Alice provided in the `update_add_ptlc()`) and that s' is a valid adaptor sig for that combination.
+
+Obviously, there are all sorts of footguns in doing this, specifically related with proper nonce selection so that Bob doesn't inadvertently reveal one of his private keys but can still redeem in the future even after a software restart. So it needs some serious cryptographic look to make sure it's safe in the cryptographic sense.
+
+But it seems safe to me in the game-theoretical sense: at every step in the channel update protocol Bob can redeem from Alice's commitment and Alice can find out the secret scalar if Bob does so.
+
+This is implementable with very few changes in the codebase, and makes PTLCs interoperable with standard HTLCs; you can have both in your channel at the same time, only small changes in the wire msgs are needed, no new comm rounds, etc.
+
+The greatest downside I can see so far is that it makes local commitment txs ungeneratable before you've received the adaptor sigs in the `commit_signed()` msg.
+
+That is, Alice can't generate her local commitment tx before Bob sends the R he wants to commit to by way of his adaptor sig (sent in his `commit_signed()` when he wants to lock in a PTLC) because that particular R appears as part of the SenderPTLCScript.
+
+I don't _think_ this is a major downside, since Alice's commitment is useless (to Alice) before she receives Bob's signatures, but I'd be interested to hear otherwise.
+
+And just to make it more explicit: this is implementing PTLCs _without_ any additional changes to the currently used HTLC scripts (modulo swapping the preimage challenge): in particular, it's _not_ aggregating/MuSig'ing the signatures into a single one, not making using of taproot/tapscript capabilities to further improve things, _not_ adding a per-hop tweak, etc.
+
+# MRTREEs
+
+This is long enough as it is and my intention was to share this hack as another interesting idea for PTLCs.
+
+But since that was actually easy to code up as a PoC, I went ahead and did that and also built a PTLC-backed MRTTREE server with an offline lightning donation/payment system.
+
+A single-sentence summary of MRTTREE is:
+
+Submarine swaps meets channel factories to build an off-chain binary tree of transactions, such that an user that redeems a &quot;leaf&quot; amount of the tree reveals one of the keys needed to redeem the upper branches of the tree.
+
+A more extensive description:
+
+This construction is created by a set of Users (with off-chain funds) interacting with a Provider (with unemcumbered on-chain funds) to create a tree of transactions such that each leaf output is redeemable by [MuSig_1(User,Provider) or MuSig_2(User,Provider)+Timelock]. The second redeem path is the pre-signed one. Upper branches of the tree are redeemable by a similar script, except we include the keys from every child (i.e. for the immediate parent of a leaf, the non-timelocked key is MuSig_1(UserLeft,UserRight,ProviderLeft,ProviderRight) and so on).
+
+A user can exit the MRTREE by &quot;selling back&quot; his User key to the provider (via a PTLC payment) such that the provider can then rewrite (recursively) the upward branches with the user key. In the limit where every user cooperates, the provider rewrites into a single output, with minimal on-chain footprint.
+
+I have a specific use case in mind for this, and I've written more about this construction at [2] (but note that was written before I was aware of PTLCs so it uses a different method to achieve the goal of allowing the upward tree rewrite).
+
+# Offline Lightning Payments
+
+So, assuming the existence of a MRTTREE service, where LN users can &quot;buy into shares&quot; of a utxo (with a long initial timelock, in the months+ range) but still preserving their individual exit rights and the non-custodialness property, we can build a cute system for offline LN donations/payments:
+
+An LN user joins a MRTREE with a well-known, public provider, creating multiple leafs of some set amount (pretty much, any amount higher than dust). The user can then go offline (from LN). It can even change/close its channels and whatnot. 
+
+When the user wishes to make a donation to some third party, it can send the tuple (provider,tree_id,leaf_private_key) to that third party via any async method (chat, e-mail, twitter DM, whatever), which then contacts the provider and redeems the funds on behalf of the user.
+
+The donation case is illustrative because if the recipient never redeems the leaf (before the tree timelock), the user can still redeem it back and thus not have the funds go to the void (or to an unrelated third party).
+
+There are probably bunch of other interesting use cases for this construct.
+
+My PTLC Proof of Concept is here:
+
+<A HREF="https://github.com/decred/dcrlnd/compare/v0.3.1...matheusd:ptlc-poc">https://github.com/decred/dcrlnd/compare/v0.3.1...matheusd:ptlc-poc</A>
+
+Sample MRTREE client and server:
+
+<A HREF="https://github.com/matheusd/mrttree">https://github.com/matheusd/mrttree</A>
+
+GUI demo of offline LN payments:
+
+<A HREF="https://www.youtube.com/watch?v=m1sQGHUKU7I&amp;t=915s">https://www.youtube.com/watch?v=m1sQGHUKU7I&amp;t=915s</A>
+
+
+# References
+
+[1] <A HREF="../2019-December/002388.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/002388.html</A>
+
+[2] <A HREF="https://matheusd.com/post/ln-split-tickets-01-mrttree/">https://matheusd.com/post/ln-split-tickets-01-mrttree/</A>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002982.html">[Lightning-dev] Funding Timeout Recovery proposal
+</A></li>
+	<LI>Next message: <A HREF="002984.html">[Lightning-dev] Towards more reliable payment path finding via probabilistic modeling the uncertainty of channel balance
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2983">[ date ]</a>
+              <a href="thread.html#2983">[ thread ]</a>
+              <a href="subject.html#2983">[ subject ]</a>
+              <a href="author.html#2983">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

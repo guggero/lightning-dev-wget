@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C87lfon4bv7.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002568.html">
+   <LINK REL="Next"  HREF="002552.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C87lfon4bv7.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Feb 28 03:41:32 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002568.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002552.html">[Lightning-dev] Direct Message draft
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2573">[ date ]</a>
+              <a href="thread.html#2573">[ thread ]</a>
+              <a href="subject.html#2573">[ subject ]</a>
+              <a href="author.html#2573">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> Aside from those philosophical complaints, seems to me the simplest
+</I>&gt;<i> attack would be:
+</I>&gt;<i>
+</I>&gt;<i>   * route 1000s of HTLCs from your node A1 to your node A2 via different,
+</I>&gt;<i>     long paths, using up the total channel capacity of your A1/A2 nodes,
+</I>&gt;<i>     with long timeouts
+</I>&gt;<i>   * have A2 offer up a transaction claiming that was the channel
+</I>&gt;<i>     close to A3; make it a real thing if necessary, but it's probably
+</I>&gt;<i>     fake-able
+</I>&gt;<i>   * then leave the HTLCs open until they time out, using up capacity
+</I>&gt;<i>     from all the nodes in your 1000s of routes. For every satoshi of
+</I>&gt;<i>     yours that's tied up, you should be able to tie up 10-20sat of other
+</I>&gt;<i>     people's funds
+</I>&gt;<i>
+</I>&gt;<i> That increases the cost of the attack by one on-chain transaction per
+</I>&gt;<i> timeout period, and limits the attack surface by how many transactions
+</I>&gt;<i> you can get started/completed within whatever the grace period is, but
+</I>&gt;<i> it doesn't seem a lot better than what we have today, unless onchain
+</I>&gt;<i> fees go up a lot.
+</I>
+Interestingly, I think your &quot;reverse commitment signing&quot; proposal would
+mean the close tx will have the HTLC within it, so this attack is not
+possible?  (Modulo handling dust HTLCs, which won't show up in the
+commitment tx).
+
+Previously I suggested the node simply send a (signed) list of up to N
+additional HTLCs (this reduces batching to N, so make it at least 16).
+This is gossiped, and if you get conflicting versions, the channel break
+is considered invalid, so (as always) the previous channel has to break.
+
+&gt;&gt;<i> &gt;   A-&gt;B: here's a HTLC, locked in
+</I>&gt;&gt;<i> &gt;   B-&gt;C: HTLC proposal
+</I>&gt;&gt;<i> &gt;   C-&gt;B: sure: updated commitment with HTLC locked in
+</I>&gt;&gt;<i> &gt;   B-&gt;C: great, corresponding updated commitment, plus revocation
+</I>&gt;&gt;<i> &gt;   C-&gt;B: revocation
+</I>&gt;&gt;<i> Interesting; this adds a trip, but not in latency (since C can still
+</I>&gt;&gt;<i> count on the HTLC being locked in at step 3).
+</I>&gt;&gt;<i> I don't see how it helps B though?  It still ends up paying A, and C
+</I>&gt;&gt;<i> doesn't pay anything?
+</I>&gt;<i>
+</I>&gt;<i> The updated commitment has C paying B onchain; if B doesn't receive that
+</I>&gt;<i> by the time the grace period's about over, B can cancel the HTLC with A,
+</I>&gt;<i> and then there's statemachine complexity for B to cancel it with C if
+</I>&gt;<i> C comes alive again a little later.
+</I>
+I thought C paid per unit time, so it wouldn't pay up-front?  You're
+suggesting it pays the max in the commitment, and then it gets some back
+in the normal case of things going right?
+
+&gt;&gt;<i> It forces a liveness check of C, but TBH I dread rewriting the state
+</I>&gt;&gt;<i> machine for this when we can just ping like we do now.
+</I>&gt;<i>
+</I>&gt;<i> I'd be surprised if making musig work doesn't require a dread rewrite
+</I>&gt;<i> of the state machine as well, and then there's PTLCs and eltoo...
+</I>
+Hmm, PTLCs and eltoo don't.  Musig requires some mods to the protocol,
+but the state machine changes are trivial.
+
+&gt;&gt;<i> &gt;&gt; There's an old proposal to fast-fail HTLCs: Bob sends an new message &quot;I
+</I>&gt;&gt;<i> &gt;&gt; would fail this HTLC once it's committed, here's the error&quot; 
+</I>&gt;&gt;<i> &gt; Yeah, you could do &quot;B-&gt;C: proposal, C-&gt;B: no way!&quot; instead of &quot;sure&quot; to
+</I>&gt;&gt;<i> &gt; fast fail the above too. 
+</I>&gt;&gt;<i> &gt; And I think something like that's necessary (at least with my view of how
+</I>&gt;&gt;<i> &gt; this &quot;keep the HTLC open&quot; payment would work), otherwise B could send C a
+</I>&gt;&gt;<i> &gt; &quot;1 microsecond grace period, rate of 3e11 msat/minute, HTLC for 100 sat,
+</I>&gt;&gt;<i> &gt; timeout of 2016 blocks&quot; and if C couldn't reject it immediately would
+</I>&gt;&gt;<i> &gt; owe B 50c per millisecond it took to cancel.
+</I>&gt;&gt;<i> Well, surely grace period (and penalty rate) are either fixed in the
+</I>&gt;&gt;<i> protocol or negotiated up-front, not per-HTLC.
+</I>&gt;<i>
+</I>&gt;<i> I think the &quot;keep open rate&quot; should depend on how many nodes have
+</I>&gt;<i> already been in the route (the more hops it's gone through, the more
+</I>&gt;<i> funds/channels you're tying up by holding onto the HTLC, so the more
+</I>&gt;<i> you should pay), while the grace period should depend on how many nodes
+</I>&gt;<i> there are still to go in the route (it needs to be higher to let each of
+</I>&gt;<i> those nodes deduct their delta from it). So I think you *should* expect
+</I>&gt;<i> those to change per HTLC than you're forwarding, as those factors will
+</I>&gt;<i> be different for different HTLCs.
+</I>
+In theory, but I could lie about both, and it's very undesirable to
+communicate these things anyway.  I think it might make it worse, not
+better, than having a fixed (per-msat?) rate.
+
+Cheers,
+Rusty.
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002568.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002552.html">[Lightning-dev] Direct Message draft
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2573">[ date ]</a>
+              <a href="thread.html#2573">[ thread ]</a>
+              <a href="subject.html#2573">[ subject ]</a>
+              <a href="author.html#2573">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

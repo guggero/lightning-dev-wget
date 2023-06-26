@@ -1,0 +1,108 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Towards a gridlike Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Towards%20a%20gridlike%20Lightning%20Network&In-Reply-To=%3CrXi1LnS9i1ytar8aqI-ppLNLWT1gOtwmpF9SB-Apax8waspZfdbFsdqv9Cns4ziUIwe08ugwrHP2C1cCLCaJPWO5AYBCPAzerVhVnsQDptc%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001206.html">
+   <LINK REL="Next"  HREF="001216.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Towards a gridlike Lightning Network</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Towards%20a%20gridlike%20Lightning%20Network&In-Reply-To=%3CrXi1LnS9i1ytar8aqI-ppLNLWT1gOtwmpF9SB-Apax8waspZfdbFsdqv9Cns4ziUIwe08ugwrHP2C1cCLCaJPWO5AYBCPAzerVhVnsQDptc%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Towards a gridlike Lightning Network">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Apr 20 03:24:40 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001206.html">[Lightning-dev] Towards a gridlike Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="001216.html">[Lightning-dev] Towards a gridlike Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1208">[ date ]</a>
+              <a href="thread.html#1208">[ thread ]</a>
+              <a href="subject.html#1208">[ subject ]</a>
+              <a href="author.html#1208">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Benjamin,
+
+&gt;<i> I think there are two distinct concepts here. The first is the identification of a 'neighborhood', and the second is the establishment of an order within that neighborhood for purpose of cycle formation.
+</I>&gt;<i>
+</I>&gt;<i> Your use of bloom filters to define a neighborhood, is I think the most valuable contribution. Formation of neighborhoods with high connectivity, with sparse but redundant connections among these neighborhoods, does seem like an economically efficient approach to maintaining useful competition and redundancy. If there are any graph theorists or category theorists on the list, perhaps they could offer some formal validation or optimization. For this, I prefer your March 23 proposal over March 24, I'm curious what improvement is intended in March 24 vs 23?
+</I>
+I do not see a bloom filter? But then I am not a mathematician so it is possible I fail to see how the Bloom filter arises from the algorithm I described.
+
+Regarding 24 vs 23, the condition for 23 allows a 3 members of a 5-member neighborhood to think they form a single 3-member neighborhood, while the remaining 2 members think they are in a 5-member neighborhood that includes the other 3 members who have formed a 3-member neighborhood.
+
+&gt;<i> The emergent definition and maintenance of a unique ordering for cycle establishment within a neighborhood is, I think, a much more ambitious undertaking. I'm not sure how we efficiently make that robust in a dynamic context, except perhaps with interactive coordination among the members operating off something other than just static global data. Otherwise different members would have different ideas about cycle order, depending on when they first joined. I also don't see how cycles recover when someone leaves.
+</I>&gt;<i>
+</I>&gt;<i> As people come and go, cycles will break. As the lightning network grows overall, neighborhoods identified by one setting of the bloom filter will become undesirably large. Perhaps a less ambitious but more robust heuristic would be one where probability of establishing a channel is proportional to the number of bits in common in the pubkey hash, normalized by the number of nodes currently observed?
+</I>
+I believe that is what the algorithm already does? It dynamically sizes neighborhoods to be small, with high probability of neighborhoods to be 3-&gt;5 members.
+
+&gt;<i> This heuristic would automatically adjust granularity over time as lightning membership grows and shrinks. Nodes could periodically reevaluate their channel allocations as the overall network grows or shrinks.
+</I>
+The algorithm does not consider what happens when we have a cycle already existing, and a new member joins or an existing one wishes to leave.  There is no way to inform this.  My expectation is that people will just close channels that they no longer  find useful; this makes funds available onchain.  Then a process notices there are onchain funds, and calls this algorithm to get a proposed channel; this adapts to whatever the topology is right now.
+
+It is not clear when we should close channels.  For one, gossip requires that a node first open a channel to somebody, before its existence is acknowledged and gossiped across the network: this is intended to prevent spammers from spinning up nodes without actually intending to join the network.  Similarly, to leave the network, we assume that nodes will at least get all their channels closed: channel closure is an onchain event visible to everyone monitoring the the blockchain (which is what all LN nodes SHOULD do), and once all channels of a node have closed, we MAY drop them from the network view (c-lightning implements this, but I do not know if other implementations do).
+
+So at least for *leaving* LN permanently, the leaving node SHOULD close all its channels (or at least their peers SHOULD close it for them in unilateral closes if the peer just does not respond at all anymore).  This updates the network view of everybody (assuming they follow the recommendation that they MAY drop nodes from the network view, if that node has all its channels closed).  The closing will also put the channel funds onchain, and presumably the autopilots of its neighbors will notice the onchain funds, calls the algorithm to get a peer to channel to, which computes (hopefully) using the updated network view that has the leaving node removed already (this may not be true: the leaving node might not be able to close all channels simultaneously, and may misbehave and expect its neighbors to close the channels for it), and adapts correctly to the node leaving the network.
+
+However for a new node entering the network, there is problem.  This requires existing nodes to close existing channels and open new ones to the new node: as this costs onchain fees, there is no real incentive for them to do so.  I can only fall back on the informal argument: that people will at first experiment with the Lightning Network and commit a tiny amount of funds, then later they will put in more funds and thus open new channels, hopefully using this algorithm so that other people who come in later will also get new channels to them: the first channels people make will (eventually) not be in the neighborhood later on, but since they will open new channels later those will adapt to new neighborhoods of the larger network graph.
+
+I believe the main benefit of the algorithm I describe is that it flattens the number of channels a node will have and reduces centralization (although I believe roasbeef argues that centralization at the LN layer is relatively unimportant?).  If each node opens two channels to two different nodes, pure random selection will by chance award a few lucky nodes with 3 or 4 or 5 or more incoming channels while about 1/4 of nodes will have no channels incoming, but this algorithm will force all nodes to have exactly two incoming and two outgoing channels, while having similar reachability as random selection.  Of course, that assumes everyone already knows the entire network beforehand, and the issue of new nodes coming in is absent.
+
+&gt;<i> Were it not for the privacy goals, dynamic optimization based on actual usage would be possible. Nodes could track the routes of payments that flow through their channels and could spot fees that seem both large and popular, and could use this information to identify under-served nodes to which a direct channel might be in order. If we allowed nodes to see two hops of the route instead of just the one, then such optimization would become possible, although this compromise would require longer minimum routes for a given level of privacy.
+</I>
+Intermediate nodes already know two hops?  The incoming and outgoing hop?  Or do you need more information?
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180419/b54d151b/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180419/b54d151b/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001206.html">[Lightning-dev] Towards a gridlike Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="001216.html">[Lightning-dev] Towards a gridlike Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1208">[ date ]</a>
+              <a href="thread.html#1208">[ thread ]</a>
+              <a href="subject.html#1208">[ subject ]</a>
+              <a href="author.html#1208">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

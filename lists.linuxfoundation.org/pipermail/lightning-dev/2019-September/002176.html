@@ -1,0 +1,248 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Continuing the discussion about noinput / anyprevout
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Continuing%20the%20discussion%20about%20noinput%20/%20anyprevout&In-Reply-To=%3C87wodp7w9f.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002175.html">
+   <LINK REL="Next"  HREF="002177.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Continuing the discussion about noinput / anyprevout</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Continuing%20the%20discussion%20about%20noinput%20/%20anyprevout&In-Reply-To=%3C87wodp7w9f.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Continuing the discussion about noinput / anyprevout">decker.christian at gmail.com
+       </A><BR>
+    <I>Mon Sep 30 13:23:56 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002175.html">[Lightning-dev] Quotes for Article on LN Bug Fix
+</A></li>
+        <LI>Next message: <A HREF="002177.html">[Lightning-dev] [bitcoin-dev] Continuing the discussion about	noinput / anyprevout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2176">[ date ]</a>
+              <a href="thread.html#2176">[ thread ]</a>
+              <a href="subject.html#2176">[ subject ]</a>
+              <a href="author.html#2176">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>With the recently renewed interest in eltoo, a proof-of-concept implementation
+[1], and the discussions regarding clean abstractions for off-chain protocols
+[2,3], I thought it might be time to revisit the `sighash_noinput` proposal
+(BIP-118 [4]), and AJ's `bip-anyprevout` proposal [5].
+
+(sorry for the long e-mail. I wanted to give enough context and describe the
+various tradeoffs so people don't have to stitch them together from memory. If
+you're impatient there are a couple of open questions at the bottom)
+
+Both proposals are ways to allow rebinding of transactions to new outputs, by
+adding a sighash flag that excludes the output when signing. This allows the
+transaction to be bound to any output, without needing a new signature, as
+long as output script and input script are compatible, e.g., the signature
+matches the public key specified in the output.
+
+BIP-118 is limited to explaining the details of signature verification, and
+omits anything related to deployment and dependency on other proposals. This
+was done in order not to depend on bip-taproot which is also in draft-phase
+currently, and to allow deployment alongside the next version of segwit
+script. `bip-anyprevout` builds on top of BIP-118, adding integration with
+`bip-taproot`, chaperone signatures, limits the use of the sighash flag to
+script path spends, as well as a new pubkey serialization which uses the first
+byte to signal opt-in.
+
+I'd like to stress that both proposals are complementary and not competing,
+which is something that I've heard a couple of times.
+
+There remain a couple of unclear points which I hope we can address in the
+coming days, to get this thing moving again, and hopefully get a new tool in
+our toolbox soon(ish).
+
+In the following I will quote a couple of things that were discussed during
+the CoreDev meeting earlier this year, but not everybody could join, and it is
+important that we engage the wider community, to get a better picture, and I
+think not everybody is up-to-date about the current state.
+
+
+## Dangers of `sighash_noinput`
+
+An argument I have heard against noinput is that it is slightly less complex
+or compute intensive than `sighash_all` signatures, which may encourage wallet
+creators to only implement the noinput variant, and use it indiscrimi-
+nately. This is certainly a good argument, and indeed we have seen at least
+one developer proposing to use noinput for all transactions to discourage
+address reuse.
+
+This was also mentioned at CoreDev [6]:
+
+&gt;<i> When [...] said he wanted to write a wallet that only used SIGHASH\_NOINPUT,
+</I>&gt;<i> that was pause for concern. Some people might want to use SIGHASH\_NOINPUT as a
+</I>&gt;<i> way to cheapen or reduce the complexity of making a wallet
+</I>&gt;<i> implementation. SIGHASH\_NOINPUT is from a purely procedural point of view
+</I>&gt;<i> easier than doing a SIGHASH\_ALL, that's all I'm saying. So you're hashing
+</I>&gt;<i> less. It's way faster. That concern has been brought to my attention and it's
+</I>&gt;<i> something I can see. Do we want to avoid people being stupid and shooting
+</I>&gt;<i> themselves and their customers in the foot? Or do we treat this as a special
+</I>&gt;<i> case where you mark we're aware of how it should be used and we just try to
+</I>&gt;<i> get that awareness out?
+</I>
+Another issue that is sometimes brought up is that an external user may
+attempt to send funds to a script that was really part of a higher-level
+protocol. This leads to those funds becoming inaccessible unless you gather
+all the participants and sign off on those funds. I don't believe this is
+anything new, and if users really want to shoot themselves in the foot and
+send funds to random addresses they fish out of a blockexplorer there's little
+we can do. What we could do is make the scripts used internally in our
+protocols unaddressable (see output tagging below), removing this issue
+altogether.
+
+
+## Chaperone signatures
+
+Chaperone signatures are signatures that ensure that there is no third-party
+malleability of transactions. The idea is to have an additional signature,
+that doesn't use noinput, or any of its variants, and therefore needs to be
+authored by one of the pubkeys in the output script, i.e., one or more of the
+participants of the contract the transaction belongs to. Concretely in eltoo
+we'd be using a shared key known to all participants in the eltoo instance, so
+any participant can sign an update to rebind it to the desired output.
+
+Chaperone signatures have a number of downsides however:
+
+-   Additional size: both the public key and the signature actually need to be
+    stored along with the real noinput signature, resulting in transfer,
+    computational and storage overhead. We can't reuse the same pubkey from the
+    noinput signature since that'd require access to the matching privkey which
+    is what we want to get rid of using noinput in the first place.
+-   Protocols can still simply use a globally known privkey, voiding the
+    benefit of chaperone signatures, since third-parties can sign again. I
+    argue that third-party malleability is a subset of first-party
+    malleability, and we should protect against first-party malleability first
+    and foremost. My counterparty has the incentive to trick me, a third-party
+    may not.
+
+On the plus side chaperone signatures certainly address the lazy-wallet-dev
+scenario, and as AJ points out in [bip-anyprevout] we get back the same
+security guarantees as we had without noinput.
+
+&gt;<i>From what I remember and the transcript (thanks Kanzure for your awesome work
+</I>by the way), there was no strong support for chaperone signatures during the
+meeting [6], but feedback from people that were not present is needed:
+
+&gt;<i> if everyone who wanted to use NOINPUT was convinced there was a problem, then
+</I>&gt;<i> they would pick the right thing, but clearly people aren't. It's not a
+</I>&gt;<i> foot-gun defense mechanism because it's easily bypassed, and it's easier to
+</I>&gt;<i> bypass it than to use it. Whereas for tagged outputs, it's that if you want
+</I>&gt;<i> any NOINPUT then you must tag.
+</I>
+
+## Output tagging
+
+One proposal that I found rather fascinating during the discussion in
+Amsterdam was that we could achieve the same disincentive to use on
+non-smart-contract cases by simply making the output scripts
+unaddressable. This can be done by specifying a version of taproot outputs for
+which the bech32 addressing scheme simply doesn't have a representation [6]:
+
+&gt;<i> The tagged outputs idea is that we don't have NOINPUT ANYPREVOUT supported for
+</I>&gt;<i> taproot v1 outputs, instead we have a segwit version 16 v16 that supports
+</I>&gt;<i> taproot. The reason for v16 is that we redefine bech32 to not cover
+</I>&gt;<i> v16. There's no addresses for this type of output. If you're an exchange and
+</I>&gt;<i> receive a bech32 address, you declare it invalid. You make it less user
+</I>&gt;<i> friendly here; and there shouldn't be an address anyway. You might want to see
+</I>&gt;<i> it on a block explorer, but you don't want to pass it around to anyone.
+</I>
+We don't need addresses in our contract constructions because we deal directly
+with the scripts. This would also have the desired effect of no allowing
+generic wallets to send to these addresses, or users accidentally sending
+funds to what was supposed to be a one-off script used internally in the
+off-chain contract.
+
+Notice that this idea was already used by Russell O'Connor when performing a
+transaction on elements using his new scripting language simplicity
+[7]:
+
+&gt;<i> For this experimental development, we created an improper segwit version,
+</I>&gt;<i> &quot;version 31&quot; for Simplicity addresses. The payload of this segwit version 31
+</I>&gt;<i> address contains a commitment Merkle root of a Simplicity program to control
+</I>&gt;<i> the UTXO.
+</I>
+The concern with output tagging is that it hurts fungibility, marking outputs
+used in a contract as such and making them identifiable. But maybe it would be
+a good idea to create two domains anyway: one for user-addressable
+destinations which users can use with their general purpose wallets, and one
+domain for contracts, which users cannot send to directly.
+
+This also came up during the CoreDev meeting [ams-coredev]:
+
+&gt;<i> these sort of NOINPUT signatures are only things that are within some
+</I>&gt;<i> application or within some protocol that gets negotiated between participants,
+</I>&gt;<i> but they don't cross-independent domains where you see a wallet or a protocol
+</I>&gt;<i> as a kind of domain. You can't tell the difference, is this an address I can
+</I>&gt;<i> give to someone else or not? It's all scripts, no real addresses. There are
+</I>&gt;<i> types of outputs that are completely insecure unconditionally; there are
+</I>&gt;<i> things that are protected and I can give to anyone, you don't want to reuse
+</I>&gt;<i> it, but there's no security issue from doing so. This is an additional class
+</I>&gt;<i> that is secure perfectly but only when used in the right way.
+</I>
+
+## Open questions
+
+The questions that remain to be addressed are the following:
+
+1.  General agreement on the usefulness of noinput / anyprevoutanyscript /
+    anyprevout. While at the CoreDev meeting I think everybody agreed that
+    these proposals a useful, also beyond eltoo, not everybody could be
+    there. I'd therefore like to elicit some feedback from the wider community.
+2.  Is there strong support or opposition to the chaperone signatures
+    introduced in anyprevout / anyprevoutanyscript? I think it'd be best to
+    formulate a concrete set of pros and contras, rather than talk about
+    abstract dangers or advantages.
+3.  The same for output tagging / explicit opt-in. What are the advantages and
+    disadvantages?
+4.  Shall we merge BIP-118 and bip-anyprevout. This would likely reduce the
+    confusion and make for simpler discussions in the end.
+5.  Anything I forgot to mention :-)
+
+Cheers,
+Christian
+
+[1] &lt;<A HREF="002131.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/002131.html</A>&gt;
+[2] &lt;<A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-September/017285.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-September/017285.html</A>&gt;
+[3] &lt;<A HREF="../2018-August/001383.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-August/001383.html</A>&gt;
+[4] &lt;<A HREF="https://github.com/bitcoin/bips/blob/master/bip-0118.mediawiki">https://github.com/bitcoin/bips/blob/master/bip-0118.mediawiki</A>&gt;
+[5] &lt;<A HREF="https://github.com/ajtowns/bips/blob/bip-anyprevout/bip-anyprevout.mediawiki">https://github.com/ajtowns/bips/blob/bip-anyprevout/bip-anyprevout.mediawiki</A>&gt;
+[6] &lt;<A HREF="http://diyhpl.us/wiki/transcripts/bitcoin-core-dev-tech/2019-06-06-noinput-etc/">http://diyhpl.us/wiki/transcripts/bitcoin-core-dev-tech/2019-06-06-noinput-etc/</A>&gt;
+[7] &lt;<A HREF="https://lists.ozlabs.org/pipermail/simplicity/2019/000018.html">https://lists.ozlabs.org/pipermail/simplicity/2019/000018.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002175.html">[Lightning-dev] Quotes for Article on LN Bug Fix
+</A></li>
+	<LI>Next message: <A HREF="002177.html">[Lightning-dev] [bitcoin-dev] Continuing the discussion about	noinput / anyprevout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2176">[ date ]</a>
+              <a href="thread.html#2176">[ thread ]</a>
+              <a href="subject.html#2176">[ subject ]</a>
+              <a href="author.html#2176">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

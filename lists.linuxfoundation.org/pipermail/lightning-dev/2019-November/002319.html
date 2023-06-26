@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3C877e45q4xf.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002297.html">
+   <LINK REL="Next"  HREF="002329.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3C877e45q4xf.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Nov 12 01:06:20 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002297.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+        <LI>Next message: <A HREF="002329.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2319">[ date ]</a>
+              <a href="thread.html#2319">[ thread ]</a>
+              <a href="subject.html#2319">[ subject ]</a>
+              <a href="author.html#2319">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; writes:
+&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; We could
+</I>&gt;&gt;<i> &gt; simplify this to a single to_self_delay that is proposed by the
+</I>&gt;&gt;<i> initiator,
+</I>&gt;&gt;<i> &gt; but what was the original reason to allow distinct values?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Because I didn't fight hard enough for simplicity :(
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> But the people you were fighting with, what reason did they have? Just
+</I>&gt;<i> flexibility in general, or was there an actual use case? Maybe these people
+</I>&gt;<i> are reading this email and can comment?
+</I>
+Compromise among the committee meant adding everything to the spec if
+there was a conceivable reason for it; the simplicity argument was less
+strong then (maybe because we hadn't implemented it all yet!).
+
+&gt;<i> So then because unilateral close is the only way to resolve atm, it is
+</I>&gt;<i> correct also in theory that there will never be a commitment tx where the
+</I>&gt;<i> non-initiator pays fees? But the point is clear, channels can get stuck.
+</I>
+Yeah.  Generally, it doesn't happen because we insist on a reasonable
+balance in the channel, but it's theoretically possible.
+
+&gt;&gt;<i> &gt; If we hard-code a constant, we won't be able to adapt to changes of
+</I>&gt;&gt;<i> &gt; `dustRelayFee` in the bitcoin network. And we'd also need to deal with a
+</I>&gt;&gt;<i> &gt; peer picking a value higher than that constant for its regular funding
+</I>&gt;&gt;<i> flow
+</I>&gt;&gt;<i> &gt; dust limit parameter.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Note that we can't adapt to dustRelayFee *today*, since we can't change
+</I>&gt;&gt;<i> it after funding (another thing we probably need to fix).
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> You can't for an existing channel, but at least for a new channel you can
+</I>&gt;<i> pick a different value. Which wouldn't be possible if we'd put a fixed
+</I>&gt;<i> (anchor) amount in the spec.
+</I>
+That's not really much consolation though for the existing network.
+
+Still Matt assures me that the relay dust limit is not going to change,
+so I think we're best off cutting down our test matrix by choosing a
+value and putting it directly into the spec.
+
+By my calculations, at minfee it will cost you ~94 satoshis to spend.
+Dust limit is 294 for Segwit outputs (basically assuming 3x minfee).
+
+So I'm actually happy to say &quot;anchor outputs are 294 satoshi&quot;.  These
+are simply spendable, and still only $3 each if BTC is $1M.  Lower is
+better (as long as we stick with funder-pays), as long as they do
+eventually get spent.
+
+&gt;&gt;<i> If we really want to make it adjustable, could we make each side pay for
+</I>&gt;&gt;<i> its own; if you can't afford it, you don't get one?  There's no point
+</I>&gt;&gt;<i> the funder paying for a fundee-anchor if the fundee has no skin in the
+</I>&gt;&gt;<i> game.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That reduces the pressure somewhat, I think?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> If you can't afford you don't get one, not sure about that. I could open a
+</I>&gt;<i> channel, send out the total capacity an in htlc to myself via some other
+</I>&gt;<i> hops, force close with a very low commit fee, then pull in the htlc (one
+</I>&gt;<i> time the money). The victim then needs to get the commit confirmed to claim
+</I>&gt;<i> the money, but there is no anchor unfortunately. I wait for the htlc to
+</I>&gt;<i> expire, then anchor down the commit tx and time out the htlc (twice the
+</I>&gt;<i> money).
+</I>
+Excellent point.  And the complexity of some &quot;you can only use a little
+bit of capacity until I have an anchor too&quot; is worse, so let's stick
+with your proposal as the simplest: funder pays for two, always.
+
+&gt;&gt;<i> Or what about we rotate the anchors and nothing else, which (assuming we
+</I>&gt;&gt;<i> make it anyone-can-spend-after-N-blocks) reduces the amount of onchain
+</I>&gt;&gt;<i> spam if someone completely loses their keys?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> That's a bigger change, but maybe it's worth it?
+</I>&gt;<i> We now have David's great proposal to reuse the funding keys for the anchor
+</I>&gt;<i> output. That allows us to always let anyone spend after confirmation,
+</I>&gt;<i> because they can reconstruct the spend script. But I think this also means
+</I>&gt;<i> that we cannot do rotation on the anchor keys. We need to use the funding
+</I>&gt;<i> pubkey as is.
+</I>
+I missed that proposal, thanks!
+
+It's stronger than my scheme, in that it works even if neither anchor is
+spent; which, if we keep update_fee, is a distinct possibility.  And
+makes the script shorter (my fee calc above assume this).
+
+We *could* tweak both anchors by the same amount, but then you'd still
+need to see one of them to spend the other.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002297.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+	<LI>Next message: <A HREF="002329.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2319">[ date ]</a>
+              <a href="thread.html#2319">[ thread ]</a>
+              <a href="subject.html#2319">[ subject ]</a>
+              <a href="author.html#2319">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

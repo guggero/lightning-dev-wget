@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%09OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3C87d1s5z7q3.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000438.html">
+   <LINK REL="Next"  HREF="000442.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%09OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3C87d1s5z7q3.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Feb 10 01:15:16 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000438.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+        <LI>Next message: <A HREF="000442.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#440">[ date ]</a>
+              <a href="thread.html#440">[ thread ]</a>
+              <a href="subject.html#440">[ subject ]</a>
+              <a href="author.html#440">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>CJP &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">cjp at ultimatestunts.nl</A>&gt; writes:
+&gt;<i> Rusty Russell schreef op di 09-02-2016 om 10:09 [+1030]:
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> For this reason, the rule is that all outputs to A in A's commit
+</I>&gt;&gt;<i> transaction must be delayed (via OP_CSV).  This includes HTLC outputs.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Referring to Appendix A of the paper, under &quot;HTLC Receiver Redeemscript&quot;
+</I>&gt;&gt;<i> (since Alice offers Eve the HTLC, Eve is B):
+</I>&gt;&gt;<i> [..]
+</I>&gt;<i>
+</I>&gt;<i> So, summarized, the &quot;HTLC Receiver Redeemscript&quot; is actually something
+</I>&gt;<i> like:
+</I>&gt;<i>
+</I>&gt;<i> R-VALUE &amp; OP_CSV &amp; SIG-PAYEE
+</I>&gt;<i> OR
+</I>&gt;<i> HTLC-TIMEOUT &amp; SIG-PAYER
+</I>&gt;<i> OR
+</I>&gt;<i> REVOCATION-B &amp; SIG A
+</I>
+Yes.
+
+&gt;<i> Now, I thought it wouldn't be OK to add an OP_CSV there, so let's see if
+</I>&gt;<i> I can exploit it.
+</I>&gt;<i>
+</I>&gt;<i> Same situation: Alice and Eve, connected with two channels. Eve performs
+</I>&gt;<i> a payment to herself, routed through these two channels.
+</I>&gt;<i>
+</I>&gt;<i> Now, Eve allows the transaction to succeed on the channel where she
+</I>&gt;<i> receives: Eve sends the R value to Alice, and Alice sends Eve a commit
+</I>&gt;<i> transaction update where the HTLC is removed and Eve receives the funds.
+</I>&gt;<i>
+</I>&gt;<i> On the other channel, Alice sends the R value to Eve, but Eve does not
+</I>&gt;<i> send Alice a commit transaction update. In fact, Eve becomes completely
+</I>&gt;<i> unresponsive on this channel. This forces Alice to broadcast her commit
+</I>&gt;<i> transaction, containing the HTLC. She has to do this *before* the CLTV
+</I>&gt;<i> of the HTLC times out, or otherwise Eve can try to claim the HTLC funds.
+</I>&gt;<i>
+</I>&gt;<i> Now, the question is: which times out first, Alice's CSV or Eve's CLTV?
+</I>&gt;<i> The one that times out first will be the first to be able to claim the
+</I>&gt;<i> funds. This *should* of course be Alice, so Alice's CSV should be the
+</I>&gt;<i> first to time out.
+</I>
+Yes, unfortunately they're intertwined.  I was sure we'd discussed
+this before, and I found it.
+
+<A HREF="../2015-July/000077.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/000077.html</A>
+
+We keep rediscovering this problem so I need to document it somewhere.
+
+&gt;<i> Let's assume the HTLC timeout is T0 + 1 day on the channel where Eve
+</I>&gt;<i> receives, T0 + 2 days on the channel where Eve sends. Eve wants to delay
+</I>&gt;<i> Alice's commit transaction as long as possible, so she sends the R value
+</I>&gt;<i> just before T0 + 1 day. That means Alice's CSV should have a delay *less
+</I>&gt;<i> than* one day. If the CSV delay is set to 0.5 day, that means Alice has
+</I>&gt;<i> a remaining 0.5 day time window in which her node must be up and running
+</I>&gt;<i> and connected to the Bitcoin network, to claim the HTLC funds.
+</I>&gt;<i>
+</I>&gt;<i> So, I think it *is possible*. However, this leads to some uncomfortable
+</I>&gt;<i> time trade-offs. The CSV delay determines how often your node must be up
+</I>&gt;<i> and running, to catch the use of revoked commit transactions. Longer is
+</I>&gt;<i> better: I'd be much more comfortable with 30 days than with 1 day. The
+</I>&gt;<i> HTLC timeout increment determines how long funds can be locked up and
+</I>&gt;<i> payment status can stay undetermined (worst-case); it adds up over the
+</I>&gt;<i> entire route. For this, shorter is better: 1 day would be much better
+</I>&gt;<i> than 30 days.
+</I>
+Yes.  If A insists that B use a 30 day CSV, A can't ask B to accept an
+HTLC with less than (say) 31 days lifetime.
+
+In general, an HTLC timeout must comfortably exceed the highest CSV
+delay on the route.
+
+It sucks, but at least it's not the sum of CSV delays.  Keeping CSV time
+down is the motivation for outsourcing the enforcement (which I think
+SegWit gives us the ability to do, because the txids of the commit
+transactions won't be malleable).
+
+&gt;<i> Even if you assume &quot;always-on, always connected&quot; nodes, e.g. cell
+</I>&gt;<i> phones, service providers and home servers, you have to take into
+</I>&gt;<i> account that systems can fail, and manual intervention may be needed to
+</I>&gt;<i> restore them. The downtime / DoS attack -&gt; theft escalation is something
+</I>&gt;<i> we don't want to happen.
+</I>
+Indeed!  c-lightning requests a CSV timeout of 1 day, allows requests of
+up to 2 days (comment says 3, but it's wrong).  It only allows HTLCS of
+up to 5 days in the future, but it wants a 6 hour window minimum[1].
+
+If we want to allow CSV timeouts of 5 days[2], HTLC timeout decrements
+of up to 1 day per node over 20 hops, that means we need to allow HTLC
+timeouts of 26 days :(
+
+We can play with those numbers a bit (20 hops is a bit much, 1 day seems
+excessive given you can always drop commit txs to blockchain if DDoS is
+severe), but I think the per-hop decrement will dominate.
+
+Cheers,
+Rusty.
+[1] It should be &quot;CSV + 6 hours&quot;, this is the bug.
+[2] A 4-day long weekend plus one day of frantic panic; this was the
+    default timeout in the Linux NAT code.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000438.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+	<LI>Next message: <A HREF="000442.html">[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#440">[ date ]</a>
+              <a href="thread.html#440">[ thread ]</a>
+              <a href="subject.html#440">[ subject ]</a>
+              <a href="author.html#440">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

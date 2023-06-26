@@ -1,0 +1,369 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] #zerobasefee
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3CCAO3Pvs_0cj7kxyVjMDy9%3DFj-%2BqaUa20Yxt7QHEOXUUv6%2BTi0fQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003202.html">
+   <LINK REL="Next"  HREF="003191.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] #zerobasefee</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3CCAO3Pvs_0cj7kxyVjMDy9%3DFj-%2BqaUa20Yxt7QHEOXUUv6%2BTi0fQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] #zerobasefee">laolu32 at gmail.com
+       </A><BR>
+    <I>Mon Aug 16 19:55:48 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003202.html">[Lightning-dev] #zerobasefee
+</A></li>
+        <LI>Next message: <A HREF="003191.html">[Lightning-dev] Fee Budgets: A Possible Path Towards Unified Cost	Functions For Lightning Pathfinding Problems
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3187">[ date ]</a>
+              <a href="thread.html#3187">[ thread ]</a>
+              <a href="subject.html#3187">[ subject ]</a>
+              <a href="author.html#3187">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Matt wrote:
+&gt;<i> I'm frankly still very confused why we're having these conversations now
+</I>
+1000% this!!
+
+This entire conversation strikes me as extremely premature and backwards
+tbh.  Someone experimenting with a new approach shouldn't prompt us to
+immediately modify the protocol to better &quot;fit&quot; the approach, particularly
+before any sort of comparative analysis has even been published. At this
+point, to my knowledge we don't even have an independent implementation of
+the algorithm that has been tightly integrated into an existing LN
+implementation. We don't know in which conditions the algorithm excels, and
+in which conditions this improvement is maybe negligible (likely when payAmt
+&lt;&lt; chanCapacity).
+
+I think part of the difficulty here lies in the current lack of a robust
+framework to use in comparing the efficacy of different approaches. Even in
+this domain, there're a number of end traits to optimize for including: path
+finding length, total CLTV delay across all shards, the amount of resulting
+splits (goal should be consume less commitment space), attempt iteration
+latency, amount/path randomization, path finding memory, etc, etc.
+
+This also isn't the first time someone has attempted to adapt typical
+flow-based algorithms to path finding in the LN setting. T-bast from ACINQ
+initially attempted to adapt a greedy flow-based algorithm [1], but found
+that a number of implementation related edge cases (he cites that the
+min+max constraints in addition to the normal fee limit most implementations
+as barriers to adapting the algorithm) led him to go with a simpler approach
+to then iterate off of. I'd be curious to hear from T-bast w.r.t how this
+new approach differs from his initial approach, and if he spots any
+yet-to-be-recognized implementation level complexities to properly
+integrating flow based algorithms into path finding.
+
+&gt;<i> a) to my knowledge, no one has (yet) done any follow-on work to
+</I>&gt;<i> investigate pulling many of the same heuristics Rene et al use in a
+</I>&gt;<i> Dijkstras/A* algorithm with multiple passes or generating multiple routes
+</I>&gt;<i> in the same pass to see whether you can emulate the results in a faster
+</I>&gt;<i> algorithm without the drawbacks here,
+</I>
+lnd's current approach (very far from perfect, derived via satisficement)
+has some similarities to the flow-based approach in its use of probabilities
+to attempt to quantify the level of uncertainty of internal network channel
+balances.
+
+We start by assuming a config level a priori probability of any given route
+working, we then take that, and the fee to route across a given link and
+convert the two values into a scalar &quot;distance/weight&quot; (mapping to an
+expected cost) we can plug into vanilla Dijkstras [2]. A fresh node uses
+this value to compare routes instead of the typical hop count distance
+metric. With a cold cache this doesn't really do much, but then we'll update
+all the a priori probabilities with observations we gain in the wild.
+
+If a node is able to forward an HTLC to the next hop, we boost their
+probability (conditional on the amount forward/failed, so there's a bayesian
+aspect). Each failure results in the probabilities of nodes being affected
+differently (temp chan failure vs no next node, etc). For example, if we're
+able to route through the first 3 hops of the route, but the final hop fails
+with a temp chan failure. We'll rewards all the nodes with a success
+probability amount (default rn is 95%) that applies when the amount being
+carried is &lt; that prior attempt.
+
+As we assume balances are always changing, we then apply a half life decay
+that slows increases a penalized probability back to the baseline. The
+resulting algorithm starts with no information/memory, but then gains
+information with each attempt (increasing and decreasing probabilities as a
+function of the amount attempted and time that has passed since the last
+attempt). The APIs also let you mark certain nodes as having a higher
+apriori probability which can reduce the amount of bogus path exploration.
+This API can be used &quot;at scale&quot; to create a sort of active learning system
+that learns from the attempts of a fleet of nodes, wallets, trampoline
+nodes, wallets, etc (some privacy caveats apply, though there're ways to
+fuzz things a bit differential style).
+
+Other knobs exist such as the min probability setting, which controls how
+high a success probability a candidate edge needs to have before it is
+explored. If the algo is exploring too many lackluster paths (and there're a
+lot of these on mainnet due to normal balance imbalance), this value can be
+increased which will let it shed a large number of edges to be explored.
+When comparing this to the discussed approach that doesn't use any prior
+memory, there may be certain cases that allows this algorithm to &quot;jump&quot; to
+the correct approach and skip all the pre-processing and optimization that
+may result in the same route, just with added latency before the initial
+attempt. I'm skipping some other details like how we handle repeated
+failures of a node's channels (there's a mechanism that penalizes them more
+heavily, as the algo assumes most of the node's channels aren't well
+maintained/balanced, so why waste time trying the other 900 channels).
+
+Our approach differs more dramatically from this new approach further when
+it comes to the question of how to split a payment either due to a failure,
+or when it's necessary (amt &gt; max(chanCapacities...)). lnd takes a very
+a simple approach of just divides the problem in half (divide and conquer,
+so
+fork into two instances of amt/2) and try again. The divide and conquer
+approach typically means you'll end up with a minimal-ish amount of fees.
+There's also a knob that lets you control the largest split size, which can
+force the algo to split sooner, as otherwise it only splits when no route
+exists (either we explored a ton and they all failed, or the payment amt is
+larger than chan capacity).
+
+The algo works pretty well when the probabilities combined with well tuning
+of the parameters help the algorithm naturally ignore lower probability
+routes during the edge relaxation step of Dijkstras. However if a client has
+no prior observations (and didn't get any from say it's wallet provider or
+w/e), then it can end up exploring poor routes for a while and eventually
+hit the default timeout (particularly with a slow disk, but that'll be
+optimized away in lnd 0.14).
+
+One interesting area of research would be to investigate if a small amount
+of flow pre-planning can help the algorithm effectively re-summarize its
+current working memory to ignore more paths we know likely won't work.
+
+In the end, there's still so much of the design space that needs exploring,
+so settling on something (and advertising that everything is solved by
+magically setting a particular value to zero) that appears (so far we're
+going mainly off of experimental anecdotes w/ unclear methods) to improve on
+things in certain scenarios, and morphing the protocol around it is a
+premature declaration of &quot;Mission Accomplished!&quot;.
+
+In any case, major kudos to Rene and Stefan for examining the problem in a
+new
+light, and re-invigorating research of related areas!
+
+-- Laolu
+
+
+[1]: <A HREF="https://github.com/ACINQ/eclair/pull/1427">https://github.com/ACINQ/eclair/pull/1427</A>
+[2]:
+<A HREF="https://github.com/lightningnetwork/lnd/blob/958119a12ab60d24c75c7681f344ceb5a450c4ad/routing/pathfind.go#L930">https://github.com/lightningnetwork/lnd/blob/958119a12ab60d24c75c7681f344ceb5a450c4ad/routing/pathfind.go#L930</A>
+
+On Sun, Aug 15, 2021 at 5:07 PM Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt;
+wrote:
+
+&gt;<i> Thanks, AJ, for kicking off the thread.
+</I>&gt;<i>
+</I>&gt;<i> I'm frankly still very confused why we're having these conversations now.
+</I>&gt;<i> In one particular class of applicable routing
+</I>&gt;<i> algorithms you could use for lightning routing having a base fee makes the
+</I>&gt;<i> algorithm intractably slow, but:
+</I>&gt;<i>
+</I>&gt;<i> a) to my knowledge, no one has (yet) done any follow-on work to
+</I>&gt;<i> investigate pulling many of the same heuristics Rene et
+</I>&gt;<i> al use in a Dijkstras/A* algorithm with multiple passes or generating
+</I>&gt;<i> multiple routes in the same pass to see whether
+</I>&gt;<i> you can emulate the results in a faster algorithm without the drawbacks
+</I>&gt;<i> here,
+</I>&gt;<i>
+</I>&gt;<i> b) to my knowledge, no one has (yet) done any follow-on work to
+</I>&gt;<i> investigate mapping the base fee to other, more
+</I>&gt;<i> flow-based-routing-compatible numbers, eg you could convert the base fee
+</I>&gt;<i> to a minimum fee by increasing the &quot;effective&quot;
+</I>&gt;<i> proportional fees. From what others have commented, this may largely
+</I>&gt;<i> &quot;solve&quot; the issue.
+</I>&gt;<i>
+</I>&gt;<i> c) to my knowledge, no one has (yet) done any follow-on work to analyze
+</I>&gt;<i> where the proposed algorithm may be most optimal
+</I>&gt;<i> in the HTLC-value&lt;-&gt;channel liquidity ratio ranges. We may find that the
+</I>&gt;<i> proposed algorithm only provides materially
+</I>&gt;<i> better routing when the HTLC value approaches X% of common network channel
+</I>&gt;<i> liquidity, allowing us to only use it for
+</I>&gt;<i> large-value payments where we can almost ignore the base fees entirely.
+</I>&gt;<i>
+</I>&gt;<i> There's real cost to distorting the fee structures on the network away
+</I>&gt;<i> from the costs of node operators, especially as
+</I>&gt;<i> we move towards requiring and using Real (tm) amounts of capital on
+</I>&gt;<i> routing nodes. If we're relying purely on hobbyists
+</I>&gt;<i> forever who are operating out of goodwill, we should just remove all fees.
+</I>&gt;<i> If we think Lightning is going to involve
+</I>&gt;<i> capital with real opportunity cost, matching fees to the costs is
+</I>&gt;<i> important, or at least important enough that we
+</I>&gt;<i> shouldn't throw it away after one (pretty great) paper and limited further
+</I>&gt;<i> analysis.
+</I>&gt;<i>
+</I>&gt;<i> Imagine we find some great way to address HTLC slot flooding/DoS attacks
+</I>&gt;<i> (or just chose to do it in a not-great way) by
+</I>&gt;<i> charging for HTLC slot usage, now we can't fix a critical DoS issue
+</I>&gt;<i> because the routing algorithms we deployed can't
+</I>&gt;<i> handle the new costing. Instead, we should investigate how we can apply
+</I>&gt;<i> the ideas here with the more complicated fee
+</I>&gt;<i> structures we have.
+</I>&gt;<i>
+</I>&gt;<i> Color me an optimist, but I'm quite confident with sufficient elbow grease
+</I>&gt;<i> and heuristics we can get 95% of the way
+</I>&gt;<i> there. We can and should revisit these conversations if such exploration
+</I>&gt;<i> is done and we find that its not possible, but
+</I>&gt;<i> until then this all feels incredibly premature.
+</I>&gt;<i>
+</I>&gt;<i> Matt
+</I>&gt;<i>
+</I>&gt;<i> On 8/14/21 21:00, Anthony Towns wrote:
+</I>&gt;<i> &gt; Hey *,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; There's been discussions on twitter and elsewhere advocating for
+</I>&gt;<i> &gt; setting the BOLT#7 fee_base_msat value [0] to zero. I'm just writing
+</I>&gt;<i> &gt; this to summarise my understanding in a place that's able to easily be
+</I>&gt;<i> &gt; referenced later.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Setting the base fee to zero has a couple of benefits:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   - it means you only have one value to optimise when trying to collect
+</I>&gt;<i> &gt;     the most fees, and one-dimensional optimisation problems are
+</I>&gt;<i> &gt;     obviously easier to write code for than two-dimensional optimisation
+</I>&gt;<i> &gt;     problems
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   - when finding a route, if all the fees on all the channels are
+</I>&gt;<i> &gt;     proportional only, you'll never have to worry about paying more fees
+</I>&gt;<i> &gt;     just as a result of splitting a payment; that makes routing easier
+</I>&gt;<i> &gt;     (see [1])
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; So what's the cost? The cost is that there's no longer a fixed minimum
+</I>&gt;<i> &gt; fee -- so if you try sending a 1sat payment you'll pay 0.1% of the fee
+</I>&gt;<i> &gt; to send a 1000sat payment, and there may be fixed costs that you have
+</I>&gt;<i> &gt; in routing payments that you'd like to be compensated for (eg, the
+</I>&gt;<i> &gt; computational work to update channel state, the bandwith to forward the
+</I>&gt;<i> &gt; tx, or the opportunity cost for not being able to accept another htlc if
+</I>&gt;<i> &gt; you've hit your max htlcs per channel limit).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; But there's no need to explicitly separate those costs the way we do
+</I>&gt;<i> &gt; now; instead of charging 1sat base fee and 0.02% proportional fee,
+</I>&gt;<i> &gt; you can instead just set the 0.02% proportional fee and have a minimum
+</I>&gt;<i> &gt; payment size of 5000 sats (htlc_minimum_msat=5e6, ~$2), since 0.02%
+</I>&gt;<i> &gt; of that is 1sat. Nobody will be asking you to route without offering a
+</I>&gt;<i> &gt; fee of at least 1sat, but all the optimisation steps are easier.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; You could go a step further, and have the node side accept smaller
+</I>&gt;<i> &gt; payments despite the htlc minimum setting: eg, accept a 3000 sat payment
+</I>&gt;<i> &gt; provided it pays the same fee that a 5000 sat payment would have. That
+</I>&gt;<i> is,
+</I>&gt;<i> &gt; treat the setting as minimum_fee=1sat, rather than
+</I>&gt;<i> minimum_amount=5000sat;
+</I>&gt;<i> &gt; so the advertised value is just calculated from the real settings,
+</I>&gt;<i> &gt; and that nodes that want to send very small values despite having to
+</I>&gt;<i> &gt; pay high rates can just invert the calculation.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I think something like this approach also makes sense when your channel
+</I>&gt;<i> &gt; becomes overloaded; eg if you have x HTLC slots available, and y channel
+</I>&gt;<i> &gt; capacity available, setting a minimum payment size of something like
+</I>&gt;<i> &gt; y/2/x**2 allows you to accept small payments (good for the network)
+</I>&gt;<i> &gt; when you're channel is not busy, but reserves the last slots for larger
+</I>&gt;<i> &gt; payments so that you don't end up missing out on profits because you
+</I>&gt;<i> &gt; ran out of capacity due to low value spam.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Two other aspects related to this:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; At present, I think all the fixed costs are also incurred even when
+</I>&gt;<i> &gt; a htlc fails, so until we have some way of charging failing txs for
+</I>&gt;<i> &gt; incurring those costs, it seems a bit backwards to penalise successful
+</I>&gt;<i> &gt; txs who at least pay a proportional fee for the same thing. Until we've
+</I>&gt;<i> &gt; got a way of handling that, having zero base fee seems at least fair.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Lower value HTLCs don't need to be included in the commitment transaction
+</I>&gt;<i> &gt; (if they're below the dust level, they definitely shouldn't be included,
+</I>&gt;<i> &gt; and if they're less than 1sat they can't be included), and as such don't
+</I>&gt;<i> &gt; incur all the same fixed costs that HTLCs that are committed too do.
+</I>&gt;<i> &gt; Having different base fees for microtransactions that incur fewer costs
+</I>&gt;<i> &gt; would be annoying; so having that be &quot;amortised&quot; into the proportional
+</I>&gt;<i> &gt; fee might help there too.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I think eltoo can help in two ways by reducing the fixed costs: you no
+</I>&gt;<i> &gt; longer need to keep HTLC information around permanently, and if you do
+</I>&gt;<i> &gt; a multilevel channel factory setup, you can probably remove the ~400
+</I>&gt;<i> &gt; HTLCs per channel at any one time limit. But there's still other fixed
+</I>&gt;<i> &gt; costs, so I think that would just lower the fixed costs, not remove them
+</I>&gt;<i> &gt; altogether and isn't a fundamental change.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I think the fixed costs for forwarding a HTLC are very small; something
+</I>&gt;<i> &gt; like:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;     0.02sats -- cost of permanently storing the HTLC info
+</I>&gt;<i> &gt;                 (100 bytes, $500/TB/year, 1% discount rate)
+</I>&gt;<i> &gt;     0.04sats -- compute and bandwidth cost for updating an HTLC
+</I>&gt;<i> ($40/month
+</I>&gt;<i> &gt;                 at linode, 1 second of compute)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The opportunity cost of having HTLC slots or Bitcoin locked up until
+</I>&gt;<i> &gt; the HTLC succeeds/fails could be much more significant, though.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; aj
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; [0]
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md#the-channel_update-message">https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md#the-channel_update-message</A>
+</I>&gt;<i> &gt; [1] <A HREF="https://basefee.ln.rene-pickhardt.de/">https://basefee.ln.rene-pickhardt.de/</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210816/e843ca02/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210816/e843ca02/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003202.html">[Lightning-dev] #zerobasefee
+</A></li>
+	<LI>Next message: <A HREF="003191.html">[Lightning-dev] Fee Budgets: A Possible Path Towards Unified Cost	Functions For Lightning Pathfinding Problems
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3187">[ date ]</a>
+              <a href="thread.html#3187">[ thread ]</a>
+              <a href="subject.html#3187">[ subject ]</a>
+              <a href="author.html#3187">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Single channel on mobile clients
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Single%20channel%20on%20mobile%20clients&In-Reply-To=%3C20161106180026.GA14841%40nex%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000644.html">
+   <LINK REL="Next"  HREF="000646.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Single channel on mobile clients</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Single%20channel%20on%20mobile%20clients&In-Reply-To=%3C20161106180026.GA14841%40nex%3E"
+       TITLE="[Lightning-dev] Single channel on mobile clients">decker.christian at gmail.com
+       </A><BR>
+    <I>Sun Nov  6 18:00:26 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000644.html">[Lightning-dev] Single channel on mobile clients
+</A></li>
+        <LI>Next message: <A HREF="000646.html">[Lightning-dev] Single channel on mobile clients
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#645">[ date ]</a>
+              <a href="thread.html#645">[ thread ]</a>
+              <a href="subject.html#645">[ subject ]</a>
+              <a href="author.html#645">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Nov 01, 2016 at 11:53:12AM +0000, Anton Kumaigorodskiy wrote:
+&gt;<i> In general you are definitely right, having a single channel has it's drawbacks: relying on a single peer indeed makes a single point of failure and a possibility of earning some funds just by keeping an app running is attractive (although how large these fees will be is an open question, an anticipation is they will be extremely low, maybe won't even cover a channel opening costs for a long time if you're not a specialized relay node with a high throughput?). But I'm afraid there will be a lot of annoying details and edge cases:
+</I>
+Yes, I see that there are quite a few things to nail down before a
+mobile user will want to participate in forwarding transfers. Opening
+multiple channels is beneficial even without forwarding, for the
+simple argument of fault tolerance. In addition it also increases
+privacy since now a single node does not see all your transfer amount,
+and they can't be certain the payments actually originate from that
+user. Having a wallet simply open a single channel by default would
+leak all its user's transfer amounts, making profiling very simple.
+
+&gt;<i> &gt; I don't see a direct connection between UX and the fact that there are
+</I>&gt;<i> &gt; multiple channels
+</I>&gt;<i> 
+</I>&gt;<i> I'd argue if there are many channels on a phone which can relay 3rd party payments then user has to be made conscious of the following:
+</I>&gt;<i> 
+</I>&gt;<i> - app should run at all times or else we risk the following scenario to happen: user opens an app, sends it to a background, while hanging in there it starts relaying another HTLC and system kills it in a few seconds or the battery foes down or system crashes (does happen rather often on Android). The next day user opens it and finds out a channel has been unilaterally closed because of HTLC expiration.
+</I>
+That is indeed a major problem, and we'd need to handle this
+gracefully, maybe re-establishing channels that were settled ahead of
+time. I agree that it should be as transparent as possible for the
+end-user.
+
+&gt;<i> - how many channels should be opened and what the fee per channel should be?
+</I>&gt;<i> - how many funds can be relayed at max? (to not interfere with user's payments as you have suggested)
+</I>&gt;<i> 
+</I>&gt;<i> These are a kind of questions a lot of users would not want to be asked, as a wallet developer I've had a fair amount of conversation with end users and I can confidently say most of them don't want to know how things specifically work, they just want an app to do it's job and get out of their way (which is totally fine but should be taken into account as we develop end user apps).
+</I>
+All of these are good questions, and to be honest I don't know the
+answer, we can but speculate at this point. I do hope however that I
+brought up a few points that help wallet implementors not dismiss
+maintaining multiple channels right away.
+
+&gt;<i> &gt; Combining multiple channels is trivial, and only the two endpoints
+</I>&gt;<i> &gt; need to know how to do it
+</I>&gt;<i> 
+</I>&gt;<i> After giving it some thought I see this is trivial, but also there seems to be an asymmetry: payee, when asked for payment, can generate multiple routes (and then an app can wait for all the requests to be fulfilled before it shows payment as &quot;done&quot; or we can have a notion of &quot;partial payment&quot; which becomes &quot;fully paid&quot; in the end), but payer, once received a single route, can't pay if no channel's capacity is sufficient. Payer has to somehow communicate beforehand that he needs multiple routes for a given sum which breaks simple scenarios like QR scanning.
+</I>
+Well, that is something we need to deal with anyway, capacity may be
+insufficient at any point along the path(s) from the sender to the
+recipient. The recipient can signal that it would accept multipath
+transfers, and the client can decide whether to perform a multipath
+payment, that's not a big problem. But the client may construct a
+route that has insufficient capacity at some point, this is true for
+both the singlepath as well as the multipath transfer. At this point
+we can only try again with a different path, but the retry logic is
+still not worked out completely at this point.
+
+&gt;<i> &gt; The underlying connections do not actually have to
+</I>&gt;<i> &gt; show up in the UX interface at all
+</I>&gt;<i> 
+</I>&gt;<i> Let's assume we abstract all the underlying mechanics away: wallet automatically creates multiple channels and they are not displayed; user only sees a total balance across all channels. Let's also assume user can &quot;refill a balance&quot; which is done by opening an additional channel.
+</I>&gt;<i> 
+</I>&gt;<i> Now here's a bad situation: Bob/Alice have a 2/15 SAT channel and Bob wants to conduct a 10 SAT transaction. He knows he has 2 SAT so he &quot;refills&quot; his &quot;account&quot; with 9 SAT and indeed sees 11 SAT as his new balance. He then scans Carol's QR and gets a single 10 SAT route but he can't pay because he only has 9 SAT and 2 SAT channels.
+</I>&gt;<i> 
+</I>&gt;<i> Possible &quot;fixes&quot; are:
+</I>&gt;<i> 1. Don't hide multiple balances, user have to understand that a balance is in fact multidimensional which alone may be too much for a lot a of people.
+</I>&gt;<i> 2. Bilaterally close existing channels before creating new ones and recombine their balances which is no better than a single channel re-anchoring as described here: <A HREF="../2016-May/000535.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-May/000535.html</A>
+</I>
+Yeah, that is a bit confusing. I think we can probably adopt the
+Bitcoin model of having an available balance and an unconfirmed
+balance (across all channels, not per channel). That way we signal
+that Bob has 2 SAT available and he'll have to wait should he want to
+transfer more than that. We have a mechanism that would allow splicing
+in new funds into a channel, so that we don't actually need multiple
+channels between two endpoints. Funds from the old channel are still
+available during this splicing, unlike the re-anchoring. That may
+simplify the design a bit, since it makes channels unique per
+endpoint-tuple.
+
+&gt;<i> &gt; So if you find it easier to build the app assuming a single
+</I>&gt;<i> &gt; channel, then that's perfectly fine
+</I>&gt;<i> 
+</I>&gt;<i> Thanks, I really do. Single channel does not solve all of these issues but at least makes them obvious to user: the balance is truly one-dimensional, no 3rd party HTLC can break channel if wallet is closed at a wrong time, etc. On the other hand, I do tend to make up problems sometimes and I'd be glad if I'm wrong about all of this.
+</I>
+No, I think the points you raised are very interesting and real :-)
+
+Luckily I think that adding multiple channel support later, should we
+realize that it is necessary, would be too hard, so let's start with
+the simple system, and add features as we go along :-)
+
+Cheers,
+Christian
+
+&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000644.html">[Lightning-dev] Single channel on mobile clients
+</A></li>
+	<LI>Next message: <A HREF="000646.html">[Lightning-dev] Single channel on mobile clients
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#645">[ date ]</a>
+              <a href="thread.html#645">[ thread ]</a>
+              <a href="subject.html#645">[ subject ]</a>
+              <a href="author.html#645">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

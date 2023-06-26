@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset Representation Overlay
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Taro%3A%20A%20Taproot%20Asset%0A%20Representation%20Overlay&In-Reply-To=%3CCAD3i26BkzBSRTqaLxArHJVuE%2B41SnCzP3JmLoAreF-Lazxgjww%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003742.html">
+   <LINK REL="Next"  HREF="003740.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset Representation Overlay</H1>
+    <B>Johan Tor&#229;s Halseth</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Taro%3A%20A%20Taproot%20Asset%0A%20Representation%20Overlay&In-Reply-To=%3CCAD3i26BkzBSRTqaLxArHJVuE%2B41SnCzP3JmLoAreF-Lazxgjww%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset Representation Overlay">johanth at gmail.com
+       </A><BR>
+    <I>Mon Nov  7 13:51:12 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003742.html">[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+        <LI>Next message: <A HREF="003740.html">[Lightning-dev] Unjamming lightning (new research paper)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3746">[ date ]</a>
+              <a href="thread.html#3746">[ thread ]</a>
+              <a href="subject.html#3746">[ subject ]</a>
+              <a href="author.html#3746">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Laolu,
+
+Yeah, that is definitely the main downside, as Ruben also mentioned:
+tokens are &quot;burned&quot; if they get sent to an already spent UTXO, and
+there is no way to block those transfers.
+
+And I do agree with your concern about losing the blockchain as the
+main synchronization point, that seems indeed to be a prerequisite for
+making the scheme safe in terms of re-orgs and asynchronicity.
+
+I do think the scheme itself is sound though (maybe not off-chain, see
+below): it prevents double spending and as long as the clients adhere
+to the &quot;rule&quot; of not sending to a spent UTXO you'll be fine (if not
+your tokens will be burned, the same way as if you don't satisfy the
+Taro script when spending).
+
+Thinking more about the examples you gave, I think you are right it
+won't easily be compatible with LN channels though:
+If you want to refill an existing channel with tokens, you need the
+channel counterparties to start signing new commitments that include
+spending the newly sent tokens. A problem arises however, if the
+channel is force-closed with a pre-existing commitment from before the
+token transfer took place. Since this commitment will be spending the
+funding UTXO, but not the new tokens, the tokens will be burned. And
+that seems to be harder to deal with (Eltoo style channels could be an
+avenue to explore, if one could override the broadcasted commitment).
+
+Tl;dr: I think you're right, the scheme is not compatible with LN.
+
+- Johan
+
+
+On Sat, Nov 5, 2022 at 1:36 AM Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; wrote:
+&gt;<i>
+</I>&gt;<i> Hi Johan,
+</I>&gt;<i>
+</I>&gt;<i> I haven't really been able to find a precise technical explanation of the
+</I>&gt;<i> &quot;utxo teleport&quot; scheme, but after thinking about your example use cases a
+</I>&gt;<i> bit, I don't think the scheme is actually sound. Consider that the scheme
+</I>&gt;<i> attempts to target transmitting &quot;ownership&quot; to a UTXO. However, by the time
+</I>&gt;<i> that transaction hits the chain, the UTXO may no longer exist. At that
+</I>&gt;<i> point, what happens to the asset? Is it burned? Can you retry it again? Does
+</I>&gt;<i> it go back to the sender?
+</I>&gt;<i>
+</I>&gt;<i> As a concrete example, imagine I have a channel open, and give you an
+</I>&gt;<i> address to &quot;teleport&quot; some additional assets to it. You take that addr, then
+</I>&gt;<i> make a transaction to commit to the transfer. However, the block before you
+</I>&gt;<i> commit to the transfer, my channel closes for w/e reason. As a result, when
+</I>&gt;<i> the transaction committing to the UTXO (blinded or not), hits the chain, the
+</I>&gt;<i> UTXO no longer exists. Alternatively, imagine the things happen in the
+</I>&gt;<i> expected order, but then a re-org occurs, and my channel close is mined in a
+</I>&gt;<i> block before the transfer. Ultimately, as a normal Bitcoin transaction isn't
+</I>&gt;<i> used as a serialization point, the scheme seems to lack a necessary total
+</I>&gt;<i> ordering to ensure safety.
+</I>&gt;<i>
+</I>&gt;<i> If we look at Taro's state transition model in contrast, everything is fully
+</I>&gt;<i> bound to a single synchronization point: a normal Bitcoin transaction with
+</I>&gt;<i> inputs consumed and outputs created. All transfers, just like Bitcoin
+</I>&gt;<i> transactions, end up consuming assets from the set of inputs, and
+</I>&gt;<i> re-creating them with a different distribution with the set of outputs. As a
+</I>&gt;<i> result, Taro transfers inherit the same re-org safety traits as regular
+</I>&gt;<i> Bitcoin transactions. It also isn't possible to send to something that won't
+</I>&gt;<i> ultimately exist, as sends create new outputs just like Bitcoin
+</I>&gt;<i> transactions.
+</I>&gt;<i>
+</I>&gt;<i> Taro's state transition model also means anything you can do today with
+</I>&gt;<i> Bitcoin/LN also apply. As an example, it would be possible for you to
+</I>&gt;<i> withdrawn from your exchange into a Loop In address (on chain to off chain
+</I>&gt;<i> swap), and have everything work as expected, with you topping off your
+</I>&gt;<i> channel. Stuff like splicing, and other interactive transaction construction
+</I>&gt;<i> schemes (atomic swaps, MIMO swaps, on chain auctions, etc) also just work.
+</I>&gt;<i>
+</I>&gt;<i> Ignoring the ordering issue I mentioned above, I don't think this is a great
+</I>&gt;<i> model for anchoring assets in channels either. With Taro, when you make the
+</I>&gt;<i> channel, you know how many assets are committed since they're all committed
+</I>&gt;<i> to in the funding output when the channel is created. However, let's say we
+</I>&gt;<i> do teleporting instead: at which point would we recognize the new asset
+</I>&gt;<i> &quot;deposits&quot;? What if we close before a pending deposits confirms, how can one
+</I>&gt;<i> regain those funds? Once again you lose the serialization of events/actions
+</I>&gt;<i> the blockchain provides. I think you'd also run into similar issues when you
+</I>&gt;<i> start to think about how these would even be advertised on a hypothetical
+</I>&gt;<i> gossip network.
+</I>&gt;<i>
+</I>&gt;<i> I think one other drawback of the teleport model iiuc is that: it either
+</I>&gt;<i> requires an OP_RETURN, or additional out of band synchronization to complete
+</I>&gt;<i> the transfer. Since it needs to commit to w/e hash description of the
+</I>&gt;<i> teleport, it either needs to use an OP_RETURN (so the receiver can see the
+</I>&gt;<i> on chain action), or the sender needs to contact the receiver to initiate
+</I>&gt;<i> the resolution of the transfer (details committed to in a change addr or
+</I>&gt;<i> w/e).
+</I>&gt;<i>
+</I>&gt;<i> With Taro, sending to an address creates an on-chain taproot output just
+</I>&gt;<i> like sending to a P2TR address. The creation of the output directly creates
+</I>&gt;<i> the new asset anchor/output as well, which allows the receiver to look for
+</I>&gt;<i> that address on chain just like a normal on chain transaction. To 3rd party
+</I>&gt;<i> observers, it just looks like a normal P2TR transfer. In order to finalize
+</I>&gt;<i> the receipt of the asset, the receiver needs to obtain the relevant
+</I>&gt;<i> provenance proofs, which can be obtained from a multi-verse gRPC/HTTP
+</I>&gt;<i> service keyed by the input outpoint and output index. In short, the send
+</I>&gt;<i> process is fully async, with the sender and receiver using the blockchain
+</I>&gt;<i> itself as a synchronization point like a normal Bitcoin wallet.
+</I>&gt;<i>
+</I>&gt;<i> -- Laolu
+</I></PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003742.html">[Lightning-dev] [bitcoin-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+	<LI>Next message: <A HREF="003740.html">[Lightning-dev] Unjamming lightning (new research paper)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3746">[ date ]</a>
+              <a href="thread.html#3746">[ thread ]</a>
+              <a href="subject.html#3746">[ subject ]</a>
+              <a href="author.html#3746">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

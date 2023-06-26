@@ -1,0 +1,224 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Ionization Protocol: Flood Routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3C87si65500e.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000201.html">
+   <LINK REL="Next"  HREF="000216.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Ionization Protocol: Flood Routing</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3C87si65500e.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Ionization Protocol: Flood Routing">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Sep 23 02:42:57 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000201.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+        <LI>Next message: <A HREF="000216.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#211">[ date ]</a>
+              <a href="thread.html#211">[ thread ]</a>
+              <a href="subject.html#211">[ subject ]</a>
+              <a href="author.html#211">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> On Mon, Sep 21, 2015 at 11:46:13AM +0930, Rusty Russell wrote:
+</I>&gt;&gt;<i> We regularly choose a dozen &quot;beacon&quot; nodes at random (using proximity to
+</I>&gt;&gt;<i> the SHA of latest block hash or something).  Everyone propagates the
+</I>&gt;&gt;<i> cheapest route to &amp; from those nodes (which is pretty efficient, similar
+</I>&gt;&gt;<i> to your scheme).
+</I>&gt;<i>
+</I>&gt;<i> I think what you're implicitly assuming here is:
+</I>&gt;<i>
+</I>&gt;<i>  a) global p2p network of lightning nodes; at a minimum each node has
+</I>&gt;<i>     a connection to every node it has a channel open with
+</I>&gt;<i>
+</I>&gt;<i>  b) consensus protocol for choosing an ordering of potential beacons
+</I>&gt;<i>
+</I>&gt;<i>  c) potential beacons have to have committed to a beacon id prior to
+</I>&gt;<i>     ordering being chosen (with spam/flooding protection)
+</I>&gt;<i>
+</I>&gt;<i>  d) gossip protocol to announce potential beacons and compare against
+</I>&gt;<i>     ordering, keeping the top few in memory.
+</I>&gt;<i>
+</I>&gt;<i>  e) sharing routes to beacons with direct neighbours
+</I>&gt;<i>
+</I>&gt;<i>  f) distributed hash to store/lookup route recommendations, keyed by
+</I>&gt;<i>     beacon/endpoint
+</I>&gt;<i>
+</I>&gt;<i>  g) distributed hash to lookup fees for hops keyed by hop ends
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I think (a) is trivial; and you already called out (b).
+</I>&gt;<i>
+</I>&gt;<i> For (c), not having a commitment means that people could generate a new
+</I>&gt;<i> node id that does well in the ordering algorithm after the fact; if it's
+</I>&gt;<i> SHA comparisons, that means miners would likely monopolise being a beacon.
+</I>&gt;<i>
+</I>&gt;&gt;<i> 4) How to avoid fake beacons?
+</I>&gt;&gt;<i>    Require a signature attached to an unspent bitcoin TX from before
+</I>&gt;&gt;<i>    beacon selection?  That TXID is actually what competes to be close
+</I>&gt;&gt;<i>    to the beacon selector.
+</I>&gt;<i>
+</I>&gt;<i> This might as well be the (an) anchor transaction. It's already in the
+</I>&gt;<i> blockchain, it's already associated with a channel. You couldn't just
+</I>&gt;<i> use the txid directly, because that wouldn't differentiate between
+</I>&gt;<i> endpoints though. This would give an advantage to nodes with lots of
+</I>&gt;<i> channels open; not sure whether that's desirable? Probably it is?
+</I>&gt;<i>
+</I>&gt;<i> For (d), once you've got the ordering, nodes tell each other about their
+</I>&gt;<i> 12 favourite beacons, and if they hear about better ones, they pass those
+</I>&gt;<i> on too. That needs to be global knowledge, but it doesn't matter too much
+</I>&gt;<i> if we have slightly different sets of 12 beacons at any point.  12 beacon
+</I>&gt;<i> ids is a fine amount of information to pass around globally, too.
+</I>&gt;<i>
+</I>&gt;<i> For (e), I don't think you want to gossip globally about routes --
+</I>&gt;<i> that's too much information to pass around if it's not necessary; but
+</I>&gt;<i> you still have to share your routes to beacons with your neighbours in
+</I>&gt;<i> order to figure anything out. Nodes announcing their best routes to their
+</I>&gt;<i> neighbours is basically just Dijkstra's algorithm in parallel I think.
+</I>
+Indeed, it's trivial (and I've already implemented a simple simulator to
+do it).  The initial spamminess can be mitigated by waiting before
+broadcasting depending on how likely you are a beacon.
+
+&gt;<i> But just knowing your neighbours' routes isn't enough; you need to be
+</I>&gt;<i> able to lookup a route for anyone, and that (by definition I think)
+</I>&gt;<i> means you need (f) a DHT of routes-to-beacons. Note that looking up a
+</I>&gt;<i> route has privacy implications, in that it implies you're probably going
+</I>&gt;<i> to make a payment along that route!
+</I>
+That's why the recipient provides a set of routes from (some subset of)
+beacons to them.  You know routes to all beacons, so pathfinding solved.
+
+&gt;&gt;<i> To receive a payment, B picks a few beacon nodes at random and sends
+</I>&gt;&gt;<i> those routes (beacons -&gt; B) to A.  Presumably A knows its route to all
+</I>&gt;&gt;<i> the beacon nodes and thus can choose the best.
+</I>&gt;<i>
+</I>&gt;<i> A trivial DHT would be to have each node store its routes locally,
+</I>&gt;<i> and just make a TCP/IP connection to the node directly to ask for its
+</I>&gt;<i> routes. That seems like it'd be pretty bad for privacy though. I'm a
+</I>&gt;<i> fan of being able to route to/through nodes you can't reach via IP, and
+</I>&gt;<i> this would prevent that too.
+</I>
+Yes, that's a bad idea.  And I'm not sure why you need this?
+
+&gt;<i> Finally for (g), I don't think you want to store fees in the routes
+</I>&gt;<i> directly, since updating fees would require updating an unknown number
+</I>&gt;<i> of routes; but fees have to be queryable, so that's a separate DHT. This
+</I>&gt;<i> one doesn't need to be updated when new beacons are elected though. This
+</I>&gt;<i> DHT would want to be fairly high performance, because you're doing 2*B*L
+</I>&gt;<i> lookups everytime you want to find a route, and it has to accept and
+</I>&gt;<i> propogate updates fairly quickly if fees change.
+</I>
+Well, propagating fee updates for (say) 1200 routes isn't too bad,
+as long as they're not changing too fast.
+
+&gt;&gt;<i> There are some twisty details here:
+</I>&gt;&gt;<i> 1) How many beacon nodes?
+</I>&gt;&gt;<i>    12, and increase on a log scale with network size.  That size can
+</I>&gt;&gt;<i>    be derived from previous beacons.
+</I>&gt;<i>
+</I>&gt;<i> I think it's also something you could set per-node, like the
+</I>&gt;<i> minrelaytxfee.
+</I>
+That doesn't make sense, since we need to agree on who is a beacon.
+
+&gt;&gt;<i> 2) How long between selection and a beacon becoming active?
+</I>&gt;&gt;<i>    10 blocks.  That gives time for others to connect to beacon node.
+</I>&gt;<i>
+</I>&gt;<i> Beacons can be &quot;active&quot; as soon as you can route through them, and that's
+</I>&gt;<i> just a DHT lookup to determine, and then a matter of comparing fees to
+</I>&gt;<i> what the old beacons give you. So I think no artificial delay is needed,
+</I>&gt;<i> and the real question is just when you expire your routes to/from the
+</I>&gt;<i> old beacons?
+</I>
+No.  Beacons will get saturated fast unless they have a chance to
+prepare.  In particular, the network will want to establish channels
+with new beacons, and beacons may well want to bring offline funds
+online to handle the anticipated capacity.
+
+&gt;&gt;<i> 3) How long before a beacon node is invalid?
+</I>&gt;&gt;<i>    No idea.  Let's keep a day's worth for the moment?
+</I>&gt;<i>
+</I>&gt;<i> Sounds fine; also mostly a client side parameter. (Though if the routing
+</I>&gt;<i> DHT is non-trivial, old beacons should expire from there after some
+</I>&gt;<i> interval too to deal with nodes that disappear)
+</I>&gt;<i>
+</I>&gt;&gt;<i> 5) How to update beacon routing?
+</I>&gt;&gt;<i>    Particularly for fee changes, this is important.  Best effort,
+</I>&gt;&gt;<i>    with ratelimiting.  I hope eventually we'll have reasonable traffic
+</I>&gt;&gt;<i>    models so a node can say &quot;I'm going to ramp up/down my fees for
+</I>&gt;&gt;<i>    this long at this rate&quot; and have a reasonable chance that it's true.
+</I>&gt;<i>
+</I>&gt;<i> I think this is reinventing DHTs, though maybe none of the existing ones
+</I>&gt;<i> work well enough for this use case?
+</I>
+What's the fascination with DHTs?
+
+&gt;<i> I think rate limiting decreases in fees is always safe (it won't prevent
+</I>&gt;<i> any transactions going through, it will only prevent them being started).
+</I>&gt;<i>
+</I>&gt;<i> (I'm not sure a programmed ramp-up/down of fees makes sense; though
+</I>&gt;<i> maybe it would be a good way to perform price discovery)
+</I>&gt;<i>
+</I>&gt;&gt;<i> PS.  For the immediate term, we'll use a global comms mechanism like
+</I>&gt;&gt;<i>      IRC, but that's just a prototype hack.
+</I>&gt;<i>
+</I>&gt;<i> Hmm. Counterproposal: no beacons or routing DHT, just fees by gossip
+</I>&gt;<i> protocol (or IRC channel as prototype hack). Everyone has a complete
+</I>&gt;<i> (but possibly slightly out of date) database of node-node (but not
+</I>&gt;<i> node-wallet) channel fees, and changes are propogated by gossip. Back
+</I>&gt;<i> of the envelope maths:
+</I>&gt;<i>
+</I>&gt;<i>   everyone uses lightning ==&gt; 8B wallets (5B teens/adults, 3B businesses)
+</I>&gt;<i>   every wallet has ~4 channels ==&gt; 32B node-wallet channels
+</I>&gt;<i>   100k wallet channels per node on average ==&gt; 320k nodes
+</I>
+Um, so each wallet isn't a node?  That's a very different architecture,
+which uses hosted wallets or something?  I don't think that's very
+interesting.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000201.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+	<LI>Next message: <A HREF="000216.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#211">[ date ]</a>
+              <a href="thread.html#211">[ thread ]</a>
+              <a href="subject.html#211">[ subject ]</a>
+              <a href="author.html#211">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

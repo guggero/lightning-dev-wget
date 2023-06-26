@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Dual Funding Proposal
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dual%20Funding%20Proposal&In-Reply-To=%3C87sgze3vbh.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001708.html">
+   <LINK REL="Next"  HREF="001710.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Dual Funding Proposal</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dual%20Funding%20Proposal&In-Reply-To=%3C87sgze3vbh.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Dual Funding Proposal">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Dec  4 02:00:18 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001708.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+        <LI>Next message: <A HREF="001710.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1709">[ date ]</a>
+              <a href="thread.html#1709">[ thread ]</a>
+              <a href="subject.html#1709">[ subject ]</a>
+              <a href="author.html#1709">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>lisa neigut &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">niftynei at gmail.com</A>&gt; writes:
+&gt;&gt;<i> The receiving node MUST fail the channel if:
+</I>&gt;&gt;<i>    ...
+</I>&gt;&gt;<i>    - `option_dual_fund` has been negotiated.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Does v2 of channel open necessarily deprecate the original between two
+</I>&gt;<i> upgraded nodes?
+</I>&gt;<i>
+</I>&gt;<i> This seems more sane than having both as an option...will update.
+</I>
+Yes.  This is a nod to the future in which we drop the old open_channel
+mechanics altogether.
+
+&gt;&gt;<i> Oh, it needs to check max_extra_witness_len is reasonable too, since
+</I>&gt;&gt;<i> that will affect the fees.  Each signature adds 74, and pubkey adds 34,
+</I>&gt;&gt;<i> so I think MUST BE less than 500 is perfectly reasonable (for both
+</I>&gt;&gt;<i> reader and writer).
+</I>
+OK, I've reconsidered the format slightly; we should just send
+`max_witness_len` and not send *any* witness at this stage.  Send the
+entire witness in `funding_signed2`.
+
+This now means we need room for the script itself, so perhaps relax this
+value to 1000?
+
+&gt;&gt;<i>  - MAY send init_rbf if it considers the most recent funding tx unlikely
+</I>&gt;&gt;<i>    to be confirmed in reasonable time.
+</I>&gt;&gt;<i>  - MUST set `feerate_per_kw` larger than the most recent funding tx.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Another good reason to break out `funding_txn_feerate_per_kw` from
+</I>&gt;<i> `commitment_txn_feerate_per_kw` in `open_channel2`
+</I>
+Agreed; BTW I kinda wish bitcoin uses 'txn' instead of 'tx' to
+abbreviate transaction since I used to read 'tx' as 'transmit'.  But
+I've been brainwashed now so it doesn't matter any more...
+
+&gt;&gt;<i> Do we really want to negotiate everything again?  It seems like the
+</I>&gt;&gt;<i> funder should be able to maybe add *new* inputs and outputs (though TBH
+</I>&gt;&gt;<i> I think that's going to be unusual enough that we could omit it), but
+</I>&gt;&gt;<i> doing a wholesale replacement means we have to be careful that the all
+</I>&gt;&gt;<i> RBFs end up having at least one input in common.  Yech.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Only allowing the opener to add new inputs/outputs drives down the scope of
+</I>&gt;<i> a RBF a good deal. I like it.
+</I>&gt;<i> Adding new inputs seems like a common sense bare minimum, especially if we
+</I>&gt;<i> assume wildly unpredictable fee rates.
+</I>
+You need be able to specify new outputs with new inputs (change); except
+of course you want to be able to simply so you probably need to specify
+*new* inputs, and *all* your outputs (since the other side doesn't care
+about what outputs you use, you might even eliminate some for all I
+care).
+
+This seems asymmetrical, but I love protocols which are hard to
+mis-implement.
+
+&gt;&gt;<i> But it's an excellent point I had missed.  The channel_id changes on
+</I>&gt;&gt;<i> each renegotiation.  We could either switch channel_id *after*
+</I>&gt;&gt;<i> each accept_rbf, or keep the original channel_id until funding_locked2 (in
+</I>&gt;&gt;<i> which case it should have a &quot;final_channel_id&quot; field, to make sure we're
+</I>&gt;&gt;<i> talking about the same funding tx).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Since we have to handle the &quot;oops, old one got in!&quot; it might be weird to
+</I>&gt;&gt;<i> see `funding_locked2` with an old txid.  Perhaps we stick with the
+</I>&gt;&gt;<i> original channel_id until then, and flip *after* funding_locked2 is sent
+</I>&gt;&gt;<i> and received.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i> Would it be more sane to continue to include the temporary channel id,
+</I>&gt;<i> in addition to the 'current' (i.e. most recently negotiated funding txn)
+</I>&gt;<i> channel id,
+</I>&gt;<i> until the funding_locked2 is sent  (adds a `temporary_channel_id` field for
+</I>&gt;<i> `commitment_signed2`, ` funding_signed2` and `funding_locked2`, in addition
+</I>&gt;<i> to `channel_id`)?
+</I>&gt;<i> That way, all opening messages would have a stable id across an RBF
+</I>&gt;<i> re-negotiation, `temp_channel_id`.
+</I>&gt;<i> Sticking with the first broadcast funding transaction hash feels
+</I>&gt;<i> a bit misleading in the case of a second round of `commitment_signed2` and
+</I>&gt;<i> `funding_signed2`.
+</I>
+I hate temporary_channel_id, because (as specced) it's an untrusted
+value.  See Matt's complaints about it:
+        <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/496">https://github.com/lightningnetwork/lightning-rfc/pull/496</A>
+
+That was bearable though, because it only lasted 3 messages (open,
+accept, funding_created).
+
+Strawman idea: for dual funded channels, `channel_id` is based not on
+the txid, but the SHA256(open_channel2.revocation_basepoint |
+accept_channel2.revocation_basepoint).  That must be unique, and we can
+use this same value to sort the tx, FWIW.
+
+We'd still use the `temporary_channel_id` for open_channel2 and the
+accept_channel2 reply (to match them), but we don't ever need to change
+again.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001708.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+	<LI>Next message: <A HREF="001710.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1709">[ date ]</a>
+              <a href="thread.html#1709">[ thread ]</a>
+              <a href="subject.html#1709">[ subject ]</a>
+              <a href="author.html#1709">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

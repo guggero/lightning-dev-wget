@@ -1,0 +1,211 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] daemon/p2p protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20daemon/p2p%20protocol&In-Reply-To=%3C20151019053003.GB19146%40navy%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000265.html">
+   <LINK REL="Next"  HREF="000273.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] daemon/p2p protocol</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20daemon/p2p%20protocol&In-Reply-To=%3C20151019053003.GB19146%40navy%3E"
+       TITLE="[Lightning-dev] daemon/p2p protocol">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Oct 19 05:30:03 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000265.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+        <LI>Next message: <A HREF="000273.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#271">[ date ]</a>
+              <a href="thread.html#271">[ thread ]</a>
+              <a href="subject.html#271">[ subject ]</a>
+              <a href="author.html#271">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sat, Oct 17, 2015 at 06:53:55AM +1000, Anthony Towns wrote:
+&gt;<i> I think treating the relationship between a network address (IPv4/IPv6
+</I>&gt;<i> addr and port, tor service) and the lightning network address as sensitive
+</I>&gt;<i> is valuable. Revealing a network address helps reveal physical identity,
+</I>&gt;<i> makes denial-of-service attacks straightforward, and gives a point of
+</I>&gt;<i> entry for targetted hacking to steal your money.
+</I>
+I guess the attacks I'm thinking of are something like:
+
+Exploits leading to theft:
+
+ - if you're a merchant, it's easy to find out your lightning id (just
+   buy something from you!) and during the trading day you'll probably
+   have a relatively large balance in your lightning channels (up until
+   you close it out by committing your profits to the blockchain eg). If
+   I can find your IP address and hack into your system, I can steal
+   that money.
+
+ - if you're making lots of money routing payments, I might be able to
+   deduce that from public information (like how cheap your fees are,
+   how rarely your fees change, how many connections you have, ...)
+   and thus know that you have a lot of money in lightning channels that
+   I can steal
+
+ - if you're just being a consumer, however, I can't think of a reason
+   your lightning id would matter -- if I can snoop on your IP connection,
+   I can probably tell you're mostly a consumer by traffic analysis,
+   and conclude that you've probably got $10-$100 that could be
+   stolen. failure of imagination on my behalf?
+
+Denial of service:
+
+ - I might know the lightning id of someone I don't like; a merchant who
+   sells something unpopular, or a node that routes payment for people I
+   don't like. If I can translate that into an IP address, I might be
+   able to DoS them using botnets etc.
+
+Exploits that help you exploit others:
+
+ - if I know X has a channel with you; figuring out X's IP might let
+   me monitor X's TCP connections (by hacking into their system, or
+   by subpoena'ing their ISP), which in turn would help me figure out
+   your IP.
+
+I guess there's three ways you can associate the info:
+
+ a) given a lightning id, cheaply work out the IP that provides it
+
+ b) given an IP, cheaply work out the lightning id associated with it
+
+ c) given an IP and a lightning id, confirm/deny whether that lightning
+    id is provided by that IP
+
+(a) is what you want if you're planning theft or DoS
+
+(c) is enough if you've got other information about whoever you want to
+    attack that can narrow down the lightning ids and IP addresses (eg, you
+    want to attack a local business, so you can find out their lightning id
+    directly, and narrow down their IP based on local ISPs)
+
+(c) is obviously trivial if you've already got (a) or (b).
+
+You can get to (a) from (b) if (b) is cheap enough and you can build up
+a database that you can query in reverse.
+
+If you're not an attacker, then (a) is useful if you want to have new
+channels not be totally random (eg, to have people be able to connect
+to newly announced beacons). And (c) is presumably necessary if you
+want to reconnect to someone you had a channel with, when you lose your
+internet connction.
+
+One &quot;clever&quot; way to handle (a) might be via a &quot;fund a new channel by
+lightning transaction&quot; operation. ie, if you (Alice) want to open a
+channel with Bob, route a payment to Bob with instructions to forward to
+Alice, and to do that by connecting to a given IP/port and establishing
+a new channel; ie rather than just telling Bob to route to Alice in the
+onion payoad, also included Alice's network address. That way Alice
+reveals her IP precisely to Bob; and Bob only reveals his IP if he
+decides he is interested in opening a channel.
+
+That'd also provide a way of reconnecting with a peer if you lose your
+connection and both of you change your IPs. It assumes that you both
+have an alternative channel that's still functional though.
+
+
+Okay... so how about the following. When making a new p2p connection, when
+you know who you're talking to, you rely on a shared secret X, and send:
+
+    Alice: &quot;Hi. I'm &lt;session key A&gt;. My nonce is X.&quot;
+    Bob: &quot;Good to meet you, I'm &lt;session key B&gt;.&quot;
+
+Rest is encrypted to ECDH(A,B).
+
+    Alice: SIG_Alice(Alice || Bob || A || ECDH(A,B))
+    Bob: SIG_Bob(Bob || Alice || B || ECDH(A,B))
+
+    Alice: &quot;Hi Bob!&quot;
+    Bob: &quot;Hi Alice!&quot;
+
+
+If you don't know who you're talking to, you don't send a nonce and
+you do the current protocol. Once you're connected (or once you have a
+channel setup) they'll tell you a nonce to use next time:
+
+    Alice: &quot;Hi. I'm &lt;session key A&gt;.&quot;
+    Bob: &quot;Good to meet you, I'm &lt;session key B&gt;.&quot;
+
+Rest is encrypted to ECDH(A,B).
+
+    Alice: I'm Alice, SIG(Alice || A || ECDH(A,B))
+    Bob: I'm Bob, SIG(Bob || B || ECDH(A,B))
+    Bob: BTW, next time you connect, use nonce &lt;Y&gt;.
+
+If Bob wants some degree of privacy, while still accepting anonymous
+connections, then he generates a new id to hand out to anonymous
+connections every so often, linking it up to one of his other ids, or
+to one of his neighbours by reusing a pre-existing channel. If you're
+asking someone to connect to you and have a bunch of ids, you give them
+a nonce to use that will select the correct one. You use nonces as a
+hash key to lookup your id, their id, and any channels you have open.
+You don't share or reuse nonces.
+
+(If an attacker knows Alice and Bob have a connection, and can MITM
+Alice trying to connect to X, the above lets them verify which of Alice's
+connections is Bob. If that's a reasonable attack, it'd be avoidable if
+the nonce X was replaced by X and Y; X sent in cleartext as above, but
+Y simply included in the info being signed. That prevents the attacker
+from being able to verify the signature info at all)
+
+Not convinced that's quite right, but maybe something along those lines
+might work out.
+
+Until there's a substantial number of lightning nodes (1000s?), it's
+probably trivial to link network address and lightning id by traffic
+analysis, so I think it's probably sane to leave implementing any of
+the above until later.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000265.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+	<LI>Next message: <A HREF="000273.html">[Lightning-dev] daemon/p2p protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#271">[ date ]</a>
+              <a href="thread.html#271">[ thread ]</a>
+              <a href="subject.html#271">[ subject ]</a>
+              <a href="author.html#271">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

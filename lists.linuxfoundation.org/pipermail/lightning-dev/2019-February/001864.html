@@ -1,0 +1,131 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Extending Associated Data in the Sphinx Packet	to Cover All Payment Details
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Extending%20Associated%20Data%20in%20the%20Sphinx%20Packet%0A%09to%20Cover%20All%20Payment%20Details&In-Reply-To=%3C875ztuh6ta.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001863.html">
+   <LINK REL="Next"  HREF="001867.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Extending Associated Data in the Sphinx Packet	to Cover All Payment Details</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Extending%20Associated%20Data%20in%20the%20Sphinx%20Packet%0A%09to%20Cover%20All%20Payment%20Details&In-Reply-To=%3C875ztuh6ta.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Extending Associated Data in the Sphinx Packet	to Cover All Payment Details">decker.christian at gmail.com
+       </A><BR>
+    <I>Fri Feb  8 11:13:05 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001863.html">[Lightning-dev] Extending Associated Data in the Sphinx Packet to	Cover All Payment Details
+</A></li>
+        <LI>Next message: <A HREF="001867.html">[Lightning-dev] WIP pull requests for feature bit unification and	TLV bits
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1864">[ date ]</a>
+              <a href="thread.html#1864">[ thread ]</a>
+              <a href="subject.html#1864">[ subject ]</a>
+              <a href="author.html#1864">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Laolu,
+
+thanks for bringing this up. I think committing to more data might be
+nice, but I have some reservations re signaling in the onion packet
+version. But let's start at the top:
+
+&gt;<i> However, since the CLTV isn't also authenticated, then it's possible
+</I>&gt;<i> to attempt to inject a new HTLC with a fresher CLTV. If the node isn't
+</I>&gt;<i> keeping around all pre-images, then they might forward this since it
+</I>&gt;<i> passes the regular expiry tests. If we instead extend the associated
+</I>&gt;<i> data payload to cover the CLTV as well, then this binds the adversary
+</I>&gt;<i> to using the same CLTV details.
+</I>
+The CLTV is actually committed to indirectly through the outgoing CLTV
+value in the onion payload itself (both for intermediate hops and final
+hops). For intermediate hops we will refuse any forward that has a CLTV
+value for the next leg that is not far enough in the future based on the
+incoming CLTV value. Notice that the values we commit to are not deltas,
+but absolute values. This means that a node needs to keep a cache of
+shared secrets used until the `outgoing_cltv_value` from the onion dips
+below `incoming_cltv_value - cltv_expiry_delta`). Any replay attempt
+after that will result in the first hop (adjacent to the attacker) to
+reject the HTLC with an `incorrect_cltv_expiry` error.
+
+That being said I'm happy to add more information to the AD, but it may
+need to be rolled out differently from what you describe.
+
+&gt;<i> If this were to be deployed, then we can do it by using a new packet version
+</I>&gt;<i> in the Sphinx packet. Nodes that come across this new version (signalled by
+</I>&gt;<i> a global feature bit) would then know to include the extra information in
+</I>&gt;<i> the AD for their MAC check.
+</I>
+This will not really work if the route contains any node that does not
+understand the new version of the packet. The node prior to the
+non-upgraded node would have to downgrade the packet version from v1 to
+v0 understood by the non-upgraded node, which could be done via an
+instruction in the per-hop payload itself, but the non-upgraded node
+would not have any way of learning that it needs to upgrade the packet
+version to v1 again. This means we can use v1 up to the first node that
+doesn't understand v1 and have a permanent downgrade for the rest of the
+route.
+
+We might get away with signalling this in the payload itself, but that
+inverts the processing of the onion into parse and interpret the payload
+before checking the HMAC, which I can already hear cryptographers groan
+about :-)
+
+&gt;<i> While we're at it, we should also actually *commit* to the packet
+</I>&gt;<i> version. Right now nodes can swap out the version to anything they
+</I>&gt;<i> want, potentially causing another node to reject the packet.  This
+</I>&gt;<i> should also be added to the AD to ensure the packet can't be modified
+</I>&gt;<i> without another node detecting it.
+</I>
+I don't think this is really useful. If a node wants to cause us to
+reject a packet it can just tamper with anything in the payload and
+we'll fail with an HMAC failure. The version really is just a hint as to
+how we should process the packet, and if tampered with it'll just cause
+us to reject, similarly to when the attacker modifies the ephemeral key.
+
+&gt;<i> Longer term, we may end up with _all_ payment details in the Sphinx packet.
+</I>
+Agreed, we can also just use the serialized HTLC output, since that is
+the on-chain representation of the payment, and therefore has to include
+all relevant details :-)
+
+Cheers,
+Christian
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001863.html">[Lightning-dev] Extending Associated Data in the Sphinx Packet to	Cover All Payment Details
+</A></li>
+	<LI>Next message: <A HREF="001867.html">[Lightning-dev] WIP pull requests for feature bit unification and	TLV bits
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1864">[ date ]</a>
+              <a href="thread.html#1864">[ thread ]</a>
+              <a href="subject.html#1864">[ subject ]</a>
+              <a href="author.html#1864">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

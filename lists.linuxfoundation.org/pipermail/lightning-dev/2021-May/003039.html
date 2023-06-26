@@ -1,0 +1,96 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Payment Latency by Fast Forwards
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3CWvCM3AYzPHfNYS05Z-b5cXvI3BdRPfXnZhN9KQFQ5nMNTjlCySQ1xUht4u1YOMWkYACbKOK99-IkrF7hPOsO3Oq--0_NgsIRH0rbd2Ms8Uw%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003038.html">
+   <LINK REL="Next"  HREF="003040.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Payment Latency by Fast Forwards</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3CWvCM3AYzPHfNYS05Z-b5cXvI3BdRPfXnZhN9KQFQ5nMNTjlCySQ1xUht4u1YOMWkYACbKOK99-IkrF7hPOsO3Oq--0_NgsIRH0rbd2Ms8Uw%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Improving Payment Latency by Fast Forwards">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun May 23 18:48:37 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003038.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+        <LI>Next message: <A HREF="003040.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3039">[ date ]</a>
+              <a href="thread.html#3039">[ thread ]</a>
+              <a href="subject.html#3039">[ subject ]</a>
+              <a href="author.html#3039">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+Note that there is a possible jamming attack here.
+
+More specifically, when &quot;failing&quot; an incoming HTLC, the receiver of the HTLC sends its signature for a transaction spending the HTLC and spending it back to the sender revocable contract.
+The funds cannot be reused until the channel state is updated to cut-through all the transactions (the HTLC transaction and the failure transaction).
+(Well it *could* but that greatly amps the complexity of the whole thing --- no, just no.)
+
+Thus I could jam a particular receiver by sending, via forwarding nodes, to that receiver, payments with a random hash, which with high probability have preimages that are unknown by the receiver.
+The receiver can only fail those HTLCs, but &quot;to fail an HTLC&quot; under Fast Forwards makes the funds unusable, until the previous channel state can be revoked and replaced with a new one.
+But updating the channel state requires privkeys to be online in order to create the signatures for the new channel state.
+
+This creates a practical limit on how long you can keep privkeys offline; if you keep it offline too long, an attacker can jam all your incoming capacity for long periods of time.
+This is not currently a problem without &quot;receiver online, privkey offline&quot;, since without &quot;privkey offline&quot; case, the receiver can update the channel state immediately.
+
+However, if the receiver is willing to lose privacy, the protocol can be mildly modified so that the receiver tells the forwarding node to *first* ask the receiver about every HTLC hash before actually instantiating and sending the HTLC.
+Only if the receiver agrees will the forwarder actually send the HTLC.
+
+The forwarder is incentivized to go along with this, as otherwise, the receiver cannot actually fail any HTLCs --- it needs to provide a signature, and signatures require privkeys, and the receiver has those offline.
+Thus, the forwarder would prefer to ask the receiver *before* it instantiates the HTLC, as otherwise the HTLC cannot be cancelled until the receiver gets its privkeys online, which can take a long time --- and if the HTLC times out in the meantime, that can only be enforced by dropping onchain, and Fast Forwards are *very* expensive in the unilateral close case.
+
+Obviously this tells the forwarding node that the channel is used for receiving and that any payments over it terminate at the next hop, thus a privacy degradation.
+On the other hand, unpublished channels remain popular despite my best efforts, and this is the exact problem unpublished channels have, so ---- not a degradation in privacy in practice, since users of unpublished channels already have degraded privacy (axiom of terminus),
+
+This also increases latency once again, as there is now 1.5 roundtrips (forwarder asks receiver if this forwarded HTLC is kosher, receiver responds, forwarder sends signature to HTLC transaction).
+However, the increased latency only occurs at the endpoint; forwarders (which need to have privkeys online 100% of the time anyway, and can thus cut-through any number of failed HTLCs at any time) can skip the &quot;is this HTLC kosher&quot; message and just send the HTLC signatures immediately.
+Thus, this may be an acceptable tradeoff.
+
+Thus, one might consider this scheme to be usable for *either* Fast Forwards, *or* &quot;receiver online, privkeys offline&quot;, but not usefully both (after all, a forwarder is both a receiver and a sender, and a sender needs its keys in order to send, so it cannot use the &quot;privkeys offline&quot; feature anyway).
+
+
+It may be difficult to understand this, so maybe I will make a convenient presentation of some sort.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003038.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+	<LI>Next message: <A HREF="003040.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3039">[ date ]</a>
+              <a href="thread.html#3039">[ thread ]</a>
+              <a href="subject.html#3039">[ subject ]</a>
+              <a href="author.html#3039">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

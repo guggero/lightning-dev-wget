@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] An update on PTLCs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20update%20on%20PTLCs&In-Reply-To=%3CCAO3Pvs_0D%2BqFt%2B%3DjoLQYRP7sHgXxLRmtQVCcy-rCiPQ5oCkCVQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002647.html">
+   <LINK REL="Next"  HREF="002668.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] An update on PTLCs</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20update%20on%20PTLCs&In-Reply-To=%3CCAO3Pvs_0D%2BqFt%2B%3DjoLQYRP7sHgXxLRmtQVCcy-rCiPQ5oCkCVQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] An update on PTLCs">laolu32 at gmail.com
+       </A><BR>
+    <I>Thu Apr 23 01:16:44 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002647.html">[Lightning-dev] An update on PTLCs
+</A></li>
+        <LI>Next message: <A HREF="002668.html">[Lightning-dev] An update on PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2659">[ date ]</a>
+              <a href="thread.html#2659">[ thread ]</a>
+              <a href="subject.html#2659">[ subject ]</a>
+              <a href="author.html#2659">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Nadav,
+
+Thanks for the updates! Super cool to see this concept continue to evolve
+and integrate new technologies as they pop up.
+
+&gt;<i> I believe this would only require a few changes to existing nodes:
+</I>
+Rather than a &quot;few changes&quot;, this would to date be the largest network-level
+update undertaken to the Lightning Network thus far. In the past, we rolled
+out the new onion blob format (which enables changes like this), but none of
+the intermediate nodes actually need to modify their behavior. New payment
+types like MPP+AMP only needed the _end points_ to update making this an
+end-to-end update that has been rolled out so far in a de-synchronized
+manner.
+
+Re-phrasing deploying this requires changes to: the core channel state
+machine (the protocol we use to make commitment updates), HTLC scripts,
+on-chain HTLC handling and resolution, path finding algorithms (to only see
+out the new PTLC-enabled nodes), invoice changes and onion blob processing.
+I'd caution against underestimating how long all of this will take in
+practice, and the degree of synchronization required to pull it all off
+properly.
+
+For a few years now the question we've all been pondering is: do we wait for
+scnhorr to roll out multi-hop locks, or just use the latest ECDSA based
+technique? As dual deployment is compatible (we can make the onion blobs for
+both types the same), a path has always existed to first roll out with the
+latest ECDSA based technique then follow up later to roll out the schnorr
+version as well. However there's also a risk here as depending on how
+quickly things can be rolled out, schnorr may become available
+mid-development, which would possibly cause us to reconsider the ECDSA path
+and have the network purely use scnhorr to make things nice and uniform.
+
+Zooming out for a bit, the solution space of &quot;how channels can look post
+scriptless-scripts + taproot&quot; is rather large [1], and the addition of this
+new technique allows for an even larger set of deployment possibilities.
+This latest ECDSA variant is much simpler than the prior ones (which had a
+few rounds of more involved ZKPs), but since it still uses OP_CMS, it can't
+be used to modify the funding output.
+
+[1]:
+<A HREF="../2019-December/002375.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/002375.html</A>
+
+-- Laolu
+
+
+On Wed, Apr 22, 2020 at 8:13 AM Nadav Kohen &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">nadav at suredbits.com</A>&gt; wrote:
+
+&gt;<i> Hello all,
+</I>&gt;<i>
+</I>&gt;<i> I'd like to give an update on the current state of thinking and coding
+</I>&gt;<i> surrounding replacing Hash-TimeLock Contracts (HTLCs) with Point-TimeLock
+</I>&gt;<i> Contracts (PTLCs) (aka Payment Hashes -&gt; Payment Points) in hopes of
+</I>&gt;<i> sparking interest, discussion, development, etc.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> We Want Payment Points!
+</I>&gt;<i> -----------------------
+</I>&gt;<i>
+</I>&gt;<i> Using point-locks (in PTLCs) instead of hash-locks (in HTLCs) for
+</I>&gt;<i> lightning payments is an all around improvement. HTLCs require the use of
+</I>&gt;<i> the same hash across payment routes (barring fancy ZKPs which are inferior
+</I>&gt;<i> to PTLCs) while PTLCs allow for payment de-correlation along routes. For an
+</I>&gt;<i> introduction to the topic, see
+</I>&gt;<i> <A HREF="https://suredbits.com/payment-points-part-1/.">https://suredbits.com/payment-points-part-1/.</A>
+</I>&gt;<i>
+</I>&gt;<i> In addition to improving privacy in this way and protecting against
+</I>&gt;<i> wormhole attacks, PTLC-based lightning channels open the door to a large
+</I>&gt;<i> variety of interesting applications that cannot be accomplished with HTLCs:
+</I>&gt;<i>
+</I>&gt;<i> Stuckless (retry-able) Payments with proof of payment (
+</I>&gt;<i> <A HREF="https://suredbits.com/payment-points-part-2-stuckless-payments/">https://suredbits.com/payment-points-part-2-stuckless-payments/</A>)
+</I>&gt;<i>
+</I>&gt;<i> Escrow contracts over Lightning (
+</I>&gt;<i> <A HREF="https://suredbits.com/payment-points-part-3-escrow-contracts/">https://suredbits.com/payment-points-part-3-escrow-contracts/</A>)
+</I>&gt;<i>
+</I>&gt;<i> High/DLOG AMP (
+</I>&gt;<i> <A HREF="https://docs.google.com/presentation/d/15l4h2_zEY4zXC6n1NqsImcjgA0fovl_lkgkKu1O3QT0/edit#slide=id.g64c15419e7_0_40">https://docs.google.com/presentation/d/15l4h2_zEY4zXC6n1NqsImcjgA0fovl_lkgkKu1O3QT0/edit#slide=id.g64c15419e7_0_40</A>
+</I>&gt;<i> )
+</I>&gt;<i>
+</I>&gt;<i> Stuckless + AMP (an improvement on Boomerang) (
+</I>&gt;<i> <A HREF="../2019-October/002239.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/002239.html</A>
+</I>&gt;<i> )
+</I>&gt;<i>
+</I>&gt;<i> Pay-for-signature (
+</I>&gt;<i> <A HREF="https://suredbits.com/payment-points-part-4-selling-signatures/">https://suredbits.com/payment-points-part-4-selling-signatures/</A>)
+</I>&gt;<i>
+</I>&gt;<i> Pay-for-commitment (
+</I>&gt;<i> <A HREF="../2019-September/002166.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/002166.html</A>
+</I>&gt;<i> )
+</I>&gt;<i>
+</I>&gt;<i> Monotonic access structures on payment completion (
+</I>&gt;<i> <A HREF="https://suredbits.com/payment-points-monotone-access-structures/">https://suredbits.com/payment-points-monotone-access-structures/</A>)
+</I>&gt;<i>
+</I>&gt;<i> Ideal Barrier Escrow Implementation (
+</I>&gt;<i> <A HREF="https://suredbits.com/payment-points-implementing-barrier-escrows/">https://suredbits.com/payment-points-implementing-barrier-escrows/</A>)
+</I>&gt;<i>
+</I>&gt;<i> And allowing for Barrier Escrows, we can even have
+</I>&gt;<i>
+</I>&gt;<i> Atomic multi-payment setup (
+</I>&gt;<i> <A HREF="https://suredbits.com/payment-points-and-barrier-escrows/">https://suredbits.com/payment-points-and-barrier-escrows/</A>)
+</I>&gt;<i>
+</I>&gt;<i> Lightning Discreet Log Contract (
+</I>&gt;<i> <A HREF="https://suredbits.com/discreet-log-contracts-on-lightning-network/">https://suredbits.com/discreet-log-contracts-on-lightning-network/</A>)
+</I>&gt;<i>
+</I>&gt;<i> Atomic multi-payment update (
+</I>&gt;<i> <A HREF="https://suredbits.com/updating-and-transferring-lightning-payments/">https://suredbits.com/updating-and-transferring-lightning-payments/</A>)
+</I>&gt;<i>
+</I>&gt;<i> Lightning Discreet Log Contract Novation/Transfer (
+</I>&gt;<i> <A HREF="https://suredbits.com/transferring-lightning-dlcs/">https://suredbits.com/transferring-lightning-dlcs/</A>)
+</I>&gt;<i>
+</I>&gt;<i> There are likely even more things that can be done with Payment Points so
+</I>&gt;<i> make sure to respond if I've missed any known ones.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> How Do We Get Payment Points?
+</I>&gt;<i> -----------------------------
+</I>&gt;<i>
+</I>&gt;<i> Eventually, once we have Taproot, we can use 2p-Schnorr adaptor signatures
+</I>&gt;<i> in Lightning channels. For a detailed thread by ZmnSCPxj, see here
+</I>&gt;<i> <A HREF="../2019-December/002375.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/002375.html</A>
+</I>&gt;<i>
+</I>&gt;<i> In the meantime, Lloyd has written about a way to do 1p-ECDSA adaptor sigs
+</I>&gt;<i> (<A HREF="https://github.com/LLFourn/one-time-VES">https://github.com/LLFourn/one-time-VES</A>) which can be paired with
+</I>&gt;<i> OP_CHECKMULTISIG to allows us to execute PTLCs on Bitcoin today!
+</I>&gt;<i>
+</I>&gt;<i> Nickler has implemented this in a branch of secp256k1 (
+</I>&gt;<i> <A HREF="https://github.com/jonasnick/secp256k1/pull/14">https://github.com/jonasnick/secp256k1/pull/14</A>) and I have implemented it
+</I>&gt;<i> in Bouncy Castle in Bitcoin-S with some testing against this branch (
+</I>&gt;<i> <A HREF="https://github.com/nkohen/bitcoin-s-core/tree/bouncy-adaptor">https://github.com/nkohen/bitcoin-s-core/tree/bouncy-adaptor</A>). Do note
+</I>&gt;<i> that as nickler states on his PR, &quot;IT IS EXTREMELY DANGEROUS AND RECKLESS
+</I>&gt;<i> TO USE THIS MODULE IN PRODUCTION. DON'T!&quot;
+</I>&gt;<i>
+</I>&gt;<i> A demo of an on-chain PTLC I executed using nickler's implementation on
+</I>&gt;<i> the backend + bitcoin-s can be seen here <A HREF="https://youtu.be/w9o4v7Idjno">https://youtu.be/w9o4v7Idjno</A>
+</I>&gt;<i>
+</I>&gt;<i> And waxwing did a lovely write-up about the crypto itself
+</I>&gt;<i> <A HREF="https://joinmarket.me/blog/blog/schnorrless-scriptless-scripts/">https://joinmarket.me/blog/blog/schnorrless-scriptless-scripts/</A>
+</I>&gt;<i>
+</I>&gt;<i> I would be very interested in having a fork of (at least) one lightning
+</I>&gt;<i> implementation (or Rust Lightning) to be a proof of concept ECDSA-PTLC node
+</I>&gt;<i> with which we can test and play with the plethora of PTLC-based proposals
+</I>&gt;<i> above.
+</I>&gt;<i>
+</I>&gt;<i> I believe this would only require a few changes to existing nodes:
+</I>&gt;<i>
+</I>&gt;<i> 1) update_add_ptlc will have a 32 byte x-coordinate (of a point) rather
+</I>&gt;<i> than a 32 byte hash. Additionally the onion's hop_data will contain a 32
+</I>&gt;<i> byte scalar tweak for each hop. As per [link multi-hop locks]. The last
+</I>&gt;<i> hop_data will instead include a 32 byte scalar equal to the sum of all
+</I>&gt;<i> tweaks.
+</I>&gt;<i>
+</I>&gt;<i> 2) commitment_signed will have 162 byte adaptor ptlc_signatures rather
+</I>&gt;<i> than valid (71/72 byte) ECDSA signatures on PTLC-success transactions.
+</I>&gt;<i>
+</I>&gt;<i> 3) The in-flight outputs on the commitment transaction itself become a
+</I>&gt;<i> little simpler as we no longer need to explicitly check the payment
+</I>&gt;<i> pre-image against a hash. Instead, delete all instances of &quot;OP_HASH160
+</I>&gt;<i> &lt;RIPEMD160(payment_hash)&gt; OP_EQUALVERIFY&quot; in the scripts (leaving the rest
+</I>&gt;<i> the same) and require no pre-image in the witness, only a valid signature.
+</I>&gt;<i> The pre-image check is implicitly enforced by the &lt;remoteptlc_sig&gt; witness
+</I>&gt;<i> since only an adaptor signature was provided by remote so that the payment
+</I>&gt;<i> pre-image is required to create the valid signature (from which the
+</I>&gt;<i> pre-image can be then deduced by comparing adaptor and valid signatures).
+</I>&gt;<i>
+</I>&gt;<i> If I've missed any other changes that need to happen, do respond with them!
+</I>&gt;<i>
+</I>&gt;<i> I hope that as a community we can work towards having a PTLC-based
+</I>&gt;<i> Lightning Network that is safe and stable as soon as possible, and so I
+</I>&gt;<i> encourage further thinking, development and expirementation with PTLCs now
+</I>&gt;<i> so that when Taproot is finally at our disposal we can cleanly start moving
+</I>&gt;<i> towards a more ideal Lightning :)
+</I>&gt;<i>
+</I>&gt;<i> Best,
+</I>&gt;<i> Nadav
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200422/9849bd91/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200422/9849bd91/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002647.html">[Lightning-dev] An update on PTLCs
+</A></li>
+	<LI>Next message: <A HREF="002668.html">[Lightning-dev] An update on PTLCs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2659">[ date ]</a>
+              <a href="thread.html#2659">[ thread ]</a>
+              <a href="subject.html#2659">[ subject ]</a>
+              <a href="author.html#2659">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

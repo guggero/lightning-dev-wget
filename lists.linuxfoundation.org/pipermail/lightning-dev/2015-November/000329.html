@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Better privacy with SNARKs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Better%20privacy%20with%20SNARKs&In-Reply-To=%3C20151120074415.GA24674%40navy%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000328.html">
+   <LINK REL="Next"  HREF="000330.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Better privacy with SNARKs</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Better%20privacy%20with%20SNARKs&In-Reply-To=%3C20151120074415.GA24674%40navy%3E"
+       TITLE="[Lightning-dev] Better privacy with SNARKs">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Nov 20 07:44:15 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000328.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+        <LI>Next message: <A HREF="000330.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#329">[ date ]</a>
+              <a href="thread.html#329">[ thread ]</a>
+              <a href="subject.html#329">[ subject ]</a>
+              <a href="author.html#329">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Nov 19, 2015 at 01:16:57PM +0000, Mats Jerratsch wrote:
+&gt;<i> Interesting, thanks for the write-up Anthony!
+</I>
+Glad I went ahead and implemented it as a snark before posting the idea
+or you would have spoiled all the fun I had playing with snarkfront!
+
+&gt;<i> I feel like the way ZKPs are constructed, one has to be absolutely
+</I>&gt;<i> certain everything is perfectly implemented to actually work out the
+</I>&gt;<i> way we want it.
+</I>
+Yeah. I think you could have a &quot;stop-loss&quot; condition, where any node that
+gets cheated (ie, they have a proof that R2 gives them and R1 for H1,H2,X;
+but they have an R2 that doesn't give them R1) can just publish all that
+evidence, and everyone can immediately stop trusting snarks and so only
+a small amount of money can actually be stolen from the system. But, yeah.
+
+&gt;<i> ---------------
+</I>&gt;<i> After a night of sleep and some reassurance with sipa, I thought about
+</I>&gt;<i> something similar but with EC keys, that will allow us to do the same,
+</I>&gt;<i> but without SNARKS.
+</I>
+So this is genius! And I swear I would have thought of it myself if
+I could just get past my mental block on adding opcodes to bitcoin.
+Honest, guv!
+
+&gt;<i> Assume two keypairs, K1(Q, q) and K2(R, r). Further we have a scalar
+</I>&gt;<i> p, such that
+</I>&gt;<i> r = p * q
+</I>&gt;<i> and
+</I>&gt;<i> R = r * G = ( p * q ) * G = p * ( q * G ) = p * Q.
+</I>&gt;<i> You can therefore give someone Q, R and p and he is able to verify
+</I>&gt;<i> that above conditions indeed holds true. For a sufficiently large p it
+</I>&gt;<i> is not possible to derive that relationship within reasonable time
+</I>&gt;<i> without p. If he ever gets to know q, he is able to directly compute r
+</I>&gt;<i> as well.
+</I>
+Even better, given K1(Q,q) (q the public key provided by the merchant,
+Q the merchant's secret, used to claim the payment and serving as a
+receipt), you (as the consumer) can construct r2, .., rN by generating
+random bits, and then generate
+
+  q1 = q
+  q2 = r2*q1
+  q3 = r3*q2
+  ...
+  qN = rN*q[N-1]
+
+and route your HTLC payable to qN at the first hop, q[N-1] at the second
+all the way to q1 when it gets to the merchant. The merchant reveals
+Q=Q1, and nodes calculate:
+
+  Q2 = r2*Q1
+  Q3 = r3*Q2
+  ...
+  QN = rN*Q[N-1]
+
+to collect their payments. So the extra burden for keeping the payment
+private falls entirely on the consumer, rather than the merchant. (Okay,
+you had this point in your mail already essentially)
+
+Hmm, I'm not sure if you can divide QN by (r2*..*rN) to get back to Q1,
+but I think you can (the lowercase q's are the points on the elliptic
+curve where division is hard, but the capital Q's are just numbers
+in Z_n where n is the order of G on the curve, I think?). If you can,
+you even get the original receipt/proof of payment!
+
+Oh, _and_ you don't even having to reveal q1/Q to any intermediate hops
+-- you could just pay to q[N-1] on the final hop and provide rN in the
+onion message on the final hop. If you do that, nobody but the merchant
+and the end consumer can calculate the proof of payment.
+
+_And_ I think you could just use SHA(ECDH_SEC || 3) as the r values at
+each stage rather than needing any additional entropy, or having to add
+any significant data to the onion packets.
+
+&gt;<i> There is one caveat. We are currently unable to enforce a payment with
+</I>&gt;<i> a priv/pub key pair. We would need a new operator
+</I>&gt;<i> OP_CHECKPRIVPUBKEYPAIR or similar that pops two items from the stack
+</I>&gt;<i> &lt;Private Key&gt; &lt;Public Key&gt;
+</I>&gt;<i> and replaces them with true/false.
+</I>
+There are a few &quot;generic&quot; crypto ops that might be useful to have; two
+that come to mind are:
+
+  &lt;point&gt; &lt;multiplicand&gt; &lt;resultpoint&gt; OP_CHECK_SECP256K1_MUL_VERIFY
+    (enough for this, maybe lets you do ECDH on the blockchain,
+     and allows you to commit to revealing a key on the blockchain)
+
+  &lt;signature&gt; &lt;pubkey&gt; &lt;message&gt; OP_CHECK_INLINE_SIGNATURE_VERIFY
+    (this would let you do atomic cross-chain swaps without knowing in
+     advance who you're swapping with)
+
+Maybe it'd make sense to combine them into a soft-forkable OP_CRYPTO_OP
+that pulls the crypto operation id from the stack, then if the operation
+is known, pulls the operands, and fails the script if the operands
+don't add up. If the operation is unknown, mark it as non-standard but
+acceptable for future soft-forkability...
+
+On Fri, Nov 20, 2015 at 12:05:46PM +1030, Rusty Russell wrote:
+&gt;<i> With the segregated witness proposal, introducing new opcodes is easy,
+</I>&gt;<i> so maybe someone would find a reason to prefer open-coding it like this?
+</I>
+I don't follow how segregated witness makes new opcodes any easier?
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000328.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+	<LI>Next message: <A HREF="000330.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#329">[ date ]</a>
+              <a href="thread.html#329">[ thread ]</a>
+              <a href="subject.html#329">[ subject ]</a>
+              <a href="author.html#329">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

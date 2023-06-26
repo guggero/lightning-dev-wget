@@ -1,0 +1,194 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C878u1tms2b.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000482.html">
+   <LINK REL="Next"  HREF="000478.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C878u1tms2b.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Mar  8 05:55:56 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000482.html">[Lightning-dev] Backward deterministic R Value
+</A></li>
+        <LI>Next message: <A HREF="000478.html">[Lightning-dev] Simplifying revocation through a new opcode for	general signature verification?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#469">[ date ]</a>
+              <a href="thread.html#469">[ thread ]</a>
+              <a href="subject.html#469">[ subject ]</a>
+              <a href="author.html#469">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> On Wed, Jan 27, 2016 at 01:37:04PM +1030, Rusty Russell wrote:
+</I>&gt;&gt;<i> Misc
+</I>&gt;&gt;<i> ----
+</I>&gt;&gt;<i> - shachain vs elkrem
+</I>&gt;&gt;<i>   - We use this to generate the revocation secrets, to minimize storage
+</I>&gt;&gt;<i>     and computation for a huge number of old commitment txs.
+</I>&gt;&gt;<i>   - They're actually very similar, but elkrem is much easier to grok.[6]
+</I>&gt;<i>
+</I>&gt;<i> Hmm, I was going to say I like it, but I'm not sure I do...
+</I>
+OK, I revisited shachain; it's nicer to describe in terms of a binary
+tree.  The derivation is still a little complex, but people should find
+this far less brainbendy.
+
+And yes, I reversed the indices, so we start with 0xFFFFFFFFFFFFFFFF and
+work back towards the seed at 0.
+
+&gt;<i>From <A HREF="https://github.com/rustyrussell/ccan/blob/master/ccan/crypto/shachain/design.txt:">https://github.com/rustyrussell/ccan/blob/master/ccan/crypto/shachain/design.txt:</A>
+</I>
+A Tree Solution
+---------------
+
+A better solution is to use a binary tree, with the seed at the root.
+The left child is the same as the parent, the right child is the
+SHA256() of the parent with one bit flipped (corresponding to the
+height).
+
+This gives a tree like so:
+
+                      seed
+                    /      \
+                  /          \
+                /              \
+              /                  \
+            seed                   SHA256(seed^1)
+           /    \                  /             \
+       seed    SHA256(seed^2)  SHA256(seed^1)  SHA256(SHA256(seed^1)^2)
+Index:  0         1                2                  3
+
+Clearly, giving R(2) allows you to derive R(3), giving R(1) allows you
+to derive nothing new (you still have to remember R(2)), and giving
+R(0) allows you to derive everything.
+
+In pseudocode, this looks like the following for a 64 bit tree:
+
+generate_from_seed(index):
+    value = seed
+    for bit in 0 to 63:
+        if bit set in index:
+            flip(bit) in value
+            value = SHA256(value)
+    return value
+
+
+The Receiver's Tree
+-------------------
+
+To derive the value for a index N, you need to have the root of a tree
+which contains it.  That is the same as needing an index I which is N
+rounded down in binary: eg. if N is 0b001100001, you need 0b001100000,
+0b001000000 or 0b000000000.
+
+Pseudocode:
+
+# Can we derive the value for to_index from from_index?
+can_derive(from_index, to_index):
+    # to_index must be a subtree under from_index; this is the same as
+    # saying that to_index must be the same as from_index up to the
+    # trailing zeros in from_index.
+    for bit in count_trailing_zeroes(from_index)..63:
+        if bit set in from_index != bit set in to_index:
+            return false
+    return true
+
+# Derive a value from a lesser index: generalization of generate_from_seed()
+derive(from_index, to_index, from_value):
+    assert(can_derive(from_index, to_index))
+    value = from_value
+    for bit in 0..63:
+        if bit set in to_index and not bit set in from_index:
+            flip bit in value
+            value = SHA256(value)
+    return value
+
+If you are receiving values (in reverse order), you need to remember
+up to 64 of them to derive all previous values.  The simplest method
+is to keep an array, indexed by the number of trailing zeroes in the
+received index:
+
+# Receive a new value (assumes we receive them in order)
+receive_value(index, value):
+    pos = count_trailing_zeroes(index)
+    # We should be able to generate every lesser value, otherwise invalid
+    for i in 0..pos-1:
+       if derive(index, value, known[i].index) != known[i].value:
+            return false
+    known[pos].index = index
+    known[pos].value = value
+    return true
+
+To derive a previous value, find an element in that array from which
+you can derive the value you want, eg:
+
+# Find an old value
+regenerate_value(index):
+    for i in known:
+        if can_derive(i.index, index):
+            return derive(i.index, i.value, index)
+    fail
+
+You can see the implementation for more optimized variants of the
+above code.
+
+Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000482.html">[Lightning-dev] Backward deterministic R Value
+</A></li>
+	<LI>Next message: <A HREF="000478.html">[Lightning-dev] Simplifying revocation through a new opcode for	general signature verification?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#469">[ date ]</a>
+              <a href="thread.html#469">[ thread ]</a>
+              <a href="subject.html#469">[ subject ]</a>
+              <a href="author.html#469">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

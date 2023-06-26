@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Deriving channel keys deterministically from seed,	musig, and channel establishment v2
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Deriving%20channel%20keys%20deterministically%20from%20seed%2C%0A%09musig%2C%20and%20channel%20establishment%20v2&In-Reply-To=%3CJbiPFNf_HI7d8BcY1czNRQYq8rvw_WItQPRXlx06xs17mC63bkR-ZQc8MU61BxHjoMcMfYEzRD6ckNDCZjGHvuSQikcc-qiarLcB0FRuBN4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003226.html">
+   <LINK REL="Next"  HREF="003232.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Deriving channel keys deterministically from seed,	musig, and channel establishment v2</H1>
+    <B>SomberNight</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Deriving%20channel%20keys%20deterministically%20from%20seed%2C%0A%09musig%2C%20and%20channel%20establishment%20v2&In-Reply-To=%3CJbiPFNf_HI7d8BcY1czNRQYq8rvw_WItQPRXlx06xs17mC63bkR-ZQc8MU61BxHjoMcMfYEzRD6ckNDCZjGHvuSQikcc-qiarLcB0FRuBN4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Deriving channel keys deterministically from seed,	musig, and channel establishment v2">somber.night at protonmail.com
+       </A><BR>
+    <I>Fri Sep 17 16:14:22 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003226.html">[Lightning-dev] DNS records for LN nodes
+</A></li>
+        <LI>Next message: <A HREF="003232.html">[Lightning-dev] Deriving channel keys deterministically from	seed, musig, and channel establishment v2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3229">[ date ]</a>
+              <a href="thread.html#3229">[ thread ]</a>
+              <a href="subject.html#3229">[ subject ]</a>
+              <a href="author.html#3229">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+TL;DR: an approach is described how to derive channel keys
+deterministically that allows certain forms of recovery from just
+a seed, that works today. This approach however will no longer work
+with e.g. MuSig key aggregation in the future. An idea for a proposal
+is given how the channel-open flow (e.g. as part of channel v2) could be
+changed to make a similar approach work independent of key aggregation.
+
+-----
+
+While implementing anchor output support in Electrum, we have realised
+one difficulty is to do with the remote-force-close case where the
+to_remote output is no longer a simple p2wpkh.
+
+Currently, pre-anchor-support, Electrum sets option_static_remotekey
+to required (feature bit 12), and we restrict lightning usage to wallets
+that derive p2wpkh addresses, and payment_basepoint is set
+to a bip32-derived pubkey that corresponds to a wallet address.
+Hence, if a user were to restore from seed words, and their channel
+counterparty force closed their channel, the to_remote output of the
+broadcast commitment tx would directly pay to the user's wallet.
+That is, in many typical scenarios, funds are not lost when restoring
+from seed.
+
+(Also, if we are the channel-funder/opener, it is easy to find the
+funding transaction, just by testing txs in the wallet history.
+Further, for the cases we are the channel-funder/opener,
+there is a setting to put an OP_RETURN in the funding tx, which stores
+the nodeid of the counterparty, allowing us to identify who to contact
+to get the channel closed.
+Also, we are (ab)using dataloss_protect to ask the remote
+to force-close when restoring from seed, so the user does not even have
+to wait for an arbitrarily long time.)
+
+With anchors, the to_remote is now a p2wsh that involves a CSV,
+and we cannot easily make this script correspond to a wallet address,
+i.e. we lose the property that the remote-force-close pays directly
+to a wallet address.
+
+So, the problem we would like to solve, is:
+- having seed words
+- having access to blockchain data
+- somehow having identified our channel counterparties (node IDs),
+  and our channels with them (funding outpoints)
+- and assuming we can get the remote to do a force-close
+--&gt; we would like to be able to spend the to_remote output
+
+Solutions:
+
+1) Naively, we could just derive a static key to be used as
+payment_basepoint, reused between all our channels, and watch the
+single resulting p2wsh script on-chain.
+Clearly this has terrible privacy implications.
+
+2) Or, we could derive a new bip32 chain/sequence of pubkeys
+used as payment_basepoint for channels, and watch these p2wsh scripts,
+with a gap limit.
+Particularly the gap limit part makes this undesirable though
+(just consider having more than &quot;gap limit&quot; channels open and restoring
+from seed).
+
+Instead, it seems desirable to see whether we can extract some entropy
+from the blockchain, and use that as a nonce to be combined with a
+static private secret derived from our seed.
+We could extract data either from the funding tx, or from the
+remote-commitment-transaction that spent the funding output.
+
+3) We exploit the fact that the funding output uses a
+2of2 OP_CHECKMULTISIG script composed of the funding pubkeys of
+each party. The funding pubkey itself can be used as a nonce, and
+it can be recovered from the witness of the commitment tx.
+The privkey for payment_basepoint can then be derived as e.g.
+hash(bip32_derive(seed, HARDCODED_PATH) + funding_pubkey).
+
+In fact (3) is not novel at all: eclair has been deriving
+all their channel keys like this [0] for some time, from
+a static seed-based secret combined with the funding_pubkey as nonce,
+and generating the funding_privkey from ~os.urandom.
+
+Electrum will likely use (3) at least for the payment_basepoint,
+as part of adapting to anchors.
+
+-----
+
+Note that the idea (3) relies on recovering the funding_pubkey from
+the witness of the spending transaction, which will break in the future
+if the funding script is changed to e.g. a p2tr that uses musig.
+
+Crucially, note that all the approach needs is some blockchain-visible
+nonce that is already known at the time we need to construct the
+open_channel message (as we want to be able to derive some of the keys
+that are sent as part of the open_channel message
+(e.g. payment_basepoint) from it).
+As long as the funding output uses a 2of2 OP_CHECKMULTISIG,
+the local funding_pubkey fits the bill.
+
+Note that irrespective of any restrictions on the script used in
+the funding output, we could use the funding scriptPubKey/address as
+the nonce, if the open_channel/accept_channel messages were
+split into two.
+For example, instead of the single round of open_channel/accept_channel,
+there could be two rounds:
+- an open_channel_part1, where the peers exchange only
+  the funding_pubkey (and the other non-pubkey fields), and
+- an open_channel_part2, where the rest of the pubkeys are sent
+This way the peers would learn what the funding address would be after
+the first round finishes, and could potentially use that to derive
+their other channel keys (needed for round 2).
+
+So, to arrive at my point, I would like to ask whether people think
+such a change - or something similar - might be useful, and if so,
+whether it could/should be incorporated to the current
+channel establishment v2 proposal [1].
+If there is agreement that this would be useful, a spec change
+would be most useful before changing the 2of2 multisig script.
+
+Regards,
+ghost43 (SomberNight)
+
+
+[0]: <A HREF="https://github.com/ACINQ/eclair/pull/1097">https://github.com/ACINQ/eclair/pull/1097</A>
+[1]: <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/851">https://github.com/lightningnetwork/lightning-rfc/pull/851</A>
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003226.html">[Lightning-dev] DNS records for LN nodes
+</A></li>
+	<LI>Next message: <A HREF="003232.html">[Lightning-dev] Deriving channel keys deterministically from	seed, musig, and channel establishment v2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3229">[ date ]</a>
+              <a href="thread.html#3229">[ thread ]</a>
+              <a href="subject.html#3229">[ subject ]</a>
+              <a href="author.html#3229">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

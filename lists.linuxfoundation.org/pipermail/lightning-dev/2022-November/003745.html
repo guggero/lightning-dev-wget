@@ -1,0 +1,268 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A pragmatic, unsatisfying work-around for anchor outputs fee-bumping reserve requirements
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20pragmatic%2C%0A%20unsatisfying%20work-around%20for%20anchor%20outputs%20fee-bumping%20reserve%0A%20requirements&In-Reply-To=%3CCACdvm3PYAjuKgRfYrxwG_2ny%3DGRjaiAB9su7RQ9xH2gDRKbLxA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003743.html">
+   <LINK REL="Next"  HREF="003754.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A pragmatic, unsatisfying work-around for anchor outputs fee-bumping reserve requirements</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20pragmatic%2C%0A%20unsatisfying%20work-around%20for%20anchor%20outputs%20fee-bumping%20reserve%0A%20requirements&In-Reply-To=%3CCACdvm3PYAjuKgRfYrxwG_2ny%3DGRjaiAB9su7RQ9xH2gDRKbLxA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A pragmatic, unsatisfying work-around for anchor outputs fee-bumping reserve requirements">bastien at acinq.fr
+       </A><BR>
+    <I>Mon Nov  7 08:56:17 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003743.html">[Lightning-dev] A pragmatic, unsatisfying work-around for anchor outputs fee-bumping reserve requirements
+</A></li>
+        <LI>Next message: <A HREF="003754.html">[Lightning-dev] Mitigating Channel Jamming with Reputation	Credentials: a Protocol Sketch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3745">[ date ]</a>
+              <a href="thread.html#3745">[ thread ]</a>
+              <a href="subject.html#3745">[ subject ]</a>
+              <a href="author.html#3745">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey laolu,
+
+Thanks for your feedback.
+
+&gt;<i> However, I can imagine that if an implementation doesn't have its own
+</I>&gt;<i> wallet, then things can be a bit more difficult, as stuff like the
+</I>bitcoind
+&gt;<i> wallet may not expose the APIs one needs to do things like CPFP properly.
+</I>
+I don't think this is only an issue of wallet management though. I would
+bet that most node operators today don't have a good enough utxo reserve
+to actually provide safety against a malicious attacker once mempool
+backlog starts filling up. Eclair isn't really limited by bitcoind APIs
+here, but rather by BIP 125 rules, which creates the same issues for
+lnd's internal wallet.
+
+The reason we're not seeing issues today is only because there is no
+malicious behavior on the network, but when that happens, there will
+be issues (remember, the turkey thinks everything is fine and really
+likes that guy who comes everyday to feed it, until Thanksgiving comes).
+
+The issue I'm most concerned with is an attacker filling your outgoing
+HTLC slots with HTLCs that timeout at blocks N+1, N+2, ..., N+483. It's
+not trivial to batch those HTLCs because they all have different cltv
+expiries. If you're low on utxo count, you only have two choices:
+
+1. Re-create a batched transaction at every block to include more utxos
+2. Create trees of unconfirmed transactions where the change output of
+one HTLC tx is the funding input of another HTLC tx
+
+With option 1, you'll need to increase the overall feerate at every
+block to match RBF rules, which means you'll end up greatly overpaying
+the fees once you've RBF-ed a hundred times or more...
+
+With option 2, it's even worse, because HTLCs that timeout earlier end
+up closer to the root of tree. It will be prohibitively costly to RBF
+them because BIP 125 will force you to pay a huge fee for replacing a
+high number of unconfirmed descendants. Your only option is to CPFP at
+one of the leaves of the tree, which is going to be very costly as well
+because it requires setting a high feerate to the *whole* tree, even
+though it could contain many HTLCs that still have time available before
+the cltv-expiry-delta ends.
+
+The attacker may also regularly claim HTLCs one-by-one by revealing the
+preimage just to invalidate your whole batched transaction or tree of
+unconfirmed transactions, requiring you to rebuild it at every block and
+wait one more block before getting transactions confirmed (until you
+reach the point where the attacker can also claim all HTLC outputs and
+your only solution is a scorched-earth strategy).
+
+Both options end up with the node operator greatly overpaying fees when
+fighting a relatively smart attacker (which means the node operator is
+actually losing money).
+
+Also, this is a fairly complex bit of logic to implement, which depends
+on bitcoin node's relaying policies and is really hard to test against
+enough malicious scenarios. It's thus very likely to have subtle bugs.
+
+This class of attacks are why eclair's default are very conservative:
+
+* 30 accepted HTLCs instead of 483
+* 144 blocks of cltv-expiry-delta
+
+I'm afraid this is the only way to tip the odds in the favor of the
+honest node operators with the current protocol. It's very frustrating
+though!
+
+As for Taproot compatibility, this is perfectly doable: if we're able
+to share one nonce, we can just share multiple every time. If we're
+able to watch one transaction, we're able to watch multiple. It's more
+costly, but it's not a fundamental limitation.
+
+I'm more concerned about limitations of this proposal to tackle dusty
+HTLCs kind of attacks and the complexity it introduces, as was raised
+in the comments of the spec PR [1]. Granted, this isn't a very *good*
+proposal, but it's an attempt at raising awareness that we probably
+need to do *something* to get slightly better funds safety.
+
+Thanks,
+Bastien
+
+[1] <A HREF="https://github.com/lightning/bolts/pull/1036">https://github.com/lightning/bolts/pull/1036</A>
+
+Le sam. 5 nov. 2022 &#224; 01:52, Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; a &#233;crit
+:<i>
+</I>&gt;<i>
+</I>&gt;<i> Hi tbast,
+</I>&gt;<i>
+</I>&gt;<i> FWIW, we haven't had _too_ many issues with the additional constraints
+</I>&gt;<i> anchor channels bring. Initially users had to deal w/ the UTXO reserve,
+</I>but
+&gt;<i> then sort of accepted the trade-off for the safety that actually being
+</I>able
+&gt;<i> to dynamically bump the fee on your commitment transaction and HTLCs.
+</I>We're
+&gt;<i> also able to re-target the fee level of second level spends on the fly,
+</I>and
+&gt;<i> even aggregate them into distinct fee buckets.
+</I>&gt;<i>
+</I>&gt;<i> However, I can imagine that if an implementation doesn't have its own
+</I>&gt;<i> wallet, then things can be a bit more difficult, as stuff like the
+</I>bitcoind
+&gt;<i> wallet may not expose the APIs one needs to do things like CPFP properly.
+</I>&gt;<i> lnd has its own wallet (btcwallet), which is what has allowed us to adopt
+</I>&gt;<i> default P2TR addresses everywhere so quickly (tho ofc we inherit
+</I>additional
+&gt;<i> maintenance costs).
+</I>&gt;<i>
+</I>&gt;<i> &gt; Correctly managing this fee-bumping reserve involves a lot of complex
+</I>&gt;<i> &gt; decisions and dynamic risk assessment, because in worst-case scenarios,
+</I>a
+&gt;<i> &gt; node may need to fee-bump thousands of HTLC transactions in a short
+</I>period
+&gt;<i> &gt; of time.
+</I>&gt;<i>
+</I>&gt;<i> IMO these new considerations aren't any worse than needing to predict the
+</I>&gt;<i> future fee schedule of the chain to ensure that you can force close in a
+</I>&gt;<i> timely manner when you need to. Re fee bumping thousands of HTLCs: anchor
+</I>&gt;<i> lets them all be batched in the same transaction, which reduces fees and
+</I>&gt;<i> also the worst-case on-chain force close footprint.
+</I>&gt;<i>
+</I>&gt;<i> &gt; each node can simply sign multiple versions of the HTLC transactions at
+</I>&gt;<i> &gt; various feerates
+</I>&gt;<i>
+</I>&gt;<i> I'm not sure this can be mapped super cleanly to taproot channels that use
+</I>&gt;<i> musig2. Today in the spec draft/impl, both sides maintain a pair of nonces
+</I>&gt;<i> (one for each commitment transaction). If they need to sign N different
+</I>&gt;<i> versions, then they also need to exchange N nonces, both during the
+</I>initial
+&gt;<i> funding process, and also each time a new commitment transaction is
+</I>created.
+&gt;<i> Mo signatures means mo transaction latency. Also how would retransmitting
+</I>be
+&gt;<i> handled? By sending distinct valid signatures for a given fee rate, you're
+</I>&gt;<i> effectively creating _even more_ commitments one needs to watch to be able
+</I>&gt;<i> to play once they potentially hit the chain.
+</I>&gt;<i>
+</I>&gt;<i> Ultimately, I'm not sure why implementations that have already rolled out
+</I>&gt;<i> anchors by default, and have a satisfactory policy for ensuring fee
+</I>bumping
+&gt;<i> UTXOs are available at all times would implement this. It's just yet
+</I>another
+&gt;<i> option defined in the spec, and prescribes a more restrictive solution to
+</I>&gt;<i> what's already possible: being able to dynamically fee bump commitment
+</I>&gt;<i> transactions, and aggregate second level spends.
+</I>&gt;<i>
+</I>&gt;<i> -- Laolu
+</I>&gt;<i>
+</I>&gt;<i> On Thu, Oct 27, 2022 at 6:51 AM Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt;
+</I>wrote:
+&gt;&gt;<i>
+</I>&gt;&gt;<i> Good morning list,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The lightning network transaction format was updated to leverage CPFP
+</I>&gt;&gt;<i> carve-out and allow nodes to set fees at broadcast time, using a feature
+</I>&gt;&gt;<i> called anchor outputs [1].
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> While desirable, this change brought a whole new set of challenges, by
+</I>&gt;&gt;<i> requiring nodes to maintain a reserve of available utxos for fee-bumping.
+</I>&gt;&gt;<i> Correctly managing this fee-bumping reserve involves a lot of complex
+</I>&gt;&gt;<i> decisions and dynamic risk assessment, because in worst-case scenarios,
+</I>&gt;&gt;<i> a node may need to fee-bump thousands of HTLC transactions in a short
+</I>&gt;&gt;<i> period of time.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This is especially frustrating because HTLC transactions should not need
+</I>&gt;&gt;<i> external inputs, as the whole value of the HTLC is already provided in
+</I>&gt;&gt;<i> its input, which means we could in theory &quot;simply&quot; decrease the amount of
+</I>&gt;&gt;<i> the corresponding output to set the fees to any desired value. However,
+</I>&gt;&gt;<i> we can't do this safely because it doesn't work well with the revocation
+</I>&gt;&gt;<i> mechanism, unless we find fancy new sighash flags to add to bitcoin.
+</I>&gt;&gt;<i> See [2] for a longer rant on this issue.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> A very low tech and unsatisfying solution exists, which is what I'm
+</I>&gt;&gt;<i> proposing today: each node can simply sign multiple versions of the
+</I>&gt;&gt;<i> HTLC transactions at various feerates, and at broadcast time if you're
+</I>&gt;&gt;<i> lucky you'll have a pre-signed transaction that approximately matches
+</I>&gt;&gt;<i> the feerate you want, so you don't need to add inputs from your fee
+</I>&gt;&gt;<i> bumping reserve. This reduces the requirements on your on-chain wallet
+</I>&gt;&gt;<i> and simplifies transaction management logic. I believe that it's a
+</I>&gt;&gt;<i> pragmatic approach, even though not very elegant, to increase funds
+</I>&gt;&gt;<i> safety for existing node operators and wallets. I opened a spec PR
+</I>&gt;&gt;<i> that is currently chasing concept ACKs before I refine it [3].
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Please let me know what you think, and if this is something that you
+</I>&gt;&gt;<i> would like your implementation to provide.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks,
+</I>&gt;&gt;<i> Bastien
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [1] <A HREF="https://github.com/lightning/bolts/pull/688">https://github.com/lightning/bolts/pull/688</A>
+</I>&gt;&gt;<i> [2] <A HREF="https://github.com/lightning/bolts/issues/845">https://github.com/lightning/bolts/issues/845</A>
+</I>&gt;&gt;<i> [3] <A HREF="https://github.com/lightning/bolts/pull/1036">https://github.com/lightning/bolts/pull/1036</A>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221107/890d4429/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221107/890d4429/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003743.html">[Lightning-dev] A pragmatic, unsatisfying work-around for anchor outputs fee-bumping reserve requirements
+</A></li>
+	<LI>Next message: <A HREF="003754.html">[Lightning-dev] Mitigating Channel Jamming with Reputation	Credentials: a Protocol Sketch
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3745">[ date ]</a>
+              <a href="thread.html#3745">[ thread ]</a>
+              <a href="subject.html#3745">[ subject ]</a>
+              <a href="author.html#3745">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

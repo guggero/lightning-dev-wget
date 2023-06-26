@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Payment Latency by Fast Forwards
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3C5qwPnxxjpzkzOxXurqI0-RKoEfrvna475XswTmgUwntnzs3RwEMllkKCxzFf_3UAAjoeKlj8tD49rmgDyAREYsfk5-xvJBh0YWju1qU_f-0%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003054.html">
+   <LINK REL="Next"  HREF="003052.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Payment Latency by Fast Forwards</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3C5qwPnxxjpzkzOxXurqI0-RKoEfrvna475XswTmgUwntnzs3RwEMllkKCxzFf_3UAAjoeKlj8tD49rmgDyAREYsfk5-xvJBh0YWju1qU_f-0%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Improving Payment Latency by Fast Forwards">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Jun 20 00:30:09 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003054.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+        <LI>Next message: <A HREF="003052.html">[Lightning-dev] BIP118 confusion / SIGHASH_NOINPUT is now	SIGHASH_ANYPREVOUT (i think)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3060">[ date ]</a>
+              <a href="thread.html#3060">[ thread ]</a>
+              <a href="subject.html#3060">[ subject ]</a>
+              <a href="author.html#3060">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning LL,
+
+&gt;<i> Hi Z,
+</I>&gt;<i>
+</I>&gt;<i> Thanks again for getting to the bottom of this. I think we are on the same page except for one clarification:
+</I>&gt;<i>
+</I>&gt;<i> On Tue, 8 Jun 2021 at 12:37, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i> &#160;
+</I>&gt;<i>
+</I>&gt;<i> &gt; Thus, in our model, we have the property that Bob can always recover all signatures sent by Alice, even if Carol is corrupted by Alice --- we model the signature-deletion attack as impossible, by assumption.
+</I>&gt;<i> &gt; (This is a strengthening of security assumptions, thus a weakening of the security of the scheme --- if Bob does not take the above mitigations, Bob ***is*** vulnerable to a signature-deletion attack and might have ***all*** funds in hostage).
+</I>&gt;<i>
+</I>&gt;<i> Only where ***all*** refers to the funds in the fast forward -- funds consolidated into the channel balance are not at risk (modulo enforcing correct state on chain).
+</I>&gt;<i> I think it should be easy to get a stream of signatures so they can't be deleted. The user &quot;Bob&quot; is creating and sending the invoices so they can always demand and save the signatures from &quot;Carol the Cashier&quot; that correspond to each payment so the &quot;deletion attack&quot; will be thwarted.
+</I>
+To be clear, what I meant here with &quot;***all***&quot; was that risk of funds hostage exists if Bob has absolutely no mitigation against this (i.e. makes no copies of signatures for itself).
+What you suggest is a mitigation that *does* prevent this &quot;***all***&quot; case (i.e. Bob makes its own copies of signatures, it does not delegate signature storage to Carol the Cashier).
+
+Thus, the model outright assumes that Bob makes *some* mitigation to prevent signature deletion, as without *any* mitigation the model is insecure.
+
+Otherwise I think we are mostly in agreement here.
+
+--
+
+Another thing I have been mulling over is an older proposal where some Lightning service-provider (who takes on the role of Alice in our description) simply generates the invoice+preimage itself.
+Then when Bob comes online, the Lightning service-provider (Alice ---- hmmm A Lightning Service-provider hence &quot;ALS&quot; or &quot;Alice&quot;) simply forwards the payment to Bob at that time.
+
+i.e.
+
+* Bob makes an invoice+preimage for a third party to pay.
+* Bob hands over the preimage to Alice.
+* Bob goes offline.
+* Sender sends to Alice, who has the preimage and can claim it.
+* Bob goes online.
+* Alice sends the payment.
+
+Note that Alice is trusted to honestly forward the payment to Bob when Bob comes online in this older proposal.
+
+However, in this older proposal, any funds &quot;already&quot; in the Bob-side of the channel are safe --- Alice cannot steal them.
+Alice can only steal funds it has not forwarded to Bob yet.
+
+Now, let us return to the detailed FF scheme (with separate Carol the Cashier and Kelly the Keykeeper).
+
+If Carol was operated by Alice, it would have similar security to the above older proposal.
+
+* Carol does not have any Bob privkeys or the entire set of revocation keys, so cannot steal channel funds outright.
+* We assume that Bob has mitigations against signature deletion (i.e. Bob has backups of signatures).
+* We have already established in previous discussion, Alice+Carol cannot cooperate to steal funds &quot;already&quot; in the channel --- they can only steal funds from payments that Bob has not come online to claim yet.
+
+However, the older proposal has significant advantage:
+
+* It is simpler and can reuse existing code and tests.
+
+Indeed, C-Lightning plus plugins can implement the older proposal today, with fairly small amount of new code (only for the plugin --- no changes to C-Lightning necessary, just add a plugin, thus significantly lower testing burden).
+Contrast this with FF, which requires a new state machine and protocol to implement, with greatly increased potential for CVEs.
+
+What FF *does* have as an advantage is that Carol the Cashier can be operated by **Bob** rather than Alice.
+
+For example, Bob can have a single-board computer that runs Carol-software, and the mobile phone of Bob is simply a remote control for the Carol-software.
+The advantage here is that the single-board computer, which is 100% online, does *not* have any privkeys.
+This is in contrast with current Lightning implementations, where such a &quot;remote control&quot; scheme would need privkeys to be kept on the single-board computer, at risk of exfiltration.
+Bob can have a separate Kelly-hardware that it connects to its mobile phone whenever Bob needs to send out money, thus greatly reducing the risk experienced by Bob.
+The previous proposal cannot do this as honest resolution of the payment is simply immediately trusted to Alice A Lightning Service-provider.
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003054.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+	<LI>Next message: <A HREF="003052.html">[Lightning-dev] BIP118 confusion / SIGHASH_NOINPUT is now	SIGHASH_ANYPREVOUT (i think)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3060">[ date ]</a>
+              <a href="thread.html#3060">[ thread ]</a>
+              <a href="subject.html#3060">[ subject ]</a>
+              <a href="author.html#3060">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

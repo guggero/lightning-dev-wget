@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DRAFT: interactive tx construction protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CQJGdxzTJWbpKoImVJtkUg2aGVLRySkpx6UFA-sCQC4yTaq7lCY8a45WQoh0XOB3RNrPIPDQGRWmyhPqEI_4PNqbjVCLnm1py_1Qk4lUbi8M%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002521.html">
+   <LINK REL="Next"  HREF="002523.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DRAFT: interactive tx construction protocol</H1>
+    <B>AdamISZ</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CQJGdxzTJWbpKoImVJtkUg2aGVLRySkpx6UFA-sCQC4yTaq7lCY8a45WQoh0XOB3RNrPIPDQGRWmyhPqEI_4PNqbjVCLnm1py_1Qk4lUbi8M%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] DRAFT: interactive tx construction protocol">AdamISZ at protonmail.com
+       </A><BR>
+    <I>Tue Feb 11 16:04:50 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002521.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+        <LI>Next message: <A HREF="002523.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2522">[ date ]</a>
+              <a href="thread.html#2522">[ thread ]</a>
+              <a href="subject.html#2522">[ subject ]</a>
+              <a href="author.html#2522">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>niftynei, ZmnSCPxj and list:
+
+
+Zmn** pinged me about this discussion and I thought I could add something directly:
+
+
+First, re:
+&gt;<i> I'd like to propose that we add a second commitment requirement to the PoDLE that JoinMarket uses, to limit the use of a commitment's validity to be only between an initiator and a single peer. Otherwise you can enable something I'll call the &quot;pouncing venus-flytrap attack&quot;[1].
+</I>
+Here's some thoughts that may give context to this (excellent) observation:
+
+This issue didn't crop up (well, kinda! I do remember discussion about it) in our use case because takers always send out to 5-12 (typically) makers at once, and the HP2 only needs to get broadcast by one to stop any reuse.
+But whichever way you look at it, it's a very good point! And in LN case, seems like a very substantial attack (certainly no question it could be allowed for 2 party protocol).
+
+In case a brief summary of JM mechanism is helpful, I added some info on the the taker-maker conversation at the end of this mail [1].
+
+Second, re:
+&gt;<i> ## Mitigation
+</I>&gt;<i> Have each initiator provide two commitments: one to the shared/global J
+</I>&gt;<i> point and one to a point that is found from the hash of the non-initiating
+</I>&gt;<i> node's node_id.[2]
+</I>
+I get the thinking here, and it makes a lot of sense, but I do think it can be done more compactly.
+If the commitment is H(P2), the opening of the commitment could be altered to include the receiving node:
+
+s = k + H(kG || kJ || P || P2 || utxo || receiving-node) x
+
+and as before transfer opening: (P, P2, u, s, e) with receiving-node implicitly reconstructed to do the verification of the Schnorr sig. It's basically a message in a signature.
+
+As you note, we wouldn't want to ban usage of a H(P2) value based on an incorrect opening; we just use that failure to decide to not hand over our utxo information (as receiver of the commitment). But unless I missed something, doing it the above way is the more logical/compact choice.
+
+Seems like there's a lot of fine nuance here. A malicious counterparty can always choose to blacklist. In Joinmarket we accept (because of our stringent no-identity policy) some roughness and assume some meaningful level of honest participation. A Taker issuing a request to 10 cps hopes that at least some number (min 4 by default) will actually respond to an honest request; if say 8 of 10 do so, he will do the coinjoin with those. That it is brittle or flaky is why we allow 3 tries for each qualifying utxo (qualified on age, size), and also allow custom insertion of additional utxos (although it's rarely if ever needed). It works fine in practice, for now, but it is not watertight; if you have overwhelmingly malicious counterparties you are kinda screwed from other angles, as well as this one. Meanwhile on the Maker side we're trying to create a kind of 'herd immunity'; as long as some few of them are honest, word will get out about used commitments which will stop free spam queries, at least (but it's not a super strong defence!).
+
+
+[1] Taker-Maker convo (excerpt); some notes re: commitments/PoDLE.
+===
+!fill amount, oid, commitment (HP2)
+-- this is where a taker sends to each maker an hp2 value. This is the step intended to enforce scarcity, and the assumption in JM was always that this would basically inevitably get shared. Because there are typically 5-12 makers involved, this seemed a reasonably safe assumption.
+If the commitment value is already used and thus not valid, it gets broadcast immediately. If it's not, it only gets shared as part of the !ioauth step below.
+
+!pubkey key
+
+-- this is just the maker giving an ephemeral key for the encryption
+
+!auth (s, e, u, P, P2)
+-- (encrypted) this is the taker opening the above commitment. It's rather weird at first sight, because he is opening immediately after committing, with apparently no step inbetween; but in fact the implicit intermediate step is the broadcast (exactly what is being questioned with 'venus flytrap').
+
+!ioauth maker-utxo-data
+-- notice the maker is only sending this utxo data (encrypted of course) after proof of ownership of the utxo above.
+It's only at this step that the hp2 commitment value is (a) added to the maker's local &quot;used up&quot; list, and (b)privmsged to 1  randomly chosen other bots in the trading pit, who then pubmsgs it to everyone (and that happens multiple times because multiple makers in tx), and they in turn record it as &quot;used&quot;.
+
+The mechanism is both not very strong - we use 3 allowed attempts per utxo - and imperfect in its &quot;justice&quot;; such commitments can be &quot;used up&quot; by failures of one's counterparties. But it does serve to stop trivial global snooping, and doesn't cost anything in terms of identity or locked funds, so it has served a purpose (we did actually see such attacks before it, and not after it).
+
+I'd also note that in terms of the venus flytrap attack mentioned, there could be a small time window between one maker receiving !auth and at least one other honest maker getting to broadcast step at !ioauth; while I don't think that's very practical in our use case, it is for sure a theoretical concern and removing it could be either slightly, or extremely, important in another use case.
+
+Thanks,
+Adam Gibson/waxwing/AdamISZ
+
+Sent with ProtonMail Secure Email.
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002521.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+	<LI>Next message: <A HREF="002523.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2522">[ date ]</a>
+              <a href="thread.html#2522">[ thread ]</a>
+              <a href="subject.html#2522">[ subject ]</a>
+              <a href="author.html#2522">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

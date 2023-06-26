@@ -1,0 +1,434 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Now with RBF
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Now%20with%20RBF&In-Reply-To=%3C87h8gh1wtn.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001620.html">
+   <LINK REL="Next"  HREF="001624.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Now with RBF</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Now%20with%20RBF&In-Reply-To=%3C87h8gh1wtn.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Now with RBF">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Nov 16 04:16:20 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001620.html">[Lightning-dev] type,len,value standard
+</A></li>
+        <LI>Next message: <A HREF="001624.html">[Lightning-dev] Splicing Proposal: Now with RBF
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1621">[ date ]</a>
+              <a href="thread.html#1621">[ thread ]</a>
+              <a href="subject.html#1621">[ subject ]</a>
+              <a href="author.html#1621">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+I tried to simplify RBF as much as possible; it adds a *lot* of
+complexity :( In particular, below we have one side pay the fees (and
+thus responsible for RBF), in violation of the summit agreement,
+and simplified the fee amount as much as reasonable.
+
+RBF it implicitly requires multiple (exclusive) splices at once.  This
+will all require a great deal of testing...
+
+Changes since initial proposal:
+
+1. We add subtypes so `splice_init`/`splice_accept` etc are single
+   messages.  These basically allow us to describe variable numbers of
+   variable-length fields.
+2. We include both script and wscript in inputs, for p2sh-wrapping.
+3. Initiator pays fees.
+4. Other side gets to add the same number of inputs+outputs if they
+   want, minimum 2 (enough for one input, one change output).
+5. If we both initiate a splice at once, *fundee*'s tiebreaker (well,
+   funder pays for everything else!).
+6. Both sides give a max_extra_witness_len for inputs, to calc fee.
+7. Every still-negotiable parameter is renegotiated.
+8. We add RBF, at intiator's discretion (they're paying for it!)
+9. The language &quot;MUST fail the channel&quot; has been made into &quot;MUST error&quot;
+   in antipation of &quot;soft&quot; errors.
+
+### Initiating a splice: `splice_init`
+
+1. type: 40 (`splice_init`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`4`:`feerate_per_kw`]
+   * [`2`:`num_inputs`]
+   * [`num_inputs*splice_input`]
+   * [`2`:`num_outputs`]
+   * [`num_outputs`*splice_output`]
+   * [`8`:`max_htlc_value_in_flight_msat`]
+   * [`8`:`channel_reserve_satoshis`]
+   * [`8`:`htlc_minimum_msat`]
+   * [`4`:`minimum_depth`]
+   * [`2`:`to_self_delay`]
+
+1. subtype: `splice_input`
+2. data:
+   * [`8`:`satoshis`]
+   * [`32`:`prevtxid`]
+   * [`4`:`prevtxoutnum`]
+   * [`2`:`scriptlen`]
+   * [`scriptlen`:`script`]
+   * [`2`:`max_extra_witness_len`]
+   * [`2`:`wscriptlen`]
+   * [`wscriptlen`:`wscript`]
+
+1. subtype: `splice_output`
+2. data:
+   * [`8`:`satoshis`]
+   * [`2`:`scriptlen`]
+   * [`scriptlen`:`script`]
+
+The sender of `splice_init`:
+  - if a splice is already in progress
+    - MUST NOT send
+  - MUST ensure each `splice_input` refers to an existing UTXO.
+  - MUST ensure each `splice_output` is a standard script.
+  - SHOULD ensure that `feerate_per_kw` is sufficient for the splice
+    transaction to confirm.
+  - MUST set `feerate_per_kw` to 253 or more.
+  - MUST ensure it will have sufficient funds post-splice above its
+    reserve to pay for the splice transaction at the given `feerate_per_kw`
+    and the amount it contributes to the commitment_transaction fee
+  - MUST NOT have total `splice_output` `satoshis` greater than its current
+  balance minus reserve plus the total `splice_input` `satoshis`.
+  - MUST set `max_htlc_value_in_flight_msat`,
+  `channel_reserve_satoshis`, `htlc_minimum_msat`, `minimum_depth`,
+  `to_self_delay` as specified in `accept_channel`.
+
+NOTES:
+
+1. Are we *sure* we don't want to make channel_reserve_satoshis 1% of
+   capacity?  That would remove a parameter here.
+2. We explicitly allow a null splice to reset parameters or throw away history.
+
+The receiver of `splice_init`:
+  - if it has also sent `splice_init`:
+    - if the receiver was the original sender of `open_channel`:
+      - MUST discard its own `splice_init`
+    - otherwise:
+      - MUST discard this `splice_init`.
+  - if a splice is in progress:
+    - MUST error.
+  - if `feerate_per_kw` is less than 253:
+    - SHOULD error.
+  - if the total post-splice balance of the sender would be
+    insufficient to meet its reserve plus the amount
+    it contributes to the commitment_transaction fee:
+    - MUST error.
+  - if both nodes advertised the `option_upfront_shutdown_script`
+  feature, and the receiving node received a non-zero-length
+  `shutdown_scriptpubkey` in `open_channel` or `accept_channel`, and
+  any splice_output that `shutdown_scriptpubkey` is not equal to `script`:
+     - MUST fail the connection.
+  - MUST respond to `max_htlc_value_in_flight_msat`,
+  `channel_reserve_satoshis`, `htlc_minimum_msat`, `minimum_depth`,
+  `to_self_delay` as specified in `accept_channel`.
+  - SHOULD reply with `splice_accept`
+
+
+### Accepting a splice: `splice_accept`
+
+1. type: 41 (`splice_accept`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`2`:`num_inputs`]
+   * [`num_inputs*splice_input`]
+   * [`2`:`num_outputs`]
+   * [`num_outputs`*splice_output`]
+   * [`8`:`max_htlc_value_in_flight_msat`]
+   * [`8`:`channel_reserve_satoshis`]
+   * [`8`:`htlc_minimum_msat`]
+   * [`4`:`minimum_depth`]
+   * [`2`:`to_self_delay`]
+
+The sender of `splice_accept`:
+  - consider the `splice_limit` the total number of `splice_input` and
+  `splice_output` from `splice_init`, with minimum 2.
+  - MUST NOT send a number of `splice_input` and/or `splice_output`
+  which exceeds `splice_limit`.
+  - MUST ensure each `splice_input` refers to an existing UTXO.
+  - MUST ensure each `splice_output` is a standard script.
+  - MUST NOT have total `splice_output` `satoshis` greater than its current
+  balance minus reserve plus the total `splice_input` `satoshis`.
+  - MAY limit their `splice_input` and `splice_output`s to avoid
+  sending the sender of `splice_init` below reserve.
+
+The receiver of `splice_accept`:
+  - If the number of `splice_input` and/or `splice_output` exceeds `splice_limit`:
+     - MUST error.
+  - if the total `splice_output` `satoshis` is greater than the
+  sender's current balance minus reserve plus the total `splice_input`
+  `satoshis`:
+    - MUST error.
+  - if both nodes advertised the `option_upfront_shutdown_script`
+  feature, and the receiving node received a non-zero-length
+  `shutdown_scriptpubkey` in `open_channel` or `accept_channel`, and
+  any splice_output that `shutdown_scriptpubkey` is not equal to `script`:
+     - MUST fail the connection.
+  - SHOULD send `splice_commitment_signature`
+
+Both sides:
+  - MUST construct the resulting splice transaction as specified in &lt;FIXME&gt;
+
+NOTES:
+
+1. The receiver doesn't check transaction validity.  Worst-case, it'll
+   never confirm, and never splice in.
+2. We don't set size limits on inputs &amp; outputs, and we probably should?
+3. The initiator can be forced below their reserve by the recipient
+   adding their own splice in/outs.  But that's OK.
+
+1. type: 42 (`splice_commitment_signature`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`64`:`commitment_signature`]
+   * [`2`:`num_htlcs`]
+   * [`num_htlcs*64`:`htlc_signature`]
+
+The sender:
+  - MUST set `commitment_signature` and `htlc_signature`s as done for
+    `commitment_signed`, but spending the funding output of the splice
+    transaction.
+
+The recipient:
+  - if `signature` is not valid for its local splice commitment transaction:
+    - MUST fail the channel.
+  - if `num_htlcs` is not equal to the number of HTLC outputs in the local
+    splice commitment transaction:
+    - MUST fail the channel.
+  - if any `htlc_signature` is not valid for the corresponding HTLC transaction:
+    - MUST fail the channel.
+  - if the recipient was not the sender of `splice_init`:
+    - SHOULD send its own `splice_commitment_signature` in return.
+  - otherwise:
+    - SHOULD send `splice_confirm`.
+
+### Confirming a splice: `splice_confirm`
+
+1. type: 43 (`splice_confirm`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`64`:`signature`]
+   * [`2`:`num_witnesses`]
+   * [`num_witnesses*witness_stack`]
+
+Each `witness` itself is serialized witness input stack:
+1. subtype: `witness_stack`
+2. data:
+   * [`2`:`num_input_stack`]
+   * [`num_input_stack`*`stack_element`]
+
+1. subtype: `stack_element`
+2. data:
+   * [`2`:`len`]
+   * [`len`:`element`]
+
+The sender:
+  - MUST set `signature` to the signature for the splice transaction.
+  - MUST set `witness` to the marshalled witness data for each of its
+    inputs, in splice transaction order.
+  - MUST remember the details of this splice transaction.
+  - MUST NOT send a `witness_stack` whose length exceeds the
+    corresponding `max_extra_witness_len`.
+
+The recipient:
+  - SHOULD check that 
+  - SHOULD apply `signature` and `witness` to the splice transaction and
+    broadcast the result.
+  - If a `witness_stack` length exceeds the corresponding `max_extra_witness_len`:
+    - MAY error.
+  - if the recipient was the sender of `splice_init`:
+    - SHOULD reply with its own `splice_confirm`.
+
+
+### Updating a splice: `splice_rbf`
+
+1. type: 45 (`splice_rbf`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`4`:`fee_step`]
+
+Each `fee_step` adds 1/4 (rounded down) to the initial splice
+transaction fee. eg. if the initial fee was 1035 satoshi, `fee_step` 1
+is  1035 + 1035 / 4 = 1293, `fee_step` 2 is 1293 + 1293 / 4 = 1616.
+
+The sender:
+  - SHOULD send `splice_rbf` if the current splice transaction will not
+    confirm in a timely manner.
+  - MUST set `fee_step` greater than zero and greater than any prior `fee_step`.
+  - MUST be the sender of `splice_init`.
+  - MUST have already sent and received `splice_confirm` for the
+    previous splice transaction.
+  - MUST ensure it will have sufficient funds post-splice above its
+    reserve to pay for the splice transaction at the new feerate.
+  - MUST construct the resulting splice transaction as specified in &lt;FIXME&gt;
+  - SHOULD send `splice_commitment_signature` on the new splice
+    transation, and continue negotiation as before.    
+
+The recipient:
+  - if the sender of `splice_rbf` was not the sender of `splice_init`:
+    - MUST error.
+  - if the new fee exceeds the sender's current balance minus reserve
+    after it is applied to the splice transaction:
+    - MUST error.
+  - MUST construct the resulting splice transaction as specified in &lt;FIXME&gt;
+  - MUST handle `splice_commitment_signature` on the new splice
+    transation, and continue negotiation as before.    
+  
+NOTES:
+
+1. 1/4 is a reasonable minimal RBF, but as each one requires more
+   tracking by the recipient, serves to limit the number you can create.
+
+### Completing a splice: `splice_rbf`
+
+1. type: 45 (`splice_closed`) (`option_splice`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`32`:`splice_txid`]
+
+
+The sender:
+  - MUST NOT send until the splice transaction has reached its own
+  `minimum_depth`.
+  - MUST set `splice_txid` to the txid of the splice transaction which confirmed.
+
+Either node:
+  - if it has received and sent `splice_rbf`:
+    - MAY discard HTLCs and revocations requirements for states in
+    channel prior to the splice.
+  - MUST follow the requirements for `announcement_signatures` as if
+    this were a new channel.
+
+Message Changes During Splicing
+-------------------------------
+Once you've sent `splice_confirm` each commitment transaction is needs
+to be duplicated for every splice transaction (thanks to RBF, there can
+be multiple at once).  These are in rbf-received order (increasing fee
+order, if initiator is spec compliant):
+
+1. type: 39 (`closing_signed`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`8`:`fee_satoshis`]
+   * [`64`:`signature`]
+   * [`2`:`num_splice`] (`option_splice`)
+   * [`num_splice*64`:`splice_signature`] (`option_splice`)
+
+1. subtype: `splice_signatures`
+2. data:
+   * [`64`:`signature`]
+   * [`2`:`num_htlcs`]
+   * [`num_htlcs*64`:`htlc_signature`]
+
+1. type: 132 (`commitment_signed`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`64`:`signature`]
+   * [`2`:`num_htlcs`]
+   * [`num_htlcs*64`:`htlc_signature`]
+   * [`2`:`num_splice`] (`option_splice`)
+   * [`num_splice*splice_signatures`] (`option_splice`)
+
+If a reconnection occurs between between sending and receiving
+`splice_confirm` or `splice_closed` the peer's status is uncertain.  This we
+have a new field in `channel_reestablish` to flag that we consider ourselves
+to be splicing:
+
+1. type: 136 (`channel_reestablish`)
+2. data:
+   * [`32`:`channel_id`]
+   * [`8`:`next_local_commitment_number`]
+   * [`8`:`next_remote_revocation_number`]
+   * [`32`:`your_last_per_commitment_secret`] (`option_data_loss_protect`)
+   * [`33`:`my_current_per_commitment_point`] (`option_data_loss_protect`)
+   * [`2`:`num_splice`] (`option_splice`)
+
+The sender:
+- MUST set `num_splice` to the number of `splice_confirm` it has received for
+  the current splice operation, or 0 if no current splice operation.
+
+The recipient:
+- if `num_splice` is less than the number of `splice_confirm` it has sent for the current splice operation:
+  - MUST re-transmit the last splice_confirm.
+- if `num_splice` is more than the number of `splice_confirm` it has sent for the current splice operation:
+  - MUST re-transmit the last splice_closed.
+
+NOTES:
+
+1. I suggest that the option_data_loss_protect fields MUST BE set here if
+   option_splice (there's no reason not to AFAICT).  Or do we want to try TLV
+   here?
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001620.html">[Lightning-dev] type,len,value standard
+</A></li>
+	<LI>Next message: <A HREF="001624.html">[Lightning-dev] Splicing Proposal: Now with RBF
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1621">[ date ]</a>
+              <a href="thread.html#1621">[ thread ]</a>
+              <a href="subject.html#1621">[ subject ]</a>
+              <a href="author.html#1621">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

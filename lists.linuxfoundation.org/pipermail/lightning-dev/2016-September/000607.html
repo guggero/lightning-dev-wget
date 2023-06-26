@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [BOLT Draft] Onion Routing Spec
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3C20160906112701.GA28919%40nex%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000604.html">
+   <LINK REL="Next"  HREF="000608.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [BOLT Draft] Onion Routing Spec</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3C20160906112701.GA28919%40nex%3E"
+       TITLE="[Lightning-dev] [BOLT Draft] Onion Routing Spec">decker.christian at gmail.com
+       </A><BR>
+    <I>Tue Sep  6 11:27:01 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000604.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+        <LI>Next message: <A HREF="000608.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#607">[ date ]</a>
+              <a href="thread.html#607">[ thread ]</a>
+              <a href="subject.html#607">[ subject ]</a>
+              <a href="author.html#607">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Sep 05, 2016 at 11:55:22AM +0930, Rusty Russell wrote:
+&gt;<i> Christian Decker &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt; writes:
+</I>&gt;<i> &gt; I'd like to pick up the conversation about the onion routing protocol
+</I>&gt;<i> &gt; again, since we are close to merging our implementation into the
+</I>&gt;<i> &gt; lightningd node.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; As far as I can see we mostly agree on the spec, with some issues that
+</I>&gt;<i> &gt; should be deferred until later/to other specs:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;  - Key-rotation policies
+</I>&gt;<i> 
+</I>&gt;<i> OK, I've been thinking about the costs of key-rotation.
+</I>&gt;<i>
+</I>
+I forgot that we have two potential key-rotations:
+
+ - Rotating the key used in transactions that hit the Bitcoin network
+ - Rotating the public key used for the DH shared secret generation
+   for the onion routing protocol
+
+For the moment I was concentrating on the latter.
+
+&gt;<i> Assumptions:
+</I>&gt;<i> 1) We simply use a single pubkey for everything about a node, aka its ID.
+</I>&gt;<i> 2) Medium-scale public network, 250,000 nodes and 1M channels.
+</I>&gt;<i> 3) Every node knows the entire public network.
+</I>&gt;<i> 
+</I>&gt;<i> Each node ID is 33 bytes (pubkey) each channel is 6 bytes (blocknum +
+</I>&gt;<i> txnum).  You need to associate channels -&gt; ids, say another 8 bytes per
+</I>&gt;<i> channel.
+</I>&gt;<i> 
+</I>&gt;<i> That's 22.25MB each node has to keep.
+</I>&gt;<i> 
+</I>&gt;<i> The proofs are larger: to prove which IDs owns a channel, each one needs
+</I>&gt;<i> a merkle proof (12 x 32 bytes) plus the funding tx (227 bytes, we can
+</I>&gt;<i> skip some though), the two pubkeys (66 bytes), and a signature of the ID
+</I>&gt;<i> using those pubkeys (128 bytes, schnorr would be 64?).
+</I>&gt;<i> 
+</I>&gt;<i> That's an additional 800M each node has to download to completely
+</I>&gt;<i> validate, and of course some nodes will have to keep this so we can
+</I>&gt;<i> download it from somewhere.  That's even bigger than Pokemon Go :(
+</I>&gt;<i>
+</I>&gt;<i> Change Assumptions:
+</I>&gt;<i> 1) We use a &quot;comms&quot; key for each node instead of its ID.
+</I>&gt;<i> 2) Nodes send out a new comms key, signed by ID.
+</I>&gt;<i> 
+</I>&gt;<i> That's another 33 bytes each to keep, or 8.25MB.  To rotate a comms key,
+</I>&gt;<i> we need the new key (33 bytes), and a signature from the id (64 bytes),
+</I>&gt;<i> and probably a timestamp, (4 bytes), that's 25.25MB.
+</I>&gt;<i> 
+</I>&gt;<i> That's not too bad if we rotate daily.  Probably not if we rotate
+</I>&gt;<i> hourly..
+</I>&gt;<i>
+</I>
+A node's public key used for DH shared secret generation exists
+independently of its channels. I think we probably should not bind the
+rotation of the key we use to talk to that node to one of its
+channels. However, it does make sense to require that a node also has
+at least one active channel in order for us to care at all :-)
+
+The comms key approach is in line with what I was thinking as well.
+We can bind the new communication key with the channel's existence by
+showing a derivation path from the node's (fixed) public key and the
+new key. So a node wanting to rotate its communication key just sends
+the following: &quot;I am &lt;pubkey&gt; (33 byte), please use key &lt;derivation
+number&gt; (~4 byte) and here is a &lt;signature&gt; (64 bytes) that I signed
+this rotation off.&quot;. The communication overhead is identical to your
+proposal, but, since you send only the new key, I think in your
+proposal we'd have to churn through all known node ids to find which
+one signed the rotation, or where you also using timestamp based
+derivation?
+
+Another case we could consider is having passive rotations: when an
+endpoint announces a channel's existence it also sends its rotation
+interval along. Every &lt;rotation interval&gt; nodes simply derive the new
+key and use that for the DH shared secret generation should they want
+to talk to this node. And nodes have a switchover window in which they
+accept both (would be necessary in the active rotation as well due to
+delays). The passive rotation incurs no communication overhead and can
+be bound to the node's channels, so as long as we believe one of its
+channels to exist, we rotate its keys.
+
+Possibly a mix of active and passive would make sense, with the active
+rotation enabling emergency rotations in case a key was compromised,
+but we're in a lot of trouble then anyway :-)
+
+&gt;<i> Cheers,
+</I>&gt;<i> Rusty.
+</I>
+Cheers,
+Christian
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000604.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+	<LI>Next message: <A HREF="000608.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#607">[ date ]</a>
+              <a href="thread.html#607">[ thread ]</a>
+              <a href="subject.html#607">[ subject ]</a>
+              <a href="author.html#607">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

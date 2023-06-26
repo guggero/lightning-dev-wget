@@ -1,0 +1,258 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Feedback please!
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C87d0rzc0l7.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001472.html">
+   <LINK REL="Next"  HREF="001467.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Feedback please!</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Feedback%20please%21&In-Reply-To=%3C87d0rzc0l7.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Feedback please!">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Oct 24 06:36:52 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001472.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+        <LI>Next message: <A HREF="001467.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1476">[ date ]</a>
+              <a href="thread.html#1476">[ thread ]</a>
+              <a href="subject.html#1476">[ subject ]</a>
+              <a href="author.html#1476">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Conner Fromknecht &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">conner at lightning.engineering</A>&gt; writes:
+&gt;<i> In light of this, and if I'm following along, it seems our hand is forced in
+</I>&gt;<i> splicing via a single on-chain transaction. In my book, this is preferable
+</I>&gt;<i> anyway. I'd much rather push complexity off-chain than having to do a
+</I>&gt;<i> mutli-stage splicing pipeline.
+</I>
+Agreed.  As Christian pointed out, at least our design space is reduced now?
+
+&gt;<i> I would propose sending a distinct message, which references the
+</I>&gt;<i> `active_channel_id` and a `splice_channel_id` for the pending splice:
+</I>&gt;<i>
+</I>&gt;<i> 1. type: XXX (`commitment_splice_signed`) (`option_splice`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`32`:`active_channel_id`]
+</I>&gt;<i>    * [`32`:`splice_channel_id`]
+</I>&gt;<i>    * [`64`:`signature`]
+</I>&gt;<i>    * [`2`:`num_htlcs`]
+</I>&gt;<i>    * [`num_htlcs*64`:`htlc_signature`]
+</I>&gt;<i>
+</I>&gt;<i> This more directly addresses handling multiple pending splices, as well as
+</I>&gt;<i> preventing us from running into any size constraints. The purpose of
+</I>&gt;<i> including the `active_channel_id` would be to remote node locate the
+</I>&gt;<i> spliced channel, since it may not be populated indexes containing
+</I>&gt;<i> active channels. If we don't want to include this, the existing message
+</I>&gt;<i> can be used without modification.
+</I>
+Yes, I like this!  I don't think the `splice_channel_id` helps us much,
+since we need to wait we receive all pending commitement_splice_signed
+before sending revoke_and_ack, and I think we should simply insist they
+be in splice order which makes implementation easier (simple counter).
+
+&gt;&gt;<i> We shouldn't allow more than one pending splice operation anyway, as
+</I>&gt;&gt;<i> stated in your proposal initially. We are already critically reliant on
+</I>&gt;<i> our
+</I>&gt;&gt;<i> transaction being confirmed on-chain, so I don't see this as much of an
+</I>&gt;&gt;<i> added issue.
+</I>&gt;<i>
+</I>&gt;<i> IMO there's no reason to limit ourselves to one pending splice at the
+</I>&gt;<i> message
+</I>&gt;<i> level. I think it'd be an oversight to not to plan ahead with RBF in mind,
+</I>&gt;<i> given that funding transactions have gone unconfirmed precisely because of
+</I>&gt;<i> improperly chosen fee rates. Arguably, funding flow should be extended to
+</I>&gt;<i> support this as well.
+</I>
+Good reminder re: RBF and funding.  I've put this on the brainstorming
+list with your name next to it ;)
+
+&gt;<i> Adding a splice-reject message/error code should be sufficient to allow
+</I>&gt;<i> implementations to signal that their local tolerance for number of pending
+</I>&gt;<i> splices has been reached. It's likely we'd all start with getting one splice
+</I>&gt;<i> working, but then the messages won't need to modified if we want to
+</I>&gt;<i> implement
+</I>&gt;<i> additional pending splices via RBF.
+</I>&gt;<i>
+</I>&gt;<i> A node that wants to RBF but receives a reject can then proceed with CPFP
+</I>&gt;<i> as a
+</I>&gt;<i> last resort.
+</I>&gt;<i>
+</I>&gt;<i> Are there any downsides I'm overlooking with this approach?
+</I>
+No, I think you've covered it.
+
+&gt;&gt;<i> | Bit Position  | Name                      | Field
+</I>&gt;<i>       |
+</I>&gt;&gt;<i> | ------------- | ------------------------- |
+</I>&gt;<i> -------------------------------- |
+</I>&gt;&gt;<i> | 0             | `option_channel_htlc_max` | `htlc_maximum_msat`
+</I>&gt;<i>       |
+</I>&gt;&gt;<i> | 1             | `option_channel_moving`   | `moving_txid
+</I>&gt;<i>      |
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The `channel_update` gains the following field:
+</I>&gt;&gt;<i>     * [`32`: moving_txid`] (option_channel_moving)
+</I>&gt;<i>
+</I>&gt;<i> Do we actually need to send the `moving_txid` via a channel update? I think
+</I>&gt;<i> it's
+</I>&gt;<i> enough for both parties to send `channel_update`s with the
+</I>&gt;<i> `option_channel_moving` bit set, and continue to keep the channel in our
+</I>&gt;<i> routing
+</I>&gt;<i> table.
+</I>
+It helps because they can't broadcast the new channel for 6 confirms.
+OTOH, that's probably not too long to wait.
+
+&gt;<i> If we receive later receive two `channel_update`s whose `short_channel_id`s
+</I>&gt;<i> reference the spending transaction (and the node pubkeys are the same), we
+</I>&gt;<i> assume the splice was successful and that this channel has been
+</I>&gt;<i> subsumed.
+</I>
+So rule would be: if we've seen both channel_updates with
+option_channel_moving set, we remember the txid which closed it, and
+start a 100-block countdown the &quot;real close&quot;.  If we
+a (valid) channel_announce for that closing tx with same node pubkeys,
+we simply delete the 100-block countdown.
+
+&gt;<i> I
+</I>&gt;<i> think this works so long as the spending transaction doesn't contain
+</I>&gt;<i> multiple
+</I>&gt;<i> funding outputs, though I think the current proposal is fallible to this as
+</I>&gt;<i> well.
+</I>
+I think variant above works even in that case?
+
+&gt;<i> To me, this proposal has the benefit of not bloating gossip bandwidth with
+</I>&gt;<i> an
+</I>&gt;<i> extra field that would need to parsed indefinitely, and gracefully
+</I>&gt;<i> supporting
+</I>&gt;<i> RBF down the road. Otherwise we'd need to gossip and store each potential
+</I>&gt;<i> txid.
+</I>&gt;<i>
+</I>&gt;<i> With regards to forwarding, both `short_channel_id`s would be accepted by
+</I>&gt;<i> the
+</I>&gt;<i> splicers for up to 100 blocks (after splice confirm?), at which point they
+</I>&gt;<i> can
+</I>&gt;<i> both forget the prior `short_channel_id`.
+</I>
+Technically, the need to remember for some grace period after they
+announce the block.  We have a similar recommendation for old fee
+values, though it's soft.  100 seems overkill.
+
+I think we can assume gossip will propagate widely within 6 blocks and
+say they should accept it at least up to 6 blocks after announcing?  Or
+1 hour, though I prefer using the blockchain as a clock in general.
+
+&gt;<i> ## Shachain
+</I>&gt;<i>
+</I>&gt;&gt;<i> I thought about restarting the revocation sequence, but it seems like
+</I>&gt;&gt;<i> that only saves a tiny amount since we only store log(N) entries.  We
+</I>&gt;&gt;<i> can drop old HTLC info post-splice though, and (after some delay for
+</I>&gt;&gt;<i> obscurity) tell watchtowers to drop old entries I think.
+</I>&gt;<i>
+</I>&gt;<i> I agree the additional state isn't too burdensome, and that we would still
+</I>&gt;<i> be
+</I>&gt;<i> able to drop watchtower state after some delay as you mentioned.
+</I>&gt;<i>
+</I>&gt;<i> On one hand, it does seem like the opportune time to remove such state if
+</I>&gt;<i> desired.
+</I>&gt;<i>
+</I>&gt;<i> OTOH, it is _really_ nice from an atomicity perspective that the current
+</I>&gt;<i> channel and (potentially) N pending channels can be revoked using a single
+</I>&gt;<i> commitment secret and message. Doing so would mean we don't have to
+</I>&gt;<i> modify the `revoke_and_ack` or `channel_reestablish` messages. The receiver
+</I>&gt;<i> would just apply the commitment secrets/points to the current channel and
+</I>&gt;<i> any
+</I>&gt;<i> pending splices.
+</I>
+Agreed; on balance, it's fine to avoid reset.
+
+&gt;<i> ## Misc
+</I>&gt;<i>
+</I>&gt;&gt;<i> Any reason to now make the splicing_add_* messages allow one to add
+</I>&gt;<i> several
+</I>&gt;&gt;<i> inputs in a single message? Given &quot;acceptable&quot; constraints for how large
+</I>&gt;<i> the
+</I>&gt;&gt;<i> witness and pkScripts can be, we can easily enforce an upper limit on the
+</I>&gt;&gt;<i> number of inputs/outputs to add.
+</I>&gt;<i>
+</I>&gt;<i> Yes, I prefer this simplification.
+</I>
+Just harder to write the spec that way :) I'll come up with something.
+
+&gt;&gt;<i> Additionally, as the size of the channel is either expanding or
+</I>&gt;<i> contracting,
+</I>&gt;&gt;<i> both sides should be allowed to modify things like the CSV param, reserve,
+</I>&gt;&gt;<i> max accepted htlc's, max htlc size, etc. Many of these parameters like the
+</I>&gt;&gt;<i> CSV value should scale with the size of the channel, not allowing these
+</I>&gt;&gt;<i> parameters to be re-negotiated could result in odd scenarios like still
+</I>&gt;&gt;<i> maintain a 1 week CSV when the channel size has dipped from 1 BTC to 100k
+</I>&gt;&gt;<i> satoshis.
+</I>&gt;<i>
+</I>&gt;<i> Agreed!
+</I>
+&quot;CSV should scale with value&quot; seems like voodoo, though.  It make us
+feel better that we're being conservative with large amounts of money,
+but it makes no sense from a time-value-of-money perspective.  Sure,
+bigger amounts are more important, but it's also more painful to have
+them locked up.
+
+I'd really like most of these parameters to go away, rather than
+introducing YA negotiation pain point.  See other post.
+
+&gt;&gt;<i> These all seem marginal to me.  I think if we start hitting max values,
+</I>&gt;&gt;<i> we should discuss increasing them.
+</I>&gt;<i>
+</I>&gt;<i> Doesn't this defeat the goal of firewalling funds against individual channel
+</I>&gt;<i> failures?
+</I>
+That's kind of true, but you should be more concerned about node
+failure, and thus diversify your channels between different nodes.
+That's better for everyone.
+
+&gt;<i> Splice out,
+</I>&gt;<i> Conner
+</I>
+Nice touch :)
+
+Cheers,
+Rusty.
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001472.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+	<LI>Next message: <A HREF="001467.html">[Lightning-dev] Splicing Proposal: Feedback please!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1476">[ date ]</a>
+              <a href="thread.html#1476">[ thread ]</a>
+              <a href="subject.html#1476">[ subject ]</a>
+              <a href="author.html#1476">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

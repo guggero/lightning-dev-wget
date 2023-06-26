@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Just%20in%20Time%20Routing%20%28JIT-Routing%29%20and%20a%0A%09channel%20rebalancing%20heuristic%20as%20an%20add%20on%20for%20improved%0A%09routing%20success%20in%20BOLT%201.0&In-Reply-To=%3CG2-pWUfwa5I_ZOH6n6Wg0qwq4G1qRpdbTL7__Wnbi5MPaxZrquejr1HcsVJXp-Sh0q3UpSYLobvkEu7hI04udqY5dp1w6tfdWv-1U40_EiE%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001937.html">
+   <LINK REL="Next"  HREF="001893.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Just%20in%20Time%20Routing%20%28JIT-Routing%29%20and%20a%0A%09channel%20rebalancing%20heuristic%20as%20an%20add%20on%20for%20improved%0A%09routing%20success%20in%20BOLT%201.0&In-Reply-To=%3CG2-pWUfwa5I_ZOH6n6Wg0qwq4G1qRpdbTL7__Wnbi5MPaxZrquejr1HcsVJXp-Sh0q3UpSYLobvkEu7hI04udqY5dp1w6tfdWv-1U40_EiE%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Mar 26 03:26:27 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001937.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+        <LI>Next message: <A HREF="001893.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1938">[ date ]</a>
+              <a href="thread.html#1938">[ thread ]</a>
+              <a href="subject.html#1938">[ subject ]</a>
+              <a href="author.html#1938">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Ariel and Rene and list,
+
+I have started to consider how best to attack the modified Luaces-Pickhardt JIT-Routing, which reuses the same payment hash as the message to forward.
+(In the case where JIT-Routing is used by the ultimate source of a payment, the payment hash of the invoice being paid.)
+
+And it seems that, unless hop routes are given more time than their reported `cltv_delta`, then either:
+
+1.  JIT-Routing cannot be done since the rebalancing requires more blocks than is allocated to the hop,
+2.  OR, JIT-Routing is done despite the lack of blocks, at the major risk of possibly getting attacked by fooling around with lock times.
+
+Decorrelation could remove the risk in #2.
+
+--
+
+So let us consider the below simple network graph:
+
+
+    A ----- B ----- D ----- E
+            |       |
+            |       |
+            +-- C --+
+
+Let us pretend that C-Lightning has taken over the world and that everyone uses a sensible 14-block `cltv_delta`.
+
+The node B receives an onion from A, with the specs:
+
+1.  A offers an HTLC to B with value 1001 msat, and timelocked in 70 blocks from now.
+2.  B should offer an HTLC to D with value 1000 msat, and timelocked in 56 blocks from now.
+
+As it happens, B has not enough money in channel B-D, but can augment it with money from B-C by rebalancing.
+
+If it's the original Pickhardt JIT-Routing, then B takes on the risk that a later hop in the onion will fail, however it can complete the rebalancing without caring about the timelocks of the &quot;actual&quot; route.
+
+However, if we reuse the payment preimage, and use the &quot;reverse the polarity&quot; operation proposed by Pickhardt in response to Luaces, then we need to respect the timelocks.
+In particular, even the rebalance nodes C and D will impose `cltv_delta`.
+Note that C and D have 14 blocks each, but what is allocated to B is only 14 blocks for itself.
+
+Suppose we consider --- since the &quot;reverse the polarity&quot; operation means there are HTLCs from B-&gt;D and B-&gt;C-&gt;D, then it should be safe to have the B-&gt;C-&gt;D-&gt;B path have a longer timelock on the first HTLC; the B-&gt;D direct HTLC would still allow B to claim the money from A.
+So B would do:
+
+1.  It receives the onion from A and finds it has insufficient capacity on B-D channel.
+2.  It creates a new onion B-&gt;C-&gt;D-&gt;B, with timelocks:
+    a. D-&gt;B now+56 (this will be reversed into a B-&gt;D HTLC with timelock now+56)
+    b. C-&gt;D now+70
+    c. B-&gt;C now+84
+3.  B sends the above onion, using the same payment hash as the original onion.
+
+Now suppose A, D, and C are actually controlled by an evil person Eve.
+Eve knows the original onion and in particular knows the original payment hash and preimage.
+In addition, it knows the condition of channels B-C and B-D.
+
+So Eve attacks as below:
+
+1.  C stalls until now+71.
+    a.  The original A-&gt;N HTLC (with timeout now+70) is invalidated.
+    b.  The B-&gt;C HTLC (with timeout now+84) is still valid.
+2.  C claims the amount in the B-&gt;C HTLC.
+    Even if B refuses, C can always settle it onchain.
+
+Now of course B might not choose the specific C controlled by Eve in the rebalance.
+But note that D can keep failing incoming HTLCs from all nodes until either B selects the C that Eve controls, or B gives up (in which case Eve loses nothing anyway).
+
+So B cannot safely use the &quot;reverse the polarity&quot; operation, unless the onion gives it much more time than its `cltv_delta` declares.
+But if nodes boost their `cltv_delta`s, then it also becomes impossible to JIT-route.
+And if we give each hop node more than their declared `cltv_delta`, then that increases the risk on the source node (since the total time it gives to all hop nodes is the maximum amount of time that its money could be locked in the worst case).
+
+A similar attack on D can be mounted (by B, C, and E) if we adjust the timelocks in the opposite direction.
+
+In conclusion, the &quot;reverse the polarity&quot; operation is not feasible for JIT-Routing.
+Instead, the hop node B needs to incur the entire risk in rebalancing.
+It also means that the JIT-Routing technique cannot be used by unidirectional-only implementations like Eclair Mobile.
+
+--
+
+&gt;<i> An intermediate route node could decide for any reason to re-route a payment through any subset of nodes to arrive at the next hop. This is similar to Rene's local AMP idea where friend-of-a-friend nodes are used. But instead this system could allow arbitraryly long paths to the next hop by finding a new sub-route and re-layering the onion packet with the new sub-route prepended.
+</I>
+This requires &quot;Rendezvous Routing&quot;, which cdecker and cjp are working on; there is something something math involved.
+In particular it requires switching to some other point in the onion encryption; sorry, I am not enough of a mathist to tell you what that means.
+
+The problem with this is again that timelocks need to be respected.
+If a hop node cannot find a route that fits its own time risk and the time risk allocated to it by the source payer.
+
+Regards,
+ZmnSCPxj
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001937.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+	<LI>Next message: <A HREF="001893.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1938">[ date ]</a>
+              <a href="thread.html#1938">[ thread ]</a>
+              <a href="subject.html#1938">[ subject ]</a>
+              <a href="author.html#1938">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

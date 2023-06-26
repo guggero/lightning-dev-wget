@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] commitment update steps
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20commitment%20update%20steps&In-Reply-To=%3C20150727212956.GB12107%40lightning.network%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000062.html">
+   <LINK REL="Next"  HREF="000066.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] commitment update steps</H1>
+    <B>Joseph Poon</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20commitment%20update%20steps&In-Reply-To=%3C20150727212956.GB12107%40lightning.network%3E"
+       TITLE="[Lightning-dev] commitment update steps">joseph at lightning.network
+       </A><BR>
+    <I>Mon Jul 27 21:29:56 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000062.html">[Lightning-dev] commitment update steps
+</A></li>
+        <LI>Next message: <A HREF="000066.html">[Lightning-dev] commitment update steps
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#71">[ date ]</a>
+              <a href="thread.html#71">[ thread ]</a>
+              <a href="subject.html#71">[ subject ]</a>
+              <a href="author.html#71">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Anthony,
+
+On Sat, Jul 25, 2015 at 06:44:26PM +1000, Anthony Towns wrote:
+&gt;<i> On Fri, Jul 24, 2015 at 04:24:49PM -0700, Joseph Poon wrote:
+</I>&gt;<i> &gt; Ah sorry, that only solves the Commitment Transactions, not the HTLC
+</I>&gt;<i> &gt; outputs. It's also not possible to use the pubkeys as identifiers,
+</I>&gt;<i> &gt; as Rusty said, P2SH would be used.
+</I>&gt;<i> &gt; 
+</I>&gt;<i> &gt; While it's possible to only check only recent blocks before the
+</I>&gt;<i> &gt; Commitment Transaction for the search space (e.g. 3 days worth),
+</I>&gt;<i> &gt; since you know when the Commitment Transaction was broadcast, the
+</I>&gt;<i> &gt; search space limitation sort of breaks down if you permit long-dated
+</I>&gt;<i> &gt; HTLCs.
+</I>&gt;<i> 
+</I>&gt;<i> I don't think it matters how long the HTLC was; maybe they're way old
+</I>&gt;<i> and all expired, but were payments to you. Say the current channel is:
+</I>&gt;<i> 
+</I>&gt;<i>  12 -&gt; Cheater 88 -&gt; You
+</I>&gt;<i> 
+</I>&gt;<i> and the old transaction that Cheater just pushed to the blockchain
+</I>&gt;<i> was:
+</I>&gt;<i> 
+</I>&gt;<i>  55 -&gt; Cheater 3 -&gt; You 10 -&gt; You &amp; R1 | Cheater &amp; Timeout1 20 -&gt; You
+</I>&gt;<i>  &amp; R2 | Cheater &amp; Timeout2 12 -&gt; You &amp; R3 | Cheater &amp; Timeout3
+</I>&gt;<i> 
+</I>&gt;<i> To get at least your 88 owed, you need all but the last transaction,
+</I>&gt;<i> so you need to be able to workout #R1 and #R2 and Timeout1 and
+</I>&gt;<i> Timeout2, no matter how long ago they were.
+</I>
+Yes, I agree, that is absolutely true. I was alluding to something
+different (but didn't properly explain myself), which is that if you did
+grinding of only recent Commitments, it's possible that there will be
+HTLCs with very high timeouts in the future and this may be a necessary
+requirement for some possible future use cases (e.g.
+recurring/pre-allocated billing).
+
+&gt;<i> &gt; For now, I think a reasonable stop-gap solution would be to have
+</I>&gt;<i> &gt; some small storage of prior commitment transactions. For every
+</I>&gt;<i> &gt; commitment, and each HTLC output, store the timeout and the original
+</I>&gt;<i> &gt; Commitment Transaction height when the HTLC was first made.
+</I>&gt;<i> 
+</I>&gt;<i> I don't think you want to multiply each HTLC output by every
+</I>&gt;<i> commitment it's stored in -- if the TIMEOUT is on the order of a day,
+</I>&gt;<i> and the channel is updated just once a second that's a x86,400 blowout
+</I>&gt;<i> in storage, so almost 5 orders of magnitude.
+</I>&gt;<i> 
+</I>&gt;<i> But if everytime you see a new HTLC output (ie, R4, Timeout4), you
+</I>&gt;<i> could store those values and use the nLockTime trick to store the
+</I>&gt;<i> height of your HTLC storage. Then you just have to search back down
+</I>&gt;<i> from R4 to find the other HTLCs in the txn, ie R3, R2 and R1, which is
+</I>&gt;<i> just a matter of pulling out the values R, Timeout, dropping them into
+</I>&gt;<i> payment script templates, and checking if they match.
+</I>
+Yes, that's a good point(!), especially when you're doing local storage.
+If you're relying on OP_RETURN, though, you must put in some more
+contextual data. If you're willing to regenerate the revocation hash
+every time, I guess the OP_RETURN can just be timeout and H. For local
+storage, you don't need to do it for every HTLC if you're willing to
+search back on near-dated HTLCs, but long-dated HTLCs (say, greater than
+a couple days) could be included (class memory vs. computation
+tradeoff). Agreed, the necessary data storage isn't *that bad* for core
+nodes, and trivial for edge nodes not doing liquidity providing
+(ignoring backup concerns, of course).
+
+&gt;<i> BTW, 10 commitments per second (per channel) doesn't sound /that/ high
+</I>&gt;<i> volume :) Pay per megabyte for an end user at 100Mb/s is already
+</I>&gt;<i> around that at least at peak times, eg.
+</I>
+Perhaps with a relatively distributed graph and core nodes having many
+connections, it's possible that's the range. Either way, it should be
+fine. If you have enough entropy to filter by hundreds of millions using
+nLockTime, even if you have 10 billion (or 100 billion) to search
+through it should be nearly instant. If you have 1000 possible
+revocation hashes, just look at the first txout (the non-HTLC payouts to
+Alice and Bob) and see which revocation fits. Once you know the exact
+Commitment number, the rest of the outputs are easy.
+
+-- 
+Joseph Poon
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000062.html">[Lightning-dev] commitment update steps
+</A></li>
+	<LI>Next message: <A HREF="000066.html">[Lightning-dev] commitment update steps
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#71">[ date ]</a>
+              <a href="thread.html#71">[ thread ]</a>
+              <a href="subject.html#71">[ subject ]</a>
+              <a href="author.html#71">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

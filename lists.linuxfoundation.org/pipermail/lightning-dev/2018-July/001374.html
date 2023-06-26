@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lack of capacity field in channel_announcement makes life difficult. Why is it not there?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lack%20of%20capacity%20field%20in%20channel_announcement%0A%20makes%20life%20difficult.%20Why%20is%20it%20not%20there%3F&In-Reply-To=%3CCAOcVdHQ6y5MqZLj0peORmxoi%2BgYOW%3DECo28v5mWgGhSoXHmWtg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001373.html">
+   <LINK REL="Next"  HREF="001375.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lack of capacity field in channel_announcement makes life difficult. Why is it not there?</H1>
+    <B>Robert Olsson</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lack%20of%20capacity%20field%20in%20channel_announcement%0A%20makes%20life%20difficult.%20Why%20is%20it%20not%20there%3F&In-Reply-To=%3CCAOcVdHQ6y5MqZLj0peORmxoi%2BgYOW%3DECo28v5mWgGhSoXHmWtg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Lack of capacity field in channel_announcement makes life difficult. Why is it not there?">robban at robtex.com
+       </A><BR>
+    <I>Sun Jul 29 13:43:14 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001373.html">[Lightning-dev] Lack of capacity field in channel_announcement makes life difficult. Why is it not there?
+</A></li>
+        <LI>Next message: <A HREF="001375.html">[Lightning-dev] Lack of capacity field in channel_announcement	makes life difficult. Why is it not there?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1374">[ date ]</a>
+              <a href="thread.html#1374">[ thread ]</a>
+              <a href="subject.html#1374">[ subject ]</a>
+              <a href="author.html#1374">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I agree that having to look in the blockchain should not be a requirement
+for light wallets.
+
+I think however it would be much better and flexible to append a max to
+channel_update. We already have htlc_minimum_msat there and could add
+htlc_maximum_msat to show capacity (minus fees)
+Like this:
+
+
+   1. type: 258 (channel_update)
+   2. data:
+      - [64:signature]
+      - [32:chain_hash]
+      - [8:short_channel_id]
+      - [4:timestamp]
+      - [2:flags]
+      - [2:cltv_expiry_delta]
+      - [8:htlc_minimum_msat]
+      - [4:fee_base_msat]
+      - [4:fee_proportional_millionths]
+
+      - [8:htlc_maximum_msat]
+
+
+It shouldn't be an issue for older implementations to handle an added 8
+bytes, they simply won't read the last 8 bytes.
+New implementations can easily read old ones, and setting
+htlc_maxmimum_msat internally to a default value.
+
+Implementations that do lookup in blockchain can easily check that
+htlc_maximum_msat doesn't exceed the real capacity, and discard those
+messages if they see fit.
+
+By simply adding 8 bytes at the end it should be an easy fix that is/should
+be compatible with current implementations (devs:please verify your parsing
+code, i haven't).
+
+We also have flexibility to adjust these values just as we adjust the
+disable flag or fees.
+That means we could optionally perodically announce this value to reflect
+the average local balance, and thereby make it much easier for
+implementations to avoid for instance channels with low or 0 balance.
+
+Even if not periodically gossiped it would help in many cases.
+
+Consider an AMP payment of 100k going thru a channel which only has 50k
+local balance. The node already responds with an error with an attached
+type258 message.
+Let it reflect the current local balance in htlc_maximum_msat, so the AMP
+implementation can directly try 50k instead.
+Without that info in the error, the AMP implementation would have to try
+90k, 80k, 70k, 60k, 50k before getting through, taking up time and
+resources.
+
+Other implementations of it would be to set it in order to traffic control
+without having to signal it as disabled, and thereby passively balance
+channels, or making sure most funds end up on whatever desired side before
+closing on-chain. And there are other things you can do once we have this.
+
+I think it would be a simple 8-byte fix with huge advantages and
+possibilities.
+
+Regarding abuse:
+Nodes checking blockchain can discard erroneous messages. If the messages
+slip thru to a wallet that doesn't verify, how much could this possibly
+hurt and where? Today for instance Eclair assumes all channels are wide
+enough anyhows.
+
+Regarding bandwidth:
+Nodes should not broadcast updates after every packet, but do it wisely.
+And optionally. You could just announce the original capacity.
+
+Regarding privacy concerns:
+Use cases such as revealing local balances are of course totally optional
+and does not need to be activated for those node owners that prefer ppl to
+instead use repeated trial-and-error probing to discover the local balance.
+I'm currently working on a tool for that, but if this proposal is adopted
+i'll obviously scrap that project.
+
+Best regards
+Robert Olsson
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+On Sun, Jul 29, 2018 at 3:59 PM, &#1040;&#1088;&#1090;&#1105;&#1084; &#1051;&#1080;&#1090;&#1074;&#1080;&#1085;&#1086;&#1074;&#1080;&#1095; &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">theartlav at gmail.com</A>&gt;
+wrote:
+
+&gt;<i> Greetings.
+</I>&gt;<i>
+</I>&gt;<i> What was the rationale for not including channel capacity into the
+</I>&gt;<i> channel_announcement message?
+</I>&gt;<i>
+</I>&gt;<i> As things stand now, the only way to determine it is to check the
+</I>&gt;<i> blockchain, which is hard for mobile and/or light wallets.
+</I>&gt;<i> Even worse, the data is only there in the form of short_channel_id, which
+</I>&gt;<i> is incompatible with most block explorer APIs.
+</I>&gt;<i>
+</I>&gt;<i> In other words, having to have access to the blockchain turns a
+</I>&gt;<i> route-finding tool from a simple program into a thing laden with many
+</I>&gt;<i> dependencies in order to fetch and parse the transactions.
+</I>&gt;<i> Not knowing the capacity of the channels drops routing success rates
+</I>&gt;<i> dramatically, especially for larger payments.
+</I>&gt;<i>
+</I>&gt;<i> Is there a good reason to force us to do so that i'm missing?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> -Artem
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180729/c4e825c7/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180729/c4e825c7/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001373.html">[Lightning-dev] Lack of capacity field in channel_announcement makes life difficult. Why is it not there?
+</A></li>
+	<LI>Next message: <A HREF="001375.html">[Lightning-dev] Lack of capacity field in channel_announcement	makes life difficult. Why is it not there?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1374">[ date ]</a>
+              <a href="thread.html#1374">[ thread ]</a>
+              <a href="subject.html#1374">[ subject ]</a>
+              <a href="author.html#1374">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

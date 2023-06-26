@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Solving Lightning Jamming and beyond with Staking Credentials: a Protocol Walkthrough
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20Lightning%20Jamming%20and%20beyond%20with%20Staking%0A%20Credentials%3A%20a%20Protocol%20Walkthrough&In-Reply-To=%3CCALZpt%2BHXaFu9arvuKkCv8BW0yP6jUrqnUO7zrmfDmNEm%2BjS34w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003956.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Solving Lightning Jamming and beyond with Staking Credentials: a Protocol Walkthrough</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20Lightning%20Jamming%20and%20beyond%20with%20Staking%0A%20Credentials%3A%20a%20Protocol%20Walkthrough&In-Reply-To=%3CCALZpt%2BHXaFu9arvuKkCv8BW0yP6jUrqnUO7zrmfDmNEm%2BjS34w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Solving Lightning Jamming and beyond with Staking Credentials: a Protocol Walkthrough">antoine.riard at gmail.com
+       </A><BR>
+    <I>Wed May 24 22:57:23 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003956.html">[Lightning-dev] Release Announcement v23.05: Austin Texas	Agreement(ATXA)
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3964">[ date ]</a>
+              <a href="thread.html#3964">[ thread ]</a>
+              <a href="subject.html#3964">[ subject ]</a>
+              <a href="author.html#3964">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list,
+
+As it has been discussed before, a solution to mitigate jamming
+attacks over the Lightning Network consists in the introduction of
+credentials that must be acquired by HTLC senders to lock each hop
+liquidity along the forwarding path. Those credentials can be
+privacy-preserving to mask the identity of the HTLC senders towards
+the routing hops. They serve as a monetary hedge in case of default of
+the HTLC sender on the payment of the routing fees.
+
+As additional advantages, this credentials framework, dubbed &quot;Staking
+Credentials&quot;, can be deployed to mitigate other liquidity timevalue
+DoS in the Lightning landscape, e.g collaborative transaction
+construction or even beyond as an enhanced paywall to access Nostr
+relay services [0].
+
+This post gives an overview of the framework by detailing the key
+concepts, laying out the protocol phases, showing concrete examples
+and presenting the upsides and downsides of this mitigation approach
+for jamming.
+
+## Protocol Abstractions
+
+The protocol relies on basic mechanisms of the Lightning Network such
+as the onion messages, blinded paths where the sender doesn't know who
+is the recipient and gossips, an information dissemination protocol
+not relying on third-party.
+
+Beyond, new abstractions are introduced:
+- credentials: unique keys establishing attributes of the bearer,
+those keys can be blinded [1].
+- scarce assets: e.g a Bitcoin transaction, a Lightning payment,
+chaumian ecash, UTXO ownership proofs.
+- Requester/Issuer entities: the Requester requires from the Issuer
+authentication of credentials in exchange for submitting scarce
+assets.
+- Client/Provider entities: the Client requires from the Provider a
+service in exchange of submitting a credential.
+
+## Protocol Phases
+
+The first phase of the protocol is the discovery by a user of the
+`credentials_policy` and `service_policy` gossips originating
+respectively from Issuers and Providers. By reading the
+`service_policy`, a user can discover the list of credentials Issuer a
+target service Provider is relying on.
+
+The user in the role of the Requester starts by committing a scarce
+asset as announced by the Issuer's `credentials_policy`. E.g the
+Requester sends a Bitcoin on-chain to a destination scriptPubkey
+previously announced by the gossip mechanism. The user attaches the
+scarce asset proof with a set of blinded credentials, finds an onion
+path to the Issuer and sends the whole inside an onion message.
+
+When the Issuer receives the scarce asset proofs and the set of
+credentials, the proof is first verified e.g the on-chain payment must
+be confirmed to a destination scriptPubkey controlled by the Issuer.
+If the proof is correct and the scarce asset cost matches the quantity
+of credentials as announced by `credentials_policy`, the blinded
+credentials are countersigned by the Issuer and the signatures replied
+back to the Requester by using a blinded path.
+
+The Requester receives the Issuer signature and should verify they're
+correct under the announced issuance public key in
+`credentials_policy`. If they are valid, the credentials can be
+unblinded and consumed for the satisfaction of a service or correct
+the transactional asymmetries of a Bitcoin financial contract (e.g the
+signature release for a dual-funding transaction).
+
+Alternatively, the credentials usage can be delegated to another user
+under the warning than for the second-user, there is no guarantee the
+credential transfer is not double-spend.
+
+The user in the role of the Client forwards the unblinded credentials
+and the corresponding Issuer signatures to a target service Provider.
+The service request can be protocol-specific and linked with the
+credentials submission with a simple pair of identifiers (e.g a
+32-byte random value). At reception by the Provider, the signatures on
+the unblinded credentials must be verified against the corresponding
+Issuance public key. The quantity of credentials must be equal to the
+service units requested as announced by `service_policy`.
+
+If those checks are correct, the Provider is satisfying the Client
+service request, and additionally can provide back authentication
+signatures for a new set of blinded credentials (optionally attached
+in the service request issued by the Client).
+
+## Example: Lightning jamming
+
+Alice, the routing hop, cumulates in this deployment both the role of
+Issuer and Provider. As an Issuer, she announces how much Lightning
+satoshis she wishes to be paid to countersign a quantity of N
+credentials in `credentials_policy`. As a Provider, she announces how
+much credentials she wishes to allow a lockup of her 10_000 sats
+Lightning channels for 100 blocks in `service_policy`.
+
+Bob the HTLC sender discovers Alice's `credentials_policy`, sends a
+Lightning payment to Alice and then collects a quantity of N signed
+blinded credentials during a issuance dance with Alice. After this,
+Bob can build a payment path going through Alice, where her hop's
+onion `payload` includes an identifier Z. Bob transfers the signed
+unblinded credentials with the same identifier Z through onion routing
+to Alice node.
+
+Alice node verifies the credentials with respect to her
+`service_policy` for the forwarding of HTLC. If this is correct, the
+HTLC is forward over her 10_000 sats Lightning channel. If the HTLC
+settlement is successful, a new quantity of blinded credentials is
+countersigned by Alice to reward Bob for the efficient usage of her
+liquidity.
+
+## Protocol Upsides
+
+The credentials allows a service Provider to establish a dynamic
+risk-management policy, where the submission of credentials is
+disabled during the &quot;peaceful&quot; state and where credentials must bind
+to 100% of the timevalue of the liquidity service in case of &quot;war&quot;
+state. E.g for jamming, the cost of the credentials can match 100% of
+the routing fees announced in `channel_update.
+
+The blinding of the credentials should preserve the privacy of the
+HTLC senders, therefore preventing deanonymization of the payments, or
+selective censorship of the HTLC forward by a specific HTLC sender.
+
+The credentials enable an emergent discount effect, where in case of
+&quot;honest&quot; behavior of the Client in the usage of the service, they can
+be rewarded by fresh credentials, therefore reducing the operational
+cost of their future service usage.
+
+The credentials framework should be generic enough to adapt to
+multiple Bitcoin flows beyond HTLC forwarding, and the Lightning
+jamming issue. Other flows of interest can be to cover the asymmetries
+in collaborative transaction construction, e.g the order of the
+release of the contributed UTXOs signatures. Qualitative credentials
+could be deployed enabling bounded routing fees or SLA of liquidity
+during periods of Lightning network congestion.
+
+There is a Rust implementation in early progress, with a short-term
+goal to have the full Staking Credential flow working in its
+non-blinded version for a 1-hop payment path.
+
+Cheers,
+Antoine
+
+[0] <A HREF="https://github.com/civkit/staking-credentials-spec">https://github.com/civkit/staking-credentials-spec</A>
+[1] <A HREF="https://sceweb.sce.uhcl.edu/yang/teaching/csci5234WebSecurityFall2011/Chaum-blind-signatures.PDF">https://sceweb.sce.uhcl.edu/yang/teaching/csci5234WebSecurityFall2011/Chaum-blind-signatures.PDF</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230524/35f6e341/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230524/35f6e341/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003956.html">[Lightning-dev] Release Announcement v23.05: Austin Texas	Agreement(ATXA)
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3964">[ date ]</a>
+              <a href="thread.html#3964">[ thread ]</a>
+              <a href="subject.html#3964">[ subject ]</a>
+              <a href="author.html#3964">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

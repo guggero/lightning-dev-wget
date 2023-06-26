@@ -1,0 +1,267 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Congestion and Flow control for Multipath Routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Congestion%20and%20Flow%20control%20for%20Multipath%20Routing&In-Reply-To=%3CCAJ5H3Z6qajnKU7fZNv81ChkPf5NjFgTfQ3BQmfqX-Rfg6EGoAA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002065.html">
+   <LINK REL="Next"  HREF="002072.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Congestion and Flow control for Multipath Routing</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Congestion%20and%20Flow%20control%20for%20Multipath%20Routing&In-Reply-To=%3CCAJ5H3Z6qajnKU7fZNv81ChkPf5NjFgTfQ3BQmfqX-Rfg6EGoAA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Congestion and Flow control for Multipath Routing">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Mon Jul 15 12:23:18 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002065.html">[Lightning-dev] [PROPOSAL] Gossip protocol v2
+</A></li>
+        <LI>Next message: <A HREF="002072.html">[Lightning-dev] Congestion and Flow control for Multipath	Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2071">[ date ]</a>
+              <a href="thread.html#2071">[ thread ]</a>
+              <a href="subject.html#2071">[ subject ]</a>
+              <a href="author.html#2071">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear fellow BOLT devs,
+
+in this mail I want to suggest a congestion and flow control mechanism to
+improve the speed and reliability of multi path routing schemes. This is
+the first of a couple of emails that I will write in the following weeks as
+I have used my break in hospital not only to recover but to tinker quite
+a bit about path finding and routing algorithms on the lightning network.
+
+Problem statement
+===============
+Currently on the lightning network we have the issue of stuck payments [0].
+As soon as an onion is sent it is out of the sender's control. This problem
+seems to be in particular drastic if we wish to use Atomic Multi Path
+routing [1] (which in the described form is not compatible with my
+proposal. I believe my proposal should be compatible with the status quo of
+base-AMP). The entire payments and HTLCs of a multipath payment will only
+be settled once enough incoming HTLCs arrived at the recipient (meaning the
+sum of amounts is bigger or equal to the amount specified in the invoice).
+This has the following list of downsides:
+
+- One malicious actor (who is just not forwarding the onion but also not
+signaling an error) is enough to interrupt the entire payment process and
+freeze all other HTLCs even of partial payments the actor is not part of.
+- The entire payment process takes as long as `max_{p \in paths}(t(p))`
+where `t(p)` is the time it took for path `p` to set up (and settle) HTLCs
+- More HTLCs will be reserved by the network for a longer time. This means
+more liquidity is bound / reserved and channels could even become unusable
+if the 483 HTLC limit is reached.
+
+Protocol Goals
+===========
+I looked at the windowing mechanism used in TCP to achieve congestion
+control and transferred this concept to the setting of the Lightning
+Network. This idea is motivated by the Spider Network paper [2] which
+mentions that in a simulation the success rate of payments is increased
+when changing the lightning network from a circuit switched payment process
+(which we currently have with our atomicity requirements) to a packet
+switched mechanism that includes congestion control (though in that
+publication congestion control had a different semantics than in has in my
+proposal).
+
+Protocol Benefits
+=============
+- Improve the speed of multipath payments
+- Reduce load from the network (in particular don't lock liquidity for such
+a long time)
+- less congestion at single nodes (I assume this is not a problem at this
+point in time)
+- more privacy (different preimages are used along different paths and
+overall payments might become smaller or of uniform size)
+- usual benefits from AMP
+
+Protocol idea (base version)
+=====================
+Disclaimer: This base version has obvious drawbacks but I decided to
+include it as it transports the idea.
+
+A regular payment on the Lightning Network for amount `x` has a Payment
+Hash `H` and a preimage `r`.  If a recipient would now accept that this
+payment could be split over up to `n` paths the recipient would create a
+sha-chain of preimages and payment hashes with `n` elements
+
+```
+r_0 = rand()
+H_0 = H(r_0)
+r_{i+1} = H_i
+H_{i+1} = H(r_{i+1})
+```
+
+The payment process is initiated by the recipient providing H_{n-1} and
+signaling (in the invoice) that up to `n` preimages are available to
+complete this payment.
+
+A sender can now decide to split the payment amount `x` into `n` seperate
+payments for example of the amounts `x/n` though different splits should be
+possible. Once the preimage of the first partial payment is returned the
+payer learns the payment hash wich can be used for the next partial
+payment. (One issue is that while we have a proof of payment we do not
+necessarily have a proof of amount - which is true for the regular
+lightning case though with a single atomic payment this is not an issue as
+the preimage will not be relased if the amount is too low. We could avoid
+this issue by demanding that mulipath payments have to be at least of size
+`x/n`)
+
+This protocol makes the AMP process sequential and reduces the load from
+the network. Congestion (which is a local problem of routing nodes) becomes
+less likely if only HTLCs are locked up for a partial payment independent
+of the success or failure of other partial payments. However in the base
+version there is a severe downside:
+
+**Sequential payments will make the payment process even longer since it is
+not the max time needed over all payments but the sum of times needed.**
+
+We can resolve this issue by introducing flow control via a windowing
+mechanism and allowing concurrency of partial payments
+
+Protocol Overview (suggested version)
+==============================
+Let us assume the receiving node supports a window size of `s` concurrent
+payments. Now the payee will not only create one sha-chain of `n` payment
+hashes as in the base version but `s` sha-chains of `n` payment hashes.
+In the invoice we would now transport the following data:
+
+* `n` (we need a different letter as n is already taken) = amount of
+partial payments that are supported per payment hash
+* `s` = number of concurrent payments supported (window size)
+* `s` many `p` fields which contain the `s` different top elements H_{n-1}
+for each sha-chain
+
+Note that technically the payment amount could now be even split up into
+`s*n` partial payments though I would recommend to still go with `n`
+partial payments.
+
+The advantage with this mechanism are the following:
+* As long as less then `s` payments get stuck the protocol can continue to
+deliver partial payments.
+* Nodes already agree to do some overpayments to obfuscate the payment
+amount. If the stuck payments are really small they could be considered as
+overpayments (in case they eventually go through). This would work if the
+sender sends overall `n+k` payments where `k` is the number of currently
+stuck payments.
+
+Potential Improvements (for better privacy)
+================================
+* Instead of using a sha-chain we could xor every preimage with a sequence
+number making it harder for an attacker to correlate two consecutive
+payments in the stream of payments via
+```
+r_0=rand()
+H_0(r_0)
+r_{i+1} = H_0 ^ (i+1)
+H_{i+1} = H(r_{i+1})
+```
+Instead of a sequence number we could also do something like `(i+1)*x` (as
+attackers should not be aware of the overall payment amount it will be hard
+to guess that number). I guess you folks are aware of much better
+cryptographic tricks to achieve what I suggest here. So please take this
+just as an idea from a beginner in cryptography.
+
+* If paths are reused for partial payments the sender should switch to a
+preimage from a different sha-chain creating some path decorellation
+* Even when going away from hashedpreimages when changing to MuSig and
+multilocks a mechanism similar to HD-wallets should be usable for this
+scheme
+
+
+Sender Requirements
+=================
+The sender needs to keep track how many payments have been successfully
+sent and how many are in transition / stuck.
+For the privacy parts the sender additionally needs to watch out to cycle
+through the shachains when reusing paths
+
+Receiver Requirements
+==================
+More data needs to be stored / held in memory. (either `s` complete
+sha-chains) or the `s` times the initial preimage of each chain and the
+current payment hash. in the later case the computational overhead will be
+increased.
+
+Conclusion
+=========
+* With introduction of two new fields in BOLT 11 invoices and rather simple
+code changes for invoice creation / preimage releasing we have the ability
+to introduce flow and congestion control to multipath routing of payments.
+* The proposed mechanism is not atomic. It is possible that a payee
+receives only a fraction of all payments and stops collaborating
+* Less HTLCs and liquidity will be bound in multipath routing schemes
+resulting in a reduction of load for the network
+* A few stuck payments can be neglected as &quot;cost&quot; of operation. While I
+strongly support ideas from [0] we might not need them with this simple
+trick.
+* As I used the term `stream of payments` in the text this mechanism could
+also be extended for a streaming payments protocol.
+
+I am curios on your thoughts.
+
+With kind regards Rene
+
+
+[0]:
+<A HREF="../2019-June/002029.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/002029.html</A>
+ Proposal
+for Stuckless Payment by Hiroki
+[1]:
+<A HREF="../2018-February/000993.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/000993.html</A>
+AMP:
+Atomic Multi-Path Payments over Lightning  by Conner &amp; Laolu
+[2]: <A HREF="https://arxiv.org/abs/1809.05088">https://arxiv.org/abs/1809.05088</A> Routing Cryptocurrency with the
+Spider Network by Vibhaalakshmi et. al.
+
+-- 
+<A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+
+Skype: rene.pickhardt
+
+mobile: +49 (0)176 5762 3618
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190715/163114e7/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190715/163114e7/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002065.html">[Lightning-dev] [PROPOSAL] Gossip protocol v2
+</A></li>
+	<LI>Next message: <A HREF="002072.html">[Lightning-dev] Congestion and Flow control for Multipath	Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2071">[ date ]</a>
+              <a href="thread.html#2071">[ thread ]</a>
+              <a href="subject.html#2071">[ subject ]</a>
+              <a href="author.html#2071">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,194 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3CaedS9XBAzr6FgRa9A81CnlSseK-rrbHHMJvSvcHninuYMKnDNuqq5lfdgxSFSGWoyKfWBprmCMjFts8vwEIQR1AzX9YN9xc6NfZyj8QIzL4%3D%40endothermic.dev%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003552.html">
+   <LINK REL="Next"  HREF="003559.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation</H1>
+    <B>Alex Myers</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3CaedS9XBAzr6FgRa9A81CnlSseK-rrbHHMJvSvcHninuYMKnDNuqq5lfdgxSFSGWoyKfWBprmCMjFts8vwEIQR1AzX9YN9xc6NfZyj8QIzL4%3D%40endothermic.dev%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation">alex at endothermic.dev
+       </A><BR>
+    <I>Thu Apr 21 20:31:46 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003552.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003559.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3558">[ date ]</a>
+              <a href="thread.html#3558">[ thread ]</a>
+              <a href="subject.html#3558">[ subject ]</a>
+              <a href="author.html#3558">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello Bastien,
+
+Thank you for your feedback. I hope you don't mind I let it percolate for a while.
+
+&gt;<i> Eclair doesn't do any rate-limiting. We wanted to &quot;feel the pain&quot; before adding
+</I>&gt;<i> anything, and to be honest we haven't really felt it yet.
+</I>
+I understand the &#8220;feel the pain first&#8221; approach, but attempting set reconciliation has forced me to confront the issue a bit early.
+
+My thoughts on sync were that set-reconciliation would only be used once a node had fully synced gossip through traditional means (initial_routing_sync / gossip_queries.) There should be many levers to pull in order to help maintain sync after this. I'm going to have to experiment with them a bit before I can claim they are sufficient, but I'm optimistic.
+
+&gt;<i> One thing that may help here from an implementation's point of view is to avoid
+</I>&gt;<i> sending a disabled channel update every time a channel goes offline. What
+</I>&gt;<i> eclair does to avoid spamming is to only send a disabled channel update when
+</I>&gt;<i> someone actually tries to use that channel. Of course, if people choose this
+</I>&gt;<i> offline node in their route, you don't have a choice and will need to send a
+</I>&gt;<i> disabled channel update, but we've observed that many channels come back
+</I>&gt;<i> online before we actually need to use them, so we're saving two channel updates
+</I>&gt;<i> (one to disable the channel and one to re-enable it). I think all implementations
+</I>&gt;<i> should do this. Is that the case today?
+</I>&gt;<i> We could go even further, and when we receive an htlc that should be relayed
+</I>&gt;<i> to an offline node, wait a bit to give them an opportunity to come online instead
+</I>&gt;<i> of failing the htlc and sending a disabled channel update. Eclair currently doesn'tdo that, but it would be very easy to add.
+</I>
+Core-Lightning also delays sending disabled channel updates in an effort to minimize unnecessary gossip. I hadn&#8217;t considered an additional delay before failing an htlc on a disabled channel. That will be interesting to explore in the context of transient disconnects of Tor v3 nodes.
+
+I like the idea of a block_height in the channel update tlv. That would be sufficient to enable a simple rate-limit heuristic for this application anyway. Allowing leeway for the chain tip is no problem. I would also expect most implementations to hold a couple updates in reserve, defaulting to predated updates when available. This would allow a &#8220;burst&#8221; functionality similar to the current LND/CLN rate-limit, but the responsibility is now placed on the originating node to provide that allowance.
+
+Cheers,
+
+Alex
+
+------- Original Message -------
+On Friday, April 15th, 2022 at 2:15 AM, Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; wrote:
+
+&gt;<i> Good morning Alex,
+</I>&gt;<i>
+</I>&gt;&gt;<i> I&#8217;ve been investigating set reconciliation as a means to reduce bandwidth
+</I>&gt;<i>
+</I>&gt;&gt;<i> and redundancy of gossip message propagation.
+</I>&gt;<i>
+</I>&gt;<i> Cool project, glad to see someone working on it! The main difficulty here will
+</I>&gt;<i> indeed be to ensure that the number of differences between sets is bounded.
+</I>&gt;<i> We will need to maintain a mechanism to sync the whole graph from scratch
+</I>&gt;<i> for new nodes, so the minisketch diff must be efficient enough otherwise nodes
+</I>&gt;<i> will just fall back to a full sync way too often (which would waste a lot of
+</I>&gt;<i> bandwidth).
+</I>&gt;<i>
+</I>&gt;&gt;<i> Picking several offending channel ids, and digging further, the majority of these
+</I>&gt;<i>
+</I>&gt;&gt;<i> appear to be flapping due to Tor or otherwise intermittent connections.
+</I>&gt;<i>
+</I>&gt;<i> One thing that may help here from an implementation's point of view is to avoid
+</I>&gt;<i> sending a disabled channel update every time a channel goes offline. What
+</I>&gt;<i> eclair does to avoid spamming is to only send a disabled channel update when
+</I>&gt;<i> someone actually tries to use that channel. Of course, if people choose this
+</I>&gt;<i> offline node in their route, you don't have a choice and will need to send a
+</I>&gt;<i> disabled channel update, but we've observed that many channels come back
+</I>&gt;<i> online before we actually need to use them, so we're saving two channel updates
+</I>&gt;<i> (one to disable the channel and one to re-enable it). I think all implementations
+</I>&gt;<i> should do this. Is that the case today?
+</I>&gt;<i>
+</I>&gt;<i> We could go even further, and when we receive an htlc that should be relayed
+</I>&gt;<i> to an offline node, wait a bit to give them an opportunity to come online instead
+</I>&gt;<i> of failing the htlc and sending a disabled channel update. Eclair currently doesn't
+</I>&gt;<i> do that, but it would be very easy to add.
+</I>&gt;<i>
+</I>&gt;&gt;<i> - A common listing of current default rate limits across lightning network implementations.
+</I>&gt;<i>
+</I>&gt;<i> Eclair doesn't do any rate-limiting. We wanted to &quot;feel the pain&quot; before adding
+</I>&gt;<i> anything, and to be honest we haven't really felt it yet.
+</I>&gt;<i>
+</I>&gt;&gt;<i> which will use a common, simple heuristic to accept or reject a gossip message.
+</I>&gt;<i>
+</I>&gt;&gt;<i> (Think one channel update per block, or perhaps one per block_height &lt;&lt; 5.)
+</I>&gt;<i>
+</I>&gt;<i> I think it would be easy to come to agreement between implementations and
+</I>&gt;<i> restrict channel updates to at most one every N blocks. We simply need to add
+</I>&gt;<i> the `block_height` in a tlv in `channel_update` and then we'll be able to actually
+</I>&gt;<i> rate-limit based on it. Given how much time it takes to upgrade most of the
+</I>&gt;<i> network, it may be a good idea to add the `block_height` tlv now in the spec,
+</I>&gt;<i> and act on it later? Unless your work requires bigger changes in channel update
+</I>&gt;<i> in which case it will probably be a new message.
+</I>&gt;<i>
+</I>&gt;<i> Note that it will never be completely accurate though, as different nodes can
+</I>&gt;<i> have different blockchain tips. My nodes may be one or two blocks late compared
+</I>&gt;<i> to the node that emits the channel update. We need to allow a bit of leeway there.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Bastien
+</I>&gt;<i>
+</I>&gt;<i> Le jeu. 14 avr. 2022 &#224; 23:06, Alex Myers &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">alex at endothermic.dev</A>&gt; a &#233;crit :
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hello lightning developers,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I&#8217;ve been investigating set reconciliation as a means to reduce bandwidth and redundancy of gossip message propagation. This builds on some earlier work from Rusty using the minisketch library [1]. The idea is that each node will build a sketch representing it&#8217;s own gossip set. Alice&#8217;s node will encode and transmit this sketch to Bob&#8217;s node, where it will be merged with his own sketch, and the differences produced. These differences should ideally be exactly the latest missing gossip of both nodes. Due to size constraints, the set differences will necessarily be encoded, but Bob&#8217;s node will be able to identify which gossip Alice is missing, and may then transmit exactly those messages.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This process is relatively straightforward, with the caveat that the sets must otherwise match very closely (each sketch has a maximum capacity for differences.) The difficulty here is that each node and lightning implementation may have its own rules for gossip acceptance and propagation. Depending on their gossip partners, not all gossip may propagate to the entire network.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Core-lightning implements rate limiting for incoming channel updates and node announcements. The default rate limit is 1 per day, with a burst of 4. I analyzed my node&#8217;s gossip over a 14 day period, and found that, of all publicly broadcasting half-channels, 18% of them fell afoul of our spam-limiting rules at least once. [2]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Picking several offending channel ids, and digging further, the majority of these appear to be flapping due to Tor or otherwise intermittent connections. Well connected nodes may be more susceptible to this due to more frequent routing attempts, and failures resulting in a returned channel update (which otherwise might not have been broadcast.)A slight relaxation of the rate limit resolves the majority of these cases.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> A smaller subset of channels broadcast frequent channel updates with minor adjustments to htlc_maximum_msat and fee_proportional_millionths parameters. These nodes appear to be power users, with many channels and large balances. I assume this is automated channel management at work.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Core-Lightning has updated rate-limiting in the upcoming release to achieve a higher acceptance of incoming gossip, however, it seems that a broader discussion of rate limits may now be worthwhile. A few immediate ideas:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - A common listing of current default rate limits across lightning network implementations.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - Internal checks of RPC input to limit or warn of network propagation issues if certain rates are exceeded.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - A commonly adopted rate-limit standard.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> My aim is a set reconciliation gossip type, which will use a common, simple heuristic to accept or reject a gossip message. (Think one channel update per block, or perhaps one per block_height &lt;&lt; 5.) See my github for my current draft. [3] This solution allows tighter consensus, yet suffers from the same problem as original anti-spam measures &#8211; it remains somewhat arbitrary. I would like to start a conversation regarding gossip propagation, channel_update and node_announcement usage, and perhaps even bandwidth goals for syncing gossip in the future (how about a million channels?) This would aid in the development of gossip set reconciliation, but could also benefit current node connection and routing reliability more generally.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thanks,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Alex
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [1] <A HREF="https://github.com/sipa/minisketch">https://github.com/sipa/minisketch</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [2] <A HREF="https://github.com/endothermicdev/lnspammityspam/blob/main/sampleoutput.txt">https://github.com/endothermicdev/lnspammityspam/blob/main/sampleoutput.txt</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [3] <A HREF="https://github.com/endothermicdev/lightning-rfc/blob/gossip-minisketch/07-routing-gossip.md#set-reconciliation">https://github.com/endothermicdev/lightning-rfc/blob/gossip-minisketch/07-routing-gossip.md#set-reconciliation</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220421/a2ddf84f/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220421/a2ddf84f/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003552.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003559.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3558">[ date ]</a>
+              <a href="thread.html#3558">[ thread ]</a>
+              <a href="subject.html#3558">[ subject ]</a>
+              <a href="author.html#3558">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

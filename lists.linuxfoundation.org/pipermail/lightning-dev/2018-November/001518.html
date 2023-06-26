@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Commitment Transaction Format Update Proposals?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Commitment%20Transaction%20Format%20Update%20Proposals%3F&In-Reply-To=%3CCAO3Pvs8ydNTeYJjoBpTs_Nfnd7%3DV1r2Qcd9LJ6jnTH-kyiQDGg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001516.html">
+   <LINK REL="Next"  HREF="001519.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Commitment Transaction Format Update Proposals?</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Commitment%20Transaction%20Format%20Update%20Proposals%3F&In-Reply-To=%3CCAO3Pvs8ydNTeYJjoBpTs_Nfnd7%3DV1r2Qcd9LJ6jnTH-kyiQDGg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Commitment Transaction Format Update Proposals?">laolu32 at gmail.com
+       </A><BR>
+    <I>Tue Nov  6 04:29:21 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001516.html">[Lightning-dev] Proposal for updateable / revokable proofs of payment
+</A></li>
+        <LI>Next message: <A HREF="001519.html">[Lightning-dev] Commitment Transaction Format Update Proposals?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1518">[ date ]</a>
+              <a href="thread.html#1518">[ thread ]</a>
+              <a href="subject.html#1518">[ subject ]</a>
+              <a href="author.html#1518">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty,
+
+I'm a big fan in general of most of this! Amongst many other things, it'll:
+simplify the whole static channel backup + recovery workflow, and avoid all
+the fee related headaches we've run into over the past few months.
+
+&gt;<i> - HTLC-timeout and HTLC-success txs sigs are
+</I>&gt;<i> SIGHASH_ANYONECANPAY|SIGHASH_SINGLE, so you can Bring Your Own Fees.
+</I>
+Would this mean that we no longer extend fees to the second-level
+transactions as well? If so, then a dusty HTLC would be determined solely by
+looking at the direct output, rather than the resulting output in the second
+layer.
+
+&gt;<i>  - `localpubkey`, `remotepubkey`, `local_htlcpubkey`, `remote_htlcpubkey`,
+</I>&gt;<i> `local_delayedpubkey`, and `remote_delayedpubkey` derivation now uses a
+</I>&gt;<i> two-stage unhardened BIP-32 derivation based on the commitment number.
+</I>
+It seems enough to _only_ modify the derivation for local+remote pubkey (so
+the direct &quot;settle&quot; keys). This constrains the change to only what's
+necessary to simplify the backup+recovery workflow with the current
+commitment design. By restricting the change to these two keys, we minimize
+the code impact to the existing implementations, and avoid unnecessary
+changes that don't make strides towards the immediate goal.
+
+&gt;<i> - `to_remote` is now a P2WSH of:
+</I>&gt;<i>        `to_self_delay` OP_CSV OP_DROP &lt;remotepubkey&gt; OP_CHECKSIG
+</I>
+This seems at odds with the goal of &quot;if the remote party force closes, then
+I get my funds back immediately without requiring knowledge of any secret
+data&quot;. If it was just a plain p2wkh, then during a routine seed import and
+rescan (assuming ample look ahead as we know this is a &quot;special&quot; key), I
+would pick up outputs of channels that were force closed while I was down
+due to my dog eating my hard drive.
+
+Alternatively, since the range of CSV values can be known ahead of time, I
+can brute force a set of scripts to look for in the chain. However, this
+results in potentially a very large number of scripts (depending on how many
+channels one has, and bounds on the acceptable CSV) I need to scan for.
+
+-- Laolu
+
+
+On Fri, Oct 12, 2018 at 3:57 PM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i>         There have been a number of suggested changes to the commitment
+</I>&gt;<i> transaction format:
+</I>&gt;<i>
+</I>&gt;<i> 1. Rather than trying to agree on what fees will be in the future, we
+</I>&gt;<i>    should use an OP_TRUE-style output to allow CPFP (Roasbeef)
+</I>&gt;<i> 2. The `remotepubkey` should be a BIP-32-style, to avoid the
+</I>&gt;<i>    option_data_loss_protect &quot;please tell me your current
+</I>&gt;<i>    per_commitment_point&quot; problem[1]
+</I>&gt;<i> 3. The CLTV timeout should be symmetrical to avoid trying to game the
+</I>&gt;<i>    peer into closing. (Connor IIRC?).
+</I>&gt;<i>
+</I>&gt;<i> It makes sense to combine these into a single `commitment_style2`
+</I>&gt;<i> feature, rather than having a testing matrix of all these disabled and
+</I>&gt;<i> enabled.
+</I>&gt;<i>
+</I>&gt;<i> BOLT #2:
+</I>&gt;<i>
+</I>&gt;<i> - If `commitment_style2` negotiated, update_fee is a protocol error.
+</I>&gt;<i>
+</I>&gt;<i> This mainly changes BOLT #3:
+</I>&gt;<i>
+</I>&gt;<i> - The feerate for commitment transactions is always 253 satoshi/Sipa.
+</I>&gt;<i> - Commitment tx always has a P2WSH OP_TRUE output of 1000 satoshi.
+</I>&gt;<i> - Fees, OP_TRUE are always paid by the initial funder, because it's simple,
+</I>&gt;<i>   unless they don't have funds (eg. push_msat can do this, unless we
+</I>&gt;<i> remove it?)
+</I>&gt;<i> - HTLC-timeout and HTLC-success txs sigs are
+</I>&gt;<i>   SIGHASH_ANYONECANPAY|SIGHASH_SINGLE, so you can Bring Your Own Fees.
+</I>&gt;<i> - `localpubkey`, `remotepubkey`, `local_htlcpubkey`,
+</I>&gt;<i>   `remote_htlcpubkey`, `local_delayedpubkey`, and `remote_delayedpubkey`
+</I>&gt;<i>   derivation now uses a two-stage unhardened BIP-32 derivation based on
+</I>&gt;<i>   the commitment number.  Two-stage because we can have 2^48 txs and
+</I>&gt;<i>   BIP-32 only supports 2^31: the first 17 bits are used to derive the
+</I>&gt;<i>   parent for the next 31 bits?
+</I>&gt;<i> - `to_self_delay` for both sides is the maximum of either the
+</I>&gt;<i>   `open_channel` or `accept_channel`.
+</I>&gt;<i> - `to_remote` is now a P2WSH of:
+</I>&gt;<i>         `to_self_delay` OP_CSV OP_DROP &lt;remotepubkey&gt; OP_CHECKSIG
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Rusty.
+</I>&gt;<i>
+</I>&gt;<i> [1] I recently removed checking this field from c-lightning, as I
+</I>&gt;<i>     couldn't get it to reliably work under stress-test.  I may just have
+</I>&gt;<i>     a bug, but we could just fix the spec instead, then we can get our
+</I>&gt;<i>     funds back even if we never talk to the peer.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181106/9aa80d96/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181106/9aa80d96/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001516.html">[Lightning-dev] Proposal for updateable / revokable proofs of payment
+</A></li>
+	<LI>Next message: <A HREF="001519.html">[Lightning-dev] Commitment Transaction Format Update Proposals?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1518">[ date ]</a>
+              <a href="thread.html#1518">[ thread ]</a>
+              <a href="subject.html#1518">[ subject ]</a>
+              <a href="author.html#1518">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

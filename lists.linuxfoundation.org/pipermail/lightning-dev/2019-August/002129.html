@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal: Automated Inbound Liquidity With	Invoices
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Automated%20Inbound%20Liquidity%20With%0A%09Invoices&In-Reply-To=%3CmawpTpu_8LDNKhiUaHBHj-w9yi2ncz_RJk6qL9lHYA9-9eVtTgDpc54w2t9Raexj_F9yw7u_ATMdeW08dSrW7_K4sm_vUnoq4ws16euVhXg%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002128.html">
+   <LINK REL="Next"  HREF="002130.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal: Automated Inbound Liquidity With	Invoices</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Automated%20Inbound%20Liquidity%20With%0A%09Invoices&In-Reply-To=%3CmawpTpu_8LDNKhiUaHBHj-w9yi2ncz_RJk6qL9lHYA9-9eVtTgDpc54w2t9Raexj_F9yw7u_ATMdeW08dSrW7_K4sm_vUnoq4ws16euVhXg%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Proposal: Automated Inbound Liquidity With	Invoices">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Aug 16 03:58:25 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002128.html">[Lightning-dev] Proposal: Automated Inbound Liquidity With	Invoices
+</A></li>
+        <LI>Next message: <A HREF="002130.html">[Lightning-dev] CVEs assigned for lightning projects: please	upgrade!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2129">[ date ]</a>
+              <a href="thread.html#2129">[ thread ]</a>
+              <a href="subject.html#2129">[ subject ]</a>
+              <a href="author.html#2129">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Dario,
+
+&gt;<i> Having&#160;said that, if the usability of the scheme &quot;open channel, wait until it's locked, then send HTLC payment&quot; were deemed good enough, then routing nodes could implement this idea to route payments &quot;just in time&quot;, even if there aren't any pre-existing routes to the destination.
+</I>
+This is a good idea, but one with some difficulties in implementation.
+
+* The current onion route format contains the next short-channel-id (and in particular not the node-id of the next hop in the route).
+  Indeed, short-channel-ids were invented to reduce the size of the onion route format.
+  If a channel used to exist between nodes, then the payer might have gotten this short-channel-id in the past via gossip.
+  Then later, if the channel is closed, most implementations will forget the short-channel-id (and thus would probably also forget *which* node the short-channel-id used to be connected to, so determining the next node for the just-in-time channel opening would be difficult).
+  * C-Lightning retains this information for some blocks but will forget it at some point.
+  * Implementations that do this &quot;just-in-time&quot; channel-opening will need to remember this short-channel-id for longer.
+* The final HTLC going to the payee has the tightest time schedule.
+  If this HTLC has a timeout that is too near, the payee will reject the payment.
+  Since channel opening requires blocks to pass in order to confirm the funding transaction, by the time the HTLC reaches the payee, the timeout might now be judged too near and the payee will reject the payment anyway.
+  * The spec itself recommends the use of &quot;shadow routing&quot;.
+    Briefly, the payer obscures who the payee is by adding a greater timeout to the payee than the minimum required by the payee.
+    (since timeouts decrease at each hop, an intermediate node can guess who the payee is by determining how small the remaining timeout looks.)
+    This can mitigate the above effect.
+    C-Lightning implements shadow routing.
+
+However, this same idea would be greatly helped by trampoline routing:
+
+* The planned trampoline routing indicates the node id of the next trampoline hop, thus not requiring implementations to remember who a closed short-channel-id used to be connected to.
+* Trampoline nodes will generally require a much larger fee and timelock budget, because they also have to build routes.
+  If the fee and timelock budgets are big enough, then the trampoline node might decide to open a direct channel to the next trampoline node &quot;just-in-time&quot; for the next trampoline hop.
+
+Regards,
+ZmnSCPxj
+
+&gt;<i>
+</I>&gt;<i> On Wed, Aug 14, 2019 at 8:42 PM ZmnSCPxj via Lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Good morning Ecurrencyhodler,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; It seems to me a trusted model then.
+</I>&gt;<i> &gt; Regardless of who makes the channel (the payee cannot determine who the payer is anyway) the payee cannot trustlessly release the product until the channel is deeply confirmed, else your security is only 0-conf, not off-chain.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Further, `push_msat` has the drawback of not providing proof-of-payment, thus an intermediate hop node may be unable to claim funds.
+</I>&gt;<i> &gt; (I believe `push_msat` was a mistake: you should simply make a normal HTLC payment (that provides proof-of-payment) after the channel is deeply confirmed, and `push_msat`, if you read lightning-rfc, does have this warning that you cannot trust money you receive that way until the channel is deeply confirmed.)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Regards,
+</I>&gt;<i> &gt; ZmnSCPxj
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Sent with ProtonMail Secure Email.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+</I>&gt;<i> &gt; On Thursday, August 15, 2019 2:05 AM, ecurrencyhodler &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ecurrencyhodler at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; &gt;So would `push_msat`; until confirmed deeply the channel opening can still be cancelled by double-spending and it would be foolhardy to deliver the product until the channel is deeply confirmed to be opened.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Okay so there's 2 situations here I'd like to explore:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; 1. Bob -&gt; routing node -&gt; Me
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; 2. Bob -&gt; Me
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Scenario 1
+</I>&gt;<i> &gt; &gt; If Bob pays the invoice and the routing node opens a payment channel and pushes sats to me, you could stipulate that the routing node isn't able to fully take ownership of the sats until 6 confirmations potentially via Hodl Invoices (by the time the routing nodes channel with pushed payments confirms with mine).&#160; But I could still make LN payments instantly through the routing node because the routing node just needs to wait until the 6 confirmations and settle all accounts after the fact.&#160;&#160;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Scenario 2
+</I>&gt;<i> &gt; &gt; Bob and I know each other so if channel disappears, it's basically the same situation with Thor's instant channel.&#160; But we could completely remove scenario 2 and only allow routing nodes to open channels to me as long as Bob makes the payment.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; On Wed, Aug 14, 2019 at 12:03 AM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Good morning Ecurrencyhodler,
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Hi ZmnSCPxj!&#160;
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Submarine swaps are a great current solution, but we still have to wait for confirmations.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; So would `push_msat`; until confirmed deeply the channel opening can still be cancelled by double-spending and it would be foolhardy to deliver the product until the channel is deeply confirmed to be opened.
+</I>&gt;<i> &gt; &gt; &gt; At least this way, you can perform the preparation in parallel to your other startup operations for starting your business before actual launch of your merchant website.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;Further, while it involves fees, it does give you control over what nodes you make channels with, and would be a good investment in your future accessibility over the Lightning Network.
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; What disadvantages do you see over this proposal and say something like autopilot?&#160; Or do you just prefer manual channel management overall?
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; This should eventually be implementable by some kind of auto-system.
+</I>&gt;<i> &gt; &gt; &gt; It is still early days and a lot of infrastructure is yet to be written.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; On Tue, Aug 13, 2019 at 6:27 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Good morning Ecurrencyhodler,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; A current and practical way to set up incoming liquidity would be to take some onchain funds, create a channel to a high-uptime node on the network (just run an autopilot), then use a submarine swap (i.e. pay offchain funds to buy onchain funds).
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Then you can reuse the same onchain funds over and over to make more liquidity until the submarine swap provider runs out of onchain funds or you have sufficient liquidity or your money has been drained by the fees involved.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; While this requires onchain funds, presumably as a new business or merchant you will have capital in some form before starting your business.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The most sensible way to store and transport financial capital is, of course, Bitcoin, thus you already have what is needed to start this, you simply have to do it before you perform other operations.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Further, while it involves fees, it does give you control over what nodes you make channels with, and would be a good investment in your future accessibility over the Lightning Network.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Sent with ProtonMail Secure Email.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; On Monday, August 12, 2019 11:42 AM, Ecurrencyhodler Blockchains &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ecurrencyhodler at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Hi.&#160;I'd like to propose a way for instant inbound liquidity to be automated via invoices and would appreciate your feedback.&#160; It's similar to Thor's instant channel but this proposal would only be valuable if it becomes a standard across all lightning implementations and wallets.&#160; It won't work if it's limited to just one Lightning wallet.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Proposal: Automated Inbound Liquidity With Invoices
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; For Who: Full Lightning Network nodes
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Problem: Waiting for inbound liquidity as channel establishes when you first come online and want to receive a LN payment.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Solution:&#160;Embedding the node uri of the invoice creator, along with amount to be routed.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Scenario:&#160;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 1.&#160; Bob wants to send me 100,000 sats.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 2.&#160; My node just came online and has 0 inbound liquidity.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 3.&#160; I create an invoice for 100,000 sats.&#160; My LN node recognizes I have 0 inbound liquidity so my wallet also embeds my URI in the invoice.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 4.&#160; Bob&#8217;s wallet sees an invoice + uri.&#160; Maybe even tries to route.&#160; When it doesn&#8217;t see anything, it auto opens a channel + pushes 100,000 sat payment.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 5.&#160; I now own and can spend 100,000 sats instantly.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Considerations:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; -&#160; &#160;This auto establishing of channels and pushing payments isn&#8217;t for all LN nodes.&#160; Just routing nodes.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; -&#160; &#160;Bob doesn&#8217;t need to be the one to establish the channel.&#160; He can push the information down the line until a node dedicated to routing is found.&#160; The routing node can then be the one to establish the channel with me.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; -&#160; &#160;Certain specifics need to be flushed out such as the size of Bob&#8217;s channel.&#160; Right now I think Bob can manually set the size of the channels to be established on his end.&#160; Should be smaller channels at first.&#160; If the person gets paid again, just establish another channel towards the same node if there isn't enough capacity.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; -&#160; &#160;Routing nodes who provide this service can charge a premium.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; -&#160; &#160;Bob, as a liquidity provider, won't cheat against himself so I can make LN payments instantly.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; -&#160; &#160;The beauty behind this proposal is that I can receive a payment instantly, I can send payments instantly, and that it hides everything from me as an end user.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; -&#160; &#160;Can possibly be extended to neutrino LN wallets if they are public.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002128.html">[Lightning-dev] Proposal: Automated Inbound Liquidity With	Invoices
+</A></li>
+	<LI>Next message: <A HREF="002130.html">[Lightning-dev] CVEs assigned for lightning projects: please	upgrade!
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2129">[ date ]</a>
+              <a href="thread.html#2129">[ thread ]</a>
+              <a href="subject.html#2129">[ subject ]</a>
+              <a href="author.html#2129">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

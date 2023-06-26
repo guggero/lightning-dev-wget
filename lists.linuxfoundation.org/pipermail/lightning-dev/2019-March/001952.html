@@ -1,0 +1,85 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Routemap%20scaling%20%28was%3A%20Just%20in%20Time%20Routing%0A%09%28JIT-Routing%29%20and%20a%20channel%20rebalancing%20heuristic%20as%20an%20add%0A%09on%20for%20improved%20routing%20success%20in%20BOLT%201.0%29&In-Reply-To=%3C6iVzxoQuiVl-t1-td9mD2nywYYspmlOiJi8NBcoQGE_C5NuMLuCHmXc4Dx73XjC4UxY_vumKoTEvYyIC-1DKMt5XgUPNxDEvzvf970D2U4A%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001951.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)</H1>
+    <B>m.a.holden</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Routemap%20scaling%20%28was%3A%20Just%20in%20Time%20Routing%0A%09%28JIT-Routing%29%20and%20a%20channel%20rebalancing%20heuristic%20as%20an%20add%0A%09on%20for%20improved%20routing%20success%20in%20BOLT%201.0%29&In-Reply-To=%3C6iVzxoQuiVl-t1-td9mD2nywYYspmlOiJi8NBcoQGE_C5NuMLuCHmXc4Dx73XjC4UxY_vumKoTEvYyIC-1DKMt5XgUPNxDEvzvf970D2U4A%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Routemap scaling (was: Just in Time Routing	(JIT-Routing) and a channel rebalancing heuristic as an add	on for improved routing success in BOLT 1.0)">m.a.holden at protonmail.com
+       </A><BR>
+    <I>Sat Mar 30 16:44:46 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001951.html">[Lightning-dev] Eltoo in a tree
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1952">[ date ]</a>
+              <a href="thread.html#1952">[ thread ]</a>
+              <a href="subject.html#1952">[ subject ]</a>
+              <a href="author.html#1952">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj &amp; Ren&#233;.
+
+One way you could have both determinism and encourage a diverse distribution of network maps is to treat it as a spatial indexing problem, where the space we use is the lexicographical space of the node ids (or hashes of), borrowing some similarities from DHTs.
+
+If for example, we take a quadtree, you can take the 2 most-significant bits of the public key hash, which would put your node into one of 4 buckets. Nodes could advertise a feature bit indicating that they are committed to keeping the entire routemap of the bucket which matches their own public key hash, which would be all of the nodes in the same bucket - and all of the channels with one or both of their endpoints in the bucket.
+
+I'd estimate that with a quadtree, information held by each node could be reduced to about 40% of that of the parent node in the quadtree, although the real amounts would depend on such things as autopilot defaults (ie, how many channels you open to nodes within your bucket versus channels to nodes in other buckets). Nodes could decide their own bucket capacities on which they wish to spill and reduce the amount of gossip by taking the 2 next most significant bits of the PKH, and could go several layers deep.
+
+A node which needs to make a payment to another node within its bucket should be able to do so without querying (unless there are no routes with the required capacity). If making a payment to another bucket, then there would still exist a decent number of channels in the local routemap to nodes in those other buckets, and these nodes could be queried to find the second half of a route to the destination, or could use JIT routing for the second half, assuming the first half of the route can be selected from the local routemap.
+
+In terms of relating this to &quot;locality&quot; in the geographical sense, one could create a convention where each bucket represents an approximate physical location. The globe can be spatially-indexed as a quadtree by taking a tetrahedral map projection (eg, Lee conformal projection[1]). The 4 equalateral triangles of the tetrahedron can be infinitely split again into 4 smaller equal-sized equalateral triangles for however many layers deep the quadtree might be. With this, it might be possible to have a convention where there is a relation between the lexicographical space and the geographical space, and wallet software would essentially brute force a private key to put you into the corresponding bucket to your physical location (trivial for the small number of bits we're talking about). Routing would be improved for local trade because you would have the entire local topology stored, and would only need to query when making payment at distance. (This may raise some privacy concerns which would need discussing.)
+
+One issue is that it would result in a very unbalanced tree given that population is dense in some areas and sparse in others. To overcome this, instead of using a conformal or equal-area projection, we might be able to use an equal-population-per-area projection, which I had never heard of such projection before but have found some research in regards to producing them[2]. Nodes would need to agree on the projection in order for this to work, but the work could be done once and the results open sourced and shared between the implementations.
+
+Autopilot implementations might also need adjusting to consider distance too. As a starting point I would suggest a geometric distribution, where half of opened channels should be within the same bucket, a quarter should be to sibling buckets, and an eight to cousin buckets, etc. This would result in increased probability of routing and reduced querying for local payments - paying your local coffee shop should be query-free - and payments to the other side of the world might require increased querying.
+
+There are also privacy considerations if nodes indicate their approximate locations which would need discussing. What do you think?
+
+Also, this method does not need the be the exclusive way in which gossip is communicated between nodes, and one might also combine with something like ZmnSCPxj has suggested, for gossiping about the highest capacity nodes. It might be also possible to share information about the highest capacity channels in a bucket too.
+
+[1]:<A HREF="https://en.wikipedia.org/wiki/Lee_conformal_world_in_a_tetrahedron">https://en.wikipedia.org/wiki/Lee_conformal_world_in_a_tetrahedron</A>
+[2]:<A HREF="https://www.pnas.org/content/101/20/7499.full">https://www.pnas.org/content/101/20/7499.full</A>
+
+(PS, sorry for the separate thread, LML will not let me subscribe to the list)
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190330/0441d5ab/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190330/0441d5ab/attachment-0001.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001951.html">[Lightning-dev] Eltoo in a tree
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1952">[ date ]</a>
+              <a href="thread.html#1952">[ thread ]</a>
+              <a href="subject.html#1952">[ subject ]</a>
+              <a href="author.html#1952">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

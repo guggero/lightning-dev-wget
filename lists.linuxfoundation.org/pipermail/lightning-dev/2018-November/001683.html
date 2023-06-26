@@ -1,0 +1,184 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BDRAFT%5D%20Multi-cell-hop%20onion%20with%20TLV%20%28and%0A%09example%20for%20multi-part-payment%29&In-Reply-To=%3CGiloepFSpPcMjl6ZvTCyb-EAGtj6-u_HpLKSaUorKxx7PiSdu3ciOm04C3zhlJdjKllKm1Fv6mm5J7hGLKkrbRa-pu14fd9Lnjz-SkWaz-g%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001681.html">
+   <LINK REL="Next"  HREF="001691.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BDRAFT%5D%20Multi-cell-hop%20onion%20with%20TLV%20%28and%0A%09example%20for%20multi-part-payment%29&In-Reply-To=%3CGiloepFSpPcMjl6ZvTCyb-EAGtj6-u_HpLKSaUorKxx7PiSdu3ciOm04C3zhlJdjKllKm1Fv6mm5J7hGLKkrbRa-pu14fd9Lnjz-SkWaz-g%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Nov 28 03:51:04 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001681.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and example	for multi-part-payment)
+</A></li>
+        <LI>Next message: <A HREF="001691.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1683">[ date ]</a>
+              <a href="thread.html#1683">[ thread ]</a>
+              <a href="subject.html#1683">[ subject ]</a>
+              <a href="author.html#1683">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Rusty,
+
+&gt;<i> There's a kinda-neat intersection between the &quot;use TLV&quot; proposal and the
+</I>&gt;<i> &quot;multi-cell-onion&quot; idea, so I want to make a concrete proposal (wording
+</I>&gt;<i> needs formalization):
+</I>&gt;<i>
+</I>&gt;<i> Multi-cell structure:
+</I>&gt;<i>
+</I>&gt;<i> 1.  `realm` (or `per_hop_type` if you prefer) meaning expanded.
+</I>&gt;<i> 2.  Lower 4 bits is `num_extra_cells` to use (ie. total 1-17 cells).
+</I>&gt;<i> 3.  Upper 4 bits reserved: if set, drop.
+</I>
+What does drop mean exactly?
+Or an error with `BADONION` bit set? (&quot;drop the HTLC as a failure&quot;)
+Or should we try to consume the next 65 bytes? (&quot;drop this cell and process the next cell&quot;)
+
+&gt;<i> 4.  HMAC on end covers that many per-hops.
+</I>&gt;<i> 5.  Padding is thus 12 bytes + 64 * `num_extra_cells`.
+</I>
+Is it not multiple of 65?
+
+Also, it seems to me that the existing `per_hop_type`/`realm`/`packet_type` of 0 implies that only a single 65-byte section is used (as is current behavior).  Then a byte of 1 indicates two 65-byte sections are used, and so on.
+I broadly approve of this design.
+
+However with only 4 bits it seems to me:
+
+&gt;<i>(ie. total 1-17 cells).
+</I>
+is inaccurate? Only 1-&gt;16 cells?
+
+&gt;<i>
+</I>&gt;<i>     Structure of padding changes:
+</I>&gt;<i>
+</I>&gt;<i> 6.  We make the onion `padding` contain TLV, rename to `tlv`.
+</I>&gt;<i> 7.  TLVs (as always!) are in lexicographical order (with shortest-wins on
+</I>&gt;<i>     tiebreak).
+</I>
+If types are unique, then &quot;shortest-wins&quot; would not matter.
+I believe there was a vague agreement that types would have to be unique in a TLV sequence, and that if a type could be variadic, it would be variadic within its own value-blob.
+
+&gt;<i>
+</I>&gt;<i> 8.  TLVs follow unknown-odd-is-ok rule.
+</I>&gt;<i> 9.  No 0-type; that terminates (backwards compat with 0-filled padding).
+</I>&gt;<i>
+</I>&gt;<i>     New onion error value:
+</I>&gt;<i>
+</I>&gt;<i> 10.  type: PERM|22 (`tlv_element_invalid`)
+</I>&gt;<i> 11.  `2`:`offset`
+</I>&gt;<i>
+</I>&gt;<i>     The writer MUST set `offset` to a byte offset within the `tlv` field
+</I>&gt;<i>     of the tlv element it rejected. It SHOULD use the offset of the `type` byte of the TLV
+</I>&gt;<i>     element if it didn't understand it, the offset the `len` byte of the TLV
+</I>&gt;<i>     element if it was an incorrect length, or otherwise within the `value`
+</I>&gt;<i>     if the value was somehow invalid.
+</I>&gt;<i>
+</I>&gt;<i>     TLVs defined for initial onion:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> -   type 2: `switch_chain`
+</I>&gt;<i>     length: 32
+</I>&gt;<i>     value: chain_id of new chain.
+</I>&gt;<i>
+</I>&gt;<i>     Used to switch chains during transit or at final hop.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Use with multi-part payment (&quot;base AMP&quot;):
+</I>&gt;<i>
+</I>&gt;<i> -   type 4: `total_payment`
+</I>&gt;<i>     length: variable, &lt;= 8
+</I>&gt;<i>     value: amount of total payment, in msat (big-endian of course).
+</I>&gt;<i>
+</I>&gt;<i>     Writer must only use for final hop, and only if bolt11 flagged it as
+</I>&gt;<i>     available (bolt11-multi_part_available). May use even if this payment
+</I>&gt;<i>     meets the total_payment requirement.
+</I>&gt;<i>
+</I>&gt;<i>     Reader MUST reject if not final hop, MAY reject if invoice was not
+</I>&gt;<i>     `bolt11-multi_part_available`. Reader SHOULD wait until total parts
+</I>&gt;<i>     meet or exceed `total_payment` (exceed may be due to fuzzing) [rest
+</I>&gt;<i>     as per previous posts].
+</I>
+Can we use the existence of this tlv to signal use of base AMP, instead of a separate flags byte?
+
+On another topic, how about:
+
+- type 6: `application_data`
+  length: variable
+  value: unknown
+
+Writer MUST only use for final hop, and only if it knows that the final hop has a specific application that it is compatible with.
+
+Reader MUST pass this application data to higher layers.
+The application is responsible for identifying the correctness and validity of the attached value.
+
+(It seems to me that this would work for spontaneous payments to identify who the sender is, e.g. exchanges might provide a userkey and authorization that will be wrapped in this TLV; a corresponding new field in BOLT11 invoices (or multi-use offers) can specify the `application_data` to use for the payment, for example)
+
+- type 8: `spontaneous_payment`
+  length: 32
+  value: preimage
+
+Writer MUST only use for final hop, and sacrifices proof-of-payment.
+
+Reader MUST claim the HTLC using the given preimage.
+
+&gt;<i>     PS. I prefer 'multi-part-payment' to 'base AMP' in the spec. It's more
+</I>&gt;<i>     explicit, and leaves the namespace clear for more atomicy AMPs.
+</I>
+I would argue that &quot;base&quot; AMP is sufficiently atomic to merit the full name of &quot;atomic multipath payment&quot;.
+Indeed, even if we switch to points and their generation scalars (pubkey/privkey), the same &quot;base AMP&quot; can be used as-is, with the added security of decorrelation within paths and between paths by taking advantage of homomorphisms.
+
+However, this is getting to color-of-the-bikeshed territory and I will just call it by whatever name sticks to my mind, preferring Base AMP just as I prefer sipa.
+
+Regards,
+ZmnSCPxj
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001681.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and example	for multi-part-payment)
+</A></li>
+	<LI>Next message: <A HREF="001691.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1683">[ date ]</a>
+              <a href="thread.html#1683">[ thread ]</a>
+              <a href="subject.html#1683">[ subject ]</a>
+              <a href="author.html#1683">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

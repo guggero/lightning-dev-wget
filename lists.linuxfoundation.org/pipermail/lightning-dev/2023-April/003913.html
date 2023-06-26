@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Resizing Lightning Channels Off-Chain With Hierarchical Channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Resizing%20Lightning%20Channels%20Off-Chain%20With%0A%20Hierarchical%20Channels&In-Reply-To=%3CZD/TnKbYAVKC5brn%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003910.html">
+   <LINK REL="Next"  HREF="003917.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Resizing Lightning Channels Off-Chain With Hierarchical Channels</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Resizing%20Lightning%20Channels%20Off-Chain%20With%0A%20Hierarchical%20Channels&In-Reply-To=%3CZD/TnKbYAVKC5brn%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Resizing Lightning Channels Off-Chain With Hierarchical Channels">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Apr 19 11:42:20 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003910.html">[Lightning-dev] Resizing Lightning Channels Off-Chain With	Hierarchical Channels
+</A></li>
+        <LI>Next message: <A HREF="003917.html">[Lightning-dev] Resizing Lightning Channels Off-Chain With	Hierarchical Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3913">[ date ]</a>
+              <a href="thread.html#3913">[ thread ]</a>
+              <a href="subject.html#3913">[ subject ]</a>
+              <a href="author.html#3913">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Apr 18, 2023 at 07:17:34PM +0000, jlspc wrote:
+&gt;<i> &gt; One thing that confuses me about the paper is how to think about routing
+</I>&gt;<i> &gt; to a &quot;channel&quot; rather than a node -- ie the payment from &quot;E-&gt;FG-&gt;A&quot; where
+</I>&gt;<i> &gt; &quot;FG&quot; isn't &quot;F&quot; or &quot;G&quot;, but &quot;both of them&quot;.
+</I>&gt;<i> Yes, I found it very difficult to think about, and I kept getting confused between concepts like &quot;user&quot;, &quot;node&quot;, &quot;channel&quot;, and &quot;factory&quot;.
+</I>&gt;<i> The thing that works best for me is to create a clear definition of each of these terms, along with the term &quot;party&quot;.
+</I>
+Okay, that makes sense. I think it might work better to treat &quot;node&quot; as
+synonymous with &quot;user&quot; rather than &quot;party&quot; though -- that way you can say
+&quot;you create a lightning node by running lightning node software such as
+lnd/cln/eclair/etc&quot;. That means not all vertices in the payment routing
+network are nodes; but all vertices in the *gossip* network are nodes,
+so that seems okay.
+
+Just saying &quot;channel&quot; (instead of &quot;logical channel&quot;) and &quot;utxo/off-chain
+utxo&quot; (instead of &quot;physical channel&quot;) might also work okay.
+
+&gt;<i> I also think it's best to imagine a world in which there are hierarchical channels, but there are no &quot;factories&quot; per se.
+</I>
+Personally, I use &quot;channel factory&quot; to mean &quot;anything that lets a
+single utxo contain multiple channels between different users, that
+can be reorganised without going on-chain&quot;, so I think once you've got
+hierarchial channels, you've implicitly got (a variation of) channel
+factories.
+
+(I'm not sure &quot;channel factories&quot; is really the most evocative way of
+describing them -- at least when I think of a factory, I think the product
+should be accessible to everyone; but for channel factories you have to
+be involved in the factory's original mutlisig to be able to use one of
+its channels. Maybe better to call them &quot;channel coops&quot;, where you're
+creating a little commune of friends/allies to work together with each
+other. Could be pronounced like &quot;workers' co-op&quot; or like &quot;chicken coop&quot;,
+either way :)
+
+&gt;<i> * Logical Channel: a layer 2 construct that consists of all of the physical channels owned by a specific pair of parties
+</I>&gt;<i>   - the size (capacity) of a logical channel is the sum of the sizes of their physical channels
+</I>&gt;<i>   - (Footnote: It's possible, with a significant amount of software development work that I in no way discount, to route a payment through a logical channel where the payment traverses multiple physical channels at the same time. This is done by using separate HTLCs, all sharing the same secret, in each of the physical channels that the payment traverses. I can write more about this if that would be helpful.)
+</I>
+I think it might already be interesting to write a BOLT/BLIP for that?
+Having a single channel backed by multiple on-chain utxos is probably
+interesting for splicing (adding or spending a utxo while keeping the
+channel open on the other utxos might be able to be done more simply than
+splicing in general), and having multiple utxos might let you increase
+some of your channel limits, eg `max_accepted_htlcs` might be able to
+be increased to 483*U where U is the number of UTXOs backing the channel.
+
+&gt;<i> &gt; It feels like there's a whole
+</I>&gt;<i> &gt; mass of complications hidden in there from a routing perspective; like how
+</I>&gt;<i> &gt; do you link &quot;FG&quot; back with &quot;F&quot; and &quot;G&quot;, how do you decide fees, how do
+</I>&gt;<i> &gt; you communicate fees/max_htlc/etc.
+</I>&gt;<i> Regarding the specific issues you raised:
+</I>&gt;<i> Q: How do you link &quot;FG&quot; back with &quot;F&quot; and &quot;G&quot;?
+</I>&gt;<i> A: In terms of gossiping and the channel graph, you don't
+</I>
+Yeah, I think that simplifies things substantially.
+
+I think the main thing that misled me here was the &quot;CD-&gt;E-&gt;FG&quot; payment
+chain -- it doesn't make sense to me why E would want to devote funds
+that can only be used for rebalancing channels, but not normal payments.
+Having that be CD-&gt;DE-&gt;FG seems like it would make much more sense in that
+model. (Though, obviously, no one except D and E could necessarily tell
+the difference between those two scenarios in practice, and just because
+something doesn't make sense, doesn't mean nobody will actually do it)
+
+The other thing was that going from N nodes to C*N channels, then
+re-considering each of the C*N channels (A-&gt;B, etc) as also potentially
+being nodes and adding an additional K*C*N channels (AB-&gt;CD, etc) seemed
+like it might be quadratic to me. But it's probably not -- C (channels per
+node) and K (utxos per channel) are probably constant or logarithmic in
+N, so it's probably okay? 
+
+On the other hand, I could see the rebalancing channels not actually
+being very useful for routing payments (they require 3+ signatures,
+and may not even be publicly connected to any of the level-1 nodes),
+so it could make sense to just treat them as two different networks,
+where regular people doing payments only see the base channels, but
+high-availability nodes also find out about the rebalancing channels.
+If so, then the extra nodes/channels in the rebalancing graph only affect
+people who can afford to dedicate the resources to storing it anyway,
+so it's probably fine.
+
+&gt;<i> Q: How do you decide fees?
+</I>&gt;<i> Q: How do you communicate fees/max_htlc/etc.?
+</I>
+Yep, both these bcome trivial.
+
+&gt;<i> &gt; if you have a factory ((A,B),C,D,E) then every payment through AB to C
+</I>&gt;<i> &gt; or D or E will decrease AB's channel capacity.
+</I>
+I was assuming a payment path using the channels (X-&gt;A) and (AB-&gt;C)
+here. But that's not something anyone can pick in this model, unless A
+announces an (A-&gt;AB) path that others can use to link them, and in that
+case either {A,AB} is a real channel and everything works fine, or it's
+a fake one that A and B have negotiated because they're both happy if
+the AB channel changes capacity randomly.
+
+&gt;<i> Finally, I realize that creating a world without factories doesn't sound like a good solution for scaling Bitcoin. However, I believe hierarchical channels largely solve the problem of resizing channels off-chain.
+</I>
+I think this is probably a lot harder in practice than in theory? If
+you have an {A,B} channel holding 3 BTC across two hierarchial channels,
+{X:1 BTC, AB:1 BTC} and {Y:1 BTC, AB:2 BTC}, and someone wants to route
+0.5 BTC through X-&gt;AB-&gt;Y, then that will look something like:
+
+   {X:1, AB:1}    {AB:2, Y:1}
+
+   {X:0.5, XAB:0.5, AB:1}  {AB:2, Y:1}
+
+   {X:0.5, XAB:0.5, AB:1}  {AB:1.5, ABY:0.5 Y:1}
+
+and either:
+
+   {X:1, AB:1}    {AB:2, Y:1}   (on failure)
+or
+   {X:0.5, AB:1.5}    {AB:1.5, Y:1.5}   (on success)
+
+But what if you're in the middle of routing 2 BTC over the A,B channel
+in the meantime? In that case you need some of the AB payments to be
+conditional on the success path of XAB and the failure path of ABY.
+
+I *think* that's fine, and doesn't involve a combinatorical blowup in
+the event that you're routing rebalances across multiple off-chain utxos
+-- you just end up splitting your channel across {X+2*Y} utxos where X
+is the number of &quot;physical&quot; channels and &quot;Y&quot; is the number of pending
+rebalances. But it seems like there's a fair chunk of complexity and
+maybe some extra round trips (eg, moving a pending HTLC from being
+purely in the AB:2 output to being split across the {XAB:0.5/success and
+ABY:0.5/timeout} atomically seems tricky?).
+
+(I figure implementing something eltoo-like via 2-user tunable penalty
+channels and/or ln-symmetry (let alone splicing, taproot funding
+addresses, and ptlcs) is a sufficient sink for all the available
+engineering effort any time soon, but talking about hierarchial/factory
+things well in advance of when they could reasonably be implemented is
+fun too)
+
+Cheers,
+aj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003910.html">[Lightning-dev] Resizing Lightning Channels Off-Chain With	Hierarchical Channels
+</A></li>
+	<LI>Next message: <A HREF="003917.html">[Lightning-dev] Resizing Lightning Channels Off-Chain With	Hierarchical Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3913">[ date ]</a>
+              <a href="thread.html#3913">[ thread ]</a>
+              <a href="subject.html#3913">[ subject ]</a>
+              <a href="author.html#3913">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

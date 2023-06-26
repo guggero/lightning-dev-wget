@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] #zerobasefee
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3C20210816020224.GC3971%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003179.html">
+   <LINK REL="Next"  HREF="003181.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] #zerobasefee</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3C20210816020224.GC3971%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] #zerobasefee">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Aug 16 02:02:24 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003179.html">[Lightning-dev] #zerobasefee
+</A></li>
+        <LI>Next message: <A HREF="003181.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3180">[ date ]</a>
+              <a href="thread.html#3180">[ thread ]</a>
+              <a href="subject.html#3180">[ subject ]</a>
+              <a href="author.html#3180">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Aug 15, 2021 at 07:19:01AM -0500, lisa neigut wrote:
+&gt;<i> My suggestion would be that, as a compromise, we set a network wide minimum fee
+</I>&gt;<i> at the protocol level of 1msat.
+</I>
+Is that different in any meaningful way to just saying &quot;fees get rounded
+up to the nearest msat&quot; ? If the fee is 999.999msat, expecting to get
+away with paying less than 1sat seems kinda buggy to me.
+
+On Sun, Aug 15, 2021 at 08:04:52PM -0400, Matt Corallo wrote:
+&gt;<i> I'm frankly still very confused why we're having these conversations now.
+</I>
+Because it's what people are thinking about. The bar for having a
+conversation about something is very low...
+
+&gt;<i> In
+</I>&gt;<i> one particular class of applicable routing algorithms you could use for
+</I>&gt;<i> lightning routing having a base fee makes the algorithm intractably slow,
+</I>
+I don't think of that as the problem, but rather as the base fee having
+a multiplicative effect as you split payments.
+
+If every channel has the same (base,proportional) fee pair, and send a
+payment along a single path, you're paying n*(base+k*proportional). If
+you split the payment, and send half of it one way, and half the other
+way, you're paying n*(2*base+k*proportional). If you split the payment
+four ways, you're paying n*(4*base+k*proportional). Where's the value
+to the network in penalising payment splitting?
+
+Being denominated in sats, the base fee also changes in value as the
+bitcoin price changes -- c-lightning dropped the base fee to 1sat (from
+546 sat!) in Jan 2018, but the value of 1sat has increased about 4x
+since then, and it seems unlikely the fixed costs of a successful HTLC
+payment have likewise increased 4x.  Proportional fees deal with this
+factor automatically, of course.
+
+&gt;<i> There's real cost to distorting the fee structures on the network away from
+</I>&gt;<i> the costs of node operators, 
+</I>
+That's precisely what the base fee is already doing. Yes, we need some
+other way of charging fees to prevent using up too many slots or having
+transactions not fail in a timely manner, but the base fee does not
+do that.
+
+&gt;<i> Imagine we find some great way to address HTLC slot flooding/DoS attacks (or
+</I>&gt;<i> just chose to do it in a not-great way) by charging for HTLC slot usage, now
+</I>&gt;<i> we can't fix a critical DoS issue because the routing algorithms we deployed
+</I>&gt;<i> can't handle the new costing.
+</I>
+I don't think that's true. The two things we don't charge for that can
+be abused by probing spam are HTLC slot usage and channel balance usage;
+both are problems only in proportion to the amount of time they're held
+open, and the latter is also only a problem proportional to the value
+being reserved. [0]
+
+Additionally, I don't think HTLC slot usage needs to be kept as a
+limitation after we switch to eltoo; and in the meantime, I think it can
+be better managed via adjusting the min_htlc_amount -- at least for the
+scenario where problems are being caused by legitimate payment attempts,
+which is also the only place base fee can help.
+
+[0] (Well, ln-penalty's requirement to permanently store HTLC information
+     in order to apply the penalty is in some sense a constant
+     cost, however the impact is also proportional to value, and for
+     sufficiently low value HTLCs can be ignored entirely if the HTLC
+     isn't included in the channel commitment)
+
+&gt;<i> Instead, we should investigate how we can
+</I>&gt;<i> apply the ideas here with the more complicated fee structures we have.
+</I>
+Fee structures should be *simple* not complicated.
+
+I mean, it's kind of great that we started off complicated -- if it
+turns out base fee isn't necessary, it's easy to just set it to zero;
+if we didn't have it, but needed it, it would be much more annoying to
+add it in later.
+
+&gt;<i> Color me an optimist, but I'm quite confident with sufficient elbow grease
+</I>&gt;<i> and heuristics we can get 95% of the way there. We can and should revisit
+</I>&gt;<i> these conversations if such exploration is done and we find that its not
+</I>&gt;<i> possible, but until then this all feels incredibly premature.
+</I>
+Depends; I don't think it makes sense to try to ban nodes that don't have
+a base fee of zero or anything, but random people on twitter advocating
+that node operators should set it to zero and just worry about optimising
+via the proportional fee and the min htlc amount seems fine.
+
+For an experimental plugin that aggressively splits payments up, I think
+either ignoring channels with &gt;0 base fee entirely, or deciding that
+you're happy to spend a total of X sats on base fees, and then ignoring
+channels whose base fee is greater than X/paths/path-length sats is fine.
+
+But long term, I also think that the base fee is an entirely unhelpful
+complication that will eventually just be hardcoded to zero by everyone,
+and eventually channels that propose non-zero base fees won't even be
+gossiped. I don't expect that to happen any time soon though.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003179.html">[Lightning-dev] #zerobasefee
+</A></li>
+	<LI>Next message: <A HREF="003181.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3180">[ date ]</a>
+              <a href="thread.html#3180">[ thread ]</a>
+              <a href="subject.html#3180">[ subject ]</a>
+              <a href="author.html#3180">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

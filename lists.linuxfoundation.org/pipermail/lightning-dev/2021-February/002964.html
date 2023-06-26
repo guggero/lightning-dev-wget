@@ -1,0 +1,306 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Error Codes for LN
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Error%20Codes%20for%20LN&In-Reply-To=%3CCAH%3DWSfSdwCMhkSKKa4-kw706tMcYzuB%2BU5XTeRLeU22JxBk2-Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002976.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Error Codes for LN</H1>
+    <B>Carla Kirk-Cohen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Error%20Codes%20for%20LN&In-Reply-To=%3CCAH%3DWSfSdwCMhkSKKa4-kw706tMcYzuB%2BU5XTeRLeU22JxBk2-Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Error Codes for LN">kirkcohenc at gmail.com
+       </A><BR>
+    <I>Fri Feb 12 07:34:04 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002976.html">[Lightning-dev] Hold fee rates as DoS protection (channel	spamming and jamming)
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2964">[ date ]</a>
+              <a href="thread.html#2964">[ thread ]</a>
+              <a href="subject.html#2964">[ subject ]</a>
+              <a href="author.html#2964">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+I&#8217;d like to make a case for re-purposing the existing error message
+
+(17) in the spec to allow for more structured errors, and create a
+
+path for standardized, enriched errors going forward.
+
+As is: the error message contains an arbitrary string, and is used to
+
+communicate fatal errors to our peers.
+
+To (potentially) be: the error message contains an error code, and
+
+optional metadata which enriches the context of the error.
+
+There are a few benefits of upgrading these messages:
+
+* Better debugging information, and standardization across
+
+   implementations
+
+* Clearer information for the end user
+
+* Reduced risk of leaking information in an arbitrary string
+
+* More fine-grained error handling based on error code
+
+Since we shouldn&#8217;t have non-ascii values in the error string itself,
+
+this can most easily be achieved by adding TLV fields after the
+
+data field. In terms of supporting nodes that have not upgraded,
+
+we could either include the error code in the data field to cover
+
+our bases, or introduce a feature bit so that we know whether
+
+to backfill the data field. This gives upgraded nodes an improved
+
+quality of life, while leaving older nodes unaffected.
+
+While we can&#8217;t enumerate every possible error, there are quite
+
+a few cases in the spec where we can introduce explicit error
+
+codes. For the sake of the skim-readers, I&#8217;ve left that list at
+
+the end of the email.
+
+Taking the example of our node receiving an invalid signature for
+
+a htlc, a new error would look like this:
+
+   1.
+
+   type: 17 (`error`)
+   2.
+
+   data
+
+[Channel_id:channel_id]
+
+[u16:len]
+
+[len*byte:data]
+
+   1.
+
+   tlv_stream: `invalid_sig_tlvs`
+   2.
+
+   Types
+
+i. type 0 (`error_code`)
+
+data: [u16: error_code]
+
+ii. type 1 (`htlc_id`)
+
+data: [u64: id]
+
+iii. type 2 (`state_number`)
+
+data: [u64: commitment_number]
+
+This new kind of error provides us with an error code that tells us
+
+exactly what has gone wrong, and metadata pointing to the htlc
+
+with an invalid sig. This information can be logged, or stored in a
+
+more permanent error store to help diagnose issues in the future.
+
+Right now, the spec is pretty strict on error handling [13], indicating
+
+that senders/recipients of errors `MUST` fail the channel referenced
+
+in the error. This isn&#8217;t very practical, and I believe that the majority
+
+of the impls don&#8217;t abide by this instruction. With the addition of error
+
+codes, we can pair each error code with a recommended action
+
+that is more appropriate for the error at hand - for example, still force
+
+closing if we get an invalid signature, but being more lenient if we
+
+get a low fee in update fee. While this may already be the case in
+
+practise, it&#8217;s messy for everybody to roll their own and then figure
+
+out what other impls are doing. With a standardized set of errors,
+
+and reasonable handling - rather than the current &#8220;close-all-da-chans&#8221;
+
+prescription in the spec - we can clear up some of the ambiguity
+
+around errors, and a spec that&#8217;s reasonable for the end user to
+
+follow.
+
+Thanks for reading!
+
+- Carla
+
+Candidates for error codes:
+
+Signature problems:
+
+* Incorrect Signature [1] [3] [7] [12]
+
+*Non-standard signature [1] [3 [7]
+
+Funding Process:
+
+* Funding process timeout [2]
+
+* Fees greater than base fee [3]
+
+* Fees out of range [3]
+
+* Funding tx spent [11]
+
+* Funding params unacceptable (eg, channel too small)
+
+Channel State Machine:
+
+* HTLC timeout [4]
+
+* Zero htlc add [5]
+
+* Htlc add less than minimum [5]
+
+* Htlc add can&#8217;t afford at current fee rate [5]
+
+* Maximum htlc count exceeded [5]
+
+* Maximum htlc in flight exceeded [5]
+
+* cltv &gt; 500000000 [5]
+
+* Sub-msat values [5]
+
+* Fulfill/fail htlc id not found [6]
+
+* Incorrect commitment number [10]
+
+* Incorrect preimage [6]
+
+* Incorrect per commit secret [8]
+
+Fee Updates
+
+* Update fee to low/high [9]
+
+* Unexpected update fee [9]
+
+* Cannot afford update fee [9]
+
+Connection Level
+
+* Disconnecting
+
+* Feature bit required
+
+Gossip
+
+* Incorrect gossip short channel ID [12]
+
+
+[1]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#the-funding_created-message">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#the-funding_created-message</A>
+
+[2]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#the-funding_locked-message">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#the-funding_locked-message</A>
+
+[3]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#closing-negotiation-closing_signed">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#closing-negotiation-closing_signed</A>
+
+[4]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-8">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-8</A>
+
+[5]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-9">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-9</A>
+
+[6]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-10">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-10</A>
+
+[7]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-11">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-11</A>
+
+[8]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-12">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-12</A>
+
+[9]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-13">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-13</A>
+
+[10]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-14">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#requirements-14</A>
+
+[11]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/05-onchain.md#requirements">https://github.com/lightningnetwork/lightning-rfc/blob/master/05-onchain.md#requirements</A>
+
+[12]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md#requirements">https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md#requirements</A>
+
+[13]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/01-messaging.md#the-error-message">https://github.com/lightningnetwork/lightning-rfc/blob/master/01-messaging.md#the-error-message</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210212/0fc08d61/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210212/0fc08d61/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002976.html">[Lightning-dev] Hold fee rates as DoS protection (channel	spamming and jamming)
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2964">[ date ]</a>
+              <a href="thread.html#2964">[ thread ]</a>
+              <a href="subject.html#2964">[ subject ]</a>
+              <a href="author.html#2964">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

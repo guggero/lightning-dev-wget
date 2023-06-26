@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Blind Signing Considered Harmful
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blind%20Signing%20Considered%20Harmful&In-Reply-To=%3CCAB0O3SW5Ah4--Z%2BFY-YNm6B_YfGf9EJWRQ-KjpSqAbGxqaZZxg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003580.html">
+   <LINK REL="Next"  HREF="003582.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Blind Signing Considered Harmful</H1>
+    <B>Devrandom</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Blind%20Signing%20Considered%20Harmful&In-Reply-To=%3CCAB0O3SW5Ah4--Z%2BFY-YNm6B_YfGf9EJWRQ-KjpSqAbGxqaZZxg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Blind Signing Considered Harmful">c1.devrandom at niftybox.net
+       </A><BR>
+    <I>Tue May 10 08:02:35 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003580.html">[Lightning-dev] Blind Signing Considered Harmful
+</A></li>
+        <LI>Next message: <A HREF="003582.html">[Lightning-dev] Invitation to test our research on probabilistic and optimal payment flows. I made it quick &amp; easy for you (:
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3581">[ date ]</a>
+              <a href="thread.html#3581">[ thread ]</a>
+              <a href="subject.html#3581">[ subject ]</a>
+              <a href="author.html#3581">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning ZmnSCPxj,
+
+On Mon, May 9, 2022 at 5:40 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning devrandom,
+</I>&gt;<i>
+</I>&gt;<i> It seems to me that a true validating Lightning signer would need to be a
+</I>&gt;<i> Bitcoin node with active mitigation against eclipse attacks, the ability to
+</I>&gt;<i> monitor the blockheight, and the ability to broadcast transactions.
+</I>&gt;<i>
+</I>
+The UTXO Oracle(s) have some additional properties that improve on a plain
+Bitcoin node:
+
+- they provide compact attestations that can be checked in an
+isolated/hardened environment, so that the signer doesn't need to be
+exposed to a network stack and can live on a consumer device or HSM
+- a UTXO Oracle can send out attestations on a broadcast medium (e.g. live
+behind Tor, satellite, etc.), so it's harder to block or eclipse
+- the periodic attestation would cover the current block hash, and a
+commitment for the UTXO set hash (e.g. hash of the compact filter history)
+
+Broadcast is a separate concern.  For broadcast, the intent is to have a
+disaster recovery procedure:
+
+- the signer sends out a heartbeat if it has a quorum of non-stale oracle
+attestations and there are no upcoming safety deadlines (e.g. HTLC timeout
+or need to breach-remedy)
+- the heartbeats form a &quot;deadman's switch&quot; - if the node operator doesn't
+get them, they spring into action
+- the operator falls back to sneakernet for broadcasting a
+closing/breach-remedy transaction if needed
+
+
+&gt;<i>
+</I>&gt;<i> Otherwise, a compromised node can lie and tell the signer that the block
+</I>&gt;<i> height is much lower than it really is, letting the node peers clawback
+</I>&gt;<i> incoming HTLCs and claim outgoing HTLCs, leading to a net loss of funds in
+</I>&gt;<i> the forwarding case.
+</I>&gt;<i>
+</I>
+Right, routing nodes really need to be aware of the on-chain status of
+incoming channels.
+
+
+&gt;<i>
+</I>&gt;<i> Looking at the link, it seems to me that you have a &quot;UTXO Set Oracle&quot;,
+</I>&gt;<i> does this inform your `lightning-signer` about block height and facilitate
+</I>&gt;<i> transaction broadcast?
+</I>&gt;<i> Is this intended to be a remote device from the `lightning-signer` device?
+</I>&gt;<i>
+</I>
+It could be a quorum of systems, remote from the signer device, some or all
+of which may be under third-party operational control.  The attestation for
+a certain block is deterministic, so they should all agree.
+
+
+&gt;<i> If so, what happens if the connection between the &quot;UTXO Set Oracle&quot; remote
+</I>&gt;<i> device and the `lightning-signer` is interrupted?
+</I>&gt;<i>
+</I>
+If there is no quorum, heartbeats would cease, which would alert the
+operator to start disaster recovery.
+
+
+&gt;<i>
+</I>&gt;<i> In particular:
+</I>&gt;<i> [...]
+</I>&gt;<i>
+</I>
+Agreed, that's the main attack scenario on a router that doesn't properly
+chain the on-chain status of an input channel.
+
+This seems to be listed in:
+&gt;<i> <A HREF="https://gitlab.com/lightning-signer/docs/-/wikis/Potential-Exploits">https://gitlab.com/lightning-signer/docs/-/wikis/Potential-Exploits</A>
+</I>&gt;<i>
+</I>&gt;<i> &gt; an HTLC is failed and removed on the input before it is removed on the
+</I>&gt;<i> output.  The output is then claimed by the counterparty, losing that amount
+</I>&gt;<i>
+</I>&gt;<i> Is there a mitigation, planned or implemented, against this exploit?
+</I>&gt;<i>
+</I>
+Yes, heartbeats would cease and the operator would manually intervene as
+above.
+
+That said, there is another potential mode:  if you limit the value of
+HTLCs in flight (e.g. 5% of channel value), are willing to lose that
+amount, you don't do routing, and you have watchtowers, then you can live
+without the UTXO Oracle component.  This may be acceptable in a consumer
+application.
+
+Finally, we could essentially embed UTXO Oracles into the network if:
+
+- we commit to compact-filters or utreexo roots in the consensus
+- we are OK with SPV-style security, where we detect an eclipse by noticing
+a reduction in block rate
+
+But it's hard to say when the first item might be plausibly deployed.
+
+--
+devrandom
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220510/b1cb218a/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220510/b1cb218a/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003580.html">[Lightning-dev] Blind Signing Considered Harmful
+</A></li>
+	<LI>Next message: <A HREF="003582.html">[Lightning-dev] Invitation to test our research on probabilistic and optimal payment flows. I made it quick &amp; easy for you (:
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3581">[ date ]</a>
+              <a href="thread.html#3581">[ thread ]</a>
+              <a href="subject.html#3581">[ subject ]</a>
+              <a href="author.html#3581">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

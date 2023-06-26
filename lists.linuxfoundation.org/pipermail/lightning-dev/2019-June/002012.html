@@ -1,0 +1,95 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] ECDH for spontaneous payments and offline	vending machines
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20ECDH%20for%20spontaneous%20payments%20and%20offline%0A%09vending%20machines&In-Reply-To=%3CNovzGtVRZk2gOrZTnak7Ttd8sTU1B0TnIds7IjILxsjJO1PPr6EnZP6b7e69KzqzDH2-ES3RpZt0YNY6PMabecwUUKsZU51Th0u6MGAExaE%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002011.html">
+   <LINK REL="Next"  HREF="002013.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] ECDH for spontaneous payments and offline	vending machines</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20ECDH%20for%20spontaneous%20payments%20and%20offline%0A%09vending%20machines&In-Reply-To=%3CNovzGtVRZk2gOrZTnak7Ttd8sTU1B0TnIds7IjILxsjJO1PPr6EnZP6b7e69KzqzDH2-ES3RpZt0YNY6PMabecwUUKsZU51Th0u6MGAExaE%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] ECDH for spontaneous payments and offline	vending machines">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Jun 11 03:47:26 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002011.html">[Lightning-dev] ECDH for spontaneous payments and offline	vending machines
+</A></li>
+        <LI>Next message: <A HREF="002013.html">[Lightning-dev] ECDH for spontaneous payments and offline	vending machines
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2012">[ date ]</a>
+              <a href="thread.html#2012">[ thread ]</a>
+              <a href="subject.html#2012">[ subject ]</a>
+              <a href="author.html#2012">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Stepan,
+
+&gt;<i> # Offline invoice generation
+</I>&gt;<i>
+</I>&gt;<i> Some time ago there was a discussion about offline vending machines, the idea was to pre-load a vending machine with invoices, display invoices to the user and ask for the preimage as a payment confirmation. When all invoices are used or expired we refill it with the new ones. It is great but it doesn't work if the payment amount is variable (pay for volume or time).
+</I>&gt;<i>
+</I>&gt;<i> An alternative could be to share the node private key with the vending machines to generate invoices on the fly, but it is a security hole. There is a trick though how generate invoices that our online node could claim without exposing any secrets to the vending machine.
+</I>&gt;<i>
+</I>&gt;<i> Vending machine generates an ephemeral key `k` and corresponding ephemeral node id `K`. It generates an invoice signed with this key. It also includes a routing information that the payment should go through our online node `N`. As a preimage we use `hmac-sha256(x, amount)` where `x` is a secret key from ECDH(K, N) - (x-coordinate of `k * N`). We also put the amount into the 8-byte short channel id in the routing information to ensure that the node can calculate the preimage even if the user is willing to pay a tip and increases the amount of the htlc.
+</I>&gt;<i>
+</I>&gt;<i> When our online node is asked to route a payment to an unknown node `K` it tries to generate the preimage. It calculates the ECDH secret `x` (x-coordinate of `n * K` where `n` is a private key corresponding to its node id) and calculates the preimage from the amount encoded in the short channel id and the secret x. If the preimage matches the payment hash it can claim the money (also checking that htlc amount is greater or equal the amount encoded in the channel id).
+</I>
+Reviewing BOLT #4, sadly it seems not to work...?
+
+&gt;<i> 1. type: `per_hop` (for `realm` 0)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`8`:`short_channel_id`]
+</I>&gt;<i>    * [`8`:`amt_to_forward`]
+</I>&gt;<i>    * [`4`:`outgoing_cltv_value`]
+</I>&gt;<i>    * [`12`:`padding`]
+</I>
+There is no way to inform your online node what `K` is, since what is in the `per_hop` does not include `K`.
+Instead, the `short_channel_id` is intended to inform the forwarding node which is the next hop, using only 8 bytes; presumably the forwarding node has a table mapping short channel IDs to actual peers it has.
+The online node in your proposal is unable to extract `K`, a the next-node-ID is never transmitted.
+
+For the donation case, it seems possible, as the donator is the sender and can arrange to use the shared secret as the preimage.
+But for the invoice-generation case, the invoice-generator is not the sender, and the sender might not know how to properly inform the shared secret.
+
+Maybe later, when we use &quot;rendezvous routing&quot; (and provide hooks into BOLT #11 for it), it may become possible to perform this trick (as we will use node IDs in rendezvous routing, rather than `short_channel_id`).
+Then the online node can, if unable to rendezvous-forward to a node on its routemap, check if the &quot;next node ID&quot; in the rendezvous routing sub-route can be used as to compute a shared secret that is the preimage.
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/611">https://github.com/lightningnetwork/lightning-rfc/pull/611</A>
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002011.html">[Lightning-dev] ECDH for spontaneous payments and offline	vending machines
+</A></li>
+	<LI>Next message: <A HREF="002013.html">[Lightning-dev] ECDH for spontaneous payments and offline	vending machines
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2012">[ date ]</a>
+              <a href="thread.html#2012">[ thread ]</a>
+              <a href="subject.html#2012">[ subject ]</a>
+              <a href="author.html#2012">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

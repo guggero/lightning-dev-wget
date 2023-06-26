@@ -1,0 +1,122 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Split payments within one LN invoice
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Split%20payments%20within%20one%20LN%20invoice&In-Reply-To=%3Cb7H75SPr9eG8u38bvYuA8-LOf3UGmZGDlVi4nEpXF7sJlBHD2wdfDY6363rjE6tkJfHvlJA9iz3vJN7fD-T966Q0EM4tySxQNw4RcNKnMZ4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003425.html">
+   <LINK REL="Next"  HREF="003419.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Split payments within one LN invoice</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Split%20payments%20within%20one%20LN%20invoice&In-Reply-To=%3Cb7H75SPr9eG8u38bvYuA8-LOf3UGmZGDlVi4nEpXF7sJlBHD2wdfDY6363rjE6tkJfHvlJA9iz3vJN7fD-T966Q0EM4tySxQNw4RcNKnMZ4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Split payments within one LN invoice">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sat Dec 18 00:22:56 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003425.html">[Lightning-dev] Split payments within one LN invoice
+</A></li>
+        <LI>Next message: <A HREF="003419.html">[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3426">[ date ]</a>
+              <a href="thread.html#3426">[ thread ]</a>
+              <a href="subject.html#3426">[ subject ]</a>
+              <a href="author.html#3426">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Ronan,
+
+&gt;<i> If there is a payment to go from party A to be split between parties B &amp; C, is it possible that only one of B or C would need a plugin?
+</I>&gt;<i>
+</I>&gt;<i> If all receiving parties need a plugin that is quite limiting. Thanks, Ronan
+</I>
+Given N payees, only N - 1 need the plugin.
+
+The last payee in a chain of payees issues a normal invoice (C-Lightning plugin not needed).
+Then the previous payee takes in that invoice, and emits a new invoice, using the plugin.
+This goes on until the first payee is reached.
+The first payee then issues its invoice to the payer.
+
+To follow your example, where A pays to both B and C:
+
+* C issues a normal invoice (no plugin needed).
+* C hands its invoice over to B.
+* B receives the invoice from C and issues a plugin-provided command (`addtoinvoice`?), which creates another invoice
+* B hands its invoice over to A.
+* A pays the invoice (no plugin needed).
+
+As another example, suppose we have you paying cdecker, jb55, and ZmnSCPxj.
+Let us sort them in alphabetical order.
+
+* ZmnSCPxj issues a normal invoice (no plugin needed).
+* ZmnSCPxj hands its invoice over to jb55.
+* jb55 issues a plugin-provided command, giving it the invoice from ZmnSCPxj and getting out a larger invoice.
+* jb55 hands its invoice over to cdecker.
+* cdecker issues a plugin-provided command, giving it the invoice from jb55 and getting  out a larger invoice.
+* cdecker hands over its invoice to Ronan.
+* Ronan pays the invoice (no plugin needed).
+
+Regards,
+ZmnSCPxj
+
+
+&gt;<i>
+</I>&gt;<i> On Fri, Dec 17, 2021 at 3:06 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Good morning cdecker,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; I was looking into the docs [1] and stumbled over `createinvoice` which does almost what you need. However it requires the preimage, and stores the invoice in the database which you don't want.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Indeed, that is precisely the issue, we need a `signfakeinvoice` command, as we cannot know at invoice creation time the preimage, and our invoice database currently assumes every invoice has a preimage known and recorded in the database.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; However if you have access to the `hsm_secret` you could sign in the plugin itself, completely sidestepping `lightningd`. Once you have that it should be a couple of days work to get a PoC plugin for the coordination and testing. From there it depends on how much polish you want to apply and what other systems you want to embed it into.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Well, the point of an `hsmd` is that it might be replaced with a driver to an actual hardware signing module (H S M).
+</I>&gt;<i> &gt; The `lightningd`&lt;-&gt;`hsmd` interface includes commands for invoice signing, and `signfakeinvoice` would essentially just expose that interface, so an HSM has to support that interface.
+</I>&gt;<i> &gt; So a plugin cannot rely on `hsm_secret` existing, as the signer might not be emulated in software (i.e. what we do now) but be an actual hardware signer that does not keep the secret keys on the same disk.
+</I>&gt;<i> &gt; This is the reason why we (well, I) created and exposed `getsharedsecret`, in theory a plugin could just read `hsm_secret`, but we want to consider a future where the HSM is truly a hardware module.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Regards,
+</I>&gt;<i> &gt; ZmnSCPxj
+</I>
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003425.html">[Lightning-dev] Split payments within one LN invoice
+</A></li>
+	<LI>Next message: <A HREF="003419.html">[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3426">[ date ]</a>
+              <a href="thread.html#3426">[ thread ]</a>
+              <a href="subject.html#3426">[ subject ]</a>
+              <a href="author.html#3426">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

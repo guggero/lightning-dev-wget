@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] BOLT 11, real time micro payments,	and route redundancy
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT%2011%2C%20real%20time%20micro%20payments%2C%0A%09and%20route%20redundancy&In-Reply-To=%3C87o9qr7152.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000753.html">
+   <LINK REL="Next"  HREF="000757.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] BOLT 11, real time micro payments,	and route redundancy</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT%2011%2C%20real%20time%20micro%20payments%2C%0A%09and%20route%20redundancy&In-Reply-To=%3C87o9qr7152.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] BOLT 11, real time micro payments,	and route redundancy">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Sep  4 00:34:01 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000753.html">[Lightning-dev] BOLT 11, real time micro payments, and route redundancy
+</A></li>
+        <LI>Next message: <A HREF="000757.html">[Lightning-dev] BOLT 11, real time micro payments, and route redundancy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#754">[ date ]</a>
+              <a href="thread.html#754">[ thread ]</a>
+              <a href="subject.html#754">[ subject ]</a>
+              <a href="author.html#754">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Andy Schroder &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">info at AndySchroder.com</A>&gt; writes:
+&gt;<i> Hello,
+</I>&gt;<i>
+</I>&gt;<i> Yes, it seems as though high frequency payments are not a reality. For 
+</I>&gt;<i> high value products that are delivered quickly, &quot;micro&quot; payments are not 
+</I>&gt;<i> even possible. With my fuel delivery system, the smallest volume of 
+</I>&gt;<i> product that could be individually payed for would be on the order of a 
+</I>&gt;<i> hundred mL. If I were to implement paying by the 100mL, is there any 
+</I>&gt;<i> protocol for doing repeated payments? Do you have to request a new 
+</I>&gt;<i> payment request, or can you just send more to the same payment request?
+</I>
+Not currently, no: paying the same payment request twice is an
+invitation for anyone in the middle to just take your funds!
+
+With 1.1 we're looking at changing the way payment hashes work so this
+will be possible (kind of like bip32, except for lightning).
+
+&gt;<i> Regarding the payment route going down, if you can re-use the same 
+</I>&gt;<i> payment request, when you say *during* a payment, do you mean when you 
+</I>&gt;<i> are actually sending the payment (I think this is probably it), or 
+</I>&gt;<i> everything related to that payment request (I don't think this is it)? 
+</I>&gt;<i> It seems like this could definitely be a problem for lower value 
+</I>&gt;<i> products that are delivered slowly over long periods of time, such as 
+</I>&gt;<i> water, natural gas, electricity, internet, a parking meter, or some kind 
+</I>&gt;<i> of digital content.
+</I>
+No, it's only during the actualy payment.  Which looks like:
+
+ A: Hi B, I'll pay you $1 for preimage of hash X.
+ B: Hi C, I'll pay you $0.99 for preimage of hash X.
+ C: Hi D, I'll pay you $0.98 for preimage of hash X.
+ D: Thanks C, here's the preimage.
+ C: Thanks B, here's the preimage.
+ B: Thanks A, here's the preimage.
+
+Now, if B or C go down after receiving the offer but before either
+failing or returning the preimage, A has to wait, unsure if they'll try
+to redeem the offer or not.  (If B or C are simply offline, A or B
+simply fail and A gets to try again on a different route).
+
+In practice it's a few hundred ms of exposure, but it's still possible.
+Then we slow down to blockchain speed.
+
+&gt;<i> Regarding the refund address. Thanks for adding that to the issue 
+</I>&gt;<i> requests. I guess I'm confused how this is going to work safely. If you 
+</I>&gt;<i> put a refund request in with your payment, isn't that revealing the 
+</I>&gt;<i> public key of your node and then defeating the whole purpose of the 
+</I>&gt;<i> onion routing of the payment in the first place (I'm, assuming the payee 
+</I>&gt;<i> node re-uses the same public key?)? It seems like rather than putting a 
+</I>&gt;<i> flag in BOLT 11 to instruct a payer to include a refund payment request, 
+</I>&gt;<i> shouldn't the payer just know to do that if they think they will need 
+</I>&gt;<i> to? Or maybe they won't always?
+</I>
+Nobody along the route (B and C in our example above) can see it.  And D
+kind of has to, since it needs to send the refund.
+
+But there needs to be some way for D to tell A it wants a refund
+address, hence a flag in BOLT 11.
+
+&gt;<i> In BOLT 11, how does a payee distinguish payments from different payers? 
+</I>&gt;<i> In standard bitcoin transactions, this is usually by different bitcoin 
+</I>&gt;<i> addresses that have been presented to different payers. Is this what the 
+</I>&gt;<i> purpose of the d and h tagged fields are?
+</I>
+In this case 'p' is the payment-specific variable.
+
+&gt;<i> In BOLT 11, in the examples section, for the p tagged field, it lists it 
+</I>&gt;<i> as a &quot;preimage&quot;. Is this supposed to be a &quot;preimage hash&quot;?
+</I>
+Oops, thanks!
+
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/235">https://github.com/lightningnetwork/lightning-rfc/pull/235</A>
+
+&gt;<i> In BOLT 11, what's the point of tagged field n if the public key is 
+</I>&gt;<i> implied through the signature and the required recovery id?
+</I>
+I like key recovery, but there were some question marks over it.  So if
+we decide doing key recovery is a dumb idea, we can start using the n
+field.  Since everyone should support it, it's a trivial change.
+
+Cheers!
+Rusty.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000753.html">[Lightning-dev] BOLT 11, real time micro payments, and route redundancy
+</A></li>
+	<LI>Next message: <A HREF="000757.html">[Lightning-dev] BOLT 11, real time micro payments, and route redundancy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#754">[ date ]</a>
+              <a href="thread.html#754">[ thread ]</a>
+              <a href="subject.html#754">[ subject ]</a>
+              <a href="author.html#754">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

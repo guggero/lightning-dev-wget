@@ -1,0 +1,279 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%0A%09Eltoo-Penalty&In-Reply-To=%3CCALZpt%2BHpgo8fGc0KN%2Bn18v2iMQfWbZOHuxCMQE%2BfySzW5YY2YA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002075.html">
+   <LINK REL="Next"  HREF="002073.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%0A%09Eltoo-Penalty&In-Reply-To=%3CCALZpt%2BHpgo8fGc0KN%2Bn18v2iMQfWbZOHuxCMQE%2BfySzW5YY2YA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Jul 16 18:34:00 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002075.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+        <LI>Next message: <A HREF="002073.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2074">[ date ]</a>
+              <a href="thread.html#2074">[ thread ]</a>
+              <a href="subject.html#2074">[ subject ]</a>
+              <a href="author.html#2074">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+&gt;<i> Just a minor correction here: your own commitment transactions are not
+</I>&gt;<i> being signed until we want to release them. Therefore having access to
+</I>&gt;<i> your DB doesn't give an attacker the ability to frame the user with an
+</I>&gt;<i> old version, since that'd still require access to the keys to add our
+</I>&gt;<i> own signature.
+</I>
+Okay, do you plan to handover keys to the watchtower to be able to sign and
+broadcast local commitment
+transactions or are you thinking about another design like giving him
+signed commitment ? That's an area
+we still need to think more for rust-lightning too.
+
+&gt;<i> And this signature is intended to be used to identify Alice as the
+</I>culprit, by also being used to sign for &lt;Alice key&gt;, but `SIGHASH_ALL`
+would strongly bind the signature to this particular transaction.
+
+Okay, you maybe also need a special pubkey type to force signatures to use
+a given SIGHASH. that's a lot of tricks but
+that could be a use-case for taproot introducing key types.
+
+&gt;<i> Now, an economically-maximizing thief would prefer to steal as much as
+</I>possible, thus such a thief would initiate a channel, then send out funds
+until only 1% is left to the thief, then &quot;freeze&quot; the channel (fail all
+incoming HTLCs from this channel without bothering to check if they would
+succeed) until the participant is offline, then perform the theft attempt
+by using their initial commitment (the one where they own all the funds in
+the channel).
+
+I think it's quite dubious to base our reasoning on current network
+situation and from then say on-chain fees in Eltoo model are enough
+to deter attackers (or even lazy parties). Channels are going to increase
+in size and people are learning how they are structured.
+With more knowledge of timeout locks and deltas, attackers may try to game
+them, specially by exploiting others elements
+like mempool congestion or eclipse your onchain node. I see penalty as the
+price the attacker have to pay to test your onchain monitoring setup.
+If it's cheap and the probabilities to win are high, given he is able to
+trouble confirmation of your update tx, a rational attacker will try.
+
+&quot;Still, a node could refuse incoming channel open requests for
+Decker-Russell-Osuntokun that are larger than 100 times the typical fee for
+a 1-input 1-output transaction, and still get similar protection to
+Poon-Dryja using the de facto standard 1% reserve&quot;
+
+And maybe people are going to limit of their channels to stay in a multiple
+of onchain fees, but they may also refuse to open
+channel with unknown or &quot;untrusted&quot; parties. Relying on economical
+incentives is better than social ones.
+
+&gt;<i> Such outputs have shared ownership, as the offerer of the HTLC will be
+</I>able to reclaim the money after the timelock, and the accepter of the HTLC
+will be able to reclaim the money before the timelock.
+
+Yes, I think a contract design principle is that we should enforce an order
+of claims between different channel participants. In a
+multiparty channel between Alice, Bob, Caroll and Dave, if Alice offered a
+HTLC to Bob and then cheats, if Bob come with a
+preimage to unlock the HTLC, his claim shouldn't be canceled by the
+punitive one raised by Bob, Caroll or Dave.
+
+&quot;I would argue that channel factories are better used than multiparticipant
+channels, as channel factories allow *some* limited transport of funds even
+if one participant is offline, whereas multiparticipant channels prevent
+*all* transport of funds as soon as any one participant is offline&quot;
+
+I agree too, with my current proposal I was just thinking in multiparty
+setup and not a 2-party one because it's far more
+adversarial. IMO, channel factories are a better design because I would say
+the &quot;valuespace&quot; is well isolated between
+participants.I.e if Alice has 1, Bob has 1, Caroll has 3, Alice shouldn't
+be able offer a HTLC worth 3 to Bob. It's more
+tricky to enforce on a multiparty channel rather than on a channel factory.
+
+&gt;<i> Let us consider what happens if Alice the thief performs the theft
+</I>attempt during various states:
+&gt;<i> * Suppose the current state is that Charlie owns the entire funds of the
+</I>channel right now.
+&gt;<i> Alice steals by publishing old state, but the old-state Alice-&gt;Bob HTLC
+</I>is revocable only by Bob.
+&gt;<i> Thus the money (that rightfully belongs to Charlie) goes to Bob instead.
+</I>&gt;<i> * Alice and Bob could be in cahoots, with Bob as the mastermind and Alice
+</I>as the fall guy.
+&gt;<i> * Suppose we decide that the Alice-&gt;Bob HTLC is revocable split by Bob
+</I>and Charlie.
+&gt;<i> Suppose the current state is that Bob owns the entire funds of the
+</I>channel right now.
+&gt;<i>  Alice steals by publishing old state, but the old-state Alice-&gt;Bob HTLC
+</I>is revocable split by Bob and Charlie.
+&gt;<i>  Thus the money (that rightfully belongs only to Bob) goes partly to
+</I>Charlie instead.
+&gt;<i> * Alice and Charlie could be in cahoots, with Charlie as the mastermind
+</I>and Alice as the fall guy.
+
+If a HTLC output is claimable by both a preimage + sig from a channel
+participant or MuSig from all
+channel participants to a punitive tx, the punitive tx may be encumbered by
+some delay to let the
+preimage path being used first. I agree that may be tricky due to overlap
+between HTLC delay and this
+nSequence one. Easiest way is you don't punish on HLTC outputs, but that
+mean you need to keep
+higher channel reserve.
+
+&gt;<i> So I think that, in terms of multiparticipant constructions, non-punitive
+</I>constructions are the only possible constructions.
+
+I think punitive constructions are possible on the channel syntax level but
+may not make sense on the economic
+due to higher funds being locked as channel reserve. This being balanced
+with an increased rate of attack, in which
+case you may want an higher insurance policy in the form of punitive
+provisions on your channel dishearten cheat
+attempts. Hard to guess if and how much the network is going to be
+adversarial in 2 or 3 years..
+
+Le dim. 14 juil. 2019 &#224; 20:12, ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning list,
+</I>&gt;<i>
+</I>&gt;<i> I had another realization about the use of punishment in a
+</I>&gt;<i> multiparticipant (n &gt; 2) setting.
+</I>&gt;<i> And it has to do with contracts that have a sort of &quot;shared ownership&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Consider HTLC outputs.
+</I>&gt;<i> Such outputs have shared ownership, as the offerer of the HTLC will be
+</I>&gt;<i> able to reclaim the money after the timelock, and the accepter of the HTLC
+</I>&gt;<i> will be able to reclaim the money before the timelock.
+</I>&gt;<i>
+</I>&gt;<i> Suppose we know that Alice cheated.
+</I>&gt;<i> Suppose also that Bob offered an HTLC to Alice with a hash whose preimage
+</I>&gt;<i> Alice secretly knows, and that Alice offered an HTLC to Charlie with a long
+</I>&gt;<i> future lock time with a hash that Alice secretly knows has a high
+</I>&gt;<i> probability that nobody knows the preimage.
+</I>&gt;<i>
+</I>&gt;<i> How should Bob and Charlie split the HTLCs?
+</I>&gt;<i> If we do not punish the HTLCs, then Alice can arrange such that most of
+</I>&gt;<i> her money is in HTLCs that she can recover, and thereby avoid punishment.
+</I>&gt;<i> If we *do* punish the HTLCs, we would have to make the Bob-&gt;Alice
+</I>&gt;<i> revocable only in favor of Bob, and make the Alice-&gt;Carol revocable only in
+</I>&gt;<i> favor of Charlie.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> This ties to constructions such as Channel Factories.
+</I>&gt;<i> I would argue that channel factories are better used than multiparticipant
+</I>&gt;<i> channels, as channel factories allow *some* limited transport of funds even
+</I>&gt;<i> if one participant is offline, whereas multiparticipant channels prevent
+</I>&gt;<i> *all* transport of funds as soon as any one participant is offline.
+</I>&gt;<i> At the same time, channel factories allow arbitrary transport of funds
+</I>&gt;<i> between any participants inside the factory if all participants are online:
+</I>&gt;<i> if a channel is exhausted, but the paying participant has funds elsewhere,
+</I>&gt;<i> the paying participant can initiate a channel reorganization and move funds
+</I>&gt;<i> to the exhausted channel.
+</I>&gt;<i>
+</I>&gt;<i> Channel factories host channels.
+</I>&gt;<i> Channels are shared-ownership UTXOs, in much the same way that HTLCs are
+</I>&gt;<i> shared-ownership UTXOs.
+</I>&gt;<i>
+</I>&gt;<i> Thus, if we will use this construction to implement channel factories,
+</I>&gt;<i> channels inside the factory should be punished by transferring the funds to
+</I>&gt;<i> the other participant of the channel.
+</I>&gt;<i>
+</I>&gt;<i> However, things can get more complicated as the states inside the
+</I>&gt;<i> construction change over time.
+</I>&gt;<i>
+</I>&gt;<i> --------
+</I>&gt;<i>
+</I>&gt;<i> Let us return to the HTLC example.
+</I>&gt;<i>
+</I>&gt;<i> Suppose there exists an Alice-&gt;Bob HTLC in the old state that Alice the
+</I>&gt;<i> thief publishes, and that the entire value of the construction is in that
+</I>&gt;<i> HTLC.
+</I>&gt;<i>
+</I>&gt;<i> Let us consider what happens if Alice the thief performs the theft attempt
+</I>&gt;<i> during various states:
+</I>&gt;<i>
+</I>&gt;<i> * Suppose the current state is that Charlie owns the entire funds of the
+</I>&gt;<i> channel right now.
+</I>&gt;<i>   Alice steals by publishing old state, but the old-state Alice-&gt;Bob HTLC
+</I>&gt;<i> is revocable only by Bob.
+</I>&gt;<i>   Thus the money (that rightfully belongs to Charlie) goes to Bob instead.
+</I>&gt;<i>   * Alice and Bob could be in cahoots, with Bob as the mastermind and
+</I>&gt;<i> Alice as the fall guy.
+</I>&gt;<i> * Suppose we decide that the Alice-&gt;Bob HTLC is revocable split by Bob and
+</I>&gt;<i> Charlie.
+</I>&gt;<i>   Suppose the current state is that Bob owns the entire funds of the
+</I>&gt;<i> channel right now.
+</I>&gt;<i>   Alice steals by publishing old state, but the old-state Alice-&gt;Bob HTLC
+</I>&gt;<i> is revocable split by Bob and Charlie.
+</I>&gt;<i>   Thus the money (that rightfully belongs only to Bob) goes partly to
+</I>&gt;<i> Charlie instead.
+</I>&gt;<i>   * Alice and Charlie could be in cahoots, with Charlie as the mastermind
+</I>&gt;<i> and Alice as the fall guy.
+</I>&gt;<i>
+</I>&gt;<i> It seems to me, that punishment systems can only work if one of the
+</I>&gt;<i> following are true:
+</I>&gt;<i>
+</I>&gt;<i> * 2 participants, which prevents channel factory scaling.
+</I>&gt;<i> * OR, no smart contracts (HTLCs or subchannels), which prevents channel
+</I>&gt;<i> factory scaling, **and** network/routing scaling.
+</I>&gt;<i>
+</I>&gt;<i> So I think that, in terms of multiparticipant constructions, non-punitive
+</I>&gt;<i> constructions are the only possible constructions.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190716/61015baf/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190716/61015baf/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002075.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+	<LI>Next message: <A HREF="002073.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2074">[ date ]</a>
+              <a href="thread.html#2074">[ thread ]</a>
+              <a href="subject.html#2074">[ subject ]</a>
+              <a href="author.html#2074">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

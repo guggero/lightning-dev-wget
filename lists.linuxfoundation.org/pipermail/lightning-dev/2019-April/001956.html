@@ -1,0 +1,212 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Outsourcing route computation with trampoline	payments
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Outsourcing%20route%20computation%20with%20trampoline%0A%09payments&In-Reply-To=%3C87lg0tnacr.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001953.html">
+   <LINK REL="Next"  HREF="001957.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Outsourcing route computation with trampoline	payments</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Outsourcing%20route%20computation%20with%20trampoline%0A%09payments&In-Reply-To=%3C87lg0tnacr.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Outsourcing route computation with trampoline	payments">decker.christian at gmail.com
+       </A><BR>
+    <I>Mon Apr  1 13:06:28 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001953.html">[Lightning-dev] Eltoo in a tree
+</A></li>
+        <LI>Next message: <A HREF="001957.html">[Lightning-dev] Outsourcing route computation with trampoline	payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1956">[ date ]</a>
+              <a href="thread.html#1956">[ thread ]</a>
+              <a href="subject.html#1956">[ subject ]</a>
+              <a href="author.html#1956">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Pierre for this awesome proposal, I think we're onto something
+here. I'll add a bit more color to the proposal, since I've been
+thinking about it all weekend :-)
+
+There are two ways we can use this:
+
+ - A simple variant in which we just tell a single trampoline what the
+   intended recipient is (just a pubkey, and an amount) and it'll find a
+   route.
+ - A complex variant in which a trampoline is given a next hop, and a
+   smaller onion to pass along to the next hop. The trampoline doesn't
+   learn the intended recipient, but can still route it.
+
+# Simple Variant
+
+As the name implies it is pretty trivial to implement: the sender
+computes a route to some trampoline node `t` it knows in its 2- or
+3-neightborhood and creates an onion that describes this route. The
+payload for the trampoline node `t` then contains two parameters:
+`receiver` and `amount`. The trampoline node `t` then computes a route
+from itself to the `receiver` and creates a new onion (the old onion
+terminates at the trampoline node). Since the trampoline node generates
+a new route, it also generates the shared secrets, HMACs and everything
+else to match (no problem with matching HMACs like in the case of
+rendezvous routing).
+
+The receiver doesn't learn anything about this being a trampoline
+payment (it doesn't even have to implement it itself), and resolution of
+the HTLC happens like normal (with the extra caveat that the trampoline
+needs to associate the upstream incoming HTLC with the resolution of the
+downstream HTLC, but we do that anyway now).
+
+# Multi-trampoline routing
+
+The more complex proposal involves nesting a smaller onion into the
+outer routing onion. For this the sender generates a small onion of, for
+example, 10 hops whose length is only 650 bytes instead of the 20 hops
+for the outer routing onion. The hops in the inner/smaller onion do not
+have to be adjacent to each other, i.e., they can be picked randomly
+from the set of known nodes and there doesn't need to be a channel
+between two consecutive hops, unlike in the outer/routing onion. The
+hops in the smaller onion are called trampolines `t_1` to `t_10`.
+
+The construction of the smaller onion can be identical to the
+construction of the routing onion, just needs its size adjusted. The
+sender then picks a random trampoline node `t_0` in its known
+neighborhood and generates a routing onion containing the smaller onion
+as payload to `t_0` and signaling data (final recipient, amount, inner
+onion). Upon receiving an incoming payment with trampoline instructions
+a trampoline `t_i` unwraps the inner onion, which yields the next
+trampoline `t_{i+1}` node_id. The trampoline then finds a route to
+`t_{i+1}`, serializing the inner onion (which was unwrapped and is now
+destined for `t_{i+1}`) and creating the outer routing onion with that
+as the payload. Notice that, like in the simple variant, `t_i` generates
+a new outer onion, which means we don't have any issues with shared
+secrets and HMACs like in rendezvous routing. Resolution is also
+identical to above.
+
+This construction reuses all the onion primitives we already have, and
+it allows us to bounce a payment through multiple trampolines without
+them learning their position in this nested path. The sender does
+not have to have a total view of the network topology, just have a
+reasonable chance that two consecutive trampolines can find a route to
+each other, i.e., don't use mobile phone as trampolines :-)
+
+# Tradeoffs everywhere
+
+## Longer Routes
+
+One potential downside is that by introducing this two-level nesting of
+an outer routing onion and an inner trampoline onion, we increase the
+maximum length of a route to `num_outer_hops * num_inner_hops`, given
+that each layer of the inner onion may initiate a new `num_outer_hops`
+outer route. For the example above (which is also the worst case) we
+have a 10 inner hops, and 9 outer hops (due to the signalling overhead),
+which results in a maximum route length of 90 hops. This may result in
+more funds being used to route a payment, but it may also increase
+chances of the payment succeeding.
+
+## Comparison with TCP/IP + Tor
+
+This proposal also brings us a lot closer to the structure of Tor on the
+public network, in which the nodes that are part of a circuit do not
+have to be direct neighboors in the network topology since end-to-end
+reachability is guaranteed by a base routing layer (TCP/IP) whereas
+sender/receiver obfuscation is tackled at a higher layer (Tor).
+
+In our case the outer onion serves as the base routing layer that is
+used for point-to-point communication, but unlike TCP/IP is also
+encrypted and routed anonymously, while the inner onion takes care of
+end-to-end reachability, also in encrypted fashion.
+
+## In-network retrial
+
+&gt;<i>From the comparison with TCP/IP and Tor might have hinted at this, but
+</I>since the outer onion is created from scratch at each trampoline, a
+trampoline may actually retry a payment multiple times if an attempt
+failed, reducing the burden on the sender, and increasing chances of the
+payment succeeding.
+
+# Conclusion
+
+Overall I'm really excited about this proposal. It decreases the need
+for a complete network view at the endpoints, may delegate some of the
+burden of finding routes to in-network trampolines, may increase the
+successrate of our payments, and increases the total length of a
+possible route (may be a negative as well).
+
+Cheers,
+Christian
+
+Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt; writes:
+&gt;<i> Hello List,
+</I>&gt;<i>
+</I>&gt;<i> I think we can use the upcoming &quot;Multi-frame sphinx onion format&quot; [1]
+</I>&gt;<i> to trustlessly outsource the computation of payment routes.
+</I>&gt;<i>
+</I>&gt;<i> A sends a payment to an intermediate node N, and in the onion payload,
+</I>&gt;<i> A provides the actual destination D of the payment and the amount. N
+</I>&gt;<i> then has to find a route to D and make a payment himself. Of course D
+</I>&gt;<i> may be yet another intermediate node, and so on. The fact that we can
+</I>&gt;<i> make several &quot;trampoline hops&quot; preserves the privacy characteristics
+</I>&gt;<i> that we already have.
+</I>&gt;<i>
+</I>&gt;<i> Intermediate nodes have an incentive to cooperate because they are
+</I>&gt;<i> part of the route and will earn fees. As a nice side effect, it also
+</I>&gt;<i> creates an incentive for &quot;routing nodes&quot; to participate in the gossip,
+</I>&gt;<i> which they are lacking currently.
+</I>&gt;<i>
+</I>&gt;<i> This could significantly lessen the load on (lite) sending nodes both
+</I>&gt;<i> on the memory/bandwidth side (they would only need to know a smallish
+</I>&gt;<i> neighborhood) and on the cpu side (intermediate nodes would run the
+</I>&gt;<i> actual route computation).
+</I>&gt;<i>
+</I>&gt;<i> As Christian pointed out, one downside is that fee computation would
+</I>&gt;<i> have to be pessimistic (he also came up with the name trampoline!).
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> Pierre-Marie
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="../2019-February/001875.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-February/001875.html</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001953.html">[Lightning-dev] Eltoo in a tree
+</A></li>
+	<LI>Next message: <A HREF="001957.html">[Lightning-dev] Outsourcing route computation with trampoline	payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1956">[ date ]</a>
+              <a href="thread.html#1956">[ thread ]</a>
+              <a href="subject.html#1956">[ subject ]</a>
+              <a href="author.html#1956">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

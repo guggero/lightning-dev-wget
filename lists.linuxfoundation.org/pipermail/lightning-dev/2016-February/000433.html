@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%20OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3C1454969273.1633.35.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000425.html">
+   <LINK REL="Next"  HREF="000434.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%20OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3C1454969273.1633.35.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Mon Feb  8 22:07:53 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000425.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+        <LI>Next message: <A HREF="000434.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#433">[ date ]</a>
+              <a href="thread.html#433">[ thread ]</a>
+              <a href="subject.html#433">[ subject ]</a>
+              <a href="author.html#433">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+&gt;<i> See:
+</I>&gt;<i> 
+</I>&gt;<i>         <A HREF="https://github.com/ElementsProject/lightning/blob/master/doc/deployable-lightning.pdf">https://github.com/ElementsProject/lightning/blob/master/doc/deployable-lightning.pdf</A>
+</I>
+Sorry for replying to a very old e-mail, but I've finally had a really
+close look at this, and the way I see it, there could be a potential
+problem.
+
+Suppose Eve (E) has two channels with Alice (A). She intends to steal
+funds from Alice. This is what she does:
+
+She performs a payment to herself, routed through Alice with the two
+channels. When the funds are locked in the two channels, she is supposed
+to reveal the transaction R value as a payee, but she doesn't. So, the
+transaction times out on both channels, leading to a channel update on
+both: the HTLCs are removed, reverting back to the original situation. 
+
+The following actions primarily take place on the channel where Eve was
+on the RECEIVING side of the transaction. First, Eve spends all her
+coins on that channel, e.g. by sending them to herself on the other
+channel. This way, she doesn't risk losing them.
+
+Next, on the channel where Eve was on the RECEIVING side of the
+transaction, Eve signs and broadcasts the version of the commit
+transaction that contained the HTLC. Of course, since revocation
+pre-images have been exchanged, Alice can immediately spend the HTLC,
+using either the HTLC-TIMEOUT &amp; SIG-PAYER clause or the REVOCATION-E &amp;
+SIG A clause. However, this is not guaranteed to work: Eve has the
+transaction R value, so Eve can *also* try to spend it, using the
+R-VALUE &amp; SIG-PAYEE clause. In fact, since Eve knows sooner about the
+commit transaction than Alice, Eve is more likely to be the first to
+spend the HTLC, especially when Alice is offline for a moment (Eve can
+know that).
+
+Now, if Eve succeeds in spending the HTLC, what can Alice do? She can of
+course claim her own balance, and using the revocation pre-image, claim
+Eve's balance in the commit transaction, but that way, she receives less
+than the total channel capacity, which is what she should have received.
+
+On the other channel, Alice could try to perform the same trick on Eve
+that Eve performed on her, since Alice now has the transaction R value.
+However, that is not guaranteed to work. Worse: Eve could also have
+depleted her own balance on *that* channel, e.g. with a payment to
+herself through a third party. That way, Alice will never be able to get
+all the funds that belong to her, and Eve gets more than she deserves.
+
+How to solve this issue? My first thought was that we should add an
+OP_CSV to the R-VALUE &amp; SIG-PAYEE clause, but that would break its
+legitimate use. I don't see how this can be solved without having a
+two-transaction set-up, and hence something like SIGHASH_NOINPUT (or
+maybe SegWitness?). So it would have to be a bit more like &quot;Poon-Dryja
+channels&quot;.
+
+Maybe a &quot;never completely deplete the channel&quot; rule could be a
+work-around? You could define a maximum for the sum of all active HTLCs
+in one direction in a commit transaction, and require the other side to
+always have at least one or two times that maximum as remaining balance.
+Would that work?
+
+BTW, apologies if this was already known. In that case, my question is:
+where can I find an updated design?
+
+CJP
+
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000425.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+	<LI>Next message: <A HREF="000434.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#433">[ date ]</a>
+              <a href="thread.html#433">[ thread ]</a>
+              <a href="subject.html#433">[ subject ]</a>
+              <a href="author.html#433">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

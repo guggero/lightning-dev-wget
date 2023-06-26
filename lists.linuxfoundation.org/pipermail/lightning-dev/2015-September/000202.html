@@ -1,0 +1,184 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Ionization Protocol: Flood Routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3CCAE8CtVm8Kk-2Q6Lf9XFwS5%2B6EYJgAWtAtZ8NePTAD%3D4eOzoBHg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000200.html">
+   <LINK REL="Next"  HREF="000215.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Ionization Protocol: Flood Routing</H1>
+    <B>Mats Jerratsch</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3CCAE8CtVm8Kk-2Q6Lf9XFwS5%2B6EYJgAWtAtZ8NePTAD%3D4eOzoBHg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Ionization Protocol: Flood Routing">matsjj at gmail.com
+       </A><BR>
+    <I>Mon Sep 21 14:06:32 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000200.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+        <LI>Next message: <A HREF="000215.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#202">[ date ]</a>
+              <a href="thread.html#202">[ thread ]</a>
+              <a href="subject.html#202">[ subject ]</a>
+              <a href="author.html#202">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> On Mon, Sep 21, 2015 at 11:46:13AM +0930, Rusty Russell wrote:
+</I>&gt;&gt;<i> We regularly choose a dozen &quot;beacon&quot; nodes at random (using proximity to
+</I>&gt;&gt;<i> the SHA of latest block hash or something).  Everyone propagates the
+</I>&gt;&gt;<i> cheapest route to &amp; from those nodes (which is pretty efficient, similar
+</I>&gt;&gt;<i> to your scheme).
+</I>
+I don't know, using the beacon kind of technique does seem a little
+bit cumbersome and you really have to think about a lot of possible
+attacks that might render the whole network unusable, because all
+beacons are maliciously sabotaging the network..
+
+
+&gt;<i> If you do know the entire graph, you don't need to give away any
+</I>&gt;<i> information about who you want to pay prior to sending the transaction.
+</I>&gt;<i> Knowing the graph is potentially interesting for commercial and academic
+</I>&gt;<i> reasons beyond wanting privacy. (Knowing the fees others charge helps you
+</I>&gt;<i> work out what fees you should charge; but just querying your neighbours'
+</I>&gt;<i> routes is probably sufficient to work that out too)
+</I>
+I initially thought about going with a Node Directory. That is, a
+central server collecting the routing data that could be sent there by
+choice. We can work out with signature and if both nodes submit the
+route towards the other node, whether this is indeed correct. But as
+this isn't too much data in the first place, I am very much in favour
+of just using some gossip-protocol. Furthermore, we can also include
+some byte for a reputation / web-of-trust system. It is completely
+optional, if you are able to figure out how to route the payment
+across your nodes you are not forced to use this system, and I don't
+think it will have severe privacy problems.
+
+Payer and payee can further work out a rendezvous node. The payee will
+send the encrypted routing data from that node on to himself and the
+payer can build the rest of the routing from his viewpoint.
+
+Having this data distributed really allows for making payments without
+leaving too many visible traces on the network.
+
+I would also spread data about how much can be spent and received with
+this route and fees for receiving and spending. Again, this data can
+be very vague and does not need to reflect the real world. You can say
+you support payments up to 10k satoshis, even though the channel has
+5BTC in it.
+
+Is there any plan how we handle connections currently? I am thinking
+about sending the current IP address with this update, such that nodes
+can connect to each other after one broke down again, and it would
+further support dynamic IPs as well. Could be possible to extend this
+to hidden service notation, although this would need some more bytes
+to store.
+
+The protocol on my side does look like this currently:
+
+General beacon for our node
+ - pubkey [32]
+ - timestamp [4]
+ - IP/connectionDetails [8+...]
+ - signature [70]
+
+Routing information
+ - pubkey_from_us [32]
+ - pubkey_from_you [32]
+ - fee_sending [4]
+ - max_sending [4]
+ - current_reputation [1]
+ - timestamp [4]
+ - signature [70]
+
+These two would be spread as one message.
+This allows to keep two separate databases, and be able to bootstrap
+new nodes with this information, while we do not have to store old
+beacon data.
+As reputation will be stored for quite some time, we should really
+save them with separate signatures. (This will make it more difficult
+/ costly to share the complete database with new nodes, and we need to
+store old data (reputation should be stored for some time) to validate
+the signatures.
+
+I was calculating with two updates a day, but only 100k nodes. Each
+node would make a connection to around 10 other nodes, resulting in
+114+10*147 = 1.5kB per update. Each node would only use around 3kb/s
+up/down and would do around 3 signature verifications per second in
+idle mode, while allowing everyone a full copy of the routing. Making
+sure messages spread efficiently is another problem, as we have so
+many tiny messages. Storing the hashes you received in a bloom table
+and asking other peers if they want to receive it as well does work,
+but just the hashes of all messages do add up already..
+
+In the end, the nodes themselves don't really need the routing
+information, we just need a way to transport the information to the
+clients that make payments. Nodes will just stupidly obey the orders
+given in the blob of data they'll receive.
+
+This design opens up for some DDoS attacks, as we don't want other
+nodes to just spam information all day long that would be relayed
+through the complete network. Furthermore, one attacker can just
+emulate a complete network that is vouching for him, and he can use
+those 'nodes' to push spam through the network as well. This does
+screw a little bit with the reputation system, but I think it would be
+possible to detect a cluster of nodes that is only connected to the
+rest of the network through that one attacker (some graph theory I
+guess). Furthermore, we can check nodes by pinging them randomly, and
+dropping any reputation if we cannot reach them.
+
+Mats Jerratsch
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000200.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+	<LI>Next message: <A HREF="000215.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#202">[ date ]</a>
+              <a href="thread.html#202">[ thread ]</a>
+              <a href="subject.html#202">[ subject ]</a>
+              <a href="author.html#202">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

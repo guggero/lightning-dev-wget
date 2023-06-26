@@ -1,0 +1,121 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Three Strategies for Lightning Forwarding Nodes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Three%20Strategies%20for%20Lightning%20Forwarding%20Nodes&In-Reply-To=%3CG8879Bpmzo5TPsFot7ayAK--eMnQr2h1DLwmXgPE3iaTn1YK3u1Zd4n3oNjIl5DmwrvFByCPJYAlU0w2HGRUBs98PUCVZWp01DpsQaQ7dHo%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003636.html">
+   <LINK REL="Next"  HREF="003618.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Three Strategies for Lightning Forwarding Nodes</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Three%20Strategies%20for%20Lightning%20Forwarding%20Nodes&In-Reply-To=%3CG8879Bpmzo5TPsFot7ayAK--eMnQr2h1DLwmXgPE3iaTn1YK3u1Zd4n3oNjIl5DmwrvFByCPJYAlU0w2HGRUBs98PUCVZWp01DpsQaQ7dHo%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Three Strategies for Lightning Forwarding Nodes">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Jun 28 02:34:25 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003636.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice via Chain Signals
+</A></li>
+        <LI>Next message: <A HREF="003618.html">[Lightning-dev] Three Strategies for Lightning Forwarding Nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3617">[ date ]</a>
+              <a href="thread.html#3617">[ thread ]</a>
+              <a href="subject.html#3617">[ subject ]</a>
+              <a href="author.html#3617">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+This is a short (relative to my typical crap) writeup on some strategies that Lightning forwarding nodes might utilize.
+
+I have been thinking of various strategies that actual node operators (as I understood from discussing with a few of them) use:
+
+* Passive rebalance / feerate by balance
+  * Set feerates according to balance: increase feerates when our side has low balance, reduce feerates when our side has high balance.
+  * &quot;passive rebalance&quot; because we are basically encouraging payments via our channel if the balance is in our favor, and discouraging payments if the balance is against us, thus typical payments will &quot;normally&quot; rebalance our node naturally without us spending anything.
+* Low fee
+  * Just fix the fee to a low fee, e.g. base 1 proportional 1 or even the @zerofeerouting guy of base 0 proportional 0.
+  * Ridiculously simple, no active management, no scripts, no nothing.
+* Wall
+  * Set to a constant (or mostly constant) high feerate.
+  * Actively rebalance, targeting low-fee routes (i.e. less than our earnings), and constantly probe the network for the rare low-fee routes that we can use to rebalance.
+  * Basically, buy cheap liquidity and resell it at higher prices.
+
+
+The interesting thing is how the three interact.
+
+Suppose we have a mixed network composed ONLY of passive rebalancers and walls.
+In that case, the passive rebalancers might occasionally set channels to low fees, in which case the walls buy up their liquidity, but eventually the liquidity of the passive rebalancer is purchased and the passive rebalancer raises their price point.
+The network then settles with every forwarding node having roughly equal balance on their channels, but note that it was the walls who paid to the passive rebalancers to get the channels into a nice balance.
+In particular, if there were only a single wall node, it can stop rebalancing once the price to rebalance costs more than 49% of its earnings, so it paid 49% of its earnings to the passive rebalancers and keeps 51% of its earnings, thus earning more than the passive rebalancers earn.
+However, once multiple wall nodes exist, they will start bidding for the available liquidity from the passive rebalancers and the may find it difficult to compete once the passive rebalancers set their feerates to more than 50% of the wall feerate, at which point the passive rebalancers now end up earning more than the wall nodes (because the wall nodes now pay more to the passive rebalancers than what they keep).
+
+Thus, it seems to me that passive rebalancers would outcompete wall strategies, if they were the only strategies on the network.
+
+However, the network as-is contains a LOT of tiny nodes with low feerates.
+
+In such an environment, walls can pick up liquidity for really, really cheap, leaving the low-feerate nodes with no liquidity in the correct direction.
+And thus, it seems plausible that they can resell the liquidity later at much higher feerates, possibly outcompeting the passive rebalancers.
+
+Unfortunately:
+
+* Low feerate nodes are notoriously unreliable for payments; their channels are usually saturated in one side or another. since walls keep taking their liquidity.
+  * Because of this known unreliability, some payer strategies filter them out via some heuristics (e.g. payment unreliability information).
+    Thus, even in the rare case where payment flows change on the network, they are not used by payers --- instead, walls exploit them since walls do not care if rebalancing fails, they will always just retry later.
+* One argument FOR using low-feerate nodes is that it &quot;supports the network&quot;.
+  * However, it seems to me that the low-feerate nodes are actually being exploited by the wall nodes instead, and the low-feerate nodes have too little payment reliability to actually support payers instead of large-scale forwarders.
+* Both low-feerates and walls do not leak their channel balances, whereas passive rebalancers do leak their channel balance.
+
+The above is just some thinking of mine --- actual experimentation on models or on actual network nodes might be better than my speculation.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003636.html">[Lightning-dev] Achieving Zero Downtime Splicing in Practice via Chain Signals
+</A></li>
+	<LI>Next message: <A HREF="003618.html">[Lightning-dev] Three Strategies for Lightning Forwarding Nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3617">[ date ]</a>
+              <a href="thread.html#3617">[ thread ]</a>
+              <a href="subject.html#3617">[ subject ]</a>
+              <a href="author.html#3617">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

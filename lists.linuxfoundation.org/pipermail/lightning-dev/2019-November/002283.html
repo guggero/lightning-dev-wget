@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20191105112419.cwppexpzpyt2dq2v%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002282.html">
+   <LINK REL="Next"  HREF="002286.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20191105112419.cwppexpzpyt2dq2v%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Nov  5 11:24:19 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002282.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002286.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2283">[ date ]</a>
+              <a href="thread.html#2283">[ thread ]</a>
+              <a href="subject.html#2283">[ subject ]</a>
+              <a href="author.html#2283">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Nov 05, 2019 at 07:56:45PM +1030, Rusty Russell wrote:
+&gt;<i> Sure: for simplicity I'm sending a 0-value HTLC.
+</I>&gt;<i> ZmnSCPxj has balance 10000msat in channel with Rusty, who has 1000msat
+</I>&gt;<i> in the channel with YAIjbOJa.
+</I>
+Alice, Bob and Carol sure seem simpler than Zmn YAI and Rusty...
+
+&gt;<i> Rusty prepares a nonce, AAAAA and hashes it 25 times = ZZZZZ.
+</I>&gt;<i> ZmnSCPxj prepares the onion, but adds extra fields (see below).  
+</I>
+It would have made more sense to me for Alice (Zmn) to generate
+the nonce, hash it, and prepare the onion, so that the nonce is
+revealed to Dave (Rusty) if/when the message ever actually reaches its
+destination. Otherwise Rusty has to send AAAAA to Zmn already so that
+Zmn can prepare the onion?
+
+&gt;<i> He then
+</I>&gt;<i> sends the HTLC to Rusty, but also sends ZZZZZ, and 25x50 msat (ie. those
+</I>&gt;<i> fields are in the update_add_htlc msg).  His balance with Rusty is now
+</I>&gt;<i> 8750msat (ie. 25x50 to Rusty).
+</I>&gt;<i> 
+</I>&gt;<i> Rusty decrypts the onion, reads the prepay field: it says 14, LLLLL.
+</I>&gt;<i> Rusty checks: the hash of the onion &amp; block (or something) does indeed
+</I>&gt;<i> have the top 8 bits clear, so the cost is in fact 16 - 8/2 == 14.  He
+</I>&gt;<i> then hashes LLLLL 14 times, and yes, it's ZZZZZ as ZmnSCPxj said it
+</I>&gt;<i> should be.
+</I>
+I'm not sure why lucky hashing should result in a discount? You're
+giving a linear discount for exponentially more luck in hashing which
+also seems odd.
+
+You've only got two nonce choices -- the initial AAAA and the depth
+that you tell Bob and Carol to hash to as steps in the route; so the
+incentive there seems to be to do a large depth, so you might hash
+AAAA 1000 times, and figure that you'll find a leading eight 0's once
+in the first 256 entries, then another by the time you get up to 512,
+and another by the time you get to 768, which gets you discounts on
+three intermediaries. But the cost there is that your intermediaries
+collectively have to do the same amount of hashing you did, so it's not
+proof-of-work, because it's as hard to verify as it is to generate.
+
+I think you could just make the scheme be:
+
+  Alice sends HTLC(k,v) + 1250 msat to Bob
+  Bob unwraps the onion and forwards HTLC(k,v) + 500 msat to Carol
+  Carol unwraps the onion and forwards HTLC(k,v) + 250 msat to Dave
+  Dave redeems the HTLC, claims an extra 300 msat and refunds 200 msat to Carol
+  Carol redeems the HTLC and refunds 200 msat to Bob
+  Bob redeems the HTLC and refunds 200 msat to Alice
+
+If there's a failure, Alice loses the 1250 msat, and someone in the
+path steals the funds. You could make the accountable by having Alice
+also provide &quot;Hash(AAAA, refund=200)&quot; to everyone, encoding AAAA in the
+onion to Dave, and then each hop reveals AAAA and refunds 200msat to
+demonstrate their honesty.
+
+Does that miss anything that all the hashing achieves?
+
+I think the idea here is that you're paying tiny amounts for the
+bandwidth, which when it's successful does in fact pay for the bandwidth;
+and when it's unsuccessful results in a channel closure, which makes it
+unprofitable to cheat the system, but doesn't change the economics of
+lightning much overall because channel closures can happen anytime anyway.
+I think that approach makes sense.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002282.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002286.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2283">[ date ]</a>
+              <a href="thread.html#2283">[ thread ]</a>
+              <a href="subject.html#2283">[ subject ]</a>
+              <a href="author.html#2283">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

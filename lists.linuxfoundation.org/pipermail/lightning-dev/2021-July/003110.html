@@ -1,0 +1,233 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Error Codes for LN
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Error%20Codes%20for%20LN&In-Reply-To=%3C87zguz559m.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003128.html">
+   <LINK REL="Next"  HREF="003142.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Error Codes for LN</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Error%20Codes%20for%20LN&In-Reply-To=%3C87zguz559m.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Error Codes for LN">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Jul  7 00:36:37 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003128.html">[Lightning-dev] Turbo channels spec?
+</A></li>
+        <LI>Next message: <A HREF="003142.html">[Lightning-dev] Error Codes for LN
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3110">[ date ]</a>
+              <a href="thread.html#3110">[ thread ]</a>
+              <a href="subject.html#3110">[ subject ]</a>
+              <a href="author.html#3110">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Carla Kirk-Cohen &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">kirkcohenc at gmail.com</A>&gt; writes:
+&gt;<i> Hi all,
+</I>
+Hi Carla,
+
+        I apologize for not responding to this earlier, but it was
+raised again in the recent spec meeting
+(<A HREF="https://lightningd.github.io/meetings/ln_spec_meeting/2021/ln_spec_meeting.2021-07-05-20.06.log.html">https://lightningd.github.io/meetings/ln_spec_meeting/2021/ln_spec_meeting.2021-07-05-20.06.log.html</A>).
+
+I love the idea of more specific error codes, BTW!
+
+Feedback interleaved:
+
+&gt;<i> Since we shouldn&#8217;t have non-ascii values in the error string itself,
+</I>&gt;<i> this can most easily be achieved by adding TLV fields after the
+</I>&gt;<i> data field. In terms of supporting nodes that have not upgraded,
+</I>&gt;<i> we could either include the error code in the data field to cover
+</I>&gt;<i> our bases, or introduce a feature bit so that we know whether
+</I>&gt;<i> to backfill the data field. This gives upgraded nodes an improved
+</I>&gt;<i> quality of life, while leaving older nodes unaffected.
+</I>
+Older nodes should definitely ignore extra fields; it's in the spec and
+we've relied on this to extend messages in the past, so this part is
+easy.
+
+Technically, all defined types are now assumed to have an optional TLV
+appended, since f068dd0d (Bolt 1: Specify that extensions to existing
+messages must use TLV (#754)).
+
+&gt;<i> While we can&#8217;t enumerate every possible error, there are quite
+</I>&gt;<i> a few cases in the spec where we can introduce explicit error
+</I>&gt;<i> codes. For the sake of the skim-readers, I&#8217;ve left that list at
+</I>&gt;<i> the end of the email.
+</I>&gt;<i>
+</I>&gt;<i> Taking the example of our node receiving an invalid signature for
+</I>&gt;<i> a htlc, a new error would look like this:
+</I>
+I think this is both too much, and not enough.
+
+Too much:
+- Many of these errors are &quot;your implementation is broken&quot;, which is
+  really not something actionable by the recipient.
+- A lot of work to fill in all these error cases, which will (because
+  they're usually impossible) will be untested and broken.
+
+Not enough:
+- Look at the proposal for channel_types, where you would object to the
+  channel_type if you don't like it.  This would be grouped under
+  &quot;Funding params unacceptable&quot;, which is actually 99% of errors at this
+  point and does not say what the problem is with specificity.
+
+I took a different approach with onion messages[1], where you (optionally)
+specify the field number, even an optional suggested value:
+
+    1. type: 1 (`erroneous_field`)
+    2. data:
+        * [`tu64`:`tlv_fieldnum`]
+    1. type: 3 (`suggested_value`)
+    2. data:
+        * [`...*byte`:`value`]
+    1. type: 5 (`error`)
+    2. data:
+        * [`...*utf8`:`msg`]
+
+In our case, we need to refer to which message (if any) caused the
+error, and we have non-tlv fields, so it can't simply use the tlv field
+number.
+
+Here's my straw proposal:
+
+1. `tlv_stream`: `error_tlvs`
+2. types:
+    1. type: 1 (`erroneous_message`)
+    2. data:
+        * [`...*byte`:`message`]
+    1. type: 3 (`erroneous_fieldnum`)
+    2. data:
+        * [`tu64`:`fieldnum`]
+    1. type: 5 (`suggested_value`)
+    2. data:
+        * [`...*byte`:`value`]
+
+erroneous_message is the message we're complaining about (including
+2-byte type), which may be truncated (but must be at least 2 bytes).
+
+fieldnum is either the 0-based field number (for fixed fields), or the
+number of fixed fields + the tlv type (for tlv fields).
+
+suggested_value is the optional value if we have an idea if what we
+expected / prefer.
+
+&gt;<i> This new kind of error provides us with an error code that tells us
+</I>&gt;<i>
+</I>&gt;<i> exactly what has gone wrong, and metadata pointing to the htlc
+</I>&gt;<i>
+</I>&gt;<i> with an invalid sig. This information can be logged, or stored in a
+</I>&gt;<i>
+</I>&gt;<i> more permanent error store to help diagnose issues in the future.
+</I>&gt;<i>
+</I>&gt;<i> Right now, the spec is pretty strict on error handling [13], indicating
+</I>&gt;<i>
+</I>&gt;<i> that senders/recipients of errors `MUST` fail the channel referenced
+</I>&gt;<i>
+</I>&gt;<i> in the error.
+</I>
+&gt;<i> This isn&#8217;t very practical, and I believe that the majority
+</I>&gt;<i> of the impls don&#8217;t abide by this instruction.
+</I>
+This was inevitable eventually, but c-lightning deliberately treated
+errors as fatal for a long time so people would *notice* and *report*
+these issues.
+
+To be fair, *LND* didn't treat them as fatal.  As so naturally your
+engineers didn't *think* of them as a big deal (and testing didn't show
+it up), so it would send errors for cases which it clearly didn't want
+to close the channel (e.g. peer too slow to respond!).
+
+Hence this PR, which makes these less fatal, and adds warning support:
+
+        <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/834">https://github.com/lightningnetwork/lightning-rfc/pull/834</A>
+
+(We should similarly add this TLV to warnings?)
+
+&gt;<i> Candidates for error codes:
+</I>
+The vast majority of these are &quot;contact your developer, peer says we did
+something illegal&quot;.  Which is always nice to have more information
+about, but not critital.
+
+The exceptions are:
+
+&gt;<i> Funding Process:
+</I>&gt;<i>
+</I>&gt;<i> * Funding process timeout [2]
+</I>&gt;<i>
+</I>&gt;<i> * Fees out of range [3]
+</I>&gt;<i>
+</I>&gt;<i> * Funding tx spent [11]
+</I>&gt;<i>
+</I>&gt;<i> * Funding params unacceptable (eg, channel too small)
+</I>...
+&gt;<i> Channel State Machine:
+</I>&gt;<i> 
+</I>&gt;<i> * HTLC timeout [4]
+</I>...
+&gt;<i> Fee Updates
+</I>&gt;<i>
+</I>&gt;<i> * Update fee to low/high [9]
+</I>...
+
+And BTW this one is misguided:
+
+&gt;<i> * Feature bit required
+</I>
+If Alice says a feature bit is even (compulsory), and Bob doesn't offer
+it, that's on Bob!  Alice's behavior here is undefined: she may do a
+courtesy message to Bob, but she may also *assume* it's agreed.
+
+But it's worth noting that with the exception of timeouts, these are all
+expressable in form &quot;problem is this message, this field&quot;.  Perhaps it's
+worth having a special TLV case for timeouts in the message?
+
+Thanks for starting this ball rolling!
+
+Cheers,
+Rusty.
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/759">https://github.com/lightningnetwork/lightning-rfc/pull/759</A>
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003128.html">[Lightning-dev] Turbo channels spec?
+</A></li>
+	<LI>Next message: <A HREF="003142.html">[Lightning-dev] Error Codes for LN
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3110">[ date ]</a>
+              <a href="thread.html#3110">[ thread ]</a>
+              <a href="subject.html#3110">[ subject ]</a>
+              <a href="author.html#3110">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

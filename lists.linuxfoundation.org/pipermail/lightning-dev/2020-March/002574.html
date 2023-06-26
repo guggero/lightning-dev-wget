@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Sphinx Rendezvous Update
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Sphinx%20Rendezvous%20Update&In-Reply-To=%3C87tv376l4q.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="002575.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Sphinx Rendezvous Update</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Sphinx%20Rendezvous%20Update&In-Reply-To=%3C87tv376l4q.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Sphinx Rendezvous Update">decker.christian at gmail.com
+       </A><BR>
+    <I>Mon Mar  2 11:39:49 UTC 2020</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="002575.html">[Lightning-dev] Superbolt Proposal - a professionally run LN subset delivering superior UX
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2574">[ date ]</a>
+              <a href="thread.html#2574">[ thread ]</a>
+              <a href="subject.html#2574">[ subject ]</a>
+              <a href="author.html#2574">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Bastien,
+
+thanks for verifying my proposal, and I do share your concerns regarding
+privacy leaks (how many hops are encoded in the onion) and success ratio
+if a payment is based on a fixed (partial) path.
+
+&gt;<i> I believe this makes it quite usable in Bolt 11 invoices, without blowing up
+</I>&gt;<i> the size of the QR code (but more experimentation is needed on that).
+</I>
+It becomes a tradeoff of how small you want your onion to be, and how
+many hops the partial onion can have. For longer partial onions we're
+getting close to the current full onion size, but I expect most partial
+onion to be close to the network diameter of ~6 (excluding degerenate
+chains). So the example below with 5 hops seemed realistic, and dropping
+the legacy format in favor of TLVs we can get a couple of bytes back as
+well.
+
+&gt;&gt;<i> As an example such an onion, with 5 legacy hops (65 byte each) results
+</I>&gt;&gt;<i> in a 325 + 66 bytes onion, and we save 975 bytes.
+</I>&gt;<i>
+</I>&gt;<i> While having flexibility when choosing the length of the prefill
+</I>&gt;<i> stream feels nice, wouldn't it be safer to impose a fixed size to
+</I>&gt;<i> avoid any kind of heuristic at `RV` to try to guess how many hops
+</I>&gt;<i> there are between him and the recipient?
+</I>
+I'm currently just using the maximum size, which is an obvious privacy
+leak, but I'm also planning on exposing the size to be prefilled, and
+hence cropped out when compressing, when generating. Ideally we'd have a
+couple of presets, i.e., 1/4, 2/4, 3/4, and adhere to them, randomizing
+which one we pick.
+
+Having smaller partial onions would enable my stretch goal of being able
+to chain multiple partial onions, though that might be a useless
+achievement to unlock xD
+
+&gt;&gt;<i> Compute a shared secret using a random ephemeral private key and
+</I>&gt;&gt;<i> `RV`s public key, and then generate a prefill-key
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> While implementing, I felt that the part about the shared secret used
+</I>&gt;<i> to generate the prefill stream is a bit blurry (your proposal on
+</I>&gt;<i> Github doesn't phrase it the same way). I think it's important to
+</I>&gt;<i> stress that this secret is derived from both `ephkey` and `RV`'s
+</I>&gt;<i> private key, so that `RV+1` can't compute the same stream.
+</I>
+I noticed the same while implementing the decompress stage, which
+requires the node ID from `RV` during generation, and performs ECDH +
+HKDF with the `RV` node private and the ephemeral key in the *next*
+onion, i.e., the one extracted from the payload itself. This is
+necessary since the ephemeral key on the incoming onion, which delivered
+the partial onion in its payload is not controlled by the partial onion
+creator, while the one in the partial onion is.
+
+This means that the ephemeral key in the partial onion is used twice:
+
+ - Once by `RV` to generate the obfuscation stream to fill in the gap
+ - As part of the reconstructed onion, processed by `RV+1` to decode the
+   onion.
+
+I'm convinced this is secure and doesn't leak information since
+otherwise transporting the ephemeral key publicly would be insecure
+(`RV+1` can't generate the obfuscation secret used to fill in the gap
+without access to `RV`s private key), and the ephemeral key is only
+transmitted in cleartext once (from `RV` to `RV+1`), otherwise it is
+hidden in the outer onion.
+
+&gt;<i> Another thing that may be worth mentioning is error forwarding. Since
+</I>&gt;<i> the recipient generated the onion, `RV` won't have the shared secrets
+</I>&gt;<i> (that's by design). So it's expected that payment errors won't be
+</I>&gt;<i> readable by `RV`, but it's probably a good idea if `RV` returns an
+</I>&gt;<i> indication to the sender that the payment failed *after* the
+</I>&gt;<i> rendezvous point.
+</I>
+Indeed, this is pretty much by design, since otherwise the sender could
+provoke errors, e.g., consuming all of `RV`s outgoing capacity with
+probes to get back temporary channel failure errors for the channel that
+was encoded in the partial onion, and then do that iteratively until we
+have identified the real destination which we weren't supposed to learn.
+
+So any error beyond `RV` should be treated by the sender as &quot;rendez-vous
+failed, discard partial onion&quot;.
+
+&gt;<i> An important side-note is that your proposal is really quick and
+</I>&gt;<i> simple to implement from the existing Sphinx code. I have made ASCII
+</I>&gt;<i> diagrams of the scheme (see [1]).  This may help readers visualize it
+</I>&gt;<i> more easily.
+</I>
+I quickly skimmed the drawings and they're very nice to understand how
+regions overlap, that was my main problem with the whole sphinx
+construction, so thanks for taking the time :+1:
+
+&gt;<i> It still has the issue that each hop's amount/cltv is fixed at invoice
+</I>&gt;<i> generation time by the recipient. That means MPP cannot be used, and
+</I>&gt;<i> if any channel along the path updates their fee the partial onion
+</I>&gt;<i> becomes invalid (unless you overpay the fees).
+</I>&gt;<i>
+</I>&gt;<i> Trampoline should be able to address that since it provides more
+</I>&gt;<i> freedom to each trampoline node to find an efficient way to forward to
+</I>&gt;<i> the next trampoline.  It's not yet obvious to me how I can mix these
+</I>&gt;<i> two proposals to make it work though.  I'll spend more time
+</I>&gt;<i> experimenting with that.
+</I>
+True, I think rendez-vous routing have some use-cases, but routing in
+the public network seems a bit brittle. It is definitely not MPP
+compliant since the sphinx constructions says that each shared secret
+should be blacklisted after use, and if we were to use the partial onion
+on multiple path we'd be bound to use the same shared secret for the
+subpaths contained in the partial onion.
+
+I've been mostly thinking about systems in which you can guarantee
+stability, e.g., in a subnetwork controlled by the recipient, but to
+hide any internal routing decisions. That'd be similar to a supercharged
+routing hint basically, without revealing the internal structure.
+
+Cheers,
+Christian
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="002575.html">[Lightning-dev] Superbolt Proposal - a professionally run LN subset delivering superior UX
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2574">[ date ]</a>
+              <a href="thread.html#2574">[ thread ]</a>
+              <a href="subject.html#2574">[ subject ]</a>
+              <a href="author.html#2574">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

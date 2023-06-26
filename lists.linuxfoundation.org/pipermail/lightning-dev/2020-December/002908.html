@@ -1,0 +1,164 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Recovery of Lightning channels without backups
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Recovery%20of%20Lightning%20channels%20without%20backups&In-Reply-To=%3CCAGB645YkFkktSuoFm3bEZ%3DtdVWQG_gSfPfPTEU%3D72URs-q%2BJxA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002907.html">
+   <LINK REL="Next"  HREF="002909.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Recovery of Lightning channels without backups</H1>
+    <B>Gijs van Dam</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Recovery%20of%20Lightning%20channels%20without%20backups&In-Reply-To=%3CCAGB645YkFkktSuoFm3bEZ%3DtdVWQG_gSfPfPTEU%3D72URs-q%2BJxA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Recovery of Lightning channels without backups">gvandam at gmail.com
+       </A><BR>
+    <I>Mon Dec  7 08:24:20 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002907.html">[Lightning-dev] Recovery of Lightning channels without backups
+</A></li>
+        <LI>Next message: <A HREF="002909.html">[Lightning-dev] Recovery of Lightning channels without backups
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2908">[ date ]</a>
+              <a href="thread.html#2908">[ thread ]</a>
+              <a href="subject.html#2908">[ subject ]</a>
+              <a href="author.html#2908">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey Lloyd (and others),
+
+I have just been working on something similar. I came up with the following
+plan of attack that works within the current protocol:
+
+Create a static channel backup after the fact. I have dubbed this a
+synthetic static channel backup. I only use it to trigger the data loss
+protection protocol.
+By restoring this synthetic SCB a `channel_reestablish` is being sent to
+the remote peer. This `channel_reestablish`contains the
+`next_commitment_number`and the `next_revocation_number` both set to zero.
+This triggers the remote peer to force close the channel dropping its
+current commitment transaction to the chain. Using the
+`per_commitment_point` received from the remote peer you can now derive the
+private key needed for sweeping your funds, using
+privkey = basepoint_secret + SHA256(per_commitment_point || basepoint)
+
+We use the basepoint_secret derived (in LND) with
+
+```
+basePointSecret, err := keyRing.DerivePrivKey(keychain.KeyDescriptor{
+  KeyLocator: keychain.KeyLocator{
+    Family: keychain.KeyFamilyPaymentBase,
+    Index:  0, // Same commitment index as used by the remote node
+  },
+})
+```
+
+I have  got this somewhat working in a test setup. (I probably have
+overlooked some details). I would be interested in hearing Sjors Provoost
+on this, since his question and answer on this topic over on the Bitcoin
+StackExchange was really helpful.[1]
+He lost his backup in a boating accident as well. (What is it with you guys
+and boating? :) )
+
+Your approach covers more cases, and my approach only fits certain edge
+cases. But my approach is possible today, without changes to the Lightning
+protocol.
+
+Regards,
+
+Gijs
+
+[1]:
+<A HREF="https://bitcoin.stackexchange.com/questions/90196/how-to-recover-funds-from-a-force-closed-lnd-lightning-channel/90719#90719">https://bitcoin.stackexchange.com/questions/90196/how-to-recover-funds-from-a-force-closed-lnd-lightning-channel/90719#90719</A>
+
+On Mon, Dec 7, 2020 at 8:32 AM Lloyd Fournier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lloyd.fourn at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hi list,
+</I>&gt;<i>
+</I>&gt;<i> I've been considering the problem of recovering lightning channels after
+</I>&gt;<i> losing channel state in a boating accident. The modern way of doing this
+</I>&gt;<i> seems to be &quot;static channel backups&quot; -- these are essentially lists of
+</I>&gt;<i> channel ids and the nodes you had the channels with.
+</I>&gt;<i>
+</I>&gt;<i> The idea is that with this backup you can remember who you had channels
+</I>&gt;<i> with, connect to them and ask them to force close the channel (can someone
+</I>&gt;<i> link me the concrete protocol messages you send to do this?).
+</I>&gt;<i>
+</I>&gt;<i> It occurred to me that if the lightning protocol were changed slightly you
+</I>&gt;<i> could do this without the channel backup at all. Consider the open channel
+</I>&gt;<i> message and its two fields `funding_pubkey` and `temporary_channel_id`.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#the-open_channel-message">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#the-open_channel-message</A>
+</I>&gt;<i>
+</I>&gt;<i> The reason `temporary_channel_id` is necessarily &quot;temporary&quot; is because we
+</I>&gt;<i> don't know the other party's `funding_pubkey`. Instead I propose using
+</I>&gt;<i> deterministically randomized version of the node's static public key as the
+</I>&gt;<i> `funding_pubkey` so we know it up front. Specifically, when opening a
+</I>&gt;<i> channel with a remote node, do a Diffie-Hellman operation with their public
+</I>&gt;<i> key and use the resulting shared secret to deterministically produce
+</I>&gt;<i> scalars r1 and r2 and use 2-of-2(r1*G + P_local, r2*P_remote) as the script
+</I>&gt;<i> pubkey of funding output. Now we know what the funding output would look
+</I>&gt;<i> like with any node without interacting with them. Of course, to open
+</I>&gt;<i> multiple channels with the same node we would have to generate a new shared
+</I>&gt;<i> secret from each one by hashing a counter.
+</I>&gt;<i>
+</I>&gt;<i> Now that we can figure out what our funding outputs with each node look
+</I>&gt;<i> like non-interactively, when we lose our channel state we can find them in
+</I>&gt;<i> the UTXO set as long as we can recreate a list of node's we may have had
+</I>&gt;<i> channels with. For most non-enterprise users (such as myself) this can be
+</I>&gt;<i> done automatically because we exclusively have channels with well known
+</I>&gt;<i> reliable public nodes whose public keys can be discovered through routing
+</I>&gt;<i> gossip or from public indexes. Therefore if I can just restore my node's
+</I>&gt;<i> keypair from my seed I should be able to scan the network for nodes and
+</I>&gt;<i> figure out if I have channels open with them and then carry out the
+</I>&gt;<i> recovery process. From my perspective this seems to be a rather nice
+</I>&gt;<i> improvement in user experience.
+</I>&gt;<i>
+</I>&gt;<i> Thoughts?
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i>
+</I>&gt;<i> LL
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201207/d4af1742/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201207/d4af1742/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002907.html">[Lightning-dev] Recovery of Lightning channels without backups
+</A></li>
+	<LI>Next message: <A HREF="002909.html">[Lightning-dev] Recovery of Lightning channels without backups
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2908">[ date ]</a>
+              <a href="thread.html#2908">[ thread ]</a>
+              <a href="subject.html#2908">[ subject ]</a>
+              <a href="author.html#2908">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

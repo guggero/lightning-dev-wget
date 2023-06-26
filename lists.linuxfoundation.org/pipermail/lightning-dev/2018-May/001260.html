@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Mitigations for loop attacks
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3C871seljpak.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001232.html">
+   <LINK REL="Next"  HREF="001261.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Mitigations for loop attacks</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3C871seljpak.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Mitigations for loop attacks">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed May  9 06:50:27 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001232.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+        <LI>Next message: <A HREF="001261.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1260">[ date ]</a>
+              <a href="thread.html#1260">[ thread ]</a>
+              <a href="subject.html#1260">[ subject ]</a>
+              <a href="author.html#1260">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Jim Posen &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">jim.posen at gmail.com</A>&gt; writes:
+&gt;<i> There are two directions of solutions I have heard: 1) protocol support for
+</I>&gt;<i> decrypting the onion route if the HTLC is kept in-flight for too long 2)
+</I>&gt;<i> requiring fees even if the payment fails as a cost to the attacker 3) some
+</I>&gt;<i> sort of reputation system for nodes.
+</I>&gt;<i>
+</I>&gt;<i> Option 1 I'm afraid may be quite complex. Say this mechanism kicks in and
+</I>&gt;<i> all nodes in the circuit deobfuscate the route and are able to see the
+</I>&gt;<i> delays at each hop. The outcome we hope for is that there is one node
+</I>&gt;<i> clearly to blame and the prior hop in the route fails all channels with
+</I>&gt;<i> them. However, the attacker can of course control multiple successive hops
+</I>&gt;<i> in the route, one that looks innocent in front of one that looks guilty,
+</I>&gt;<i> then keep the channel alive and try again. So then all nodes need to keep a
+</I>&gt;<i> record of the full circuits and iteratively shift blame up the chain if bad
+</I>&gt;<i> HTLCs keep going through those channels.
+</I>
+You missed the vital detail: that you must prove channel closure if you
+can't unpeel the onion further.  That *will* hit an unresponsive party
+with a penalty.[1]
+
+&gt;<i> Option 2 is also problematic because it only protects against the case
+</I>&gt;<i> where the sender is colluding with the receiver, and not where a routing
+</I>&gt;<i> node is opportunistically delaying payments. This would, however, likely be
+</I>&gt;<i> successful against nodes being annoying and sending tons of payments with
+</I>&gt;<i> randomly generated payment hashes in order to &quot;ping&quot; a circuit.
+</I>
+The models we tried in Milan all created an incentive to fail payments,
+which is a non-starter.
+
+&gt;<i> Option 3 has become my preferred solution. The idea is that that for each
+</I>&gt;<i> node that one has channels with, it only forwards payments through them if
+</I>&gt;<i> they have a good history, otherwise it fails the payment. Notably, we
+</I>&gt;<i> ignore whether the downstream hop is directly responsible for delaying a
+</I>&gt;<i> payment or whether they are simply willing to forward to another node that
+</I>&gt;<i> is intentionally delaying -- both should be considered bad behavior. In my
+</I>&gt;<i> opinion, this type of solution fits best into the Lightning model of
+</I>&gt;<i> independent, linked channels where each node has private contracts with its
+</I>&gt;<i> direct peers. It also is the simplest in the context of onion routing
+</I>&gt;<i> because if you are offered an HTLC to route, the only decision you can make
+</I>&gt;<i> is whether to forward it or fail it based on the amount, previous hop, and
+</I>&gt;<i> next hop. When I refer to &quot;reputation&quot; hereafter, I do not mean a global
+</I>&gt;<i> reputation that is gossiped about -- just a local view of a peer's history.
+</I>
+This seems like we'd need some serious evaluation to show that this
+works, because the risks are very high.
+
+I can destroy your node's reputation by routing crap through you; even
+if it costs me marginaly more reputation than it does you, that just
+means that the largest players can force failure upon smaller players,
+centralizing the network.  And I think trying to ensure that it costs me
+more reputation than the sum of downstream reputation loss leaks too
+much information
+
+If the system doesn't work perfectly, it creates incentive to
+de-anonymize payments so you can determine which are likely to fail, and
+also means nodes are safest not forwarding payments, lest they ruin
+their reputatation.  But nodes which don't forward have much less
+privacy.
+
+But I agree, all solutions I've seen to this problem are bad in
+different ways.
+
+Cheers,
+Rusty.
+
+[1] Proving that you've committed to a particular HTLC in a channel is
+    difficult, because of dust HTLCs[2] and partially-committed ones[3].
+
+[2] We could have an OP_RETURN output which was a merkle tree of trimmed
+    HTLCs to cover the dust case.
+
+[3] You committed to an HTLC but the peer didn't respond; you have no
+    proof.  So you also need to present a merkle tree of uncommitted
+    HTLCs (limited, say, to 16) otherwise you can create 1M HTLCs, then
+    claim they were all in that one channel close.
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001232.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+	<LI>Next message: <A HREF="001261.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1260">[ date ]</a>
+              <a href="thread.html#1260">[ thread ]</a>
+              <a href="subject.html#1260">[ subject ]</a>
+              <a href="author.html#1260">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,135 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C877e0c7krr.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002561.html">
+   <LINK REL="Next"  HREF="002568.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C877e0c7krr.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Feb 24 02:59:36 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002561.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002568.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2563">[ date ]</a>
+              <a href="thread.html#2563">[ thread ]</a>
+              <a href="subject.html#2563">[ subject ]</a>
+              <a href="author.html#2563">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> On Fri, Feb 21, 2020 at 12:35:20PM +1030, Rusty Russell wrote:
+</I>&gt;&gt;<i> And if there is a grace period, I can just gum up the network with lots
+</I>&gt;&gt;<i> of slow-but-not-slow-enough HTLCs.
+</I>&gt;<i>
+</I>&gt;<i> Well, it reduces the &quot;gum up the network for &lt;timeout&gt; blocks&quot; to &quot;gum
+</I>&gt;<i> up the network for &lt;grace period&gt; seconds&quot;, which seems like a pretty
+</I>&gt;<i> big win. I think if you had 20 hops each with a 1 minute grace period,
+</I>&gt;<i> and each channel had a max_accepted_htlcs of 30, you'd need 25 HTLCs per
+</I>&gt;<i> second to block 1000 channels (so 2.7% of the 36k channels 1ml reports),
+</I>&gt;<i> so at the very least, successfully performing this attack would be
+</I>&gt;<i> demonstrating lightning's solved bitcoin's transactions-per-second
+</I>&gt;<i> limitation?
+</I>
+But the comparison here is not with the current state, but with the
+&quot;best previous proposal we have&quot;, which is:
+
+1. Charge an up-front fee for accepting any HTLC.
+2. Will hang-up after grace period unless you either prove a channel
+   close, or gain another grace period by decrypting onion.
+
+(There was is an obvious extension to this, where you pay another HTLC
+first which covers the (larger) up-front fee for the &quot;I know the next
+HTLC is going to take a long time&quot;).
+
+That proposal is simpler, and covers this case quite nicely.
+
+&gt;<i> at which point the best B can do is unilaterally close the B/C channel
+</I>&gt;<i> with their pre-HTLC commitment, but they still have to wait for that to
+</I>&gt;<i> confirm before they can safely cancel the HTLC with A, and that will
+</I>&gt;<i> likely take more than whatever the grace period is, so B will be losing
+</I>&gt;<i> money on holding fees.
+</I>&gt;<i>
+</I>&gt;<i> Whereas:
+</I>&gt;<i>
+</I>&gt;<i>   A-&gt;B: here's a HTLC, locked in
+</I>&gt;<i>
+</I>&gt;<i>   B-&gt;C: HTLC proposal
+</I>&gt;<i>   C-&gt;B: sure: updated commitment with HTLC locked in
+</I>&gt;<i>   B-&gt;C: great, corresponding updated commitment, plus revocation
+</I>&gt;<i>   C-&gt;B: revocation
+</I>&gt;<i>
+</I>&gt;<i> means that if C goes silent before B receives a new commitment, B can
+</I>&gt;<i> cancel the HTLC with A with no risk (B can publish the old commitment
+</I>&gt;<i> still even if the new arrives later, and C can only publish the pre-HTLC
+</I>&gt;<i> commitment), and if C goes silent after B receives the new commitment, B
+</I>&gt;<i> can drop the new commitment to the blockchain and pay A's fees out of it.
+</I>
+Interesting; this adds a trip, but not in latency (since C can still
+count on the HTLC being locked in at step 3).
+
+I don't see how it helps B though?  It still ends up paying A, and C
+doesn't pay anything?
+
+It forces a liveness check of C, but TBH I dread rewriting the state
+machine for this when we can just ping like we do now.
+
+&gt;&gt;<i> There's an old proposal to fast-fail HTLCs: Bob sends an new message &quot;I
+</I>&gt;&gt;<i> would fail this HTLC once it's committed, here's the error&quot; 
+</I>&gt;<i>
+</I>&gt;<i> Yeah, you could do &quot;B-&gt;C: proposal, C-&gt;B: no way!&quot; instead of &quot;sure&quot; to
+</I>&gt;<i> fast fail the above too. 
+</I>&gt;<i>
+</I>&gt;<i> And I think something like that's necessary (at least with my view of how
+</I>&gt;<i> this &quot;keep the HTLC open&quot; payment would work), otherwise B could send C a
+</I>&gt;<i> &quot;1 microsecond grace period, rate of 3e11 msat/minute, HTLC for 100 sat,
+</I>&gt;<i> timeout of 2016 blocks&quot; and if C couldn't reject it immediately would
+</I>&gt;<i> owe B 50c per millisecond it took to cancel.
+</I>
+Well, surely grace period (and penalty rate) are either fixed in the
+protocol or negotiated up-front, not per-HTLC.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002561.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002568.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2563">[ date ]</a>
+              <a href="thread.html#2563">[ thread ]</a>
+              <a href="subject.html#2563">[ subject ]</a>
+              <a href="author.html#2563">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

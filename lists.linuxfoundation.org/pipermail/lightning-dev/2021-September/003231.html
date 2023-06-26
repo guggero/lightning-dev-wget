@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] Inherited IDs - A safer, more powerful alternative to BIP-118 (ANYPREVOUT) for scaling Bitcoin
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Inherited%20IDs%20-%20A%20safer%2C%0A%20more%20powerful%20alternative%20to%20BIP-118%20%28ANYPREVOUT%29%20for%20scaling%0A%20Bitcoin&In-Reply-To=%3C20210918113740.GA27989%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003230.html">
+   <LINK REL="Next"  HREF="003234.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] Inherited IDs - A safer, more powerful alternative to BIP-118 (ANYPREVOUT) for scaling Bitcoin</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Inherited%20IDs%20-%20A%20safer%2C%0A%20more%20powerful%20alternative%20to%20BIP-118%20%28ANYPREVOUT%29%20for%20scaling%0A%20Bitcoin&In-Reply-To=%3C20210918113740.GA27989%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] Inherited IDs - A safer, more powerful alternative to BIP-118 (ANYPREVOUT) for scaling Bitcoin">aj at erisian.com.au
+       </A><BR>
+    <I>Sat Sep 18 11:37:40 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003230.html">[Lightning-dev] Inherited IDs - A safer, more powerful alternative to BIP-118 (ANYPREVOUT) for scaling Bitcoin
+</A></li>
+        <LI>Next message: <A HREF="003234.html">[Lightning-dev] Inherited IDs - A safer,	more powerful alternative to BIP-118 (ANYPREVOUT) for scaling	Bitcoin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3231">[ date ]</a>
+              <a href="thread.html#3231">[ thread ]</a>
+              <a href="subject.html#3231">[ subject ]</a>
+              <a href="author.html#3231">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Sep 17, 2021 at 09:58:45AM -0700, Jeremy via bitcoin-dev wrote,
+on behalf of John Law:
+
+&gt;<i> I'd like to propose an alternative to BIP-118 [1] that is both safer and more
+</I>&gt;<i> powerful. The proposal is called Inherited IDs (IIDs) and is described in a
+</I>&gt;<i> paper that can be found here [2]. [...]
+</I>
+Pretty sure I've skimmed this before but hadn't given it a proper look.
+Saying &quot;X is more powerful&quot; and then saying it can't actually do the
+same stuff as the thing it's &quot;more powerful&quot; than always strikes me as
+a red flag. Anyhoo..
+
+I think the basic summary is that you add to each utxo a new resettable
+&quot;structural&quot; tx id called an &quot;iid&quot; and indetify input txs that way when
+signing, so that if the details of the transaction changes but not the
+structure, the signature remains valid.
+
+In particular, if you've got a tx with inputs tx1:n1, tx2:n2, tx3:n3, etc;
+and outputs out1, out2, out3, etc, then its structual id is hash(iid(tx1),
+n1) if any of its outputs are &quot;tagged&quot; and it's not a coinbase tx, and
+otherwise it's just its txid.  (The proposed tagging is to use a segwit
+v2 output in the tx, though I don't think that's an essential detail)
+
+So if you have a tx A with 3 outputs, then tx B spends &quot;A:0, A:1&quot; and
+tx C spends &quot;B:0&quot; and tx D spends &quot;C:0&quot;, if you replace B with B',
+then if both B and B' were tagged, and the signatures for C (and D,
+assuming C was tagged) will still be valid for spending from B'.
+
+So the question is what you can do with that.
+
+The &quot;2stage&quot; protocol is proposed as an alternative to eltoo is
+essentially just:
+
+ a) funding tx gets dropped to the chain
+ b) closing state is proposed by one party
+ c) other party can immediately finalise by confirming a final state
+    that matches the proposed closing state, or was after it
+ d) if the other party's not around for whatever delay, the party that
+    proposed the close can finalise it
+
+That doesn't work for more than two participants, because two of
+the participants could collude to take the fast path in (c) with some
+earlier state, robbing any other participants. That said, this is a fine
+protocol for two participants, and might be better than doing the full
+eltoo arrangement if you only have a two participant channel.
+
+To make channel factories work in this model, I think the key step is
+using invalidation trees to allow updating the split of funds between
+groups of participants. I think invalidation trees introduce a tradeoff
+between (a) how many updates you can make, and (b) how long you have to
+notice a close is proposed and correct it, before an invalidated state
+can be posted, and (c) how long it will take to be able to extract your
+funds from the factory if there are problems initially. You reduce those
+delays substantially (to a log() factor) by introducing a hierarchy of
+update txs (giving you a log() number of txs), I think.
+
+That's the &quot;multisig factories&quot; section anyway, if I'm
+following correctly. The &quot;timeout trees&quot;, &quot;update-forest&quot; and
+&quot;challenge-and-response&quot; approaches both introduce a trusted user (&quot;the
+operator&quot;), I think, so are perhaps more comparable to statechains
+than eltoo?
+
+So how does that compare, in my opinion?
+
+If you consider special casing two-party channels with eltoo, then I
+think eltoo-2party and 2stage are equally effective. Comparing
+eltoo-nparty and the multisig iid factories approach, I think the
+uncooperative case looks like:
+
+ ms-iid:
+   log(n) txs (for the invalidation tree)
+   log(n) time (?) (for the delays to ensure invalidated states don't
+                    get published)
+
+ eltoo: 1 tx from you
+        1 block after you notice, plus the fixed csv delay
+
+A malicious counterparty can post many old update states prior to you
+poisting the latest state, but those don't introduce extra csv delays
+and you aren't paying the fees for those states, so I don't think it
+makes sense to call that an O(n) delay or cost.
+
+An additional practical problem with lightning is dealing with layered
+commitments; that's a problem both for the delays while waiting for a
+potential rejection in 2stage and for the invalidation tree delays in the
+factory construction. But it's not a solved problem for eltoo yet, either.
+
+As far as implementation goes, introducing the &quot;iid&quot; concept would mean
+that info would need to be added to the utxo database -- if every utxo
+got an iid, that would be perhaps a 1.4GB increase to the utxo db (going
+by unique transaction rather than unique output), but presumably iid txs
+would end up being both uncommon and short-lived, so the cost is probably
+really mostly just in the additional complexity. Both iid and ANYPREVOUT
+require changes to how signatures are evaluated and apps that use the
+new feature are written, but ANYPREVOUT doesn't need changes beyond that.
+
+(Also, the description of OP_CODESEPARATOR (footnote 13 on page 13,
+ominous!) doesn't match its implementation in taproot. It also says BIP
+118 introduces a new address type for floating transactions, but while
+this was floated on the list, the current draft of 118 just introduces
+a new tapscript key type for normal taproot addresses)
+
+I think you can pretty easily simulate this construction with
+anyprevout. Where you would have had A:1 spent by B, and B:2 and B:3
+spent by C, change the derivation paths for the keys a1, b2, and b3
+to append &quot;/1&quot;, &quot;/1/2&quot; and &quot;/1/3&quot; and don't reuse them, and sign with
+anyprevout when constructing B and C and any replacement transactions
+for B and C.  So I don't think this allows any new constructions that
+anyprevout wouldn't.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003230.html">[Lightning-dev] Inherited IDs - A safer, more powerful alternative to BIP-118 (ANYPREVOUT) for scaling Bitcoin
+</A></li>
+	<LI>Next message: <A HREF="003234.html">[Lightning-dev] Inherited IDs - A safer,	more powerful alternative to BIP-118 (ANYPREVOUT) for scaling	Bitcoin
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3231">[ date ]</a>
+              <a href="thread.html#3231">[ thread ]</a>
+              <a href="subject.html#3231">[ subject ]</a>
+              <a href="author.html#3231">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

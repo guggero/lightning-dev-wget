@@ -1,0 +1,467 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Speculations on hardware wallet support for	Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Speculations%20on%20hardware%20wallet%20support%20for%0A%09Lightning&In-Reply-To=%3CCALZpt%2BG9bZ8XeUNsNWXEnk357hAQ-5Z5_EGWOikUFHm9xTs%2BrA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002426.html">
+   <LINK REL="Next"  HREF="002428.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Speculations on hardware wallet support for	Lightning</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Speculations%20on%20hardware%20wallet%20support%20for%0A%09Lightning&In-Reply-To=%3CCALZpt%2BG9bZ8XeUNsNWXEnk357hAQ-5Z5_EGWOikUFHm9xTs%2BrA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Speculations on hardware wallet support for	Lightning">antoine.riard at gmail.com
+       </A><BR>
+    <I>Thu Jan 16 22:30:01 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002426.html">[Lightning-dev] Speculations on hardware wallet support for	Lightning
+</A></li>
+        <LI>Next message: <A HREF="002428.html">[Lightning-dev] Data Lightning Atomic Swap (DLAS-down, DLAS-up)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2429">[ date ]</a>
+              <a href="thread.html#2429">[ thread ]</a>
+              <a href="subject.html#2429">[ subject ]</a>
+              <a href="author.html#2429">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey Zeeman,
+
+tl;dr A LN node paired with an external signer can be distrusted and LN
+funds be safe in any case
+if signer is connected to a N-set of watchtowers and at least one of them
+is non-compromised.
+
+Thanks for this interesting post, I was thinking about LN hardware wallets
+support for a while too,
+I do think LN model has its own pitfalls compare to base layer but that
+doesn't mean we can't
+substantially improve current one
+monolithic-LN-node-with-unsafe-key-material-in-RAM deployment and
+still have automatic processing of HTLCs.
+
+LN security model differs compare to base layer by requiring onchain
+monitoring and
+reaction to keep your funds safe. That's quite the contrary on how HW have
+been designed
+until now where UTXO state access isn't assumed to be secure. That's said
+the cool
+thing is you may have multiple monitoring bckends/watchtowers running on
+different
+infrastructures, if one of them stay non-compromised and enforce protocol
+rules you
+should be fine [0].
+
+So let's go through whole LN operations with a deployment such that Alice
+the LN processing
+node, Bob and Caroll the channel peers, Sally the external signer, Will a
+set of N watchtowers.
+Will is part of the same entity than Alice, run on different infra, is
+seeded with
+same secret (to derive same local keys), and have authenticated
+communication with Sally.
+
+Attacks scenario are 1) node compromised, where an attacker would leverage
+secret keys
+to sign closing/justice/sweep transaftions to a attacker-controlled
+address. 2) node
+compromised + peer collusion, where an attacker broadcast revoked
+commitment/non-revoked
+commitment with a HTLC to timeout/obtain a commitment with outgoing HTLC
+but not incoming one.
+&gt;<i>From the perspective of signer, you can't dissociate peer collusion so it
+</I>should always
+be assumed and the straighter policy enforced.
+
+Alice inits Sally with 2
+funding_transactions+remote_sigs+per_commitment_point+balances states,
+for both link AB and AC. Balance states have to be user-input validated (or
+can be deduced if Sally
+is also an onchain wallet and fundings spent from controlled-keys modulo
+push_msat max being hardcoded).
+
+Sally send to Will these requests through Alice. When Will see fundings
+confirmed it replies
+the computed channel_id to Sally and stores sigs, who then can safely
+considers these channels
+activated.
+
+Bob initiates a payment to Caroll through link AB+AC, Alice receives the
+messages and ask Sally to
+sign Bob's remote, as it's a balance increases, no proof is asked. Sally
+send to Will vector
+of HTLCs (hash+locktime)+previous_state revocation
+secret+per_commitment_point. Will can return
+Sally an error if locktime are in the past of channel has been closed so
+Sally won't accept latter
+outgoing HTLC paired with such incoming channel. If a revoked commitment is
+broadcast on AB and Alice
+is compromised, Will generate justice transactions and take the funds back.
+
+Alice builds outgoing payment and asks Sally to sign outgoing commitment
+decreasing local
+balance with incoming HTLC as a proof. Sally can send Will the new outgoing
+commitment
+tied with HTLC proof, if HTLC proof can't be tied to an incoming valid
+chan, an error should
+be returned to Sally and signature aborted.
+
+At HTLC fulfillement by Caroll, Alice should pass the preimage to Caroll
+who pass it to Will.
+If Alice is compromised, Will be able to claim incoming HTLC. Will should
+also be able to parse
+onchain HTLCs and extract preimage to claim backward in case of Alice
+withholding the preimage.
+
+At any block reception, Will should be able to broadcast commitment and
+timeout HTLCs in
+case of Alice being unreliable/compromised.
+
+To avoid burning-to-fees attack, if Alice asks Sally to sign a
+decrasing-balance commitment
+without a HTLC proof, which is credible for update_fee, fees can be bounded
+to some value.
+Bounds should scope dust HTLCs too.
+
+At channel closing, Will can observe it, if Sally ask to valid any HTLC
+proof, return an error.
+
+External signer should store commitment numbers and balances for each
+channel and do key derivation
+locally (at least for local, for remote you can't trust provided
+per_commitment_point anyway).
+
+
+Voila, I think this describes a master-slaves scheme, where external signer
+is coupled with
+watchtowers to serve as UTXO oracles, while mitigating node compromised. It
+would be
+fairly complex to design and implement it right but on the long-term it's
+worth it if you
+assume a world of wumbo channels and mutiple-btcs HTLCs [1]
+
+Devrandom work is a pretty headstart towards such safe API and we should
+keep experimenting
+with this to patch unthought corner-cases. The futur alternative is every
+HW vendor designing
+its LN-implementation specific support, and a lot of them being flawed by
+missing LN security
+model oddities. A lack of such standard programming interface on base layer
+HW and the number
+of vuln due to mishandling change or derivation is something to meditate on.
+
+
+&gt;<i> It would have to be a sophisticated threshold: a corrupted software would
+</I>split up the node funds into tiny 546-satoshi channels, paying a funding tx
+fee each time.
+&gt;<i> I suppose when considering autopilot it would have to be auto-approved
+</I>though.
+
+A signer can implement further checks to asses channel opening utility.
+Like a channels provider signer
+would verify than no more than X channels with Y liquidity are opened on
+time period Z. And you
+may ask for a user invoice signed by a different component than your LN
+node.
+
+&gt;<i> &gt; It cannot identify using the hash, incidentally: it is theoretically
+</I>possible for a route to loop through a node twice, e.g. A -&gt; B -&gt; C -&gt; D -&gt;
+E -&gt; C -&gt; F, where C appears twice.
+
+If you store latest HTLC outputs on the watchtower, at incoming link
+update, if there is
+discrepancy between stored set and submitted by node set, something is
+wrong. Further, hash replay
+isn't safe right now : <A HREF="https://eprint.iacr.org/2019/1149.pdf">https://eprint.iacr.org/2019/1149.pdf</A>
+
+&gt;<i> So you would need a more sophisticated watchtower design as well.
+</I>
+In most watchtowers discussion, it's only assumed to do justice delegation.
+But if you're a routing node, that's not enough to be safe, you should also
+timeout HTLC
+and do outgoing-to-incoming preimage passing in case of regular node
+failure. Luckily,
+watchtowers aren't specified yet...
+
+&gt;<i> I imagine that secure of a memory would be expensive to implement and
+</I>thus limited, thus if you implement it all in the hardware, you would
+impose limits on the number of channels and updates and so.
+
+All this discussion may be irrelevant anyway, I've heard about 10-100MB HSM
+with hardened Linux, so just
+run a minimal LN node on it but that would create a dependency on HSM
+vendors and there is only a few
+of them..
+
+Antoine
+
+[0] Introducing watchtowers opens some problems like state must be
+synchronized to avoid
+spurious broadcast of revoked commitments and trusted external signer to
+avoid one of them
+spending to a malicious addresses. Though they provide also a security
+boost against p2p sybil
+attacks if each run its own full-node.
+
+[1] This kind of deployment may only serve important processing LN nodes
+first, but designing
+specialized hardware/interfaces for them will also benefit more thrifty
+nodes operators by
+commoditization on the long term
+
+Le mer. 15 janv. 2020 &#224; 20:36, ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning ZmnSCPxj,
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; It need not store the whole state: for example, it could store just a
+</I>&gt;<i> commitment to the current state (and have the software store the entire
+</I>&gt;<i> state).
+</I>&gt;<i> &gt; &gt; In fact, it is best for the hardware to store the signature for the
+</I>&gt;<i> commitment transaction:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I would say that's not enough, if we assume that the attacker can
+</I>&gt;<i> &gt; destroy the underlying data, and destroy all backups. If the attacker
+</I>&gt;<i> &gt; can do that, the node is at the mercy of channel partners, since they
+</I>&gt;<i> &gt; will be able to publish old state without the possibility of
+</I>&gt;<i> &gt; retaliation. Thus there needs to be a secure form of storage where at
+</I>&gt;<i> &gt; least one backup must be recoverable at all times within the penalty
+</I>&gt;<i> &gt; time window.
+</I>&gt;<i>
+</I>&gt;<i> Right, that does seem correct.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; [...]
+</I>&gt;<i> &gt; &gt; Tr\*sted Revocation of Old Remote State
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; ==============================================
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Unfortunately, the hardware has to tr\*st the software to check that
+</I>&gt;<i> the other node is not cheating.
+</I>&gt;<i> &gt; &gt; As the hardware itself is not capable of accessing the blockchain or
+</I>&gt;<i> mempool, it cannot do this checking directly.
+</I>&gt;<i> &gt; &gt; Thus, revocation of old remote state is not ensurable by the hardware.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I am more optimistic about this. Publishing of penalty transactions
+</I>&gt;<i> &gt; can be delegated to a quorum of watchtowers, some possibly run by
+</I>&gt;<i> &gt; other entities. The node software can prove to the hardware that the
+</I>&gt;<i> &gt; watchtowers have been informed of new state by providing a receipt
+</I>&gt;<i> &gt; signed by the watchtowers. Thus it's possible to reduce trust in the
+</I>&gt;<i> &gt; node software.
+</I>&gt;<i>
+</I>&gt;<i> I had not thought of having the watchtower(s) sign a receipt of the
+</I>&gt;<i> channel state being backed up there, thank you.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; As revocation can only be done by the software anyway, the revocation
+</I>&gt;<i> secrets for the remote commitment transactions can be stored by the
+</I>&gt;<i> software only.
+</I>&gt;<i> &gt; &gt; The hardware need never learn the revocation secrets as it can do
+</I>&gt;<i> nothing with them anyway.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I would at least back up the secrets in the secure storage attached to
+</I>&gt;<i> &gt; the hardware store, so that the node can be recreated if the node
+</I>&gt;<i> &gt; software has been catastrophically compromised.
+</I>&gt;<i>
+</I>&gt;<i> Well, if the hardware itself has only a tiny secure storage (e.g. the
+</I>&gt;<i> example of only being able to store a commitment to the entire state) there
+</I>&gt;<i> would be no space to put those in as well, even with shachains.
+</I>&gt;<i> Further, all previous HTLC hashes and timelocks need to be stored as well,
+</I>&gt;<i> since old commitment transactions will only have P2WSH output to represent
+</I>&gt;<i> those HTLC hashes and timelocks, and the actual HTLC hashes and timelocks
+</I>&gt;<i> need to be shown as well in order to revoke the old HTLCs.
+</I>&gt;<i> It seems to me that, since the amount of storage needed would be linear on
+</I>&gt;<i> the number of HTLCs that ever appeared on the channel, a hardware with
+</I>&gt;<i> storage limits would not be appropriate to store this state and your
+</I>&gt;<i> append-only log machine might do better for that purpose.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Opening a Channel
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; ==================
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; [...]
+</I>&gt;<i> &gt; &gt; If there is a difference, that implies that this node is what pays the
+</I>&gt;<i> fee, and the hardware should probably double-confirm with the user using
+</I>&gt;<i> its UI whether the paid fees are acceptab;e.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If the fee is under a preset threshold, it can be auto-approved.
+</I>&gt;<i>
+</I>&gt;<i> It would have to be a sophisticated threshold: a corrupted software would
+</I>&gt;<i> split up the node funds into tiny 546-satoshi channels, paying a funding tx
+</I>&gt;<i> fee each time.
+</I>&gt;<i> I suppose when considering autopilot it would have to be auto-approved
+</I>&gt;<i> though.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Tr\*sted Forwarding
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; ====================
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Forwarding should be automated and not require a confirmation from the
+</I>&gt;<i> user on the hardware unit UI.
+</I>&gt;<i> &gt; &gt; Unfortunately, the hardware has to trust the software to actually
+</I>&gt;<i> perform forwarding correctly.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Let's look at this carefully, I feel it should be possible to prove
+</I>&gt;<i> &gt; correctness of forwarding to the hardware.
+</I>&gt;<i>
+</I>&gt;<i> I believe not.
+</I>&gt;<i> Consider this sequence of events:
+</I>&gt;<i>
+</I>&gt;<i> * The hardware approves an outgoing HTLC on one channel based on the
+</I>&gt;<i> existence of an incoming HTLC on another channel.
+</I>&gt;<i> * Both channels are dropped unilaterally onchain, with their respective
+</I>&gt;<i> latest states, before the outgoing HTLC can be claimed offchain.
+</I>&gt;<i> * The software lets the outgoing HTLC to be claimed by the other node
+</I>&gt;<i> using the hashlock branch.
+</I>&gt;<i> * The software lets time pass and lets the incoming HTLC be claimed by the
+</I>&gt;<i> other node using the timelock branch.
+</I>&gt;<i>
+</I>&gt;<i> As the hardware is incapable of actually pushing transactions onchain, it
+</I>&gt;<i> cannot do anything about the incoming HTLC getting lapsed (though since it
+</I>&gt;<i> has its own UI, if it had read access to the UTXO set somehow, it could
+</I>&gt;<i> give a warning to the user using its UI and maybe hope the user notices?).
+</I>&gt;<i> Indeed it is hard to give the hardware even read access to the blockchain
+</I>&gt;<i> in order to even *know* about the outgoing HTLC getting claimed by
+</I>&gt;<i> hashlock, without serious increases in hackability, storage, and
+</I>&gt;<i> sophistication of the hardware.
+</I>&gt;<i> Once you start having a hardware *that* sophisticated, it becomes more and
+</I>&gt;<i> more like a complete Lightning node, and if you could implement that in a
+</I>&gt;<i> *secure* unit, you would not need a separate software to drive it, the
+</I>&gt;<i> software would effectively *be* inside the trusted hardware unit (when the
+</I>&gt;<i> entire point of this exercise is to have a separate software we have
+</I>&gt;<i> reduced trust in).
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; However, the hardware has to keep track that an incoming HTLC only has
+</I>&gt;<i> at most one outgoing HTLC,.
+</I>&gt;<i> &gt; &gt; It cannot identify using the hash, incidentally: it is theoretically
+</I>&gt;<i> possible for a route to loop through a node twice, e.g. A -&gt; B -&gt; C -&gt; D -&gt;
+</I>&gt;<i> E -&gt; C -&gt; F, where C appears twice.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I think it's enough to require that each incoming HTLC can be
+</I>&gt;<i> &gt; associated with a single outgoing HTLC. The hardware would have to
+</I>&gt;<i> &gt; maintain state about which HTLCs have been &quot;used up&quot; in this way.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Further, if a payment attempt fails, then the ultimate payer might
+</I>&gt;<i> still try to route through this node, giving a different postfix past this
+</I>&gt;<i> node, so this node may forward the same hash twice on two or more different
+</I>&gt;<i> payment attempts.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; hmm... that doesn't sound safe, because then two different nodes would
+</I>&gt;<i> &gt; be able to claim the funds from us, and we can only propagate back to
+</I>&gt;<i> &gt; a single input, so we lose funds. If the Lightning protocol allows
+</I>&gt;<i> &gt; this, then it sounds like a design issue. Seems like the failed HTLC
+</I>&gt;<i> &gt; should be invalidated first. The invalidation can be proven to the
+</I>&gt;<i> &gt; hardware (a new commitment tx is signed, removing the HTLC, or the
+</I>&gt;<i> &gt; outgoing channel is closed).
+</I>&gt;<i>
+</I>&gt;<i> Well, the incoming HTLC would have to be deleted as well before the payer
+</I>&gt;<i> re-attempts (otherwise the payer could give out multiple HTLCs that are
+</I>&gt;<i> simultaneously claimable).
+</I>&gt;<i> The &quot;flag&quot; we associate with each incoming HTLC would be deleted when the
+</I>&gt;<i> incoming HTLC is deleted as well, and separate incoming HTLCs would have to
+</I>&gt;<i> be used to authorize separate outgoing HTLCs.
+</I>&gt;<i>
+</I>&gt;<i> In any case the point of this digression above was that we cannot key on
+</I>&gt;<i> the *hash* of the HTLC, we have to have some identifier of HTLC (shared
+</I>&gt;<i> between software and hardware) that is *not* the *hash*, but some other
+</I>&gt;<i> identifier.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; [...]
+</I>&gt;<i> &gt; &gt; Regardless, even if we somehow, the enforcement of HTLCs is still
+</I>&gt;<i> controlled by the software:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; -   The hardware has no access to the blockchain, thus it cannot know
+</I>&gt;<i> if the incoming HTLC is in fact something in the deep past already.
+</I>&gt;<i> &gt; &gt;     A corrupted software can induce the hardware to create an outgoing
+</I>&gt;<i> HTLC whose timelock is deeply in the past, then refuse to take the timelock
+</I>&gt;<i> branch of the outgoing HTLC while letting the timelock branch of the
+</I>&gt;<i> incoming HTLC be claimed by the other nodes.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; See above about watchtowers, and trusted sources of time/blockchain
+</I>&gt;<i> state.
+</I>&gt;<i>
+</I>&gt;<i> Watchtowers, at least as currently designed, treat each channel in
+</I>&gt;<i> isolation.
+</I>&gt;<i> Forwarding is about events on two channels.
+</I>&gt;<i> So you would need a more sophisticated watchtower design as well.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Thus, forwarding is still trusted.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; [...]
+</I>&gt;<i> &gt; &gt; Reducing Storage Size
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; ============================
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; The hardware can, instead of storing multiple channel slots and
+</I>&gt;<i> payment slots in its own persistent memory, can instead just store a single
+</I>&gt;<i> commitment to the current state it knows to be valid.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Agreed, but see the need to have a reliable backup above.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I imagine that secure of a memory would be expensive to implement and thus
+</I>&gt;<i> limited, thus if you implement it all in the hardware, you would impose
+</I>&gt;<i> limits on the number of channels and updates and so on.
+</I>&gt;<i>
+</I>&gt;<i> The idea of having a secure append-only log could also be used for the
+</I>&gt;<i> off-hardware state storage as well anyway, if you are trusting it enough to
+</I>&gt;<i> be able to recover the node state.
+</I>&gt;<i> The append-only log machine can even just accept new hardware states when
+</I>&gt;<i> it sees the signature from the hardware attesting the change in root as
+</I>&gt;<i> well, so that it forms a secure channel between the hardware and the
+</I>&gt;<i> append-only log machine.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200116/c76f14bb/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200116/c76f14bb/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002426.html">[Lightning-dev] Speculations on hardware wallet support for	Lightning
+</A></li>
+	<LI>Next message: <A HREF="002428.html">[Lightning-dev] Data Lightning Atomic Swap (DLAS-down, DLAS-up)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2429">[ date ]</a>
+              <a href="thread.html#2429">[ thread ]</a>
+              <a href="subject.html#2429">[ subject ]</a>
+              <a href="author.html#2429">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

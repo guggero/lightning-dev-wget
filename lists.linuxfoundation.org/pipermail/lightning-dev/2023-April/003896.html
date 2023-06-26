@@ -1,0 +1,420 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Resizing Lightning Channels Off-Chain With Hierarchical Channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Resizing%20Lightning%20Channels%20Off-Chain%20With%0A%20Hierarchical%20Channels&In-Reply-To=%3CZCrb836IWpnzzARB%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003898.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Resizing Lightning Channels Off-Chain With Hierarchical Channels</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Resizing%20Lightning%20Channels%20Off-Chain%20With%0A%20Hierarchical%20Channels&In-Reply-To=%3CZCrb836IWpnzzARB%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Resizing Lightning Channels Off-Chain With Hierarchical Channels">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Apr  3 14:00:19 UTC 2023</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003898.html">[Lightning-dev] Resizing Lightning Channels Off-Chain With	Hierarchical Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3896">[ date ]</a>
+              <a href="thread.html#3896">[ thread ]</a>
+              <a href="subject.html#3896">[ subject ]</a>
+              <a href="author.html#3896">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sat, Mar 18, 2023 at 12:41:00AM +0000, jlspc via Lightning-dev wrote:
+&gt;<i> TL;DR
+</I>
+Even with Harding's optech write ups, and the optech space, I barely
+follow all this, so I'm going to try explaining it too as a way of
+understanding it myself; hopefully maybe that helps someone. Corrections
+welcome, obviously!
+
+I think understanding all this requires going through each of the four
+steps.
+
+Step 1: Tunable penalties;
+  <A HREF="https://github.com/JohnLaw2/ln-tunable-penalties">https://github.com/JohnLaw2/ln-tunable-penalties</A>
+  <A HREF="../2022-October/003732.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-October/003732.html</A>
+
+This is a clever constructions that lets you do a 2-party lightning
+channel with existing opcodes where cheating doesn't result in you
+losing all your funds (or, in fact, any of your in-channel funds). It
+also retains the ability to do layered commit transactions, that is you can
+immediately commit to claiming an HTLC or that it's already timed out,
+even while you're waiting for the to_self_delay to expire to ensure
+you're not cheating.
+
+The way that it works is by separating the flow of channels funds, from
+the control flow. So instead of managing the channel via a single utxo,
+we instead manage it via 3 utxos: F (the channel funds), InA (control
+flow for a unilateral close by A), InB (control flow for a unilateral
+close by B).
+
+For each update to a new state &quot;i&quot;, which has &quot;k&quot; HTLCs, we create 4 primary txs, and 8k HTLC claims.
+
+  StAi which spends InA, and has k+1 outputs. The first output is used
+  for controlling broadcast of the commitment tx, the remaining k are for
+  controlling the resolution of each HTLC.
+
+  ComAi is the commitment for the state. It spends the funding output
+  F, and the first output of StAi. In order to spend StAi, it requires
+  a to_self_delay (and signature by A), giving B time to object that i
+  is a revoked state. If B does object, he is able to immediately spend
+  the first output of StAi directly using the revocation information,
+  and these funds form the penalty. It has k+2 outputs, one for the
+  balance of each participant, and one for each HTLC.
+
+  For each of the k HTLCs, we construct two success and two timeout
+  transactions: (HAi-j-s, HAi-j-p); (HAi-j-t, HAi-j-r). HAi-j-s and
+  HAi-j-t both spend the jth output of StAi, conditional either on a
+  preimage reveal or a timeout respectively; HAi-j-p and HAi-j-r spend
+  the output of HAi-j-s and HAi-j-t respectively, as well as the output
+  of ComAi. (s=success commitment, t=timeout commitment, p=payment on
+  success, r=refund)
+
+  And Bob has similar versions of all of these.
+
+So if Alice is honest, the process is:
+
+  * Alice publishes StAi
+  * Alice publishes HAi-j-{s,t} for any HTLCs she is able to resolve
+    immediately; as does Bob.
+  * Alice waits for to_self_delay to complete
+  * Alice publishes ComAi, and any HAi-j-{r,p} transactions she is able
+    to, and if desired consolidates her funds.
+  * As any remaining HTLCs resolve, those are also claimed.
+  * Bob's InB output is available to do whatever he wants with.
+
+If Alice is dishonest, the process is:
+
+  * Alice publishes StAi, and perhaps publishes some HAi-j-{s,t}
+    transactions.
+  * Bob spends the first output of StAi unilaterally claiming the
+  * penalty, meaning ComAi can now never be confirmed.
+  * Bob publishes StBi', and continues with the honest protocol.
+
+Bob only needs the usual O(log(n)) state in order to be able to
+reconstruct the key to spend the first output of revoked StAi txs.
+Because that prevents the corresponding ComAi from ever being published,
+no revoked HTLC-related state can make it on chain in any way that Bob
+needs to care about.
+
+If both Alice and Bob are dishonest (Alice tries to cheat, but Bob
+restored from an old backup and also publishes a revoked state) then
+both the StAi and StBi' may have their first output claimed by the other
+party, in which case the channels funds are lost (unless Alice and Bob
+manage to agree to a cooperative close somehow, even after all the
+attempts to cheat each other).
+
+While 4+8k transactions per state is a lot, I think you only actually
+need 2+4k signatures in advance (StAi and HAi-j-{s,t} only need to be
+signed when they're broadcast). Perhaps using ANYPREVOUT would let you
+reduce the number of HTLC states?
+
+Step 2: Efficient Factories for Lightning Channels
+ <A HREF="../2023-January/003827.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/003827.html</A>
+ <A HREF="https://github.com/JohnLaw2/ln-efficient-factories">https://github.com/JohnLaw2/ln-efficient-factories</A>
+
+This generalizes the tunable penalties setup for more than two
+participants.
+
+The first part of this is a straightforward generalisation, and
+doesn't cover HTLCs. Where we had 2(2+4k) transactions previously, we
+presumably would now have P(2+4k) transactions, where P is the number
+of participants.
+
+The second part of this aims to avoid that factor P. It does this by
+introducing Trigger and Mold transactions.
+
+To do this, we first establish the number of states that the factory
+will support; perhaps 2**40. In that case, the trigger transaction will
+spend the funding tx, and have 40+1 outputs. All of them will require a
+P-of-P signature to be spend, with the first also requiring a relative
+timelock of 3*to_self_delay and containing the channel funds, while the
+rest contain dust-ish amounts.
+
+For any given state i, we represent i as a binary number, and the
+commitment tx Com_i will spend the outputs corresponding to &quot;0&quot; in
+the binary number, as well as the first output containing the channel
+funds.
+
+We will also have St{A..Z}_i transactions, spending In{A..Z} as
+previously. The sole output of StAi (etc) will be spent either by any
+other participant via a revoked pubkey, or else by the Mold{A..Z}_i
+transaction. The Mold{A..Z}_i transaction will also spend the remaining
+outputs of the Trigger transaction that were not spent by Com_i.
+
+In the honest scenario, this looks like:
+
+ * Alice publishes Trigger
+ * Alice publishes StA_i
+ * Alice waits to_self_delay
+ * Alice publishes MoldA_i
+ * Alice waits an additional 2*to_self_delay
+ * Alice publishes Com_i
+ * Alice and everyone else claims their funds
+
+There are various dishonest scenarios available:
+
+ * If Alice publishes StA_i before publishing the Trigger, someone else
+   publishes the Trigger.
+
+ * If Alice doesn't publish StA_i quickly, Bob publishes StB_i
+   and continues. If multiple St{A..Z}_i's are published, whoever does
+   not publish the Mold transaction simply reclaims their funds by the
+   &quot;revocation&quot; path.
+
+ * If Alice publishes an old StA_i, Bob claims the funds using the
+   revoked key, penalising A, and then publishes the correct StB_i,
+   and continues.
+
+ * If Alice does not publish MoldA_i, Bob can publish StB_i and MoldB_i.
+
+ * Once MoldB_i is confirmed, someone could attempt to broadcast an
+   outdated Com_i' where i' &lt; i. In that case, the outputs corresponding
+   to all the 1's in the binary representation of i are already spent
+   (by MoldB_i), but for any i' &lt; i, the i' necessarily has a 0 somewhere
+   where i had a 1 (otherwise i' &gt;= i), so Com_i' would be double spending
+   an input already spent by MoldB_i.
+
+In this case, you need to track P+1 outputs (F+InA..Z), you need
+O(P*log(N)) state, and the onchain impact of a unilateral close is ideally
+4 transactions (Trigger, StAi, MoldAi, Comi) with size O(log(MaxN)),
+but maybe be up to 2*P+2 transactions (Trigger, St{A..Z}i, MoldAi,
+refund{B..Z}i, Comi).
+
+Note that this doesn't consider HTLCs at all.
+
+Step 3: Factory Optimized protocols for Lighting
+ <A HREF="https://github.com/JohnLaw2/ln-factory-optimized">https://github.com/JohnLaw2/ln-factory-optimized</A>
+ <A HREF="../2022-December/003782.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/003782.html</A>
+ <A HREF="https://bitcoinops.org/en/newsletters/2022/12/14/#factory-optimized-ln-protocol-proposal">https://bitcoinops.org/en/newsletters/2022/12/14/#factory-optimized-ln-protocol-proposal</A>
+
+Perhaps this should have been step 2, whoopsie. Anyway, this optimises
+the construction in step 1 for channels included in factories; mostly
+to deal with the fact that closing a factory is tedious and can take a
+while. I'm ignoring the Partial-Factory-Optimized step -- it's barely
+different to the Tunable Penalty mechanism. The Fully Factory Optimized
+protocol is more interesting.
+
+The main idea here is this: if a channel in a factory goes defunct while
+an HTLC is pending, we'd like to be able to guarantee we've resolved
+the HTLC to our satisfaction while deferring the decision of whether
+to shutdown the entire factory in order to close the channel, just
+in case our channel partner eventually comes back, and we can resolve
+everything properly.
+
+The way we do that is twofold: first, we set things up so that the default
+resolution of an HTLC is a refund. That immediately does away with half
+of our HTLC transactions, because now we only need the success/payment
+paths, not the timeout/refund ones. Second, we require whoever's
+going to receive the payment to publish their StXi transaction -- that
+avoids us having to do P*k success/payment paths, now we only need 1*k
+success/payment paths.  Unfortunately, we do introduce a new &quot;kickoff&quot;
+transaction to make it a three transaction kickoff/success/payment path,
+rather than just two transactions.
+
+In this case your transactions are:
+
+  F - the funding output, only available once the factory is closed
+  InB - as before
+  StBi - your state commitment, one output that will be spent by ComBi,
+         k outputs for each pending HTLC paying to B in state i.
+  HBi-j-k - the kickoff transaction for HTLC &quot;j&quot; paying to B, spends
+         the appropriate output of StBi, conditional on revealing the
+	 HTLC preimage and B's signature. Spendable either by B after
+	 to-self-delay, or by A after the HTLC's expiry plus
+	 to-self-delay
+  HBi-j-s - the success transaction, spendable by B
+  HBi-j-p - the payment transaction, spends HBi-j-s and the HTLC output
+         from ComB_i
+  HAi-j-p - the payment transaction, spends HBi-j-s and the HTLC output
+         from ComA_i
+
+I think there's an error in the paper here; it says as well as being
+spendable by H{A,B}i-j-p as above, the HTLC output in ComA_i should be
+spendable by A after to-self-delay. I believe it should require both
+to-self-delay (relative timelock) and the HTLC expiry (absolute timelock)
+before it can be spendable by A.
+
+Anyway, how's that work? If you want to shut the factory down
+immediately, it looks like:
+
+ * Shut the factory down
+ * Broadcast StBi, HBi-j-k
+ * Wait to-self-delay
+ * Broadcast ComBi, HBi-j-s, HBi-j-p
+ * Done!
+
+If you were cheating, then:
+
+ * Alice steals StBi's first output if i was on old state, and ComBi
+   cannot be broadcast. Alice publishes the current StAi', ComAi', etc.
+ 
+ * If the HTLC had timed out, Alice claims the output of HBi-j-k before
+   to-self-delay is finished, so that HBi-j-p cannot be broadcast, then
+   claims the output of ComBi once both timeouts are complete.
+
+However, what if you don't want to shut the factory down? In that
+case:
+
+ * Broadcast StBi, HBi-j-k.
+ * Wait for to_self_delay.
+ * Spend HBi-j-k to HBi-j-s.
+ * Wait some more.
+ * The other guy comes online! Let's recover the channel!
+ * Propose spending the first output of StBi and the output of HBi-j-s
+   to a new InB2, but don't sign it.
+ * Update all the off-chain channel data to a new state i+1 that uses
+   InB2 instead of InB, and that acknowledges your claim to the HTLC
+   funds.
+ * Sign and broadcast InB2
+ * Continue 
+
+If the other guy doesn't come online, you close the factory, immediately
+spend F and the first output of StBi via ComBi, and immediately spend
+HBi-j-s and the HTLC output of ComBi to claim your funds.
+
+While this is described as an optimisation focussed on improving channels
+within factories; it seems to me that the reduction in state compared to
+the &quot;tunable penalties&quot; approach in step 1 makes this a strict improvement
+in general.
+
+Anyway, combining this step and the previous gives us an idea how to do
+both factories and HTLCs. I believe that would look like:
+
+ Factory funding output -- multisig of A..Z
+ Factory In{A..Z}
+
+ Factory Trigger, spends the funding output
+ Factory St{A..Z}i spends In{A..Z}
+ Factory Mold{A..Z}i spends St{A..Z}i and various Trigger outputs
+ Factory Com_i spends the other Trigger outputs; its outputs are the
+   channels in the factory.
+
+ Channel F_x - an output of the Factory Com_i
+ Channel InA, InB
+ Channel StAi, StBi -- spends InA/InB
+ Channel ComAi, ComBi -- spends F_x and the first output of StA/StB
+ Channel H{A,B}i_j_{k,s,p} -- success path funds for active HTLCs
+
+So to update the channel state, the channel participants need:
+
+ 3*k HTLC transactions (only 1 pre-signed)
+ 2 commitment transactions (both pre-signed)
+ 2 St transactions (neither pre-signed)
+
+Every time the factory updates, every channel state must also update (as
+the channel funding outputs will change txid).
+
+Every participant needs 1+c &quot;In&quot; confirmed utxos available -- one for
+the factory itself, and one for each channel they're involved in.
+
+Every participant needs to monitor P+c+1 outputs on chain -- the factory
+Funding output (which may be spent by the Trigger tx), the P
+St{A..Z}i outputs, and their counterparty's InX output for each channel
+they're participating in.
+
+That's getting pretttty complicated, so I'm not confident I've got it
+all in my head correctly, but I think it still works.
+
+I'm skipping over the watchtower-freedom/casual user section here. cf
+<A HREF="https://bitcoinops.org/en/newsletters/2022/10/12/#ln-with-long-timeouts-proposal">https://bitcoinops.org/en/newsletters/2022/10/12/#ln-with-long-timeouts-proposal</A>
+
+Step 4: Resizing Lightning Channels Off-Chain / Hierarchial Channels
+  <A HREF="../2023-March/003886.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-March/003886.html</A>
+  <A HREF="https://github.com/JohnLaw2/ln-hierarchical-channels">https://github.com/JohnLaw2/ln-hierarchical-channels</A>
+  <A HREF="https://bitcoinops.org/en/newsletters/2023/03/29/#preventing-stranded-capital-with-multiparty-channels-and-channel-factories">https://bitcoinops.org/en/newsletters/2023/03/29/#preventing-stranded-capital-with-multiparty-channels-and-channel-factories</A>
+
+Hey, we made it to this thread!
+
+I'm not entirely sure of the novelty in this proposal; once you have
+channels in factories, lots of magic is possible, but it's all very
+complex. I believe the particular proposal here is something like:
+
+ - Instead of just having Alice/Bob/Carol/etc as identities in
+   lightning, let them &quot;pair&quot; up, so that AliceBob is considered a node,
+   and CarolDave is also a node.
+
+ - So we have a utxo where AliceBob has a channel with CarolDave, and
+   another where CarolDave has a channel with Elizabeth, eg.
+
+ - But actually the AliceBob/CarolDave utxo is a factory; and there's
+   an internal channel between Alice and Bob, and another between Carol
+   and Dave
+
+ - Now, because we describe AliceBob and CarolDave as a channel, that
+   means funds can move between AliceBob and CarolDave; but that is
+   equivalent to saying the overall capacity of the internal Alice/Bob
+   channel is actually decreasing without any on-chain activity! Neat!
+
+But... that was always the point of channel factories? And the specific
+structure of four participants split into a single pair of channels
+doesn't seem particularly compelling? I don't know, I feel like I'm
+missing something here. Or maybe it's just the first three steps were
+amazing, so merely interesting seems pedestrian by comparison?
+
+Hmm, looking at Harding's email, I see:
+
+&gt;<i> **Liquidity multiplexing:** Alice, Bob, Carol, and Dan each rightfully
+</I>&gt;<i> own some portion of a UTXO.  Alice and Bob expect to always be
+</I>&gt;<i> available; Carol and Dan may sometimes be unavailable.  The proposal
+</I>&gt;<i> allows Carol and Dan to spend/receive in combination with Alice and
+</I>&gt;<i> Bob, but also ensures Alice and Bob can spend back and forth the
+</I>&gt;<i> entirety their portions of the UTXO even if Carol, Dan, or both of
+</I>&gt;<i> them are unavailable.
+</I>
+I guess I'm not entirely enthusiastic about that because in that case
+Alice can only send funds to Carol when Dan (and whoever else is involved
+in the factory) eventually come online to signoff on the factory state
+update. That's still useful for (slow) offchain channel reallocations,
+but it doesn't seem reliable/fast enough for a payment.
+
+For the case where all factory participants are reliably online (perhaps
+with some exceptions) I guess I could see that making sense?  Then you're
+generally just treating it as a 4-party channel of A/B/C/D with everyone
+able to easily forward to anyone; but when Alice is offline for system
+maintenance for an hour every week, it automatically degrades to just
+having the Carol/Dave channel operational, with no other problems.
+
+fin
+
+Cheers,
+aj
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003898.html">[Lightning-dev] Resizing Lightning Channels Off-Chain With	Hierarchical Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3896">[ date ]</a>
+              <a href="thread.html#3896">[ thread ]</a>
+              <a href="subject.html#3896">[ subject ]</a>
+              <a href="author.html#3896">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

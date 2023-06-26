@@ -1,0 +1,341 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Speculations on hardware wallet support for	Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Speculations%20on%20hardware%20wallet%20support%20for%0A%09Lightning&In-Reply-To=%3CHrhNGbyWxcJLjHbXVKIRzvQkvPAknDL9vt7QAYNKnOoHf6laWoo8CGj0rvwjSfAxJH_h8KPLEjGU31gnDqOGJHYQKzTu81TinkhOSX6ffZU%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002420.html">
+   <LINK REL="Next"  HREF="002427.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Speculations on hardware wallet support for	Lightning</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Speculations%20on%20hardware%20wallet%20support%20for%0A%09Lightning&In-Reply-To=%3CHrhNGbyWxcJLjHbXVKIRzvQkvPAknDL9vt7QAYNKnOoHf6laWoo8CGj0rvwjSfAxJH_h8KPLEjGU31gnDqOGJHYQKzTu81TinkhOSX6ffZU%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Speculations on hardware wallet support for	Lightning">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Jan 14 15:14:57 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002420.html">[Lightning-dev] Research on proactive fee free channel	rebalancing in the friend of a friend network / and roadmap	for a protocol extension
+</A></li>
+        <LI>Next message: <A HREF="002427.html">[Lightning-dev] Speculations on hardware wallet support for	Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2425">[ date ]</a>
+              <a href="thread.html#2425">[ thread ]</a>
+              <a href="subject.html#2425">[ subject ]</a>
+              <a href="author.html#2425">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I have been thinking of this for some time without really getting any good results, and in any case [this C-Lightning mailing list post](<A HREF="https://lists.ozlabs.org/pipermail/c-lightning/2019-December/000172.html">https://lists.ozlabs.org/pipermail/c-lightning/2019-December/000172.html</A>) brings up similar topic.
+As well, 0 or more people have asked me opinions on related topics as well.
+
+In any case, the goal is to have some hardware unit, using only a simple communications channel with the software, to act as signer for all Lightning-related things (channel funding, channel updates, reclaiming funds after channel close).
+As is typical for such Bitcoin-related hardware units, it might possess its own user interface by which it can require confirmation of certain actions.
+Also, to reduce risk of hacking, the hardware unit does not have a connection to the netwrok, only a communications channel that is restricted to a local direct connection (such as USB).
+
+I will now demonstrate that such a design cannot achieve what an onchain Bitcoin hardware wallet does, namely that the hardware need not tr\*st the software and need not keep any state beyond the private key (which remains constant).
+For Lightning, it seems any hardware would require tr\*st in the software *and* some state.
+
+Cast of characters:
+
+* The hardware for this node.
+* The software for this node.
+* The other node.
+
+What I will attempt here would be to create a hardware that has as little tr\*st in the software as possible, and reduce the state that the hardware signer has to store.
+If these two goals conflict, I will attempt to reduce the tr\*st in the software.
+
+Channel Updates
+===============
+
+Onchain hardware wallets do not require user interaction just to receive funds.
+Thus, let us consider this goal.
+
+On Lightning, funds are received by getting an HTLC that this node can claim from the other node on the channel.
+This incoming HTLC deducts from the funds owned by the remote node.
+
+Thus, the hardware only needs to verify that:
+
+* The funds owned by this node on the channel remains the same.
+* A new HTLC is added that this node can claim if it knows the preimage.
+
+This requires that the hardware be able to compare a current state with a proposed new state.
+Presumably, the software for this node provides the current state, then the proposed new state, then if the hardware confirms that the state changes &quot;correctly&quot;, it will sign the proposed new state.
+
+The problem is, how can the hardware check that the &quot;current state&quot; is correct?
+For example, suppose a channel was funded by this node, and thus all funds are owned by this node.
+Then the software is corrupted, and then it claims to the hardware that the current state is that all funds are owned by the other node and that the other node is offering an HTLC.
+The hardware believes this claim of what the current state is, and signs the state where almost all the funds are owned by the other node.
+
+Note that we cannot have the software send the entire history of the channel to the hardware either.
+The software can be corrupted into sending only a partial history, rewinding some set of recent channel updates, then a new history can be created on top of that, where this node is paid far less.
+On the blockchain the longer and presumably &quot;more true&quot; history can be attested to with proof-of-work, but the hardware does not have a network connection and is thus under a persistent state of Sybil attack from the node software.
+
+Thus, the hardware has to remember at least what the current state is, and store this knowledge in persistent, secure, modifiable memory that the software cannot touch.
+It need not store the *whole* state: for example, it could store just a commitment to the current state (and have the software store the entire state).
+In fact, it is best for the hardware to store the *signature* for the commitment transaction:
+
+* The signature commits to the commitment transaction, which is a representation of the current state, thus the signature itself is a sufficient commitment to the current state.
+  * There is the issue of outputs with values too small to have outputs on the commitment transactions (i.e. below the dust limit).
+    * We can use sign-to-contract, where the signature commits to *another* preimage, one which contains the outputs that are too small to put on the Bitcoin-level commitment transaction.
+* In case of a communication breakdown between the hardware and the software, the hardware can re-send the signature of the latest commitment transaction.
+  * This is important since the hardware and the software now have to synchronize their state storage!
+    The procedure is:
+    * The software stores the new state in a &quot;proposed&quot; slot in its persistent memory.
+    * The software sends the current and proposed states to the hardware for signing the proposed state.
+    * The hardware validates the update, then signs the proposed state and replaces the signature in its persistent memory.
+    * The hardware sends the new signature.
+    * The software moves the state in the proposed slot to the current slot.
+  * With the above, if the software ever starts up with a state in the &quot;proposed&quot; slot for a channel, it can query the hardware for the most recent signature, and determine if the most recent signed is in the &quot;proposed&quot; or &quot;current&quot; slot.
+    * Thus, the hardware only requires an atomic update to its persistent memory.
+
+The hardware can safely resend the most recent signature, assuming it can trust its own persistent modifiable memory.
+This is because presumably it validated every update leading to the most recent signature in the past, else this signature in its memory would not have existed in the first place.
+
+As each channel has two sets of commitment transactions, the hardware has to store two commitments to commitment transactions for *each* channel.
+
+Another point is that revocations of *own* old commitment transactions can be issued by the hardware itself.
+This requires only a shachain; the hardware can hash the concatenation of the private key plus some channel-unique data (the full channel ID may be enough) to form the shachain seed for the revocation sequence of *own* commitment transactions.
+
+Tr\*sted Eventual Synchrony of Two Commitments
+==============================================
+
+Each channel has two commitment transactions, one for each node.
+The commitment transaction for a particular node identifies which of the two nodes actually performed the unilateral close.
+In particular, the BOLT spec allows both commitment transactions to drift out of synchrony with each other.
+
+Eventually, if the channel becomes relatively inactive (no updates going through it), then it is expected that the two commitment transactions will eventually converge into a single common state.
+But the two commitments may remain not completely in-synch indefinitely.
+
+In order to properly determine synchrony, the hardware has to have an honest account of the transcript between the software for this node, and the other node.
+The only source of this information is the software.
+The software cannot falsely give a signature from the other node that updates our *own* commitment transaction, but the software can definitely lie and deny that the remote side has done so.
+Thus, the two commitment transactions may drift out of synch significantly.
+
+There might not be any significant attacks enabled by having the two commitments out-of-sync indefinitely.
+This may prevent some HTLCs from being safely forwardable, but that only means stalls in payment forwarding.
+
+
+Non-publication of Revoked Transactions
+=======================================
+
+With Poon-Dryja, publication of old state is fatal and is an easy way for a corrupted node software to donate money to the other node.
+Even with Decker-Wattenhofer or Decker-Russell-Osuntokun, a corrupted node software can simply publish an old state where most of the money is allocated to the other node, and not publish the latest state, so switching to Decker-Russell-Osuntokun (&quot;eltoo&quot;) is not a large increase in security for a hardware signer.
+
+To prevent publication of our *own* commitment transaction at least, the hardware can simply not sign *own* commitment transactions as they are created.
+(the hardware still has to immediately sign the *remote* commitment transaction, as part of the update protocol requires handing over that signature to the other node.)
+
+Instead of storing a signature for our &quot;own* commitment transaction, the hardware can store a simple hash or txid of the latest *own* commitment transaction.
+Thus:
+
+* The hardware stores:
+  * The latest signature for the *remote* commitment transaction.
+  * The latest txid for the *own* commitment transaction.
+
+The hardware will only sign an *own* commitment transaction that matches the txid currently stored in it.
+Further, this particular commitment must now become the *last* commitment and the hardware should subsequently reject all attempts to further advance the state.
+
+When updating the *own* commitment transaction, the software must provide the signature from the other node for the next commitment transaction, as well as the current and proposed-next commitment transaction.
+The hardware validates that the state change is valid, changes the *own* commitment txid, and then returns the equivalent revocation key for the just-replaced commitment transaction.
+
+Communications breakdown between the hardware and software can still occur between the time the hardware sends the signature for the latest (and last) commitment transaction, and when the software receives it.
+Thus, the hardware has to have a concept of a &quot;closed&quot; channel, where it marks that the current txid for the *own* commitment transaction is the last one, and it will provide the signature for that commitment transaction, but refuse to sign any other commitment transaction and refuse to advance the state of the channel.
+To reduce the complexity of the software-hardware interface, we could also allow the hardware to sign a mutual close transaction that matches the *own* and *remote* commitment transactions even in this &quot;closed&quot; state.
+Finally the channel can later be removed from the (presumably limited) persistent storage of the hardware.
+
+Thus the protocol for our own unilateral or mutual close would be:
+
+* The software requests to close the channel.
+* The hardware marks the channel as closed, which prevents the channel from updating in the future.
+* The software requests a signature for the final commitment or mutual close transaction.
+  * For mutual closes it provides the commitment transaction and the mutual close, and the hardware validates that the mutual close matches the commitment transaction.
+  * For unilateral closes the hardware also provides the signatures to claim the revocable outputs.
+* The software receives the signature and broadcasts the commitment or mutual close transaction onchain.
+* Once the transaction is deeply confirmed, the software requests the channel to be deleted from the hardware persistent storage.
+
+Thus the hardware provides three APIs:
+
+* Mark-as-close.
+* Get-final-signature (unilateral or mutual close option).
+* Delete-closed.
+
+At restart, the software can query the hardware for any channels that are currently being closed, and can check the mempool and blockchain for whether they have completed the close or not.
+
+Tr\*sted Revocation of Old Remote State
+=======================================
+
+Unfortunately, the hardware has to tr\*st the software to check that the other node is not cheating.
+As the hardware itself is not capable of accessing the blockchain or mempool, it cannot do this checking directly.
+Thus, revocation of old remote state is not ensurable by the hardware.
+
+As revocation can only be done by the software anyway, the revocation secrets for the *remote* commitment transactions can be stored by the software only.
+The hardware need never learn the revocation secrets as it can do nothing with them anyway.
+
+Opening a Channel
+=================
+
+Of course, before we even start having updates to channel state, first we must have opened channels.
+
+Opening will of course allocate a slot in the hardware persistent memory for the channel.
+Further, it must respect the opening sequence.
+
+When opening a channel where the other node is the only funder, then it is sufficient to just propose some initial state for both commitment transactions and have the hardware initialize a slot in its persistent memory with this channel open.
+
+However, when opening a channel where some of the funds come from this node, the hardware will also later sign the funding transaction spending its own funds and feeding into the channel to be funded.
+The software provides the other node signature for the *own* initial commitment transaction.
+The hardware then validates that it is able to claim the equivalent amount in both the *own* and *remote* commitment transactions.
+If there is a difference, that implies that this node is what pays the fee, and the hardware should probably double-confirm with the user using its UI whether the paid fees are acceptab;e.
+
+Tr\*sted Forwarding
+===================
+
+Forwarding should be automated and not require a confirmation from the user on the hardware unit UI.
+Unfortunately, the hardware has to trust the software to actually perform forwarding correctly.
+(indeed, it is unlikely that confirmation from the user would be able to give users a good way to understand what is being asked when a forwarding attempt is made)
+
+When forwarding, the hardware has to sign off on an update that actively spends money from funds owned by this node, on the basis of a promise that some other HTLC is offering money of greater value to this node.
+Certainly the hardware can demand that the software provide a current channel state showing the incoming HTLC, before it signs off on an updated channel state that instantiates the outgoing HTLC from the funds owned by this node.
+
+However, the hardware has to keep track that an incoming HTLC only has at most one outgoing HTLC,.
+It cannot identify using the hash, incidentally: it is theoretically possible for a route to loop through a node twice, e.g. A -&gt; B -&gt; C -&gt; D -&gt; E -&gt; C -&gt; F, where C appears twice.
+Further, if a payment attempt fails, then the ultimate payer might still try to route through this node, giving a different postfix past this node, so this node may forward the same hash twice on two or more different payment attempts.
+Thus, the software and the hardware have to agree on some other identifier on HTLCs.
+In C-Lightning, for example, HTLCs are internally identified by the database ID that they happen to get assigned to; database IDs are simply automatically-incremented counters.
+
+Regardless, even if we somehow, the *enforcement* of HTLCs is still controlled by the software:
+
+* The hardware has no access to the blockchain, thus it cannot know if the incoming HTLC is in fact something in the deep past already.
+  A corrupted software can induce the hardware to create an outgoing HTLC whose timelock is deeply in the past, then refuse to take the timelock branch of the outgoing HTLC while letting the timelock branch of the incoming HTLC be claimed by the other nodes.
+
+Thus, forwarding is still trusted.
+
+Alternately, we can also point out that the only purpose of forwarding is actually just to improve our privacy.
+(in case it is not obvious, this is hyperbole)
+By forwarding, it becomes ambiguous whether we are the ultimate payee if we get an incoming HTLC, and ambiguous whether we are the ultimate payer if we send an outgoing HTLC.
+If we never forward, then this privacy is lost.
+(This is the same argument that rejects unpublished channels: nodes that only have unpublished channels cannot forward, thus every activity on their node is obviously arising or terminating at their node: unpublished channels delenda est)
+
+I will also point out that I laid out the goals for this exercise would be to reduce trust requirements first and state requirements second: privacy was not listed.
+Thus, removing the ability to forward automatically can be removed for the purpose of this exercise.
+
+Retrying Payments
+=================
+
+When trying a payment once, the hardware can confirm to the user via its own UI whether to authorize the payment.
+However, when *re*trying a payment, it would be onerous if the hardware had to keep asking the user to confirm each payment attempt.
+
+Instead, the hardware can keep track of exactly one pending outgoing payment that the software will try its best to deliver.
+The hardware can store the hash of this payment, and a maximum sendable amount (the nominal payment amount plus any extra that would pay for fees and any other privacy-improving routing techniques the software may apply).
+Initially the payment slot will be empty.
+Then, when the software initiates a payment, the hardware can be given the various data in the invoice, which it can display to the user in its UI, and when the user confirms the payment, it can load the hash and maximum allowed value into the payment slot.
+
+Then, when the software requests a new channel state, such that a new HTLC matching the payment slot hash is created from funds owned by this node, the hardware can keep track of the number of such HTLCs currently instantiated.
+As the HTLC has to be instantiated on both commitment transactions, the hardware has to keep track, in persistent memory, a single counter that goes from 0 to 2.
+When such an HTLC is instantiated from the own node funds, the hardware increments this pointer if it is less than two.
+Then if such an HTLC is removed, and the funds returned to our own node funds, the hardware decrements this pointer.
+If the HTLC is removed with the funds given to the other node, then the hardware must demand the preimage of the hash, as proof that indeed, the payment occurred.
+Then it can decrement that counter and set a flag that the payment has been completed (and thus the outgoing HTLC cannot be added again, i.e. the counter cannot be incremented).
+Then when the counter has fallen to zero with the payment-complete flag set, the hardware can clear the payment slot.
+
+The hardware can support having multiple payments in parallel running by providing more than one payment slot.
+
+Accepting Payments
+==================
+
+This is trivial: the hardware will sign off on all state updates that retain or increase the amount of funds owned by this node.
+Payment preimages for incoming payments need not even be known by the hardware, ever.
+Thus there is no trust or storage requirements for accepting payments.
+
+Reducing Storage Size
+=====================
+
+The hardware can, instead of storing multiple channel slots and payment slots in its own persistent memory, can instead just store a single *commitment* to the current state it knows to be valid.
+This can be done by transforming its state into a purely-functional data structure and merklizing it.
+
+A purely-functional data structure is a data structure where structural nodes, once constructed, cannot be modified.
+For example, a singly-linked list can be made into a purely-functional data structure,
+If we have a list A -&gt; B -&gt; C -&gt; null, then we can &quot;mutate&quot; this structure by creating a new list with a different prefix, such as Q -&gt; R -&gt; C -&gt; null.
+The old C -&gt; null node in the original list can be reused.
+
+Binary search trees are also easily transformed into purely-functional data structures.
+Generally, the Okasaki book is the primary reference for purely-functional data structures.
+
+Then, to Merklize a purely-functional data structure, simply means that all pointers are replaced with hashes.
+
+Thus, a Merkle tree is nothing more than a plain binary tree, Merklized.
+
+&gt;<i>From this point of view, the blockchain is nothing more than a Merklized singly-linked list, with the `prevBlockHash` serving as the &quot;next&quot; pointer.
+</I>New blocks are prepended to the front of this singly-linked list, and the &quot;null&quot; terminating the singly-linked list is nothing more than genesis.
+
+For the hardware state, the top node can contain two &quot;pointers&quot;, one for the channel data and one for the running-payments data.
+The root is then the &quot;pointer&quot; to the current top node.
+Those &quot;pointers&quot; then point to two red-black (or other balanced purely functional) trees, one for the channel data and one for the running payments.
+When channel data only is updated, the top node is replaced, but the node for the running payments data is just copied from the previous top node.
+Similarly, only the path to the channel data through the red-black tree is affected.
+
+Using a Merklized purely-functional data structure to store the entire hardware state allows the hardware to only absolutely require a secure persistent memory that fits 32 bytes, enough for a single commitment.
+This can allow some leeway in storing this root data redundantly in multiple places, and to encode it with error correction and detection, and so on.
+
+Whenever the software makes a request to the hardware, which in the above discussion requires the hardware to read its internal state, the software instead serializes the internal state.
+Then the hardware can validate that the software has not given it incorrect state.
+Similarly, when the hardware has to update its state, it can give the reserialization of the modified data, and update its internal state.
+The cute thing is that, just as a standard Merkle tree inclusion proof only requires sending a small subset of the entire Merkle tree, the software need not send the *entire* hardware state --- it can send only those parts that are relevant to the specific channel(s) and outgoing payment attempt(s) that it is currently asking for.
+This can let the hardware be very cheap and limited, with the software handling all of the *actual* state storage.
+
+However, we must now be very careful to ensure that the state of both hardware and software remain the same even if both become powered off or some communication failure occurs.
+My suggestion is for the software to store two copies of the hardware state (both &quot;copies&quot; can share some data files due to he purely-functional nature of the data, but some nodes will exist in only one copy or the other).
+Then, whenever the hardware has to update the state:
+
+* The software gives the part of the state that needs updating by the hardware.
+* The hardware provides the updated state data, plus a signature of the concatenation of the old root plus the new root as well as the new root.
+* The software stores the new state data (but retains the old state data).
+* The software asks the hardware to update its single root variable.
+  It provides the current root plus the new root, as well as the previous signature of the concatenation of those.
+* The hardware validates that the current root in its slot matches, that the signature is indeed a valid signature of itself, then updates its root slot.
+* The software deletes the parts of the old state data that were not reused in the new state.
+
+At any time, if power is shut off, the software and hardware can recover by checking the current root held in the hardware.
+
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002420.html">[Lightning-dev] Research on proactive fee free channel	rebalancing in the friend of a friend network / and roadmap	for a protocol extension
+</A></li>
+	<LI>Next message: <A HREF="002427.html">[Lightning-dev] Speculations on hardware wallet support for	Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2425">[ date ]</a>
+              <a href="thread.html#2425">[ thread ]</a>
+              <a href="subject.html#2425">[ subject ]</a>
+              <a href="author.html#2425">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,227 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ask%20First%2C%20Shoot%20%28PTLC/HTLC%29%20Later&In-Reply-To=%3CCAJBJmV-Zs7UKAfzAJS3d0Za75wmBcVdPPP7-1ShrQMffm4iR%2Bw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003329.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ask%20First%2C%20Shoot%20%28PTLC/HTLC%29%20Later&In-Reply-To=%3CCAJBJmV-Zs7UKAfzAJS3d0Za75wmBcVdPPP7-1ShrQMffm4iR%2Bw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later">joost.jager at gmail.com
+       </A><BR>
+    <I>Thu Oct 21 07:28:42 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003329.html">[Lightning-dev] c-lightning discord community
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3331">[ date ]</a>
+              <a href="thread.html#3331">[ thread ]</a>
+              <a href="subject.html#3331">[ subject ]</a>
+              <a href="author.html#3331">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>If it is a multipart and we have the preimage, wait for all the parts to
+</I>arrive, then say yes to all of them.
+
+Without actual reservations made in the channels, is this going to work?
+For example: a 10M payment and a route that contains a channel with only 5M
+balance. The sender's multi-path algorithm will try to split and send the
+first 5M. Then they'll do the second 5M, but because there is no actual
+reservation, the second 5M seems to be passing alright through the
+bottleneck channel too. When the payment is then executed, it will fail.
+
+Or do nodes keep track of all the unresolved probes and deduct the total
+amount from the available balance? Of course only for the available balance
+for probes. When a real htlc comes through, outstanding probes are ignored.
+Although the problem with that could be that someone can spam you with
+probes so that your available 'probe' balance is zero and you'll receive no
+real traffic anymore.
+
+Perhaps an alternative is to let senders attach a random identifier to a
+probe. For multi-part probes, each probe will carry the same identifier.
+Routing nodes will deduct the outstanding probe amounts from the available
+balance, but only for probes within the same group (same id). That way each
+probe(group) is isolated from everything else that is going on.
+
+Joost
+
+On Wed, Sep 29, 2021 at 5:40 AM ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Good morning list,
+</I>&gt;<i>
+</I>&gt;<i> While discussing something tangentially related with aj, I wondered this:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Why do we shoot an HTLC first and then ask the question &quot;can you
+</I>&gt;<i> actually resolve this?&quot; later?
+</I>&gt;<i>
+</I>&gt;<i> Why not something like this instead?
+</I>&gt;<i>
+</I>&gt;<i> * For a payer:
+</I>&gt;<i>   * Generate a path.
+</I>&gt;<i>   * Ask first hop if it can resolve an HTLC with those specs (passing the
+</I>&gt;<i> encrypted onion).
+</I>&gt;<i>   * If first hop says &quot;yes&quot;, actually do the `update_add_htlc` dance.
+</I>&gt;<i>     Otherwise try again.
+</I>&gt;<i> * For a forwarder:
+</I>&gt;<i>   * If anybody asks &quot;can you resolve this path&quot; (getting an encrypted
+</I>&gt;<i> onion):
+</I>&gt;<i>     * Decrypt one layer to learn the next hop.
+</I>&gt;<i>     * Check if the next hop is alive and we have the capacity towards it,
+</I>&gt;<i> if not, answer no.
+</I>&gt;<i>     * Ask next hop if it can resolve the next onion layer.
+</I>&gt;<i>     * Return the response from the next hop.
+</I>&gt;<i> * For a payee:
+</I>&gt;<i>   * If anybody asks &quot;can you resolve this path&quot;:
+</I>&gt;<i>     * If it is not a multipart and we have the preimage, say yes.
+</I>&gt;<i>     * If it is a multipart and we have the preimage, wait for all the
+</I>&gt;<i> parts to arrive, then say yes to all of them.
+</I>&gt;<i>     * Otherwise say no.
+</I>&gt;<i>
+</I>&gt;<i> Now, the most obvious reason against this, that comes to mind, is that
+</I>&gt;<i> this is a potential DoS vector.
+</I>&gt;<i> Random node can trigger a lot of network activity by asking random stuff
+</I>&gt;<i> of random nodes.
+</I>&gt;<i> Asking the question is free, after all.
+</I>&gt;<i>
+</I>&gt;<i> However, we should note that sending *actual* HTLCs is a similar DoS
+</I>&gt;<i> vector **today**.
+</I>&gt;<i> This is still &quot;free&quot; in that the asker has no need to pay fees for failed
+</I>&gt;<i> HTLCs; they just lose the opportunity cost of the amount being locked up in
+</I>&gt;<i> the HTLCs.
+</I>&gt;<i> And presumably the opportunity cost is low since Lightning forwarding
+</I>&gt;<i> earnings are so tiny.
+</I>&gt;<i>
+</I>&gt;<i> One way to mitigate against this is to make generating an onion costly but
+</I>&gt;<i> validating and decrypting it cheap.
+</I>&gt;<i> We could use an encryption scheme that is more computationally expensive
+</I>&gt;<i> to encrypt but cheap to decrypt, for example.
+</I>&gt;<i> Or we could require proof-of-work on the onion: each unwrapped onion
+</I>&gt;<i> layer, when hashed, has to have a hash that is less than some threshold
+</I>&gt;<i> (this scales according to the number of hops in the onion, as well).
+</I>&gt;<i> Ultimate askers need to grind the shared secret until the onion layer hash
+</I>&gt;<i> achieves the target.
+</I>&gt;<i>
+</I>&gt;<i> Obviously just because you asked a few milliseconds ago if a path is
+</I>&gt;<i> viable does not mean that the path *remains* viable right now when you
+</I>&gt;<i> actually send out an HTLC, but presumably that risk is now lessened.
+</I>&gt;<i> Unexpected shutdowns or loss of connectivity has to appear in a smaller
+</I>&gt;<i> and shorter time frame to negatively affect intermediate nodes.
+</I>&gt;<i>
+</I>&gt;<i> Another thought is: Does the forwarding node have an incentive to lie?
+</I>&gt;<i> Suppose the next hop is alive but the forwarding node has insufficient
+</I>&gt;<i> capacity towards the next hop.
+</I>&gt;<i> Then the forwarding node can lie and claim it can still resolve the HTLC,
+</I>&gt;<i> in the hope that a few milliseconds later, when the actual HTLC arrives,
+</I>&gt;<i> the capacity towards the next hop has changed.
+</I>&gt;<i> Thus, even if the capacity now is insufficient, the forwarding node has an
+</I>&gt;<i> incentive to lie and claim sufficient capacity.
+</I>&gt;<i>
+</I>&gt;<i> Against the above, we can mitigate this by accepting &quot;no&quot; from *any* node
+</I>&gt;<i> along the path, but only accepting &quot;yes&quot; from the actual payee.
+</I>&gt;<i> We already have a mechanism where any node along a route can report a
+</I>&gt;<i> forwarding or other payment error, and the sender is able to identify which
+</I>&gt;<i> node along the path raised it.
+</I>&gt;<i> Thus, the payer can identify which node along the route responded with a
+</I>&gt;<i> &quot;yes&quot;, and check that it definitely reached the payee.
+</I>&gt;<i> Presumably, when a node receives a question, it checks if the asking node
+</I>&gt;<i> has sufficient capacity towards it first, and if not, fails the channel
+</I>&gt;<i> between them, since obviously the asking node is not behaving according to
+</I>&gt;<i> protocol and is buggy.
+</I>&gt;<i>
+</I>&gt;<i> Now, this can be used to probe capacities, for free, but again --- we
+</I>&gt;<i> already *have* probing capacities, for free, today, by just using random
+</I>&gt;<i> hashes.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Why is this advantageous at all?
+</I>&gt;<i>
+</I>&gt;<i> One reason for doing this is that it improves payment latency.
+</I>&gt;<i> Some paths *will* fail, because there is no single consistent view of the
+</I>&gt;<i> network and its capacity (which is impossible due to others also possibly
+</I>&gt;<i> sending out via the same forwarding nodes you are using, and besides, even
+</I>&gt;<i> if such a view could be made to exist, it would be dangerously
+</I>&gt;<i> anti-privacy).
+</I>&gt;<i> This mechanism does not require that intermediate nodes respond with a
+</I>&gt;<i> signature and wait for a replied signature *before* they forward the onion
+</I>&gt;<i> to the next hop; when they are *just* asking, there is no HTLC involved, no
+</I>&gt;<i> updates to the channel state, and the question can be forwarded as soon as
+</I>&gt;<i> we can check locally.
+</I>&gt;<i> Further, in the current mechanism where we shoot HTLCs first and ask
+</I>&gt;<i> questions later, failures also require 1.5 roundtrips due to sharing
+</I>&gt;<i> signatures; with the &quot;just ask first&quot; phase there is no need for round
+</I>&gt;<i> trips to respond to questions.
+</I>&gt;<i>
+</I>&gt;<i> Basically, we replace multiple round trips per hop in case of a failure
+</I>&gt;<i> along a route, with a single large round trip from the payer to the failure
+</I>&gt;<i> point.
+</I>&gt;<i> In case of a success we just add more latency, but as we move to more
+</I>&gt;<i> multipath payments, perhaps it becomes more advantageous, since the
+</I>&gt;<i> probability of a particular sub-path failing is now higher?
+</I>&gt;<i>
+</I>&gt;<i> More importantly, by allowing to ask first, we reduce the probability that
+</I>&gt;<i> HTLCs made in good faith --- i.e. those that are fully intended to reach a
+</I>&gt;<i> destination and be resolved --- it may now be more palatable to charge for
+</I>&gt;<i> failing actual HTLCs.
+</I>&gt;<i> Since we expect that HTLC failures due to a node or channel failing along
+</I>&gt;<i> the way is lessened compared to today, because the sender *asks* first
+</I>&gt;<i> before *shooting* the HTLC, then the effect of charging for failing
+</I>&gt;<i> *actual* HTLCs is lessened, possibly to a more acceptable level.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So, to lightning-dev --- is this a decent idea at all?
+</I>&gt;<i> Note that in particular this is something that requires a whole-network
+</I>&gt;<i> upgrade, as intermediate nodes have to upgrade as well.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211021/aac2de10/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211021/aac2de10/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003329.html">[Lightning-dev] c-lightning discord community
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3331">[ date ]</a>
+              <a href="thread.html#3331">[ thread ]</a>
+              <a href="subject.html#3331">[ subject ]</a>
+              <a href="author.html#3331">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

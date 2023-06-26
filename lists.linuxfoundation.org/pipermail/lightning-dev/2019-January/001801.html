@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CPFP%20Carve-Out%20for%20Fee-Prediction%20Issues%20in%0A%20Contracting%20Applications%20%28eg%20Lightning%29&In-Reply-To=%3C725fc55a-6263-a9fc-74a5-1017cb1cc885%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001802.html">
+   <LINK REL="Next"  HREF="001805.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CPFP%20Carve-Out%20for%20Fee-Prediction%20Issues%20in%0A%20Contracting%20Applications%20%28eg%20Lightning%29&In-Reply-To=%3C725fc55a-6263-a9fc-74a5-1017cb1cc885%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Mon Jan  7 15:18:52 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001802.html">[Lightning-dev] Lite client considerations for Lightning	Implementations
+</A></li>
+        <LI>Next message: <A HREF="001805.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1801">[ date ]</a>
+              <a href="thread.html#1801">[ thread ]</a>
+              <a href="subject.html#1801">[ subject ]</a>
+              <a href="author.html#1801">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Sorry for the late reply.
+
+Hmm, I included the old RBF-pinning proposal as a comparison. 
+Personally, I find it both less clean and less convincingly secure.
+
+Ultimately, defining a &quot;near the top of the mempool&quot; criteria is fraught 
+with issues. While it's probably OK for the original problem (large 
+batched transactions where you don't want a single counterparty to 
+prevent confirmation), lightning's requirements are very different. 
+Instead is wanting a high probability that the transaction in question 
+confirms &quot;soon&quot;, we need certainty that it will confirm by some deadline.
+
+Thus, even if you imagine a steady-state mempool growth, unless the 
+&quot;near the top of the mempool&quot; criteria is &quot;near the top of the next 
+block&quot; (which is obviously *not* incentive-compatible), its easy to see 
+how the package would fail to confirm within a handful of blocks given 
+block time variance. Giving up the ability to RBF/CPFP more than once in 
+case the fee moves away from us seems to be a rather significant 
+restriction.
+
+THe original proposal is somewhat of a hack, but its a hack on the 
+boundary condition where packages meet our local anti-DoS rules in 
+violation of the &quot;incentive compatible&quot; goal anyway (essentially, though 
+miners also care about anti-DoS). This proposal is very different and, 
+similar to how it doesn't work if blocks randomly come in a bit slow for 
+an hour or two, isn't incentive compatible if blocks come in a bit fast 
+for an hour or two, as all of a sudden that &quot;near the top of the 
+mempool&quot; criteria makes no sense and you should have accepted the new 
+transaction(s).
+
+As for package relay, indeed, we can probably do soemthing simpler for 
+this specific case, but itdepends on what the scope of that design is. 
+Suhas opened an issue to try to scope it out a bit more at 
+<A HREF="https://github.com/bitcoin/bitcoin/issues/14895">https://github.com/bitcoin/bitcoin/issues/14895</A>
+
+Matt
+
+&gt;<i> On Dec 3, 2018, at 22:33, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;<i> Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+</I>&gt;&gt;<i> As an alternative proposal, at various points there have been 
+</I>&gt;&gt;<i> discussions around solving the &quot;RBF-pinning&quot; problem by allowing 
+</I>&gt;&gt;<i> transactors to mark their transactions as &quot;likely-to-be-RBF'ed&quot;, which 
+</I>&gt;&gt;<i> could enable a relay policy where children of such transactions would be 
+</I>&gt;&gt;<i> rejected unless the resulting package would be &quot;near the top of the 
+</I>&gt;&gt;<i> mempool&quot;. This would theoretically imply such attacks are not possible 
+</I>&gt;&gt;<i> to pull off consistently, as any &quot;transaction-delaying&quot; channel 
+</I>&gt;&gt;<i> participant will have to place the package containing A at an effective 
+</I>&gt;&gt;<i> feerate which makes confirmation to occur soon with some likelihood. It 
+</I>&gt;&gt;<i> is, however, possible to pull off this attack with low probability in 
+</I>&gt;&gt;<i> case of feerate spikes right after broadcast.
+</I>&gt;<i> 
+</I>&gt;<i> I like this idea.
+</I>&gt;<i> 
+</I>&gt;<i> Firstly, it's incentive-compatible[1]: assuming blocks are full, miners
+</I>&gt;<i> should always take a higher feerate tx if that tx would be in the
+</I>&gt;<i> current block and the replaced txs would not.[2]
+</I>&gt;<i> 
+</I>&gt;<i> Secondly, it reduces the problem that the current lightning proposal
+</I>&gt;<i> adds to the UTXO set with two anyone-can-spend txs for 1000 satoshis,
+</I>&gt;<i> which might be too small to cleanup later.  This rule would allow a
+</I>&gt;<i> simple single P2WSH(OP_TRUE) output, or, with IsStandard changed,
+</I>&gt;<i> a literal OP_TRUE.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> Note that this clearly relies on some form of package relay, which comes 
+</I>&gt;&gt;<i> with its own challenges, but I'll start a separate thread on that.
+</I>&gt;<i> 
+</I>&gt;<i> Could be done client-side, right?  Do a quick check if this is above 250
+</I>&gt;<i> satoshi per kweight but below minrelayfee, put it in a side-cache with a
+</I>&gt;<i> 60 second timeout sweep.  If something comes in which depends on it
+</I>&gt;<i> which is above minrelayfee, then process them as a pair[3].
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Rusty.
+</I>&gt;<i> [1] Miners have generally been happy with Defaults Which Are Good For The
+</I>&gt;<i>    Network, but I feel a long term development aim should to be reduce
+</I>&gt;<i>    such cases to smaller and smaller corners.
+</I>&gt;<i> [2] The actual condition is subtler, but this is a clear subset AFAICT.
+</I>&gt;<i> [3] For Lightning, we don't care about child-pays-for-grandparent etc.
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001802.html">[Lightning-dev] Lite client considerations for Lightning	Implementations
+</A></li>
+	<LI>Next message: <A HREF="001805.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1801">[ date ]</a>
+              <a href="thread.html#1801">[ thread ]</a>
+              <a href="subject.html#1801">[ subject ]</a>
+              <a href="author.html#1801">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

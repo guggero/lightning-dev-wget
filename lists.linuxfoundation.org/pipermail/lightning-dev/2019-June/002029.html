@@ -1,0 +1,323 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal for Stuckless Payment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20Stuckless%20Payment&In-Reply-To=%3CCAO6oAq0etMXQj7mMvC%3DbJ8HLqZ5Aw8v_D7iT0eA73_d1v_%2Br9A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002052.html">
+   <LINK REL="Next"  HREF="002030.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal for Stuckless Payment</H1>
+    <B>Hiroki Gondo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20Stuckless%20Payment&In-Reply-To=%3CCAO6oAq0etMXQj7mMvC%3DbJ8HLqZ5Aw8v_D7iT0eA73_d1v_%2Br9A%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Proposal for Stuckless Payment">hiroki.gondo at nayuta.co
+       </A><BR>
+    <I>Tue Jun 25 08:20:12 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002052.html">[Lightning-dev] Escrow Over Lightning?
+</A></li>
+        <LI>Next message: <A HREF="002030.html">[Lightning-dev] Proposal for Stuckless Payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2029">[ date ]</a>
+              <a href="thread.html#2029">[ thread ]</a>
+              <a href="subject.html#2029">[ subject ]</a>
+              <a href="author.html#2029">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Problem
+
+===============================
+
+With the current BOLT 1.x, there exists a theoretical possibility that
+payments get stuck. In the actual network, this problem appears to be
+significantly improved due to the maturity of each implementation and the
+preventive ping-before-commitment_signed [1]. However, there is still a
+possibility that payments would get stuck due to an unstable communication
+environment, trouble and malice of intermediate nodes, etc., and we need to
+estimate the cost to deal with potential problems in advance.
+
+
+Proposal Summary
+
+===============================
+
+The following proposal is intended to reduce payments getting stuck. Both
+the payee and the payer provide keys to settle the payment, so it is
+possible to safely retry in each phase that composes one payment. Also, the
+involvement of the intermediate nodes can be eliminated.
+
+In other words, we can assure this problem involves only the parties (the
+payer and the payee). This proposal is not compatible with the BOLT 1.x,
+and it&#8217;s assumed to apply to future specifications.
+
+
+How to deal with payments getting stuck at present?
+
+===============================
+
+If payments get stuck, we will need additional *trusted* operations by the
+final node&#8217;s implementation, the application or the service operator. For
+example, when a payer orders a cup of coffee and attempts to pay for the
+invoice, but the payment gets stuck, what must we do to correct the problem?
+
+If an `update_add_htlc` gets stuck on an intermediate node (strictly, the
+absence of the `revoke_and_ack` for the `commitment_signed` for the
+message), the payer cannot ignore the issue. It may be fulfilled or failed,
+but in the worst case the payer must wait until the `cltv_expiry`. That is
+not realistic for UX.
+
+There are obvious problems with retrying the payment by different routes
+using the same invoice. After a successful retry, if the previous stuck
+payment starts moving again and also succeeds, the payer will pay twice for
+the same invoice. The payer cannot obtain the information to prove he has
+paid twice (he has only a single preimage). Although the payee may fail the
+second arrival payment for the same invoice, that is a *trusted* operation
+dependent upon the final node implementation. Also, if an
+`update_fulfill_htlc` gets stuck on the return, there is no solution.
+
+If the payer receives another invoice from the payee and pays again, and if
+the two payments are succeed, the payer must obtain a refund from the payee
+for the extra payment. This requires additional *trusted* operations
+dependent on the application or the service operator.
+
+
+Key Provided by Payer
+
+===============================
+
+As I previously mentioned, if an `update_add_htlc` gets stuck, the payer
+cannot ignore that. Because the payee has the key (preimage) to unlock the
+HTLCs in BOLT 1.x, the HTLCs may be fulfilled in unintended timing for the
+payer.
+
+What happens if the payer provides the key? For example, in the original
+AMP [2], the payer provides the preimage (this proposal may be useful for
+AMP, but in this example it is not meaningful to be *multi-path*, so please
+imagine a simple *single-path*). The preimage is sent in the onion of the
+`update_add_htlc`s. In other words, the HTLCs (locks) and the preimage
+(key) are sent together.
+
+        A --&gt; B --&gt; C --&gt; D        # update_add_htlc, preimage
+
+        A &lt;-- B &lt;-- C &lt;-- D        # update_fulfill_htlc
+
+I would like to separate the process into two phases; &quot;add HTLCs (locks)&quot;
+and &quot;provide a preimage (key)&quot;. After adding HTLCs along the route by
+`update_add_htlc`s not including the preimage, the payee returns the ACK to
+the payer. The payer will provide the preimage to the payee in the next
+phase. In this way, the payer simply forgets the payment if an
+`update_add_htlc` gets stuck and the ACK is not returned in a more
+realistic timeout (e.g. 1 min) than the `cltv_expiry`, and can retry the
+payment with another invoice without worrying about overpayment.
+
+        A --&gt; B --&gt; C --&gt; D        # update_add_htlc
+
+        A &lt;-- B &lt;-- C &lt;-- D        # ACK
+
+        A --&gt; B --&gt; C --&gt; D        # preimage
+
+        A &lt;-- B &lt;-- C &lt;-- D        # update_fulfill_htlc
+
+However, this procedure does not yet solve the problem if
+`update_fulfill_htlc`s gets stuck.
+
+
+Proof of Payment
+
+===============================
+
+If the payer provided the preimage, the payer cannot get the proof of
+payment (PoP).
+
+PoP is important. It's important to bring it to the court, but it's also
+necessary if upper layer applications are willing to proceed to the next
+action based on the payment outcome. However, if we do not need to maintain
+compatibility with BOLT 1.x, it is possible to add PoP to the above case
+(HTLCs need two keys from both the payee and the payer, not only one key
+(preimage) from the payee).
+
+I have another consideration regarding PoP. In BOLT1.x, a preimage is
+returned along the route. The payer receives the PoP when he receives the
+preimage by the `update_fulfill_htlc` directly from the peer. Thus, if an
+`update_fulfill_htlc`s gets stuck somewhere in the route, the payer cannot
+obtain the PoP.
+
+        A --&gt; B --&gt; C --&gt; D        # update_add_htlc
+
+        A       B x-- C &lt;-- D        # update_fulfill_htlc (stuck)
+
+However, the payee can provide the preimage to the payer earlier. If the
+`update_add_htlc` is irrevocably committed at the payee's own channel and
+there is no problem with the parameters, it is safe to send the preimage to
+the payer skipping the intermediate nodes or using an alternate route (if
+possible).
+
+        A --&gt; B --&gt; C --&gt; D        # update_add_htlc
+
+        A &lt;----------------- D        # preimage
+
+        A       B x-- C &lt;-- D        # update_fulfill_htlc (stuck)
+
+
+e.g. Modifications of &#8220;Multi-Hop Locks from Scriptless Scripts&#8221;
+
+===============================
+
+Based on the above considerations, I will describe the stuckless payment
+protocol. I will do the work from &quot;Multi-Hop Locks from Scriptless Scripts&quot;.
+
+Multi-Hop Locks from Scriptless Scripts
+
+<A HREF="https://github.com/apoelstra/scriptless-scripts/blob/master/md/multi-hop-locks.md">https://github.com/apoelstra/scriptless-scripts/blob/master/md/multi-hop-locks.md</A>
+
+(commit 94a4e2f961c839bd1b9ca8773abadbf0f198c34b)
+
+I will modify the following sequence.
+
+<A HREF="https://raw.githubusercontent.com/apoelstra/scriptless-scripts/master/md/images/multi-hop-locks.png">https://raw.githubusercontent.com/apoelstra/scriptless-scripts/master/md/images/multi-hop-locks.png</A>
+
+The modifications are as follows.
+
+Setup: At the end of this phase, Do NOT send the key (`y0+y1+y2`) from A to
+D yet.
+
+Update: At the end of this phase, D returns the ACK to A.
+
+        A &lt;-- B &lt;-- C &lt;-- D        # ACK
+
+Pre-Settlement: Add this new phase after the Update phase. Any route can be
+used.
+
+        A --&gt; * --&gt; * --&gt; D        # key (`y0+y1+y2`)
+
+        A &lt;-- * &lt;-- * &lt;-- D        # PoP (`z`)
+
+Settlement: No change.
+
+Let's look at the details.
+
+In the original sequence, *the payer* provides the key (`y0+y1+y2`) to
+unlock the HTLCs (like the original AMP). The sequence has also introduced
+the PoP (`z`) provided by *the payee*, which already meets, to some extent,
+the requirements of what I will describe.
+
+Setup:
+
+In the original sequence, the resistance to stuck payments is the same as
+in the BOLT 1.x. All we need to do is to separate the process sending the
+key (`y0+y1+y2`) from the Setup phase and bring it after the Update phase.
+This prevents the payee from immediately moving to the Settlement phase
+after the Update phase is complete. Therefore, if a stuck payment in the
+Update phase suddenly begins moving, the phase cannot automatically move to
+the Settlement phase against the will of the payer.
+
+Update:
+
+At the end of this phase, we require the payee return the ACK to the payer
+to notify the completion of this phase. It must be guaranteed that the
+payee himself returns it. This can be achieved by reversing the route and
+wrapping the ACK in the onion sequentially, as the `reason` field of the
+`update_fail_htlc` in BOLT 1.x.
+
+If the payment gets stuck in this phase, the payer can create a new key and
+reuse the PoP (`z`) to start over from the Setup phase. Since the key of
+the previous stuck payment has not been sent to the payee, the stuck HTLCs
+can be left and they will be removed later.
+
+Pre-Settlement:
+
+The new Pre-Settlement phase is the actual settlement phase between the
+payer and the payee. When the payer receives the ACK at the end of the
+Update phase, he can send the key to the payee. Since this phase is just
+passing data between two points (unlike adding HTLCs), if it fails we can
+safely retry and (if possible) not have to use the same route or routing
+protocol as the Update phase.
+
+After the payee receives and verifies the key from the payer, he can send
+the PoP (`z`) to the payer as the response. The payee can do this before
+the Settlement phase if he can verify that the received key is for his own
+incoming HTLC.
+
+Settlement:
+
+The Settlement phase is the same as that of the original sequence. Even if
+a message get stucks in this phase, the payment itself is not affected
+since the settlement between the payer and the payee has already been
+substantially completed in the Pre-Settlement phase.
+
+These modifications add the cost of three new messages (ACK, key, PoP), but
+it is only three (unaccompanied by other messages). These may also reduce
+other preventive messages.
+
+
+Conclusion
+
+===============================
+
+In this proposal, the probability that messages in each phase get stuck is
+at the same level as BOLT 1.x, but even if they get stuck, it is possible
+to safely retry each phase that composes one payment, and the number of
+payments completely stuck will be reduced.
+
+In fact, the stuck problem will be limited to the Pre-Settlement phase
+between the two parties (the payer and the payee). This is the case where
+the payer sends the key to the payee, but the PoP (`z`) is not returned. I
+have already mentioned that the payer can safely retry this phase and does
+not have to use the same route or routing protocol as the Update phase.
+
+Any remaining problems would be caused by the payee's own trouble or
+malice, which means that no intermediate node is involved in the stuck
+problem, and this problem becomes one involves only the parties (the payer
+and the payee). This improvement allows us to see the Lightning Network as
+more trustless.
+
+
+Hiroki Gondo
+
+
+
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/508">https://github.com/lightningnetwork/lightning-rfc/pull/508</A>
+
+[2]
+<A HREF="../2018-February/000993.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/000993.html</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190625/ddfd97d2/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190625/ddfd97d2/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002052.html">[Lightning-dev] Escrow Over Lightning?
+</A></li>
+	<LI>Next message: <A HREF="002030.html">[Lightning-dev] Proposal for Stuckless Payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2029">[ date ]</a>
+              <a href="thread.html#2029">[ thread ]</a>
+              <a href="subject.html#2029">[ subject ]</a>
+              <a href="author.html#2029">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

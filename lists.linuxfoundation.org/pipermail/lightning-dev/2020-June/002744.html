@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%09and%20Competing%20Interest&In-Reply-To=%3CwRX9uiX_fFrjZvlmgx3Sj64VA3DdXakJZJq2_7DHJWIS7QBlphgpaBDdm4SjdY4aij5pESsumww8iJw8QZe5mO8bPgpYFyp6eImF2xbaXR4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002743.html">
+   <LINK REL="Next"  HREF="002746.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%09and%20Competing%20Interest&In-Reply-To=%3CwRX9uiX_fFrjZvlmgx3Sj64VA3DdXakJZJq2_7DHJWIS7QBlphgpaBDdm4SjdY4aij5pESsumww8iJw8QZe5mO8bPgpYFyp6eImF2xbaXR4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sat Jun 20 16:01:16 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002743.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+        <LI>Next message: <A HREF="002746.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2744">[ date ]</a>
+              <a href="thread.html#2744">[ thread ]</a>
+              <a href="subject.html#2744">[ subject ]</a>
+              <a href="author.html#2744">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Dave,
+
+&gt;<i> ZmnSCPxj noted that pay-to-preimage doesn't work with PTLCs.[2] I was
+</I>&gt;<i> hoping one of Bitcoin's several inventive cryptographers would come
+</I>&gt;<i> along and describe how someone with an adaptor signature could use that
+</I>&gt;<i> information to create a pubkey that could be put into a transaction with
+</I>&gt;<i> a second output that OP_RETURN included the serialized adaptor
+</I>&gt;<i> signature. The pubkey would be designed to be spendable by anyone with
+</I>&gt;<i> the final signature in a way that revealed the hidden value to the
+</I>&gt;<i> pubkey's creator, allowing them to resolve the PTLC. But if that's
+</I>&gt;<i> fundamentally not possible, I think we could advocate for making
+</I>&gt;<i> pay-to-revealed-adaptor-signature possible using something like
+</I>&gt;<i> OP_CHECKSIGFROMSTACK.[3]
+</I>
+
+Not a cryptographer, I just play one on the Internet, but maybe the pay-for-signature construction could work...?
+
+Assuming a PTLC has a pointlocked branch, which involves signing with MuSig(A, B).
+A offers to B the amount if B reveals the secret `t` behind `T = t * G`; A knows `T` but not `t`.
+This is done by B handing over `R[B]` and `s'[B]`:
+
+    R = R[A] + R[B] + T
+    s'[B] = r[B] + h(MuSig(A, B) | R | m) * b
+
+Then A provides its partial signature to B.
+
+    s[A] = r[A] + h(MuSig(A, B) | R | m) * a
+
+B has to complete the signature by:
+
+    s = s[A] + s'[B] + t
+
+Since A knows both `s[A]` and `s'[B]`, once it knows `s`, it can compute `t`.
+
+
+Now, we can massage the equation for `s`:
+
+    s = r[A] + h(MuSig(A, B) | R | m) * a + r[B] + h(MuSig(A, B) | R | m) * b + t
+    ; multiply both sides by G
+    s * G = r[A] * G + h(MuSig(A, B) | R | m) * a * G + r[B] * G + h(MuSig(A, B) | R | m) * b * G + t * G
+    ; replace with public points
+    s * G = R[A] + h(MuSig(A, B) | R | m) * A + R[B] + h(MuSig(A, B) | R | m) * B + T
+
+Note that A can compute `s * G` above, because it generated `R[A]`, was given `R[B]` and `T`, and knows who `A` and `B` are.
+
+So what A needs to do is to offer a fund that can only be claimed by leaking knowledge of `s` behind `s * G`.
+A can do this by creating a new keypair `A[p4s] = a[p4s] * G` and putting a fund into it.
+
+Then A generates an `R[A][p4s] = r[A][p4s] * G`, and computes:
+
+    R[p4s] = R[A][p4s] + s * G
+    s'[A][p4s] = r[A][p4s] + h(A | R[p4s] | m) * a[p4s]
+
+The signed message could be a signature to `SIGHASH_NONE`, finally an actual use for that flag.
+
+A reveals publicly (in an `OP_RETURN` as you suggest):
+
+* `R[A][p4s]`
+* `s * G`
+* `s'[A][p4s]`
+* `A[p4s]` - Already the Schnorr output pubkey.
+
+In order to complete the above signature, a third party C has to learn `s` from B.
+
+The third party has to scan every onchain 1-of-1 signature for an `s` that matches `s * G`, so there is greater processing (point multiplies are more expensive than hashes, also there are more 1-of-1s).
+But once learned, the third party can complete the signature and claim the funds.
+And A then learns `s`, from which it can derive `t`.
+
+The third party learns about which channel (i.e. the UTXO that was spent to create the PTLC in the first place), but never learns `t` or `T`, which is a small but nice privacy bonus.
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002743.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+	<LI>Next message: <A HREF="002746.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2744">[ date ]</a>
+              <a href="thread.html#2744">[ thread ]</a>
+              <a href="subject.html#2744">[ subject ]</a>
+              <a href="author.html#2744">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposed changes to the splicing specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposed%20changes%20to%20the%20splicing%20specification&In-Reply-To=%3CCAN%2BF7jk5%2Bt6eC7Z61KyscdTcAFFp2G2%3DH%3Dd4Ddrd789vpAgsCw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003901.html">
+   <LINK REL="Next"  HREF="003903.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposed changes to the splicing specification</H1>
+    <B>Dustin Dettmer</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposed%20changes%20to%20the%20splicing%20specification&In-Reply-To=%3CCAN%2BF7jk5%2Bt6eC7Z61KyscdTcAFFp2G2%3DH%3Dd4Ddrd789vpAgsCw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Proposed changes to the splicing specification">dustin at koinkeep.com
+       </A><BR>
+    <I>Tue Apr  4 19:14:46 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003901.html">[Lightning-dev] Proposed changes to the splicing specification
+</A></li>
+        <LI>Next message: <A HREF="003903.html">[Lightning-dev] Splice Lock Race Condition Solution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3902">[ date ]</a>
+              <a href="thread.html#3902">[ thread ]</a>
+              <a href="subject.html#3902">[ subject ]</a>
+              <a href="author.html#3902">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>This all works for me, I will update my implementation to be compatible
+with this approach.
+
+Perhaps we should pick another name than `funding_amount` though?
+
+The current spec (for `splice` &amp; `splice_ack`) proposal uses
+* [`u64`:`funding_satoshis`]
+
+How about we go with something like:
+* [`s64`:`relative_satoshis`]
+
+In this new mid-splice single commit_sig approach, `tx_signature` will be a
+little
+overloaded as the commit ACK as well as the ending of STFU mode.
+
+Which should work fine but we will need to modify the spec to no longer
+&quot;MUST&quot; reply
+`revoke_and_ack` to `commitment_signed` with a carve out for this special
+case.
+
+
+
+On Sun, Apr 2, 2023 at 7:25&#8239;PM Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; wrote:
+
+&gt;<i> Good morning list,
+</I>&gt;<i>
+</I>&gt;<i> As some of you may know, we've been hard at work experimenting with
+</I>&gt;<i> splicing [1]. Splicing is a complex feature with a large design space.
+</I>&gt;<i> It was interesting to iterate on two separate implementations (eclair
+</I>&gt;<i> and cln) and discover the pain points, edge cases and things that could
+</I>&gt;<i> be improved in the protocol specification.
+</I>&gt;<i>
+</I>&gt;<i> After a few months trying out different approaches, we'd like to share
+</I>&gt;<i> changes that we believe make the splicing protocol simpler and more
+</I>&gt;<i> robust.
+</I>&gt;<i>
+</I>&gt;<i> We call &quot;active commitments&quot; the set of valid commitment transactions to
+</I>&gt;<i> which updates must be applied. While one (or more) splices are ongoing,
+</I>&gt;<i> there is more than one active commitment. When signing updates, we send
+</I>&gt;<i> one `commitment_signed` message per active commitment. We send those
+</I>&gt;<i> messages in the order in which the corresponding funding transactions
+</I>&gt;<i> have been created, which lets the receiver implicitly match every
+</I>&gt;<i> `commitment_signed` to their respective funding transaction.
+</I>&gt;<i>
+</I>&gt;<i> Once we've negotiated a new splice and reached the signing steps of the
+</I>&gt;<i> interactive-tx protocol, we send a single `commitment_signed` for that
+</I>&gt;<i> new commitment. We don't revoke the previous commitment(s), as this adds
+</I>&gt;<i> an unnecessary step. Conceptually, we're simply adding a new commitment
+</I>&gt;<i> to our active commitments set.
+</I>&gt;<i>
+</I>&gt;<i> A sample flow will look like this:
+</I>&gt;<i>
+</I>&gt;<i>    Alice                           Bob
+</I>&gt;<i>      |             stfu             |
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |             stfu             |
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |          splice_init         |
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |          splice_ack          |
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |                              |
+</I>&gt;<i>      |       &lt;interactive-tx&gt;       |
+</I>&gt;<i>      |&lt;----------------------------&gt;|
+</I>&gt;<i>      |                              |
+</I>&gt;<i>      |         tx_complete          |
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |         tx_complete          |
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |         commit_sig           | Sign the new commitment.
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |         commit_sig           | Sign the new commitment.
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |        tx_signatures         |
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |        tx_signatures         |
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |                              |
+</I>&gt;<i>      |       update_add_htlc        | Alice and Bob use the channel while
+</I>&gt;<i> the splice transaction is unconfirmed.
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |       update_add_htlc        |
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |         commit_sig           | Sign the old commitment.
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |         commit_sig           | Sign the new commitment.
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |       revoke_and_ack         |
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |         commit_sig           | Sign the old commitment.
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |         commit_sig           | Sign the new commitment.
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |       revoke_and_ack         |
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |                              |
+</I>&gt;<i>      |        splice_locked         | The splice transaction confirms.
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |        splice_locked         |
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |                              |
+</I>&gt;<i>      |       update_add_htlc        | Alice and Bob can use the channel
+</I>&gt;<i> and forget the old commitment.
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |         commit_sig           | Sign the new commitment.
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |       revoke_and_ack         |
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |         commit_sig           | Sign the new commitment.
+</I>&gt;<i>      |&lt;-----------------------------|
+</I>&gt;<i>      |       revoke_and_ack         |
+</I>&gt;<i>      |-----------------------------&gt;|
+</I>&gt;<i>      |                              |
+</I>&gt;<i>
+</I>&gt;<i> You can find many more details and sample flows in [2].
+</I>&gt;<i>
+</I>&gt;<i> We require nodes to store data about the funding transaction as soon as
+</I>&gt;<i> they send their `commitment_signed` message. This lets us handle every
+</I>&gt;<i> disconnection scenario safely, allowing us to either resume the signing
+</I>&gt;<i> steps on reconnection or forget the funding attempt. This is important
+</I>&gt;<i> because if peers disagree on the set of active commitments, this will
+</I>&gt;<i> lead to a force-close. In order to achieve that, we only need to add
+</I>&gt;<i> the `next_funding_txid` to the `channel_reestablish` message, and fill
+</I>&gt;<i> it when we're missing signatures from our peer. Again, you can find more
+</I>&gt;<i> details and sample flows in [2].
+</I>&gt;<i>
+</I>&gt;<i> Finally, after trying various approaches, we believe that the funding
+</I>&gt;<i> amounts that peer exchange in `splice_init` and `splice_ack` should be
+</I>&gt;<i> relative amounts based on each peer's current channel balance.
+</I>&gt;<i>
+</I>&gt;<i> If Alice sends `funding_amount = 200_000 sats`, it means she will be
+</I>&gt;<i> adding 200 000 sats to the channel's capacity (splice-in).
+</I>&gt;<i>
+</I>&gt;<i> If she sends `funding_amount = -50_000 sats`, it means she will be
+</I>&gt;<i> removing 50 000 sats from the channel's capacity (splice-out).
+</I>&gt;<i>
+</I>&gt;<i> This makes it easier to compute the new channel balances (otherwise we
+</I>&gt;<i> have to deal with millisatoshi to satoshi truncation) and better matches
+</I>&gt;<i> the UX that node operators are expecting, which means there is less need
+</I>&gt;<i> to glue code between the RPC exposed to the node operator and the actual
+</I>&gt;<i> underlying protocol.
+</I>&gt;<i>
+</I>&gt;<i> We've also discovered that implementing 0-conf splicing is tricky: you
+</I>&gt;<i> need to be very careful about scenarios where your peer force-closes
+</I>&gt;<i> using an *inactive* commitment that ends up double-spending what you
+</I>&gt;<i> think is the only *active* commitment but is unconfirmed. We'd be happy
+</I>&gt;<i> to discuss that in more details with other implementers to reduce the
+</I>&gt;<i> risk of introducing new vulnerabilities when shipping that feature.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Bastien
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="https://github.com/lightning/bolts/pull/863">https://github.com/lightning/bolts/pull/863</A>
+</I>&gt;<i> [2] <A HREF="https://gist.github.com/t-bast/1ac31f4e27734a10c5b9847d06db8d86">https://gist.github.com/t-bast/1ac31f4e27734a10c5b9847d06db8d86</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230404/925b7825/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230404/925b7825/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003901.html">[Lightning-dev] Proposed changes to the splicing specification
+</A></li>
+	<LI>Next message: <A HREF="003903.html">[Lightning-dev] Splice Lock Race Condition Solution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3902">[ date ]</a>
+              <a href="thread.html#3902">[ thread ]</a>
+              <a href="subject.html#3902">[ subject ]</a>
+              <a href="author.html#3902">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

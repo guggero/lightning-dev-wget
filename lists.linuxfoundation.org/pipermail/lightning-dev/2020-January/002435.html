@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Decoy node_ids and short_channel_ids
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3CCACdvm3PU3SDmKZdBmOryaWwedJnmT8dsReb8CDKx3ZdnFpiwaA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002430.html">
+   <LINK REL="Next"  HREF="002448.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Decoy node_ids and short_channel_ids</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3CCACdvm3PU3SDmKZdBmOryaWwedJnmT8dsReb8CDKx3ZdnFpiwaA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Decoy node_ids and short_channel_ids">bastien at acinq.fr
+       </A><BR>
+    <I>Mon Jan 20 16:44:53 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002430.html">[Lightning-dev] Lightning Spec Meeting 2020/01/20
+</A></li>
+        <LI>Next message: <A HREF="002448.html">[Lightning-dev] Layered commitments with eltoo
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2435">[ date ]</a>
+              <a href="thread.html#2435">[ thread ]</a>
+              <a href="subject.html#2435">[ subject ]</a>
+              <a href="author.html#2435">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I'd like to explore some enhancements for unannounced (sometimes called
+private) channels.
+Unannounced channels are really useful for mobile nodes that won't be
+online often enough to route
+payments. That does leak information to your channel peer, but that's a
+topic for another post.
+
+One of the nice properties of unannounced channels is that they help break
+linkability between
+on-chain and off-chain payments (because only your channel peer knows the
+link between your
+`funding_key`, your on-chain UTXOs and your `node_id`).
+
+However the current implementation is broken: invoices leak both your
+`node_id` and
+`short_channel_id` (via the signature and Bolt 11 routing hints [1]).
+It doesn't have to be like this though; invoices don't always require you
+to use your real
+`short_channel_id` nor your real `node_id`.
+
+Let's set the scene:
+
+* Alice is our mobile wallet user
+* Bob is a normal lightning node connected to Alice via an unannounced
+channel
+* Carol wants to pay Alice via Bolt 11 invoices
+
+There is already a first proposal to fix this problem [2], with the
+following trade-offs:
+
+(-) Adds a new stateful protocol (with new messages) between Alice and Bob
+(-) Can't use a unique `short_channel_id` for every invoice
+(+) Carol doesn't need to change anything from the existing flow
+
+I'd like to propose an alternative design with the following, different
+trade-offs:
+
+(+) No state to synchronize between Alice and Bob
+(+) Can use unique `short_channel_id`s and `node_id`s for each invoice
+(-) But Carol needs to add a new record in the onion (probably needs a
+feature bit)
+
+## Decoy `node_id`s
+
+Alice currently signs all invoices with the private key associated to her
+`node_id`.
+This makes sense when Alice wants to be reached via public channels, but it
+isn't used at all when
+Alice provides routing hints. In that case she can generate a one-time
+private key and sign the
+invoice with it. This way Alice doesn't leak her real `node_id` to payers.
+
+## Decoy `short_channel_id`s
+
+Here is a simple construction for generating a `decoy_short_channel_id`:
+
+* Alice draws a random `invoice_key`
+* Alice computes the corresponding public key: `P_I = invoice_key * G`
+* Alice computes `decoy_short_channel_id = H(invoice_key * bob_node_id) xor
+short_channel_id`
+* Alice provides a routing hint using `decoy_short_channel_id` in the
+invoice
+* Alice provides `P_I` in the invoice
+
+Now when Carol wants to pay, she has to include `P_I` in the onion payload
+for Bob.
+When Bob receives the HTLC, he can compute `short_channel_id =
+H(bob_private_key * P_I) xor decoy_short_channel_id`.
+That allows Bob to correctly forward the payment to Alice without any prior
+negotiation.
+
+## Improvements
+
+The two main drawbacks of this scheme are:
+
+1. It uses 33 bytes in the invoice
+2. It uses 33 bytes in the onion payload for Bob
+
+We can easily get rid of (1.) by leveraging the `payment_secret`. The
+improved scheme is:
+
+* Alice draws a random `decoy_key`
+* Alice computes the corresponding `decoy_node_id = decoy_key * G`
+* Alice draws a random `payment_secret`
+* Alice computes `decoy_short_channel_id = H(payment_secret * decoy_key *
+bob_node_id) xor short_channel_id`
+* Alice uses the `decoy_key` to sign the invoice
+* Carol recovers `decoy_node_id` from the invoice signature
+* Carol includes `P_I = payment_secret * decoy_node_id` in the onion
+payload for Bob
+* Bob can compute `short_channel_id = H(bob_private_key * P_I) xor
+decoy_short_channel_id`
+
+But I don't see how to get rid of (2.). If anyone has a clever idea on how
+to do that, I'd love to hear it!
+
+These constructions definitely need more eyes on them; I don't see anything
+obviously broken, but
+neither did the designers of PKCS #1 until Bleichenbacher ruined the party
+[3].
+
+Thank you for reading,
+Bastien
+
+[1]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md#tagged-fields">https://github.com/lightningnetwork/lightning-rfc/blob/master/11-payment-encoding.md#tagged-fields</A>
+[2] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/681">https://github.com/lightningnetwork/lightning-rfc/pull/681</A>
+[3] <A HREF="http://archiv.infsec.ethz.ch/education/fs08/secsem/bleichenbacher98.pdf">http://archiv.infsec.ethz.ch/education/fs08/secsem/bleichenbacher98.pdf</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200120/f54dc2eb/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200120/f54dc2eb/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002430.html">[Lightning-dev] Lightning Spec Meeting 2020/01/20
+</A></li>
+	<LI>Next message: <A HREF="002448.html">[Lightning-dev] Layered commitments with eltoo
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2435">[ date ]</a>
+              <a href="thread.html#2435">[ thread ]</a>
+              <a href="subject.html#2435">[ subject ]</a>
+              <a href="author.html#2435">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

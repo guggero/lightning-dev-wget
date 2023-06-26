@@ -1,0 +1,519 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [VERY ROUGH DRAFT] BOLT 12: Offers
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BVERY%20ROUGH%20DRAFT%5D%20BOLT%2012%3A%20Offers&In-Reply-To=%3C87zhhb2bpf.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002309.html">
+   <LINK REL="Next"  HREF="002279.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [VERY ROUGH DRAFT] BOLT 12: Offers</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BVERY%20ROUGH%20DRAFT%5D%20BOLT%2012%3A%20Offers&In-Reply-To=%3C87zhhb2bpf.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [VERY ROUGH DRAFT] BOLT 12: Offers">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Nov  5 04:23:24 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002309.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002279.html">[Lightning-dev] [VERY ROUGH DRAFT] BOLT 12: Offers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2276">[ date ]</a>
+              <a href="thread.html#2276">[ thread ]</a>
+              <a href="subject.html#2276">[ subject ]</a>
+              <a href="author.html#2276">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+        This took longer than I'd indicated; for that I'm sorry.
+However, this should give us all something to chew on.  I've started
+with a draft &quot;BOLT 12&quot; (it might be BOLT 13 by the time it's finalized
+though!).
+
+I've also appended indications where we touch other BOLTs:
+1. BOLT 7 gains a message/reply system, encoded like htlc onions and
+   failure messages.
+2. BOLT 11 gains a `q` field for quantity; this avoids changing the
+   description when the user requests an invoice for more than one of something
+   (since changing the description between offer and invoice requires user
+   interaction: it's the *invoice* which you are committing to).
+
+There's definite handwaving in here; let's see if you can find it!
+
+Cheers,
+Rusty.
+
+# BOLT #12: Offer Protocols for Lightning Payments
+
+An higher-level, QR-code-ready protocol for dealing with invoices over
+Lightning.  There are two simple flows supported: in one, a user gets
+an offer (`lno...`) and requests an invoice over the lightning
+network, obtaining one (or an error) in reply.  In the other, a user
+gets an invoice request (`lni...`), and sends the invoice over the
+lightning network, retreiving an empty reply.
+
+# Table of Contents
+
+  * [Offers](#offers)
+    * [Encoding](#encoding)
+    * [TLV Fields](#tlv-fields)
+  * [Invrequests](#invrequests)
+    * [Encoding](#encoding)
+    * [TLV Fields](#tlv-fields)
+
+# Offers
+
+Offers supply a reader with enough information to request one or more
+invoices via the lightning network itself.
+
+## Encoding
+
+The human-readable part of a Lightning offer is `lno`.  The data part
+consists of three parts:
+
+1. 0 or more [TLV](01-messaging.md#type-length-value-format) encoded fields.
+2. A 32-byte nodeid[1]
+3. 64-byte signature of SHA256(hrp-as-utf8 | tlv | nodeid).
+
+## TLV Fields
+
+The TLV fields define how to get the invoice, and what it's for.
+Each offer has a unique `offer_idenfitier` so the offering node can
+distinguish different invoice requests.
+
+Offers can request recurring payments of various kinds, and specify
+what base currency they are calculated in (the actual amount will be
+in the invoice).
+
+`additional_data` is a bitfield which indicates what information the
+invoice requester should (odd) or must (even) supply:
+1. Bits `0/1`: include `delivery_address`
+2. Bits `2/3`: include `delivery_telephone_number`
+3. Bits `4/5`: include `voucher_code`
+4. Bits `6/7`: include `refund_proof`
+
+`refund_for` indicates an offer for a (whole or part) refund for a
+previous invoice, as indicated by the `payment_hash`.
+
+1. tlvs: `offer`
+2. types:
+    1. type: 1 (`paths`)
+    2. data:
+        * [`u16`:`num_paths`]
+        * [`num_paths*path`:`path`]
+    1. type: 2 (`description`)
+    2. data:
+        * [`...*byte`:`description`]
+    1. type: 3 (`expiry`)
+    2. data:
+        * [`tu64`:`seconds_from_epoch`]
+    1. type: 4 (`offer_identifier`)
+    2. data:
+        * [`...*byte`:`id`]
+    1. type: 5 (`amount`)
+    2. data:
+        * [`4*byte`:`currency`]
+        * [`tu64`:`amount`]
+    1. type: 6 (`additional_data`)
+    2. data:
+	    * [`...*byte`:`rbits`]
+    1. type: 7 (`recurrance`)
+    2. data:
+	    * [`byte`:`time_unit`]
+		* [`u32`:`period`]
+		* [`tu32`:`number`]
+    1. type: 8 (`recurrance_base`)
+    2. data:
+		* [`u32`:`basetime`]
+		* [`tu32`:`paywindow`]
+    1. type: 9 (`quantity`)
+    2. data:
+		* [`tu64`:`max`]
+    1. type: 10 (`refund_for`)
+    2. data:
+        * [`32*byte`:`payment_hash`]
+
+1. subtype: `path`
+2. data:
+   * [`u16`:`num_hops`]
+   * [`num_hops*hop`:`hops`]
+
+1. subtype: `hop`
+2. data:
+   * [`pubkey`:`nodeid`]
+   * [`short_channel_id`:`short_channel_id`]
+   * [`u16`:`flen`]
+   * [`flen*byte`:`features`]
+
+## Requirements For Offers And Invrequests
+
+A writer of an offer or an invrequest:
+  - if it is connected only by private channels:
+    - MUST include `paths` containing a path to the node.
+  - otherwise:
+    - MAY include `paths` containing a path to the node.
+  - MUST describe the item(s) being offered or purpose of invoice in `description`.
+  - MUST include `expiry` if the offer/invrequest will not be valid after some time.
+  - if it includes `expiry`:
+    - MUST set `seconds_from_epoch` to the expiry time in seconds since 1970 UTC.
+
+## Requirements For Offers
+
+A writer of an offer:
+  - MUST use a unique `offer_idenfitier` for each offer.
+  - MAY include `recurrence` to indicate offer should trigger time-spaced
+    invoices.
+  - MUST include `amount` if it includes `recurrence`.
+  - if it includes `amount`:
+    - MUST specify `currency` as the ISO 4712 or BIP-0173, padded with zero bytes if required
+	- MUST specify `amount` to the amount expected for the invoice, as the ISO 4712 currency unit multiplied by exponent, OR the BIP-0173 minimum unit (eg. `satoshis`).
+  - if it requires specific fields in the invoice:
+    - MUST set the corresponding even bits in the `additional_data` field
+
+A reader of an offer:
+  - SHOULD gain user consent for recurring payments.
+  - SHOULD allow user to view and cancel recurring payments.
+  - SHOULD gain user consent to send `delivery_` fields.
+  - if it uses `amount` to provide the user with a cost estimate:
+	- MUST warn user if amount of actual invoice differs significantly
+		from that expectation.
+  - FIXME: more!
+
+## Recurrance
+
+Some offers are *periodic*, such as a subscription service or monthly
+dues, in that payment is expected to be repeated.  There are many
+different flavors of repetition, consider:
+
+* Payments due on the first of every month, for 6 months.
+* Payments due on every Monday, 1pm Pacific Standard Time.
+* Payments due once a year:
+   * which must be made on January 1st, or
+   * which are only valid if started January 1st 2020, or
+   * which if paid after January 1st you (over) pay the full rate first year, or
+   * which if paid after January 1st are paid pro-rata for the first year, or
+   * which repeat from whenever you made the first payment
+
+Thus, each payment has:
+1. A `time_unit` defining 0 (seconds), 1 (days), 2 (months), 3 (years).
+2. A `period`, defining how often (in `time_unit`) it has to be paid.
+3. An optional `number` of total payments to be paid.
+4. An optional `basetime`, defining when the first payment applies
+   in seconds since 1970-01-01 UTC.
+5. An optional `paywindow`, defining how many seconds into the period
+   a payment will be accepted: 0xFFFFFFFF being a special value meaning
+   &quot;any time during the period, but you will have to pay proportionally
+   to the remaining time in the period&quot;.
+
+Note that the `expiry` field covers the case where an offer is no longer
+valid after January 1st 2020.
+
+## Default Offer
+
+The &quot;default offer&quot; of a node is a nominal offer used to send
+unsolicited payments.  It is generally not actually sent, but can be
+used by any other node as if it has been.  It has the following
+fields:
+
+* `offer_idenfitier`: zero-length
+* `d`: any
+* `n`: the node id of the recipient.
+
+## Invoice Request Encoding
+
+Once it has an offer, the node can request an actual invoice using the
+`invoice_req` message inside `directed`'s `onion_routing_packet`.  It
+would expect an `invoice_or_error_tlv` inside the `directed_reply`
+message.
+
+This includes a `tag` it can use to identify replies, the
+`offer_idenfitier` from the offer, a `key` it can use to prove it was
+the requester of this invoice, a `recurrence` number if this
+is a payment in a recurring series, and other codes as required.
+
+The `refund_proof` refers to a previous invoice paid by the sender for
+the specific case of a `refund_for` offer.  It provides proof of
+payment (the `payment_preimage` and also a signature of the
+`payment_hash` from the `key` which requested the being-refunded
+invoice (which does *not* have to be the same as this `key`!).
+
+1. tlvs: `invoice_request_tlv`
+2. types:
+   1. type: 1 (`tag`)
+   2. data:
+      * [`...*byte`:`tag`]
+   1. type: 2 (`offer_identifier`)
+   2. data:
+      * [`...*byte`:`id`]
+   1. type: 3 (`key`)
+   2. data:
+     * [`32`:`key`]
+   1. type: 4 (`recurrence`)
+   2. data:
+     * [`tu64`:`number`]
+   1. type: 5 (`quantity`)
+   2. data:
+     * [`tu64`:`n`]
+   1. type: 6 (`delivery_address_name`)
+   2. data:
+	 * [`...*byte`:`name`]
+   1. type: 7 (`delivery_address1`)
+   2. data:
+	 * [`...*byte`:`address1`]
+   1. type: 8 (`delivery_address2`)
+   2. data:
+	 * [`...*byte`:`address2`]
+   1. type: 9 (`delivery_city`)
+   2. data:
+	 * [`...*byte`:`city`]
+   1. type: 10 (`delivery_state_province_or_region`)
+   2. data:
+	 * [`...*byte`:`state_province_or_region`]
+   1. type: 11 (`delivery_zip_or_postal_code`)
+   2. data:
+	 * [`...*byte`:`zip_or_postal_code`]
+   1. type: 12 (`delivery_country`)
+   2. data:
+	 * [`2*byte`:`country_code`]
+   1. type: 13 (`delivery_telephone_number`)
+   2. data:
+	 * [`...*byte`:`tel`]
+   1. type: 14 (`voucher_code`)
+   2. data:
+	 * [`...*byte`:`code`]
+   1. type: 15 (`refund_proof`)
+   2. data:
+      * [`32*byte`:`payment_preimage`]
+      * [`signature`:`signature`]
+
+## Requirements
+
+FIXME: many more
+Sender MUST use ISO 3166 alpha-2 code for `delivery_country`.
+Sender MUST set offer_identifier to match offer.
+Sender MUST include `key`
+   - SHOULD use a transient unpredictable key
+   - MUST reuse key for successive recurring invoices.
+Sender MUST set `recurrence` for recurring invoices.
+
+Receiver MUST check `offer_identifier`
+Receiver MUST check `delivery_` fields.
+Receiver MUST check `recurrence`.
+Receiver MUST check `amount`.
+
+1. tlvs: `invoice_or_error_tlv`
+2. types:
+   1. type: 1 (`tag`)
+   2. data:
+     * [`...*byte`:`tag`]
+   1. type: 3 (`omitted`)
+   2. data:
+	 * [`...*u64`:`omitted_fields`]
+   1. type: 4 (`invoice`)
+   2. data:
+     * [`...*byte`:`invoice`]
+   1. type: 5 (`message`)
+     * [`...*byte`:`message`]
+   1. type: 6 (`replacement`)
+   2. data:
+     * [`signature`:`signature`]
+     * [`...*byte`:`offer`]
+
+Sender:
+- MUST copy `tag` from sender.
+- MUST omit fields it does not use, and place number in order in `omitted_fields`.
+- if it includes `invoice`:
+  - MUST not include `message`
+  - MUST not include `replacement`
+  - MUST [merkle fields it used](#merkle-calculation) and place that in invoice `s` field.
+- otherwise, if it includes `replacement`:
+  - MAY include `message` 
+- otherwise:
+  - MUST include `message` describing the error.
+
+Receiver:
+- MUST check that `tag` matches req.
+- if `replacement`:
+  - MUST fail if `signature` does not sign `offer` with same key as original.
+  - MUST only fetch once (no double-redirects!)
+- if description or amount significantly changes, must re-ask user.
+  - SHOULD note if description simply has something appended (eg &quot;+ postage&quot;).
+- within invoice:
+    - MUST check that `s` matches merkle of fields, minus `omitted`.
+	- MUST check that no vital fields are in `omitted`.
+	- MUST check that `d` matches `description`
+    - MUST check that `q` DNE if `quantity` DNE, otherwise is equal.
+    - Must check valid signature, etc.
+
+## Merkle Calculation
+
+1. For each `invoice_req_tlv` field in ascending `tlv` type order:
+   1. If the field was omitted, it is added to `omitted_fields`.
+   2. Otherwise, the immediate parent merkle is:
+   
+      SHA256(SHA256(`tag` | `be64-n`) | SHA256(`tlv-value`))
+
+      Where `be64-n` is a 64-bit big-endian counter starting at 0 and
+      incrementing for each leaf.
+
+   3. Order these nodes in increasing SHA256(`tag` | `be64-n`) order.
+
+2. Create additional leaves until `be64-n` is the next power of 2:
+
+      SHA256(`tag` | `be64-n`)
+
+3. Combine adjacent leaves using SHA256(leaf1 | leaf2) until none remain.
+
+By creating adjacent leaves using the `tag` field and a counter, and
+sorting the leaves, the only significant information revealed by a
+merkle proof on a node is the depth of tree (which implies the total
+number of TLV fields).
+
+# InvRequests
+
+There are times when it makes sense to request an invoice over another
+medium, such as HTTP or a QR code.
+
+## Encoding
+
+The human-readable part of a Lightning invrequest is `lni`.  The data part
+consists of three parts:
+
+1. 0 or more [TLV](01-messaging.md#type-length-value-format) encoded fields.
+2. A 32-byte nodeid[1]
+3. 64-byte signature of SHA256(hrp-as-utf8 | tlv | nodeid).
+
+## TLV Fields
+
+1. tlvs: `invreq`
+2. types:
+    1. type: 1 (`paths`)
+    2. data:
+        * [`u16`:`num_paths`]
+        * [`num_paths*path`:`path`]
+    1. type: 2 (`description`)
+    2. data:
+        * [`...*byte`:`description`]
+    1. type: 3 (`expiry`)
+    2. data:
+        * [`tu64`:`seconds_from_epoch`]
+    1. type: 4 (`amount`)
+    2. data:
+        * [`tu64`:`millisatoshis`]
+
+The fields `paths`, `description`, and `expiry` fields are the
+same as those for offers; the optional `amount` field describes the
+amount an invoice will be accepted for.
+
+Upon parsing and accepting an `invreq`, the node sends an
+`invoice_or_error_tlv` within an onion.  The reply is empty.
+
+## Requirements
+
+The requirements for `paths`, `description` and `expiry` are
+[described above](#requirements-for-offers-and-invrequests). 
+
+FIXME: More.
+
+[1] Assuming we go for Schnorr sigs and 32-byte pubkeys.
+----
+Addendum: BOLT #7: P2P Node and Channel Discovery and Directed Messages
+...
+# Directed Messages
+
+Directed messages allow peers to use existing connections to query for
+invoices (see [BOLT 12](12-offer-encoding.md)).  Like gossip messages,
+they are not associated with a particular local channel.
+
+The `id` is a unique, transient identifier between the peers, used to
+identify match messages and replies.
+
+## The `directed` and `directed_reply` Messages
+
+1. type: 384 (`directed`) (`option_directed_messages`)
+2. data:
+    * [`chain_hash`:`chain_hash`]
+    * [`u64`:`id`]
+    * [`1366*byte`:`onion_routing_packet`]
+
+1. type: 384 (`directed_reply`) (`option_directed_messages`)
+2. data:
+    * [`chain_hash`:`chain_hash`]
+    * [`u64`:`id`]
+    * [`u16`:`len`]
+    * [`len*byte`:`reply`]
+
+## Requirements
+
+FIXME: similar to update_add_htlc and update_fail_htlc.
+FIXME: define reasonable timeout after which you can forget if not replied?
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002309.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002279.html">[Lightning-dev] [VERY ROUGH DRAFT] BOLT 12: Offers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2276">[ date ]</a>
+              <a href="thread.html#2276">[ thread ]</a>
+              <a href="subject.html#2276">[ subject ]</a>
+              <a href="author.html#2276">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

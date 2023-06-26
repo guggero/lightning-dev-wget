@@ -1,0 +1,621 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] LN Summit 2021 Notes &amp; Summary/Commentary
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20LN%20Summit%202021%20Notes%20%26%20Summary/Commentary&In-Reply-To=%3CCAO3Pvs-g%2Bwh4SibG28nNeTyfTBY2WcVEq%3DPH3rLZC0uuXiyTUA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003337.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] LN Summit 2021 Notes &amp; Summary/Commentary</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20LN%20Summit%202021%20Notes%20%26%20Summary/Commentary&In-Reply-To=%3CCAO3Pvs-g%2Bwh4SibG28nNeTyfTBY2WcVEq%3DPH3rLZC0uuXiyTUA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] LN Summit 2021 Notes &amp; Summary/Commentary">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Nov  3 02:19:04 UTC 2021</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003337.html">[Lightning-dev] Removing lnd's source code from the Lightning specs repository
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3336">[ date ]</a>
+              <a href="thread.html#3336">[ thread ]</a>
+              <a href="subject.html#3336">[ subject ]</a>
+              <a href="author.html#3336">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all,
+
+A few weeks ago over a dozen Lightning developers met up in Zurich for two
+days to discuss a number of matters related to the current state and
+evolution of the protocol. All major implementations were represented to
+some degree, and we even had a number of &quot;independent&quot;
+developers/researchers join (in person or via a video call) as well.
+
+What follows is my best attempt at summarizing (and inserting any relevant
+details I forgot to write down, along with a bit of commentary) the set of
+notes I took during the sessions.  I'm no Kanzure, so I wasn't able to fully
+capture all the relevant conversations/topics, so what follows is my best
+attempt at cataloguing the most relevant conversations. If you attended and
+felt I missed out on a key point, or inadvertently misrepresented a
+statement/idea, please feel free to reply correcting or adding additional
+detail.
+
+The meeting notes in full can be found here:
+<A HREF="https://docs.google.com/document/d/1fPyjIUNkc9W1DPyMQ81isiv1fKDW9n7b0H6sObQ-QfU/edit?usp=sharing">https://docs.google.com/document/d/1fPyjIUNkc9W1DPyMQ81isiv1fKDW9n7b0H6sObQ-QfU/edit?usp=sharing</A>
+
+# Taproot x PTLC x LN
+
+One of the first larger sessions that kicked off was dedicated to discussing
+various paths/proposals to upgrading the entire network to taproot based
+channels and upgrading the current hash based e2e payment mechanisms (HTLCs)
+to instead be based on EC keys (PTLC utilizing adapter sigs, etc). Taproot
+is desirable as it allows most operations (funding, co-op close, certain
+sweep types, etc) to blend in with normal transactions (once uptake is high
+enough). The addition of schnorr sigs into the protocol alongside taproot
+significantly expands the design space of off-chain protocols as it allows
+the deployment of certain types of scriptless script based adapter
+signatures. Namely, the PTLC concept that does away with the current
+hash-baed HTLCs, and gives us better privacy + compostability.
+
+## Big Bang vs Iterative Deployment
+
+Recently aj published [4] a proposal for a taproot upgrade that incorporates
+several ideas into a single package, with the goal of doing a single large
+update to upgrade the network in one swoop. The proposal includes: an
+upgrade to taproot, revising all the scripts we used to be more taprooty and
+scriptless scripty, a base new revocation mechanism for punishment based
+channels, an instantiation of PTLCs, a new commitment state update machine
+(as it uses symmetric state like eltoo), a new layer commitment structure
+meant to alleviate a trade-off of symmetric state/eltoo related to CLTV+CSV
+dependencies and ultimately, eltoo itself as well.
+
+A core matter discussed was if we should try to do things in a sort of &quot;big
+bang&quot; manner (get everything all at once), or try to roll things out more
+iteratively.
+
+Pros for the big bang roll out is that we get things all at once, and
+wouldn't need to &quot;throw away&quot; any intermediate steps as future ones are
+rolled out. Cons are that it would be, well, a rather big update to the
+entire network, and the core code of all implementations. This would
+potentially be difficult to get right all at once, could take a ton of time
+to properly review the entire protocol, implement, and finally deploy.
+
+An alternative considered was a more iterative approach. Pros for the
+iterative approach would that we'd be able to get some easy wins early on
+(mu-sig based funding outputs as an example) for elements with a smaller
+design space. We'd also be able to review the components one at at time,
+while making further background progress on the more amorphous aspects of a
+greater proposal. Cons of the iterative approach is that it would
+_potentially_ take longer than a big bang approach (from start to &quot;finish&quot;,
+finish being everything we ever wanted). We'd also potentially need to
+&quot;abandon&quot; components as newer ones are proposed to take their place,
+possibly creating technical/code debt. A system for dynamically updating the
+channel params/format would make this process more streamlined, as with the
+new channel_type funding feature, we'd be able to incrementally upgrade a
+channel (to a degree).
+
+### An Potential Iterative Roadmap
+
+The question of what an iterative roadmap would even look like was brought
+up. A lofty proposal was the following ordering (not binding at all fwiw),
+note that some of these items can be carried out concurrently:
+
+  1. Mu-Sig
+
+    * The root component everything else relies on. We'd first all implement
+      Mu-Sig 2 (more on that below) and port the current 2-of-2 multi-sig
+      output instead a aggregate key schnorr 2-of-2 output. Along the way
+      we'd do a naive port of the current script set into the tapscript
+      tree. This would mean just porting the scripts as is, with minimal
+      modifications. The main thing we'd need to do is port over all the CMS
+      instances to use CSA (check sig add) instead).
+
+      Note that we'd also likely need to change/modify the current
+      sig/revocation dance to account for proper exchange of nonces, partial
+      signatures, etc. Much of this still needs to be concretely designed.
+
+  2. Native port of scripts into tapscript
+
+    * Next we'd optimize the current set of scripts, rolling them into new
+      tapscript branches as necessary. We'd likely also take a look at
+      miniscript to see how things can be further organized once re-ordered.
+
+  3. PTLCS
+
+    * In this phase we'd start to roll out PTLCs by adding a new node level
+      feature bit, re-working the onion payload, and also the HTLC scripts
+      (and also state machine in the process?). PTLCs only work if the
+      entire path supports it, so it may take some time to get near 100%
+      upgrade of the internal routing network.
+
+  4. New scriptless script revocation mechanisms
+
+    *  Next we'd start to incorporate the new scriptss script based
+       revocation mechanism. At a high level, it does away with the explicit
+       revocation secret reveal and instead bundles it into the normal
+       multi-sig commitment sig transfer using adapter signatures to reveal
+       the revocation secret. See the original proposal, or this paper [1]
+       for further details.
+
+       Note that this step is somewhat optional, as it moves entirely to
+       symmetric state which is nice w.r.t aligning things with the eventual
+       eltoo roll out, but also would require a more significant re-working
+       of the state machine and on-chain handling.
+
+  5. Layer commitments
+
+    * Related to symmetric commitment state and eltoo, this proposes to
+modify
+      the initial &quot;update&quot; transaction to decouple the CLTV+CSV timeouts on
+      HTLCs in a similar manner to our current second-level HTLCs. This is
+      an attempt to mitigate one of the tradeoffs brought about by symmetric
+      state and eltoo.
+
+      Similar to the new revocation mechanism, this is somewhat an optional
+      step as well. The main benefit here is that it would further converge
+      the paths of revocation vs sequence (eltoo) based channels. Assuming
+      revocation channels are still widely in use, they wouldn't necessarily
+      need to adopt this new format at all.
+
+  7. Eltoo
+
+    * Sequence based channels, combines a lot of the above, removes the
+      revocation mechanism from channels, opens things up to multi-party
+      channel design, etc. Last in the sequence as it requires some form of
+      soft-fork update on the base chain.
+
+## Mu-Sig 2
+
+As a potential first candidate in the iterative taproot roll out process,
+there was a lot of discussion around where Mu-Sig 2 was: if the libraries
+are ready, if people have already started implementing it, any open design
+questions, etc. From the discussions, the general conclusion was (note that
+there was other discussion with developers actively working on the design
+later in the week) that there still needs to be some standardization work
+around Mu-Sig 2 itself, particularly w.r.t guidance on safe deterministic
+nonce generation.
+
+For consumers of `secp256k1-zkp`, a PR implementing MuSig2 from an API
+perspective is under active review [2]. From here, it appears the next steps
+would be attempting to create a BIP around some of the message passing,
+nonce generation, and cicatrization aspects of the protocol when deployed to
+a two/multi party setting.
+
+As the inclusion of MuSig2 would end up modifying the core state machine
+(particularly how new signatures are exchange), some lofty design sketches
+like piggybacking extra nonces onto the current revoke_and_ack message were
+tossed around, with nothing too concrete being developed during the
+conversations.
+
+### Mu-Sig 2 &amp; Gossip
+
+Today we end up sending 4 signatures whenever we announce a new channel
+announcement on the network (2 sigs of the multi-sig keys, and 2 sigs of the
+node keys), using Mu-Sig 2 here in place would allow us to reduce this to a
+single signature which makes things slightly more efficient and also saves
+some space. Given how independent this change was from the core
+channel/funding changes (can be done today with the existing OG segwit
+channels), people generally thought this would be a good place to start, as
+it's relatively low risk and help people vet their implementations and
+become more comfortable with the new primitives at our disposal.
+
+## PTLCs &amp; The Onion
+
+Aside from the core channel level changes, PTLCs are another key development
+brought about by the activation of taproot. The Surebits team and their
+collaborators have done a ton of work in this area proving out their concept
+for their application within the DLC realm. General anointment was that we
+should be able to build on their work/exploration in designing the
+final version for LN itself.
+
+One thing that needs to be modified is the set of payloads included in the
+onion itself. This doesn't seem to be too big of a lift (nonce and points
+for the left+right locks, etc), but may end up shrinking the max possible
+route length a bit, as more space in the onion for a given hop takes away
+from the space that can be allocated to later hops. Some ideas were tossed
+around that may help us _save_ some space by re-using the shared secret
+derived for each hop (still needs to be fleshed out some).
+
+# Sync (or slightly more sync?) vs Async Commitment Update State Machines
+
+One topic that came up a few times was the trade-offs brought about by
+moving to a _more_ synchronous channel update state machine vs the current
+async (and potentially fully non-blocking) state machine. When we say sync,
+we typically mean something that ends up with one or both sides taking turns
+to do updates. This is much simpler than the current fully async update
+state machine, and appears to be somewhat of a requirement when moving to
+symmetric channel state (like eltoo does).
+
+An active proposal to the spec attempts to introduce a 'sftu' message to
+sort of pause things and clear the air for potentially difficult to
+implement in an async environment enhancements like splicing. Related to
+that
+is another active proposal that attempts to make the current state machine
+more sync by adding alternating rounds, which ends up simplifying things
+quite a bit.
+
+Re trade-offs there was discussion w.r.t if one or the other offered
+theoretical higher transaction rates vs the other. In the end the rough
+conclusion was that both likely end up about the same w.r.t throughput, but
+an async state machine would win over when it comes to latency (as it's more
+non-blocking, particularly when you allow multiple unrevoked commitments by
+sending more than 1 revocation key at the very start).
+
+# Meta Spec Process Topics
+
+Not _that_ &quot;Meta&quot; ;) -- but general discussions around the current process,
+progress, and priorities of the current spec work.
+
+## IRC vs Video Chats for Spec Meetings
+
+A big topic was the current velocity of active proposals, review
+bandwidth/energy, and just general momentum of the current spec process. A
+few attendees felt like the move to mostly IRC meetings slowed things down a
+bit, as while it's nice that everything is written down and open access,
+discussions tend to drag along, and it's easy to misinterpret a message or
+miss one during cross chatter. The idea to bring back the video calls was
+brought up, as many conversations can be hashed out more easily over voice
+vs scattered IRC messages over a 1 hr period. The latest spec meeting had an
+optional video chat that a few people ended up joining. Some ppl have mixed
+feelings about going back to the calls vs IRC as we lose the transcript, but
+seems the important thing is that the major action items, decisions, and
+follow up are written down.
+
+# BOLTs, bLIPs, and BOLT Proposals
+
+As the years have gone on, and the protocol has evolved it's clear that
+there's just _so much_ stuff to be designed, worked on, and deployed. The
+BOLT system has served us well through the years, but also fallen short at
+times when it comes to evolution of the text itself. People seemed to agree
+that a rough heuristic of what should be in a BOLT is what &quot;everyone needs
+to agree on&quot;, so core network capabilities like PLTCs. For everything else
+there're bLIP^TM (which are still in the process of getting off the ground,
+which are more descriptive documents that may describe some cool new feature
+deployed on the edges of the network like custom backup schemes, or async
+payment architectures (like Breez's Lightning Rod).
+
+On the topic of BOLT evolution, some expressed that the way things have
+evolved it can be hard to reason about what came first, or why certain
+things are the way they were. A response to this (that has somewhat started
+to catch on), is having a standalone proposals [8] folder that works through
+the rationale and design space, to be committed alongside a minimal set of
+changes to the core BOLT document.
+
+Related to BOLT evolution was the question of: when should a new standalone
+document (like BOLT-12/Offers) be created vs extending an existing document?
+The original idea was to have a logical layering between the numbers to
+create clean separation, but over time this principle wasn't fully adhered
+to/communicated, with some documents being more self contained than others.
+In the past we also attempts to create clear delineations by tagging a
+&quot;Lighting 1.1&quot; version, but that never really happened.
+
+Some suggested that we move to a sort of IETF approach, where we have
+multiple versioned documents that end up copying everything from the prior
+version, with the new additions (like bgp1, bgp2, etc). This ends up with
+some copy/past duplication, but allows implementers to just read a single
+document from top to bottom and not have to worry about old conditional
+logic that has been mostly phased out at this point.
+
+Related to the question of review bandwidth was a topic (tbh not sure I
+fully captured this correctly in the notes) of &quot;silent dissent&quot; where by not
+reviewing something it's assumed a contributor doesn't fully support a
+proposal/extension. Some felt this wasn't desirable as it ends up blocking
+proposals, while others were ok with it as they felt if another
+implementation wasn't ready to pick it up and review it, then maybe it
+wasn't quite yet a BOLT ready extension and needed more review. The
+evolution of onion messages was cited as an example where something sat for
+a while, but then was reviewed by another implementation and ended up being
+improved with lots of good feedback. I don't remember if there was really
+any sort of conclusion here, but some suggested adopting bitcoind's system
+of high priori reviews, which may help, but then again the solution space of
+LN is just so large and multiple things can be worked on independently.
+
+The session concluded with a call to zoom out a bit, and attempt to tease
+out where we want the spec to be in 5 years or so, then move towards that
+incrementally as a group.
+
+# Onion Messages &amp; Offers
+
+There was a session on onion messages and the related Offers proposal [5]
+where the proposer was able to really dig into a lot of specifics, answer
+questions on the scope, and tease out a possible staged deployment plan. The
+main motivation of the design of Offers was to both move us away from the
+awkward bech32 encoding (though it still uses it in certain places?) and
+also not necessarily require a receiver to be running a web server to be
+able to negotiate the payment. The new invoice format inherits most of the
+fields from BOLT 11, but also adds a pairing key that can be used for
+refunds (you prove you know the key, it's embedded in the custom invoice
+created for your), and also be used to create _unique_ proofs of payment.
+
+In terms of possible a possible deployment path, there was talk of possible
+leaving out certain features like recurrence, fiat exchange (?), stateless
+invoices, extra metadata, streaming invoices (allows to not have to fetch a
+new one each time, but I didn't fully follow the scheme), and just implement
+the base invoice format w/ the optional interactive invoice creation.
+Bridging BOLT 11 and 12 is possible in theory as well, though the custom
+BOLT 12 stuff would need to be left over or like stuffed into some metadata
+field in BOLT 11.
+
+Questions of the adoption window were brought up, since some of the
+functionality BOLT 12 offers (namely the payment negotiation features) are
+already implemented and deployed in higher-level protocols like LN-URL (and
+its extensions). So new developers/services need to be won over and
+convinced to adopt the new system, given they already have alternatives
+deployed that worked mostly _outside_ the protocol to achieve the
+functionality. Some found the lack of tight integration to the web layer as
+a plus (for BOLT 12), but others weren't really sure it was a big deal given
+most services these days are already web based. There was also brief
+discussion of BOLT12address [9], which emulates some of the LN Address
+functionality, but handles certs in a slightly different manner (?).
+
+# Boomerang, &quot;Stuckless&quot; Payments, and Payment Level ACKs
+
+Related to the PTLC conversation is if we want to (from the start)
+incorporate some of the techniques that allows safe payment retry on the
+network layer by enforcing a sort of 2-phase settlement protocol where the
+sender doesn't allow redundant/repeated payments to be fulfilled. The
+original Boomerang [6] scheme was based on a VSS (verifiable secret sharing
+protocol) to enforce a penalty if the remote party fulls too many shards.
+Stuckless [7] in comparison adds another round of iteration and ends up
+being slightly simpler.
+
+At a higher level, there was discussion of if this sort of over/repeated
+payment scenario really happens all that often in practice, but no one
+seemed to have a good answer. One under explored benefit of the scheme
+discussed was that it actually allows you to safely send out current HTLCs
+during path finding, since you're confident that overpayment isn't possible.
+AMP was also discussed as an alternative way to achieve the same thing,
+though
+via that atomicity enforced by the secret sharing scheme.
+
+A related topic was the concept of a payment level ACK, which would give the
+sender valuable feedback of when the HTLC _actually_ arrived at the other
+end. Today senders only know about failures, or when things ultimately all
+arrive (settle). Being able to know an HTLC arrived is very valuable
+information, as it lets one update their path finding or flow analysis in
+real time based on information from the receiver.
+
+One way to achieve this (sorta hacky) would be to send a &quot;tracer&quot; HTLC
+that should be cancelled back once the actual HTLC arrives. However this
+runs into issue of the tracer getting stuck, etc (need to ACK the ACK to
+ACK the ACK). A better way would be to utilize onion messages (or a sort of
+soft error, needs to be written) to allow communication between sender and
+receiver. It also may be the case that stuckless also naturally gives us
+ACKs at this level as well.
+
+# Channel Jamming
+
+Another topic that evolved into its own track/session was the topic of
+channel jamming and generally DoS mitigation techniques related to channels.
+Several categories of mitigations were disused including: prepaying for
+everything, forwarding passes (similar to Bittorrent like reputation),
+staking certificates, forwarding level up/down stream reputation, per-node
+VDF based global rate limiting, PoW, viewing the existing HTLC costs as a
+bond, and also extending the current fee equation to also factor in the
+worst-case CLTV delay of an HTLC.
+
+Pre/post pay techniques have been discussed extensively on the mailing list,
+so I won't go into those and will instead focus on some of the newer
+idea/concepts discussed. Open questions here are mainly surrounding proper
+parametrization (how much should it cost?) and further analysis w.r.t if a
+de minims fee will actually serve to discourage well funded attackers, given
+it's a griefing vector so nothing is gained directly either way.
+
+## Forwarding Passes
+
+The concept of a &quot;forwarding&quot; pass was introduced/discussed, which
+effectively is a per-node sort of rep currency created using symmetric
+crypto (think of it as a symmetrically encrypted metadata blob). In order
+to route through a node, one needs to first obtain a freebie pass which is
+passed back via the onion, which requires an initial failed payment or some
+sort of LSP bootstrapping mechanism. From there any successfully forwarded
+payments that include that forwarding pass (possibly to be re-randomized?)
+would accrue additional attributes/weight/reputation. Essentially you buy
+your way into the routing graces of a node with successful forwards over
+time and good behavior.
+
+The general idea is rather than (attempt) to punish individuals, one should
+attempt to ensure that the network is able to gracefully fallback to a sort
+of reduced operating mode is spam is rampant. As this is a per-node system
+(local), if a node is under high load, they can choose to only observe
+passes that are older than 3 weeks, or only those that have generated a
+certain amount of routings fees, etc. There would exist no global policy,
+but instead a local policy that nodes would use to restrict the set of
+permissible traffic sources.
+
+The downsides of this approach is that a forwarding node is able to
+correlate senders to a degree (since the pass it tied to the origin, but
+doesn't give away information like pub keys, it's a new pseudonymous
+identifier). Others also cited the similarity to the existing Bittorrent
+reputation system and the difficult of ensuring that a party isn't able to
+continually obtain &quot;freebie&quot; passes/reputation, thereby by passing the
+entire thing.
+
+## Existing HTLC Costs as a Bond
+
+Another newer concept discussed/generated/re-oriented during the discussion
+was viewing the existing HTLC cost as a bond. At times sending HTLCs is
+viewed as being &quot;costless&quot;on the network, but sending an HTLC has a direct
+cost: the time value of the coins committed in the HTLC. In the worst case,
+the sender needs to be ready to wait for the absolute CLTV timeout (which is
+highest at the sender) to expire before they can claim their funds. When
+combined with generally higher values for the min_htlc routing policy,
+routing nodes are able to dictate the minimum bond cost to a sender to
+transit their node.
+
+This line of thinking asserts that there already _is_ a cost (both the
+HTLC(s) and the cost to fund and maintain a channel), to attempting to spam
+HTLCs, which seems to have played some role in mitigations (but also that
+there's no true gain, it's griefing). Extending this concept, it's then
+possible for a node to retroactively raise its minimum bond size (either via
+min_htlc or applied during forwarding) when its set of commitment slots
+becomes too saturated. This model would then divide up the available
+commitment space into different QoS buckets with varying amounts for the
+smallest HTLC allowed in that slot.
+
+Questions of if dust would be factored in were brought up, and also to start
+to increase the 483 value as it makes attacks easier and can be raised
+higher to the policy level limit, as the current setting optimizes for an
+uncommon case (breach with a fully loaded commitment transaction) at the
+cost of throughput and making it easier to fully load a commitment
+transaction.
+
+## Pricing the HTLC Option Cost using Theta
+
+Another concept discussed was the fact that today, routing fees don't
+accurately reflect the apparent time value: I pay the same fee for
+using a 1000 block CLTV as I do for a 20 block CLTV. Many viewed this as an
+incentive issue as if corrected, then longer routes (more CLTV deltas) would
+be more expensive, which would make certain classes of attacks more
+expensive as well. In addition it would require services that can end up
+holding HTLCs for a long period of time to pay up front (again increase the
+&quot;bond value&quot; as mentioned above) for this duration.
+
+In terms of a potential roll out, something like this could be naively
+phased in by extending the current fee algorithm we a new scaling term,
+dubbed theta:
+
+  * fee = amt*feeRate + baseFee + (amt*cltvAbsolute*theta)
+
+Note that if `theta` is zero, then it's the same as the current algorithm.
+Increasing it to one causes fees to scale linearly with the product of the
+amount and worst case (absolute) time delay. Rather than a simple
+multiplicative increase, perhaps some polynomial should be used as a scaling
+factor here to give node operators more flexibility. By setting certain
+coefficients to zero, they'd be able to opt out of more aggressive scaling
+if they wished.
+
+With the way gossip and path finding works today, nodes that want to adopt
+this scheme could begin to do so by adding a new TLV value that includes the
+theta field possibly with a required (?) feature bit to indicate senders
+_must_ understand theta.
+
+An alternative way to phase it in brought up was just to repurpose the
+baseFee (as some advocates think it should be removed/ignored) to instead be
+interpreted as this `theta` value.
+
+Related to this topic are also the channel variants that achieve a &quot;constant
+time delay&quot; with their HTLC mechanism, which allows all participants to have
+the same time delay and avoid having to increment the worst case delay as
+new routes are added to the hops.
+
+## Packet Switching
+
+One of the last group sessions was on the topic of introducing new packet
+switching operating modes into the network. Compared to the current source
+routing based method (where the sender selects the entire route), with
+packet switching they'd either specify only a destination (possibly using a
+blinded route, more on that below), or select a series of &quot;waypoints&quot; with
+the intermediate nodes having freedom to select the route as they choose (a
+la certain flavors of trampoline).
+
+### Open Questions w.r.t Trampoline Deployment
+
+The session kicked up by exploring some of the unanswered questions w.r.t a
+wider production deployment of the trampoline scheme (so far there're only
+two (?) trampoline nodes on the network: the main ACINQ mainnet node
+Horizon, and the main Electrum node). One question posited was: do
+trampoline nodes retry _internally_ within the network, or simply fail back
+after the first failed routing attempt? Internal network retry has the
+benefit that in theory a trampoline node has a much better grasp on the
+liquidity distribution within their local network than the sender. However,
+assuming a path has several trampoline nodes within a route, the internal
+retry and _each_ of them has the potential to add considerable latency to a
+payment, and also rob the sender of any information they can use to update
+their path/attempt (as they aren't able to receive onion errors from the
+final destination as normal).
+
+### Trampoline Incentives &amp; Sender Implications
+
+Other open question included: how a sender was to properly set the fee and
+time lock budget (and how that affected the effort nodes would take on to
+optimize their fees gain), and how nodes were to be discovered in the first
+place (for clients that only opted to insert the trampoline nodes into their
+local graph). As the graph gets larger, some felt that the existence of
+trampoline nodes actually encourages routing nodes to maintain the graph as
+otherwise, it actually isn't needed for routine forwarding.
+
+### Privacy Implications of Trampoline Nodes
+
+Another big topic of discussion was the ultimate privacy benefits of
+inserting one or many trampoline nodes into the route. An argument was
+presented that that argued that anything but adding trampoline nodes at the
+start/end would end up degrading privacy, as the intermediate nodes learn
+that any nodes that accept the HTLC from them to the next trampoline node
+could be ruled out as the destination, thereby reducing the anonymity set
+and set of possible/available paths (due to loop attack prevention some
+implementations like lnd use [3]). Assuming the argument holds, then its
+appears desirable to only use the following configurations (more analysis
+needed ofc):
+
+  * Single trampoline node at the start: essentially offers delegated path
+    finding. Wallets like Phoenix use this operating mode today.
+
+  * Single trampoline node at the end: gives us the long sought after
+    rendezvous payments, which enhance the current protocol by offering
+    _receiver_ anonymity in addition to the current sender anonymity.
+
+  * Two trampoline nodes, one at the start and one at the end: combines the
+    above operating modes, giving best of both worlds (or just route
+    blinding for the final leg to support payments to unadvertised
+    channels?), while minimizing the anonymity set link as each additional
+    trampoline hop can gain more information w.r.t the prior route up to
+    that point.
+
+Generally more investigation is needed here to understand the privacy
+implications of moving to a hybrid onion/packet-switched model. In the end
+though the fundamental trade-off of privacy vs scalability appears to still
+be a factor.
+
+
+-- Laolu
+
+[1]: <A HREF="https://eprint.iacr.org/2020/476">https://eprint.iacr.org/2020/476</A>
+[2]: <A HREF="https://github.com/ElementsProject/secp256k1-zkp/pull/131">https://github.com/ElementsProject/secp256k1-zkp/pull/131</A>
+[3]: <A HREF="https://github.com/lightningnetwork/lnd/pull/3915">https://github.com/lightningnetwork/lnd/pull/3915</A>
+[4]:
+<A HREF="../2021-October/003278.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/003278.html</A>
+[5]: <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/798">https://github.com/lightningnetwork/lightning-rfc/pull/798</A>
+[6]: <A HREF="https://arxiv.org/abs/1910.01834">https://arxiv.org/abs/1910.01834</A>
+[7]:
+<A HREF="../2019-June/002029.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/002029.html</A>
+[8]:
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/038575ac38ced9eee5ace09dd5ec9ba7515cad55/proposals/trampoline.md">https://github.com/lightningnetwork/lightning-rfc/blob/038575ac38ced9eee5ace09dd5ec9ba7515cad55/proposals/trampoline.md</A>
+[9]: <A HREF="https://github.com/rustyrussell/bolt12address">https://github.com/rustyrussell/bolt12address</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211102/2f8bcd52/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211102/2f8bcd52/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003337.html">[Lightning-dev] Removing lnd's source code from the Lightning specs repository
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3336">[ date ]</a>
+              <a href="thread.html#3336">[ thread ]</a>
+              <a href="subject.html#3336">[ subject ]</a>
+              <a href="author.html#3336">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

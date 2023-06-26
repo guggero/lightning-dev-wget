@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%09by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CcJjwbrmrL7OREgLIfHqufz-PctyeNT91h85jMz9zyG6_nQ09Fyg9GNwHFGfjSBs4nvCvWNq6qc5476KDnUqvZFGFZjktfRzguwk7f0004Z8%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002111.html">
+   <LINK REL="Next"  HREF="002100.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%09by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CcJjwbrmrL7OREgLIfHqufz-PctyeNT91h85jMz9zyG6_nQ09Fyg9GNwHFGfjSBs4nvCvWNq6qc5476KDnUqvZFGFZjktfRzguwk7f0004Z8%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Aug  9 10:37:38 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002111.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+        <LI>Next message: <A HREF="002100.html">[Lightning-dev] Trampoline Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2114">[ date ]</a>
+              <a href="thread.html#2114">[ thread ]</a>
+              <a href="subject.html#2114">[ subject ]</a>
+              <a href="author.html#2114">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Rusty,
+
+&gt;<i> &gt; &gt; &gt; Typical quotes suggested that commodity hardware would take 2 seconds to
+</I>&gt;<i> &gt; &gt; &gt; find a route
+</I>&gt;<i> &gt; &gt; &gt; &#160;
+</I>&gt;<i> &gt; &gt; &gt; Can you provide a reproducible benchmark or further qualify this number (2
+</I>&gt;<i> &gt; &gt; &gt; seconds)?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; No reproducible benchmark.
+</I>&gt;<i>
+</I>&gt;<i> OK, on my digital ocean 2-cpu 4GB ram ntel(R) Xeon(R) CPU E5-2630L 0 @
+</I>&gt;<i> 2.00GHz (which is pretty old hardware), an unoptimized c-lighting
+</I>&gt;<i> implementation returns random routes on mainnet in:
+</I>&gt;<i>
+</I>&gt;<i> Between 3 to 347 msec, mean 220 msec.
+</I>&gt;<i>
+</I>&gt;<i> That's forking lightning-cli, querying, printing result and exiting
+</I>&gt;<i> (mainnet, 941 successes, 1353 failures, I ignored the times on
+</I>&gt;<i> failures since they were usually v fast).
+</I>&gt;<i>
+</I>&gt;<i> On my Raspberry Pi 2B (compiled with -O3):
+</I>&gt;<i>
+</I>&gt;<i> Between 21 to 3330 msec, mean 388 msec.
+</I>
+Thank you very much for this testing!
+
+A rule of thumb in UX is &quot;the user remembers your worst-case performance, not your average-case performance&quot;.
+Perhaps it is a few tries on a RPi to a *really* remote node that started this random unqualified report of &quot;2 seconds&quot;.
+
+My understanding, Dijkstra, and other non-heuristic-guided algorithms, explore a &quot;ball&quot; around the starting node.
+Thus, if the other end of the path is far, the ball to explore is larger and the practical algorithm runtime quickly goes up.
+
+A\*, on the other hand, by use of the heuristic, tends to only form balls around large obstacles, but otherwise has a much smaller frontier it explores.
+This may help reduce the worst-case times.
+
+Currently I am working on an implementation of `getroutequick` for C-Lightning.
+Basically, we periodically measure the distance of each node from our node, and store this in a cache in each node.
+Then during pathfinding, we use A\* and use the stored distance-to-our-node as part of a differential heuristic.
+Hopefully, the simple fact that we *have* a heuristic we can feed to A\* would be helpful in cutting down the worst-case runtime of pathfinding.
+
+Dijkstra, A\*, and another algorithm called &quot;Greedy Best First Search&quot; have particular relationships to each other.
+Basically, all three algorithms require a priority queue, where nodes are sorted in order from least-cost to most-cost.
+The source node is put into the priority queue.
+The processing loop takes a node from the priority queue (taking the least-cost node) and then expands each of the nodes it is connected to, pushing them into the priority queue according to their cost.
+Their difference lies in how the priority used in the priority queue is computed:
+
+* Dijkstra: f(n) = g(n)
+* A\*: f(n) = g(n) + h(n)
+* Greedy Best First: f(n) = h(n)
+
+where:
+
+* g(n) is the total cost from the source to this node
+* h(n) is the estimated cost from this node to the destination.
+
+I have come across very few references to Greedy Best First.
+Here is one: <A HREF="http://theory.stanford.edu/~amitp/GameProgramming/AStarComparison.html#dijkstras-algorithm-and-best-first-search">http://theory.stanford.edu/~amitp/GameProgramming/AStarComparison.html#dijkstras-algorithm-and-best-first-search</A>
+
+Greedy Best First scans fewer nodes, but may yield non-optimal paths.
+Dijkstra assuredly finds optimal paths, but scans many nodes due to its scanning a &quot;ball&quot; around the source.
+
+Of note is that g(n) and h(n) should be &quot;appropriately scaled&quot; to each other when used in A\*.
+That is, ideally h(n) should use the same units and should use the same costing estimates as costs of movement between nodes.
+If h(n) is scaled down, then A\* behaves closer to Dijkstra (assured optimal path, but slow).
+If h(n) is scaled up, then A\* behaves closer to Greedy Best First (faster, but may yield sub-optimal path).
+
+Indeed, heuristic admissibiilty is simply the recognition that if we scale down h(n) so that it will never give more than the actual distance to target, A\* will fall back to Dijkstra.
+
+-----
+
+Priority Queues For Dijkstra and A\*
+====================================
+
+Dijkstra (and the related A\* and Greedy Best First) uses a priority queue.
+Of note, is that Dijkstra tends to require an operation called &quot;decrease priority&quot;.
+This operation is used if a node is visited another time from a different path, which turns out to reduce its f(n).
+
+However, according to this paper: <A HREF="http://www3.cs.stonybrook.edu/~rezaul/papers/TR-07-54.pdf">http://www3.cs.stonybrook.edu/~rezaul/papers/TR-07-54.pdf</A>
+
+&gt;<i> all Dijkstra-NoDec implementations (i.e., AH-Dij, FBin-Dij, SBin-Dij, Al4-Dij and Seq-Dij) ran at least 1.4 times faster than any Dijkstra-Dec implementation (i.e.,BH-Dij, Bin-Dij and Pair-Dij).
+</I>
+Where:
+
+* Dijkstra-NoDec is for implementations whose priority queue did *not* have this &quot;decrease priority&quot; operation (i.e. &quot;NoDec&quot;)
+* Dijkstra-Dec is for implementations whose priority queue *did* have this &quot;decrease priority&quot; operation.
+
+That is: having a &quot;decrease priority&quot; operation was a drawback, not a benefit!
+
+Of course, the algorithm has to ensure it does not expand the same node twice.
+Often, the &quot;NoDec&quot; variants have to store the visited-ness of a node.
+
+Now the visited-ness of a node can be stored in the structure that also stores the f(n) of that node.
+f(n) is the priority of the node, and is basically the cost: under Dijkstra, the cost of reaching that node; under A\*, the estimated cost of reaching the goal node via the path that goes through this node.
+And costs in Lightning are measurable in millisatoshis.
+
+The maximum number of satoshis is known to fit in 53 bits.
+Millisatoshis requires 1000x larger numbers, which requires 10 additional bits.
+Thus, 63 bits can fit the largest possible cost (and if it costs more than what can fit 63 bits, then the cost of that path is immaterial: nobody can ever afford it, so saturating to this maximum value is perfectly valid).
+Now, we can add one more bit as a flag meaning &quot;we have pulled this node out of the priority queue and expanded its neighbors already&quot;, thus fitting into 64 bits.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002111.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+	<LI>Next message: <A HREF="002100.html">[Lightning-dev] Trampoline Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2114">[ date ]</a>
+              <a href="thread.html#2114">[ thread ]</a>
+              <a href="subject.html#2114">[ subject ]</a>
+              <a href="author.html#2114">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C87mvrpru3e.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000411.html">
+   <LINK REL="Next"  HREF="000412.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C87mvrpru3e.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Jan 29 02:35:17 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000411.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+        <LI>Next message: <A HREF="000412.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#413">[ date ]</a>
+              <a href="thread.html#413">[ thread ]</a>
+              <a href="subject.html#413">[ subject ]</a>
+              <a href="author.html#413">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>CJP &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">cjp at ultimatestunts.nl</A>&gt; writes:
+&gt;&gt;<i> I'm sure I've missed things; what are they?
+</I>&gt;<i>
+</I>&gt;<i> The lazy answer is to tell you to read the Amiko Pay protocol
+</I>&gt;<i> description.[1] :-P Note that it is (of course) already outdated. To
+</I>&gt;<i> give you some of the concept choices in there:
+</I>&gt;<i>
+</I>&gt;<i> * Transport layer: TCP. We don't need its retransmission features (since
+</I>&gt;<i> it's not good enough and we'll re-implement it in a higher layer), but
+</I>&gt;<i> unlike UDP it works well over TOR.
+</I>
+Agreed.  I've implemented TCP for the moment, but am not making any
+assumptions about it for protocol design.
+
+&gt;<i> * Serialization: JSON, with some conventions added on top of it, e.g.
+</I>&gt;<i> for more efficient transfer of binary data. It is bloated, but easily
+</I>&gt;<i> debuggable and easily extensible. Good for prototypes, maybe not so good
+</I>&gt;<i> for high-performance production code.
+</I>
+Agreed.  I think I'd like something better for a protocol definition,
+but it's nice for prototyping.
+
+&gt;<i> * Message confirmation: this is done manually (instead of relying on
+</I>&gt;<i> TCP), so that a node knows which messages were received / need to be
+</I>&gt;<i> re-transmitted, even after a crash + restart.
+</I>
+I think the protocol itself needs to be robust against retransmissions.
+There's no way to know if the other side received your acknowledgement
+before a crash, so you will always need to handle duplication on
+re-establishment.
+
+&gt;<i> * There is not only two-way communication between linked peers, but also
+</I>&gt;<i> between payer and payee. This is necessary for Amiko Pay's
+</I>&gt;<i> bi-directional routing, but also useful e.g. for transmitting meta-data
+</I>&gt;<i> that doesn't fit in a QR code. Amiko Pay transmits an arbitrary-contents
+</I>&gt;<i> &quot;receipt&quot; from payee to payer; in the future, this might be digitally
+</I>&gt;<i> signed by the payee, as a &quot;proof of transfer of ownership&quot; of
+</I>&gt;<i> non-cryptographic goods.
+</I>
+I agree.  There's room in the initial onion design for payer -&gt; payee
+messages, but we don't have a channel for responses.
+
+I can't see an easy way to implement the payee --&gt; payer comms reliably:
+to be reliable it would have to be published on-chain in the commit tx.
+(Which we could do by constructing HTLCs such that they require a blob
+signed by the payee, but that's tracable ...).
+
+Mats and Laolu wanted to add an arbitrary comms protocol layer, but I
+think that's something we can defer.
+
+&gt;<i> * Bi-directional routing: both payer and payee route towards a &quot;meeting
+</I>&gt;<i> point&quot;. This way, neither payer nor payee has to have a routable address
+</I>&gt;<i> on the network. This is good for both payer and payee privacy; also, in
+</I>&gt;<i> case of a semi-centralized network with a couple of large hubs, this
+</I>&gt;<i> allows the network to grow without the large hubs noticing it, both in
+</I>&gt;<i> payer and in payee direction.
+</I>
+Yes, I've totally punted on routing and fees.  This idea merges well
+with the idea of randomly selecting a handful of &quot;beacons&quot;, which I've
+toyed with in the past.
+
+&gt;<i> * Multiple channels per link: useful to be able to route transactions
+</I>&gt;<i> the usual way while one of the channels is (temporarily) closed. It's
+</I>&gt;<i> also the easy way of adding more funds to an existing link, or funds
+</I>&gt;<i> from both sides.
+</I>
+For the moment this is done with separate connections, though it would
+be fairly trivial to multiplex over a single transport.
+
+&gt;<i> * Different channel classes: the micro-transaction design, and its
+</I>&gt;<i> implications on what info needs to be transferred in which situations,
+</I>&gt;<i> is a separate, higher-level protocol layer on top of a more generic
+</I>&gt;<i> protocol that takes care of routing.
+</I>
+Yes, and we can't really finalize the lower-level implementation until
+we have the upper parts anyway...
+
+&gt;<i> * Reserving before locking: this is an optimization, to reduce the risk
+</I>&gt;<i> of locking funds in payment channels on a part of the route, and then
+</I>&gt;<i> having to undo the locking when it turns out that the remaining part of
+</I>&gt;<i> the route doesn't exist (anymore). Reserving is an informal(*),
+</I>&gt;<i> temporary locking of funds for use in the transaction, and can be done
+</I>&gt;<i> and undone very fast, without any channel operations. It is done
+</I>&gt;<i> together with route searching + establishment.
+</I>
+I think that trades one DoS for another, though.  It saves cryptographic
+constructs, but latency is the real cost, and this increases it.
+
+Of course, we'll have to revisit that if the network in practice proves
+subject to these problems...
+
+&gt;<i> PS. Don't trust a protocol spec that doesn't have an implementation,
+</I>&gt;<i> since it's probably missing a couple of essential things. Don't use an
+</I>&gt;<i> implementation that doesn't have a protocol spec, since you're likely to
+</I>&gt;<i> run into future compatibility issues.
+</I>
+Rough consensus and running code, indeed.
+
+Thanks,
+Rusty.
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000411.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+	<LI>Next message: <A HREF="000412.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#413">[ date ]</a>
+              <a href="thread.html#413">[ thread ]</a>
+              <a href="subject.html#413">[ subject ]</a>
+              <a href="author.html#413">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

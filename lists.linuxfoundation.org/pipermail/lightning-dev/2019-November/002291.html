@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20191106155733.e2b2ttxs4wsfoqpg%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002286.html">
+   <LINK REL="Next"  HREF="002293.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20191106155733.e2b2ttxs4wsfoqpg%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Nov  6 15:57:33 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002286.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002293.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2291">[ date ]</a>
+              <a href="thread.html#2291">[ thread ]</a>
+              <a href="subject.html#2291">[ subject ]</a>
+              <a href="author.html#2291">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Wed, Nov 06, 2019 at 10:43:23AM +1030, Rusty Russell wrote:
+&gt;<i> &gt;&gt; Rusty prepares a nonce, AAAAA and hashes it 25 times = ZZZZZ.
+</I>&gt;<i> &gt;&gt; ZmnSCPxj prepares the onion, but adds extra fields (see below).  
+</I>&gt;<i> &gt; It would have made more sense to me for Alice (Zmn) to generate
+</I>&gt;<i> &gt; the nonce, hash it, and prepare the onion, so that the nonce is
+</I>&gt;<i> &gt; revealed to Dave (Rusty) if/when the message ever actually reaches its
+</I>&gt;<i> &gt; destination. Otherwise Rusty has to send AAAAA to Zmn already so that
+</I>&gt;<i> &gt; Zmn can prepare the onion?
+</I>&gt;<i> The entire point is to pay *up-front*, though, to prevent spam.
+</I>
+Hmm, I'm not sure I see the point of paying upfront but not
+unconditionally -- you already commit the funds as part of the HTLC,
+and if you're refunding some of them, you kind-of have to keep them
+reserved or you risk finalising the HTLC causing a failure because you
+don't have enough msats spare to do the refund?
+
+If you refund on routing failure, why wouldn't a spammer just add a fake
+&quot;Ezekiel&quot; at the end of the route after Dave, so that the HTLCs always
+fail and all the fees are returned?
+
+&gt;<i> Bob/ZmnSCPxj doesn't prepare anything in the onion.  They get handed the
+</I>&gt;<i> last hash directly: Alice is saying &quot;I'll pay you 50msat for each
+</I>&gt;<i> preimage you can give me leading to this hash&quot;.
+</I>
+So my example was Alice paying Dave via Bob and Carol (so Alice/Bob,
+Bob/Carol, Carol/Dave being the individual channels).
+
+What you wrote to Zmn says &quot;Rusty decrypts the onion, reads the prepay
+field: it says 14, LLLL.&quot; but Alice doesn't know anything other than
+ZZZZ so can't put LLLL in the onion?
+
+Are you using Hornet so that every intermediary can communicate a nonce
+back to the source of the route? If not, &quot;Rusty&quot; generating the nonce
+seems like you're informing Rusty that you're actually the origin of the
+HTLC, and not just innocently forwarding it along; if so, it seems like
+you have independent nonces at each step, rather than
+AAAA/BBBB/LLLL/ZZZZ in a direct chain.
+
+&gt;<i> &gt; I'm not sure why lucky hashing should result in a discount?
+</I>&gt;<i> Because the PoW adds noise to the amounts, otherwise the path length is
+</I>&gt;<i> trivially exposed, esp in the failure case.  It's weak protection
+</I>&gt;<i> though.
+</I>
+With a linear/exponential relationship you just get &quot;half the time it's
+1 unit, 25% of the time it's 2 units, 12% of the time it's 3 units&quot;, so
+I don't think that's adding much noise?
+
+&gt;<i> &gt; You've only got two nonce choices -- the initial AAAA and the depth
+</I>&gt;<i> &gt; that you tell Bob and Carol to hash to as steps in the route;
+</I>&gt;<i> No, the sphinx construction allows for grinding, that was my intent
+</I>&gt;<i> here.  The prepay hashes are independent.
+</I>
+Oh, because you're also xoring with the onion packet, right, I see.
+
+&gt;<i> &gt; I think you could just make the scheme be:
+</I>&gt;<i> &gt;   Alice sends HTLC(k,v) + 1250 msat to Bob
+</I>&gt;<i> &gt;   Bob unwraps the onion and forwards HTLC(k,v) + 500 msat to Carol
+</I>&gt;<i> &gt;   Carol unwraps the onion and forwards HTLC(k,v) + 250 msat to Dave
+</I>&gt;<i> &gt;   Dave redeems the HTLC, claims an extra 300 msat and refunds 200 msat to Carol
+</I>
+The math here doesn't add up. Let's assume I meant:
+
+  Bob keeps 500 sat, forwards 750 sat
+  Carol keeps 250 sat, forwards 500 sat
+  Dave keeps 300 sat, refunds 200 sat
+
+&gt;<i> &gt;   Carol redeems the HTLC and refunds 200 msat to Bob
+</I>&gt;<i> &gt;   Bob redeems the HTLC and refunds 200 msat to Alice
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If there's a failure, Alice loses the 1250 msat, and someone in the
+</I>&gt;<i> &gt; path steals the funds.
+</I>&gt;<i> This example confuses me.
+</I>
+Well, that makes us even at least? :)
+
+&gt;<i> So, you're charging 250msat per hop?  Why is Bob taking 750?  Does Carol
+</I>&gt;<i> now know Dave is the last hop?
+</I>
+No, Alice is choosing to pay 500, 250 and 300 msat to Bob, Carol and
+Dave respectively, as part of setting up the onion, and picks those
+numbers via some magic algo trading off privacy and cost.
+
+&gt;<i> Does Alice lose everything on any routing failure?
+</I>
+That was my thought yeah; it seems weird to pay upfront but expect a
+refund on failure -- the HTLC funds are already committed upfront and
+refunded on failure.
+
+&gt;<i> If so, that is strong incentive for Alice to reduce path-length privacy
+</I>&gt;<i> by keeping payments minimal, which I was really trying to avoid.
+</I>
+Assuming v is much larger than 1250msat, and 1250 msat is much lower than
+the cost to Bob of losing the channel with Alice, I don't think that's
+a problem. 1250msat pays for 125kB of bandwdith under your assumptions
+I think?
+
+&gt;<i> &gt; Does that miss anything that all the hashing achieves?
+</I>&gt;<i> It does nothing if Carol is the one who can't route.
+</I>
+If Carol can't route, then ideally she just refunds all the money and
+everyone's happy.
+
+If Carol tries to steal, then she can keep 750 msat instead of 250 msat.
+This doesn't give any way for Bob to prove Carol cheated on him though;
+but Bob could just refund the 1250 msat and write the 750 msat off as a
+loss of dealing with cheaters like Carol.
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002286.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002293.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2291">[ date ]</a>
+              <a href="thread.html#2291">[ thread ]</a>
+              <a href="subject.html#2291">[ subject ]</a>
+              <a href="author.html#2291">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

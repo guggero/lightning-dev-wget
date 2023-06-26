@@ -1,0 +1,176 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] New paper on ant routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20New%20paper%20on%20ant%20routing&In-Reply-To=%3CzhICcO3kq0crh6fyo1cguOUTauflXmwGrTf-pxuxwzcRxqo-K4gPSuxfFiu1Y-_0zAzwb16u2OV1b2KGxfaZ8Vd-zH-V16NBpmrK5IuuGws%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002505.html">
+   <LINK REL="Next"  HREF="002509.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] New paper on ant routing</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20New%20paper%20on%20ant%20routing&In-Reply-To=%3CzhICcO3kq0crh6fyo1cguOUTauflXmwGrTf-pxuxwzcRxqo-K4gPSuxfFiu1Y-_0zAzwb16u2OV1b2KGxfaZ8Vd-zH-V16NBpmrK5IuuGws%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] New paper on ant routing">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Feb  7 04:11:03 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002505.html">[Lightning-dev] New paper on ant routing
+</A></li>
+        <LI>Next message: <A HREF="002509.html">[Lightning-dev] New paper on ant routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2508">[ date ]</a>
+              <a href="thread.html#2508">[ thread ]</a>
+              <a href="subject.html#2508">[ subject ]</a>
+              <a href="author.html#2508">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Gabriel,
+
+
+Interesting idea and it helps to reduce routemap size by completely eliminating the routemap, and also removes distinctions between published and unpublished channels by making every channel unpublished.
+However there seem to be some considerations as well.
+
+--
+
+A node which is able to match the payee seed pheromone and the payer seed pheromone knows the total distance traversed between the payer and payee, and also knows exactly the distance between itself and the payee/payer.
+Admittedly this only gives an upper bound on the distance, but the pheromone system with its ability to find shorter and shorter paths will, over time, give such a matcher better and better information about distance to payer and payee.
+A surveillance node would deliberately defer broadcasting each pheromone it receives, in the hope that the matching pheromone reaches it as well and it can determine upper bounds on distance to both a payer and the corresponding payee.
+
+This can be fixed by having just the payee broadcast the pheromone, and have the payer wait for incoming pheromones from the payee.
+Further, it preserves the current privacy of the payer, which is much harder to find in the current Lightning Network source-pathfinding onion-routing scheme, and adds privacy to the payee (the payer only knows its distance to the payee, not the exact node ID of the payee).
+
+--
+
+Having a single pheromone seed (or a pair of matched seeds) that is recognizable for the entire path prevents us from implementing any kind of path decorrelation.
+This is fine when considering just the current HTLCs (which have the same property that a single path is recognizable as being a single path solely from the hash used), but PTLCs can buy us some privacy (the entire path has no single &quot;smoking gun&quot; that identifies it, just coincidences like being near in sidereal time, having similar value, having decrementing locktime...), which is then lost with the pheromone system.
+
+It is unclear to me whether this is fixable: you would need something that intermediate nodes can malleate, but which the matcher (which, if we go with the above &quot;only the payee sends out pheromones&quot;, the payer is the only possible matcher) must somehow still recognize and match to the payment.
+
+This is a big weakness of Ant Routing.
+
+--
+
+There have been some discussions as well of performing particularly complicated payment schemes by taking advantage of homomorphism of points and scalars, enabled by PTLCs.
+It is not clear to me as well if the pheromone system can help or hinder such schemes.
+
+--
+
+Confirming the path length is an additional step.
+It can be elided by recognizing that the timelock component of the PTLC/HTLC routing must decrement at each hop.
+
+Suppose some node under-reports the distance that a pheromone travelled, in the hopes that the payment will go through them and they can earn fees thereby.
+The payer can allocate only enough timelock to cover the reported length.
+Since the true length of that path is actually longer, some other node will refuse to forward the payment due to insufficient timelock, and the payment fails and the under-reporting node will not earn fees anyway.
+
+Against this, however, we must caution that an under-reporting node might *NOT* be interested in earning fees, but instead to get payment statistics.
+Thus it would be able to &quot;pheromone-hijack&quot; and acquire information about the amount of the payment and its payment hash/point, even though it knows the payment cannot push through.
+
+So this is not a perfect solution in terms of privacy.
+
+--
+
+Routing failures seem somewhat harder to handle.
+Because the payer itself does not know the whole path to the payee, it would be pointless to reveal which node actually failed to forward; the payer can do nothing about this information anyway.
+The payer can only just try with a different peer that has also reported the target pheromone.
+
+Against this, however, we can point out that we can reduce payment failures.
+The fact that a pheromone reached the payer recently indicates that the forwarding nodes along that path have also recently been online and working, so the chances of it going offline soon are expected to be low.
+Further, if a channel is imbalanced with most of the value owned by a forwarding node, the forwarding node can simply avoid sending a pheromone down that channel, since it would not be likely to be routable via that channel anyway.
+
+Perhaps in terms of failure, a forwarding node could also remember the second-lowest distance pheromone, and report a failure back as an increase in the effective pheromone distance along that path (or a &quot;true failure&quot; where it knows of no second-lower distance pheromone).
+Further a forwarding node which has received more than one equal-distance pheromone can just retry the HTLC along those pheromone distances.
+This is similar to how JIT Routing works, with payments effectively getting rerouted via alternate paths without telling the original payer the exact details of the payment rerouting.
+
+--
+
+Distance measurements need not be in units of hops.
+
+--
+
+Finally: a MAJOR objection against Ant Routing.
+
+The main reason why Lightning is a scaling solution is that it drastically reduces how many nodes you tell about a payment.
+Compare this to the blockchain layer, where every node has, at minimum, to be told about every confirmed transaction, and this is the reason why we have a block size limit in the first place.
+
+With Ant Routing, every payment needs to have a pheromone broadcasted.
+This pheromone will reach out to *every* part of the network.
+(Even with pheromones emitted at both the payer and payee end, it is likely that one or the other pheromone will reach the entire network.)
+Thus, we are still sending out data that has to reach each and every node on the network at *each* payment.
+
+This negates the big-O scaling achieved by Lightning.
+
+Admittedly, constant factors are much lower with Ant Routing and it may remain practical.
+If you use a pheromone emitted only by the payee, we can probably use just 160 bits or even 128 bits of entropy for the pheromone identifier; it only has to be a universally-unique identifier without any special mathematical properties, and the invoice could contain the pheromone identifier as well, thus reducing the communications rounds between payer and payee to a single communication, the invoice (same as current Lightning).
+The distance count could be a single byte (if we use units in terms of hops).
+This means 17 bytes broadcasted to the entire network per payment (compared to the hundred bytes or so needed per payment on the blockchain layer).
+
+--
+
+In summary, two main objections:
+
+* Ant Routing sends data proportional to p payments to n nodes or O(pn).
+  Current source routing just sends data proportional to p payments to a constant limit of nodes or O(p).
+* Surveillors can easily determine payments and the maximum distance to the destination and likely source.
+  This is same as current Lightning but we already have proposal (path decorrelation by using payment points) to remove it, it seems not to be useable with Ant Routing.
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002505.html">[Lightning-dev] New paper on ant routing
+</A></li>
+	<LI>Next message: <A HREF="002509.html">[Lightning-dev] New paper on ant routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2508">[ date ]</a>
+              <a href="thread.html#2508">[ thread ]</a>
+              <a href="subject.html#2508">[ subject ]</a>
+              <a href="author.html#2508">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

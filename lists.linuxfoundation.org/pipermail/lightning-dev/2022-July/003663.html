@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Onion messages rate-limiting
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20rate-limiting&In-Reply-To=%3CCAJBJmV9bCPjx_AkW57Fp7qet5VeRaYpaUikieGC-Q3ndAJS8GA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003662.html">
+   <LINK REL="Next"  HREF="003664.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Onion messages rate-limiting</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20rate-limiting&In-Reply-To=%3CCAJBJmV9bCPjx_AkW57Fp7qet5VeRaYpaUikieGC-Q3ndAJS8GA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Onion messages rate-limiting">joost.jager at gmail.com
+       </A><BR>
+    <I>Mon Jul 11 09:08:53 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003662.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+        <LI>Next message: <A HREF="003664.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3663">[ date ]</a>
+              <a href="thread.html#3663">[ thread ]</a>
+              <a href="subject.html#3663">[ subject ]</a>
+              <a href="author.html#3663">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Jul 10, 2022 at 9:14 PM Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt;
+wrote:
+
+&gt;<i> &gt; It can also be considered a bad thing that DoS ability is not based on a
+</I>&gt;<i> number of messages. It
+</I>&gt;<i> &gt; means that for the one time cost of channel open/close, the attacker can
+</I>&gt;<i> generate spam forever if
+</I>&gt;<i> &gt; they stay right below the rate limit.
+</I>&gt;<i>
+</I>&gt;<i> I don't see why this is a problem? This seems to assume some kind of
+</I>&gt;<i> per-message cost that nodes
+</I>&gt;<i> have to bear, but there is simply no such thing. Indeed, if message spam
+</I>&gt;<i> causes denial of service to
+</I>&gt;<i> other network participants, this would be an issue, but an attacker
+</I>&gt;<i> generating spam from one
+</I>&gt;<i> specific location within the network should not cause that, given some
+</I>&gt;<i> form of backpressure within
+</I>&gt;<i> the network.
+</I>&gt;<i>
+</I>
+It's more a general observation that an attacker can open a set of channels
+in multiple locations once and can use them forever to support potential
+attacks. That is assuming attacks aren't entirely thwarted with
+backpressure.
+
+
+&gt;<i> &gt; Suppose the attacker has enough channels to hit the rate limit on an
+</I>&gt;<i> important connection some hops
+</I>&gt;<i> &gt; away from themselves. They can then sustain that attack indefinitely,
+</I>&gt;<i> assuming that they stay below
+</I>&gt;<i> &gt; the rate limit on the routes towards the target connection. What will
+</I>&gt;<i> the response be in that case?
+</I>&gt;<i> &gt; Will node operators work together to try to trace back to the source and
+</I>&gt;<i> take down the attacker?
+</I>&gt;<i> &gt; That requires operators to know each other.
+</I>&gt;<i>
+</I>&gt;<i> No it doesn't, backpressure works totally fine and automatically applies
+</I>&gt;<i> pressure backwards until
+</I>&gt;<i> nodes, in an automated fashion, are appropriately ratelimiting the source
+</I>&gt;<i> of the traffic.
+</I>&gt;<i>
+</I>
+Turns out I did not actually fully understand the proposal. This version of
+backpressure is nice indeed.
+
+To get a better feel for how it works, I've coded up a simple single node
+simulation (
+<A HREF="https://gist.github.com/joostjager/bca727bdd4fc806e4c0050e12838ffa3">https://gist.github.com/joostjager/bca727bdd4fc806e4c0050e12838ffa3</A>), which
+produces output like this:
+<A HREF="https://gist.github.com/joostjager/682c4232c69f3c19ec41d7dd4643bb27.">https://gist.github.com/joostjager/682c4232c69f3c19ec41d7dd4643bb27.</A> There
+are a few spammers and one real user. You can see that after some time, the
+spammers are all throttled down and the user packets keep being handled.
+
+If you add enough spammers, they are obviously still able to hit the next
+hop rate limit and affect the user. But because their incoming limits have
+been throttled down, you need a lot of them - depending on the minimum rate
+that the node goes down to.
+
+I am wondering about that spiraling-down effect for legitimate users. Once
+you hit the limit, it is decreased and it becomes easier to hit it again.
+If you don't adapt, you'll end up with a very low rate. You need to take a
+break to recover from that. I guess the assumption is that legitimate users
+never end up there, because the rate limits are much much higher than what
+they need. Even if they'd occasionally hit a limit on a busy connection,
+they can go through a lot of halvings before they'll get close to the rate
+that they require and it becomes a problem.
+
+But how would that work if the user only has a single channel and wants to
+retry? I suppose they need to be careful to use a long enough delay to not
+get into that down-spiral. But how do they determine what is long enough?
+Probably not a real problem in practice with network latency etc, even
+though a concrete value does need to be picked.
+
+Spammers are probably also not going to spam at max speed. They'd want to
+avoid their rate limit being slashed. In the simulation, I've added a
+`perfectSpammers` mode that creates spammers that have complete information
+on the state of the rate limiter. Not possible in reality of course. If you
+enable this mode, it does get hard for the user. Spammers keep pushing the
+limiter to right below the tripping point and an unknowing user trips it
+and spirals down. (
+<A HREF="https://gist.github.com/joostjager/6eef1de0cf53b5314f5336acf2b2a48a">https://gist.github.com/joostjager/6eef1de0cf53b5314f5336acf2b2a48a</A>)
+
+I don't know to what extent spammers without perfect information can still
+be smart and optimize their spam rate. They can probably do better than
+keep sending at max speed.
+
+&gt;<i> Maybe this is a difference between lightning network and the internet
+</I>&gt;<i> that is relevant for this
+</I>&gt;<i> &gt; discussion. That routers on the internet know each other and have
+</I>&gt;<i> physical links between them, where
+</I>&gt;<i> &gt; as in lightning ties can be much looser.
+</I>&gt;<i>
+</I>&gt;<i> No? The internet does not work by ISPs calling each other up on the phone
+</I>&gt;<i> to apply backpressure
+</I>&gt;<i> manually whenever someone sends a lot of traffic? If anything lightning
+</I>&gt;<i> ties between nodes are much,
+</I>&gt;<i> much stronger than ISPs on the internet - you generally are at least
+</I>&gt;<i> loosely trusting your peer with
+</I>&gt;<i> your money, not just your customer's customer's bits.
+</I>&gt;<i>
+</I>
+Haha, okay, yes, I actually don't know what ISPs do in case of DoS attacks.
+Just trying to find differences between lightning and the internet that
+could be relevant for this discussion.
+
+Seems to me that lightning's onion routing makes it hard to trace back to
+the source without node operators calling each other up. Harder than it is
+on the internet. Of course if backpressure works, you don't need to trace
+nothing so it all doesn't matter.
+
+&gt;<i> Another question on my mind is: if this works really well for rate
+</I>&gt;<i> limiting of
+</I>&gt;<i> &gt; onion messages, then why can't we use it for HTLCs as well?
+</I>
+
+
+We do? 400-some-odd HTLCs in flight at once is a *really* tight rate limit,
+&gt;<i> even! Order of
+</I>&gt;<i> magnitudes tighter than onion message rate limits need to be :)
+</I>
+
+What we don't yet do is create backpressure on the incoming channels by
+lowering the `max_pending_htlc` limit dynamically.
+
+The idea could also be extended to htlc forwarding rate limiters, to combat
+short-lived htlc spam.
+
+Joost
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220711/ed9a9e97/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220711/ed9a9e97/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003662.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+	<LI>Next message: <A HREF="003664.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3663">[ date ]</a>
+              <a href="thread.html#3663">[ thread ]</a>
+              <a href="subject.html#3663">[ subject ]</a>
+              <a href="author.html#3663">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

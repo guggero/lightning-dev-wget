@@ -1,0 +1,146 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Onion routing design.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20routing%20design.&In-Reply-To=%3CCAM_a8Jy2SyLS9-3PE08OrzSsa9tHQPeH6r2xkyN3APq0LbFm8g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000204.html">
+   <LINK REL="Next"  HREF="000208.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Onion routing design.</H1>
+    <B>Zooko Wilcox-OHearn</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20routing%20design.&In-Reply-To=%3CCAM_a8Jy2SyLS9-3PE08OrzSsa9tHQPeH6r2xkyN3APq0LbFm8g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Onion routing design.">zooko at leastauthority.com
+       </A><BR>
+    <I>Tue Sep 22 01:27:03 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000204.html">[Lightning-dev] Onion routing design.
+</A></li>
+        <LI>Next message: <A HREF="000208.html">[Lightning-dev] Onion routing design.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#207">[ date ]</a>
+              <a href="thread.html#207">[ thread ]</a>
+              <a href="subject.html#207">[ subject ]</a>
+              <a href="author.html#207">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Could you please point me to any notes about requirements/desiderata?
+
+Thanks!
+
+--Zooko
+On Sep 18, 2015 5:47 PM, &quot;Rusty Russell&quot; &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> Hi all!
+</I>&gt;<i>
+</I>&gt;<i>         So, we've handwaved that we're going to have onion routing, so
+</I>&gt;<i> each node can only see the immediate neighbors.
+</I>&gt;<i>
+</I>&gt;<i> Here's my first attempt; please fix :)
+</I>&gt;<i>
+</I>&gt;<i> The format of a route looks like so:
+</I>&gt;<i>
+</I>&gt;<i>         required bytes route;
+</I>&gt;<i>
+</I>&gt;<i> A node decrypts that using its pubkey (probably some counter mode
+</I>&gt;<i> scheme, but that's for a different post!), expecting:
+</I>&gt;<i>
+</I>&gt;<i>         // Sum of this whole thing after decryption.
+</I>&gt;<i>         required sha256_hash sum = 1;
+</I>&gt;<i>
+</I>&gt;<i>         // Where to next?
+</I>&gt;<i>         oneof next {
+</I>&gt;<i>                 // Actually, this is the last one
+</I>&gt;<i>                 bool end = 2;
+</I>&gt;<i>                 // Next lightning node.
+</I>&gt;<i>                 pubkey lightning = 3;
+</I>&gt;<i>                 // Other realms go here...
+</I>&gt;<i>         }
+</I>&gt;<i>
+</I>&gt;<i>         // How much fee you can take (== all, if last node)
+</I>&gt;<i>         required int32 fee = 4;
+</I>&gt;<i>
+</I>&gt;<i>         // Remainder (route blob for next node).
+</I>&gt;<i>         required bytes route = 5;
+</I>&gt;<i>
+</I>&gt;<i> If the sum is wrong, the routing has failed (it's been corrupted or was
+</I>&gt;<i> malformed to start).
+</I>&gt;<i>
+</I>&gt;<i> Nodes create the route backwards, to calculate the size.  Then picks a
+</I>&gt;<i> total size randomly between 1024 and 4096, and pads to that size (at
+</I>&gt;<i> least 32 bytes of random padding).  Then walks backwards to wrap and
+</I>&gt;<i> encrypt it.
+</I>&gt;<i>
+</I>&gt;<i> This offers some protection from guessing the route length.
+</I>&gt;<i>
+</I>&gt;<i> Route Probing Attacks
+</I>&gt;<i> =====================
+</I>&gt;<i> Now, there's a weakness here: No MAC!  A nosy node can't corrupt the
+</I>&gt;<i> routing past the next hop, but it could replace it entirely (this is
+</I>&gt;<i> fundamental to the scheme of R values).  If it guesses the final
+</I>&gt;<i> destination right, the HTLC will succeed, otherwise it will fail, so it
+</I>&gt;<i> can use this to probe.
+</I>&gt;<i>
+</I>&gt;<i> One partial defence is to fail to allow two HTLCs with the same R value,
+</I>&gt;<i> forcing probe serialization.  Unfortunately that allows a simple way to
+</I>&gt;<i> probe back to the source, so we shouldn't do this!
+</I>&gt;<i>
+</I>&gt;<i> We may be able to do some probabalistic backoff of duplicate R values,
+</I>&gt;<i> such that you can't tell if I've received one before?  A more
+</I>&gt;<i> sophisticated probe sequence could get a probability though...
+</I>&gt;<i>
+</I>&gt;<i> I can't see a fix for this in general. :(
+</I>&gt;<i>
+</I>&gt;<i> Error Messages
+</I>&gt;<i> ==============
+</I>&gt;<i> Another issue is that we should try not to leak information to passive
+</I>&gt;<i> observers on the route due to errors, so signing errors and using the
+</I>&gt;<i> 'sum' field as a secret key seems sensible.  This means your padding in
+</I>&gt;<i> the original message needs to be &quot;random&quot; so 'sum' is random.
+</I>&gt;<i>
+</I>&gt;<i> Thoughts welcome!
+</I>&gt;<i> Rusty.
+</I>&gt;<i> PS.  As noted before, nodes can trivially correlate HTLCs by R value, so
+</I>&gt;<i>      onioning the routing only gets you so far...
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150922/1abdd47c/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150922/1abdd47c/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000204.html">[Lightning-dev] Onion routing design.
+</A></li>
+	<LI>Next message: <A HREF="000208.html">[Lightning-dev] Onion routing design.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#207">[ date ]</a>
+              <a href="thread.html#207">[ thread ]</a>
+              <a href="subject.html#207">[ subject ]</a>
+              <a href="author.html#207">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

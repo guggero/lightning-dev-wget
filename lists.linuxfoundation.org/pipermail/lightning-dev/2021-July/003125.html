@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Eltoo Burst Mode &amp; Continuations
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%20Burst%20Mode%20%26%20Continuations&In-Reply-To=%3C20210711041000.GB4597%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003124.html">
+   <LINK REL="Next"  HREF="003127.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Eltoo Burst Mode &amp; Continuations</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%20Burst%20Mode%20%26%20Continuations&In-Reply-To=%3C20210711041000.GB4597%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Eltoo Burst Mode &amp; Continuations">aj at erisian.com.au
+       </A><BR>
+    <I>Sun Jul 11 04:10:00 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003124.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+        <LI>Next message: <A HREF="003127.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3125">[ date ]</a>
+              <a href="thread.html#3125">[ thread ]</a>
+              <a href="subject.html#3125">[ subject ]</a>
+              <a href="author.html#3125">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sat, Jul 10, 2021 at 02:07:02PM -0700, Jeremy wrote:
+&gt;<i> Let's say you're about to hit your sequence limits on a Eltoo channel... Do you
+</I>&gt;<i> have to go on chain?
+</I>&gt;<i> No, you could do a continuation where for your *final* update, you sign a move
+</I>&gt;<i> to a new update key. E.g.,
+</I>
+That adds an extra tx to the uncooperative path every 2**30 states.
+
+&gt;<i> Doing layers like this inherently adds a bunch of CSV layers, so it increases
+</I>&gt;<i> resolution time linearly.
+</I>
+I don't think that's correct -- you should be using the CLTV path for
+updating the state, rather than the CSV path; so CSV shouldn't matter.
+
+On Sat, Jul 10, 2021 at 04:25:06PM -0700, Jeremy wrote:
+&gt;<i> [...] signing a eltoo &quot;trampoline&quot;.
+</I>&gt;<i> essentially, begin a burst session at pk1:N under pk2, but always include a
+</I>&gt;<i> third branch to go to any pk1:N+1.
+</I>
+I think this is effectively reinventing/special casing channel
+factories? That is you start an eltoo channel factory amongst group
+{A,B,C,...}, then if {A,B} want an eltoo channel, that's a single update
+to the factory; that channel can get updated independently until A and
+B get bored and want to close their channel, which is then a single
+additional update to the factory. In this case, the factory just doesn't
+include the additional members {C,...}.
+
+On Sat, Jul 10, 2021 at 05:02:35PM -0700, Jeremy wrote:
+&gt;<i> suppose you make a Taproot tree with N copies (with different keys) of the
+</I>&gt;<i> state update protocol.
+</I>
+This feels cleverer/novel to me -- but as you point out it's actually
+more costly than the trampoline/factory approach so perhaps it's not
+that great.
+
+I think what you'd do is change from a single tapscript of &quot;OP_1
+CHECKSIG &lt;500e6+i&gt; CLTV&quot; to a tree of tapscripts:
+
+  &quot;&lt;P_i&gt; CHECKSIG &lt;500e6+j+1&gt; CLTV&quot;
+
+so if your state is (i*2**30 + j) you're spending using &lt;P_i&gt; with a
+locktime of 500e6+j, and you're allowing later spends with the above script
+filled in with (i,j) or (i',0) for i&lt;i'&lt;N.
+
+That means you're paying extra to specify a merkle path of lg(N)*32 and
+the key P_i (33 bytes).
+
+&gt;<i> You can take a random path through which leaf you are using which, if you're
+</I>&gt;<i> careful about how you construct your scripts (e.g., keeping the trees the same
+</I>&gt;<i> size) you can be more private w.r.t. how many state updates you performed
+</I>&gt;<i> throughout the protocol (i.e., you can see the low order bits in the CLTV
+</I>&gt;<i> clause, but the high order bits of A, B, C's relationship is not revealed if
+</I>&gt;<i> you traverse them in a deterministically permuted order).
+</I>
+Tapscript trees are shuffled randomly based on the hashes of their
+scripts, so I think that's a non-issue. You could keep the trees the
+same size by adding scripts &quot;&lt;P_i&gt; CHECKSIG &lt;500e6+j+1&gt; RETURN&quot;.
+
+&gt;<i> The space downside of this approach v.s. the approach presented in the prior
+</I>&gt;<i> email is that the prior approach achieves 64 bits with 2 txns one of which
+</I>&gt;<i> should be like 150 bytes, a similar amount of data for the script leaves may
+</I>&gt;<i> only gets you 5 bits of added sequence space.&#160;
+</I>
+You'd get 2**34 states (4 added bits of added sequence space) for
+about 161 extra bytes (4 merkle branches at 32B each and revealing the
+pubkey for 33B), compared to about 2**60 states (2**30 states for the
+second tx, with a different second tx for each of the 2**30 states of
+the first tx). Haven't done the math to check the 150 byte estimate,
+but it seems the right ballpark.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003124.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+	<LI>Next message: <A HREF="003127.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3125">[ date ]</a>
+              <a href="thread.html#3125">[ thread ]</a>
+              <a href="subject.html#3125">[ subject ]</a>
+              <a href="author.html#3125">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

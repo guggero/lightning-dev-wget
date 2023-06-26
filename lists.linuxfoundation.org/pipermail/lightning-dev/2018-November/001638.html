@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Base AMP
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Base%20AMP&In-Reply-To=%3CCAJ5H3Z5auMCeGaBFj-abuk4n8wk%2BfX9KQ0k6Q%2BNyLBadLRy%2BKA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001629.html">
+   <LINK REL="Next"  HREF="001639.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Base AMP</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Base%20AMP&In-Reply-To=%3CCAJ5H3Z5auMCeGaBFj-abuk4n8wk%2BfX9KQ0k6Q%2BNyLBadLRy%2BKA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Base AMP">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Tue Nov 20 13:53:04 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001629.html">[Lightning-dev] Base AMP
+</A></li>
+        <LI>Next message: <A HREF="001639.html">[Lightning-dev] Base AMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1638">[ date ]</a>
+              <a href="thread.html#1638">[ thread ]</a>
+              <a href="subject.html#1638">[ subject ]</a>
+              <a href="author.html#1638">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey List,
+
+as this base AMP proposal seems pretty small I just started to write this
+up to make a PR for BOLT04 and BOLT11. While doing my write up I realize
+that there are smaller things that I would want to verify / double check
+and propose with you.
+
+## Verifying:
+1.) I understand the receiving node signals support for Base AMP by setting
+a feature bit in the BOLT11 String
+2.) The sending node signals a multipath payment by setting a feature bit
+and by using the same `amount to forward` value in the last hop of the
+onion for all paths which will also be bigger that the incoming htlcs whose
+sum has to be at least the size of `amount_to_forward`.
+
+## Clarifying:
+3.) Senders MUST NOT (SHOULD NOT?) create paths which would have to be
+merged by intermediary nodes (as we don't know - and have no means of
+querying - if they support the format of the adepted onion packages for
+partial paths. Also it even seems impossible since the rest of the path for
+at least one partial path could not be stored in the onion / forwarded
+onions can't be seen)
+
+## Proposing:
+Should we specify an algorithm for executing a multipath payment for the
+sending node or should this be left to the implementation. An obvious Idea
+for an algorithm would be a divide and conquer scheme which should be
+obvious with the following python style pseudo code:
+
+def pay_base_amp(amount):
+   success = False
+   for route in get_available_routes():
+       success = send_via_route(route, amount)
+    if not success:
+       pay_base_amp(amount/2 + 1) # the +1 is to mitigate rounding errors.
+there could be other ways to do so.
+       pay_base_amp(amount/2 + 1)
+
+Even if we leave the exact AMP execution to the sender we could still
+suggest this divide and conquer scheme in BOLT 04
+
+Another idea I had (which is probably a bad one as it allows for probing of
+channel balances) would be to allow nodes on a partial path to send back
+some hints of how much additional capacity they can forward if they see
+that the partial payment feature bit is set (this would require to set this
+feature bit in every onion) Also if we want to make use of this information
+every node would have to support base amp. So I guess this idea is bad for
+several reasons. Still we could have a MAY rule out of it?
+
+best Rene
+
+
+On Fri, Nov 16, 2018 at 4:45 PM Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; wrote:
+
+&gt;<i> On Thu, Nov 15, 2018 at 11:54:22PM +0000, ZmnSCPxj via Lightning-dev wrote:
+</I>&gt;<i> &gt; The improvement is in a reduction in `fee_base_msat` in the C-&gt;D path.
+</I>&gt;<i>
+</I>&gt;<i> I think reliability (and simplicity!) are the biggest things to improve
+</I>&gt;<i> in lightning atm. Having the flag just be incuded in invoices and not
+</I>&gt;<i> need to be gossiped seems simpler to me; and I think endpoint-only
+</I>&gt;<i> merging is better for reliability too. Eg, if you find candidate routes:
+</I>&gt;<i>
+</I>&gt;<i>   A -&gt; B -&gt; M -- actual directed capacity $6
+</I>&gt;<i>   A -&gt; C -&gt; M -- actual directed capacity $5.50
+</I>&gt;<i>   M -&gt; E -&gt; F -- actual directed capacity $6
+</I>&gt;<i>   A -&gt; X -&gt; F -- actual directed capacity $7
+</I>&gt;<i>
+</I>&gt;<i> and want to send $9 form A to F, you might start by trying to send
+</I>&gt;<i> $5 via B and $4 via C.
+</I>&gt;<i>
+</I>&gt;<i> With endpoint-only merging you'd do:
+</I>&gt;<i>
+</I>&gt;<i>    $5 via A,B,M,E,F -- partial success
+</I>&gt;<i>    $4 via A,C,M,E -- failure
+</I>&gt;<i>    $4 via A,X,F -- payment completion
+</I>&gt;<i>
+</I>&gt;<i> whereas with in-route merging, you'd do:
+</I>&gt;<i>
+</I>&gt;<i>    $5 via A,B,M -- held
+</I>&gt;<i>    $4 via A,C,M -- to be continued
+</I>&gt;<i>    $9 via M,E -- both partial payments fail
+</I>&gt;<i>
+</I>&gt;<i> which seems a fair bit harder to incrementally recover from.
+</I>&gt;<i>
+</I>&gt;<i> &gt; Granted, current `fee_base_msat` across the network is very low
+</I>&gt;<i> currently.
+</I>&gt;<i> &gt; So I do not object to restricting merge points to ultimate payees.
+</I>&gt;<i> &gt; If fees rise later, we can revisit this.
+</I>&gt;<i>
+</I>&gt;<i> So, while we already agree on the approach to take, I think the above
+</I>&gt;<i> provides an additional rationale :)
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> aj
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>
+
+-- 
+<A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+
+Skype: rene.pickhardt
+
+mobile: +49 (0)176 5762 3618
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181120/af408cd6/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181120/af408cd6/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001629.html">[Lightning-dev] Base AMP
+</A></li>
+	<LI>Next message: <A HREF="001639.html">[Lightning-dev] Base AMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1638">[ date ]</a>
+              <a href="thread.html#1638">[ thread ]</a>
+              <a href="subject.html#1638">[ subject ]</a>
+              <a href="author.html#1638">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

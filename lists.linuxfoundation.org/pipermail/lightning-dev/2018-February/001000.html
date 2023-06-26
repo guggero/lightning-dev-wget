@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAO3Pvs-uitkL48%2B4jkfTtjtOGo_jo-50waEPiuNHmZ_3NXhgNw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000992.html">
+   <LINK REL="Next"  HREF="001006.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAO3Pvs-uitkL48%2B4jkfTtjtOGo_jo-50waEPiuNHmZ_3NXhgNw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Feb  7 00:24:02 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000992.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+        <LI>Next message: <A HREF="001006.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1000">[ date ]</a>
+              <a href="thread.html#1000">[ thread ]</a>
+              <a href="subject.html#1000">[ subject ]</a>
+              <a href="author.html#1000">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Y'all,
+
+Definitely agree that we need a stop-gap solution to fix the naive table
+dump on initial connect. I've been sketching out some fancier stuff, but we
+would need time to properly tune the fanciness, and I'm inclined to get out
+a stop-gap solution asap.  On testnet, the zombie churn is pretty bad atm.
+It results in uneasily wasted bandwidth as the churn is now almost constant.
+There still exist some very old testnet nodes our there it seems. Beyond the
+zombie churn, with the size of the testnet graph, we're forced to send tens
+of thousands of messages (even if we're already fully synced) upon initial
+connect, so very wasteful over all.
+
+So I think the primary distinction between y'alls proposals is that
+cdecker's proposal focuses on eventually synchronizing all the set of
+_updates_, while Fabrice's proposal cares *only* about the newly created
+channels. It only cares about new channels as the rationale is that if once
+tries to route over a channel with a state channel update for it, then
+you'll get an error with the latest update encapsulated.
+
+Christian wrote:
+&gt;<i> I propose adding a new feature bit (6, i.e., bitmask 0x40) indicating that
+</I>&gt;<i> the `init` message is extended with a u32 `gossip_timestamp`, interpreted
+</I>as
+&gt;<i> a UNIX timestamp.
+</I>
+As the `init` message solely contains two variably sized byte slices, I
+don't think we can actually safely extend it in this manner. Instead, a new
+message is required, where the semantics of the feature bit _require_ the
+other side to send it directly after receiving the `init` message from the
+other side.
+
+Aside from that, overall I like the simplicity of the protocol: it
+eliminates both the zombie churn, and the intensive initial connection graph
+dump without any extra messaging overhead (for reconciliation, etc).
+
+Fabrice wrote:
+&gt;<i> Just to be clear, you propose to use the timestamp of the most recent
+</I>&gt;<i> channel updates to filter the associated channel announcements ?
+</I>
+I think he's actually proposing just a general update horizon in which
+vertexes+edges with a lower time stamp just shouldn't be set at all. In the
+case of an old zombie channel which was resurrected, it would eventually be
+re-propagated as the node on either end of the channel should broadcast a
+fresh update along with the original chan ann.
+
+&gt;<i> When a node that supports channel announcement filters receives
+</I>&gt;<i> a`channel_announcement_filters` message, it uses it to filter channel
+</I>&gt;<i> announcements (and, implicitly ,channel updates) before sending them
+</I>
+This seems to assume that both nodes have a strongly synchronized view of
+the network. Otherwise, they'll fall back to sending everything that went on
+during the entire epoch regularly. It also doesn't address the zombie churn
+issue as they may eventually send you very old channels you'll have to deal
+with (or discard).
+
+&gt;<i> The use case we have in mind is mobile nodes, or more generally nodes
+</I>&gt;<i> which are often offline and need to resync very often.
+</I>
+How far back would this go? Weeks, months, years?
+
+FWIW this approach optimizes for just learning of new channels instead of
+learning of the freshest state you haven't yet seen.
+
+
+-- Laolu
+
+
+On Mon, Feb 5, 2018 at 7:08 AM Fabrice Drouin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">fabrice.drouin at acinq.fr</A>&gt;
+wrote:
+
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> On 5 February 2018 at 14:02, Christian Decker
+</I>&gt;<i> &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; Hi everyone
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The feature bit is even, meaning that it is required from the peer,
+</I>&gt;<i> &gt; since we extend the `init` message itself, and a peer that does not
+</I>&gt;<i> &gt; support this feature would be unable to parse any future extensions to
+</I>&gt;<i> &gt; the `init` message. Alternatively we could create a new
+</I>&gt;<i> &gt; `set_gossip_timestamp` message that is only sent if both endpoints
+</I>&gt;<i> &gt; support this proposal, but that could result in duplicate messages being
+</I>&gt;<i> &gt; delivered between the `init` and the `set_gossip_timestamp` message and
+</I>&gt;<i> &gt; it'd require additional messages.
+</I>&gt;<i>
+</I>&gt;<i> We chose the other aproach and propose to use an optional feature
+</I>&gt;<i>
+</I>&gt;<i> &gt; The reason I'm using timestamp and not the blockheight in the short
+</I>&gt;<i> &gt; channel ID is that we already use the timestamp for pruning. In the
+</I>&gt;<i> &gt; blockheight based timestamp we might ignore channels that were created,
+</I>&gt;<i> &gt; then not announced or forgotten, and then later came back and are now
+</I>&gt;<i> &gt; stable.
+</I>&gt;<i>
+</I>&gt;<i> Just to be clear, you propose to use the timestamp of the most recent
+</I>&gt;<i> channel updates to filter
+</I>&gt;<i> the associated channel announcements ?
+</I>&gt;<i>
+</I>&gt;<i> &gt; I hope this rather simple proposal is sufficient to fix the short-term
+</I>&gt;<i> &gt; issues we are facing with the initial sync, while we wait for a real
+</I>&gt;<i> &gt; sync protocol. It is definitely not meant to allow perfect
+</I>&gt;<i> &gt; synchronization of the topology between peers, but then again I don't
+</I>&gt;<i> &gt; believe that is strictly necessary to make the routing successful.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Please let me know what you think, and I'd love to discuss Pierre's
+</I>&gt;<i> &gt; proposal as well.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Christian
+</I>&gt;<i>
+</I>&gt;<i> Our idea is to group channel announcements by &quot;buckets&quot;, create a
+</I>&gt;<i> filter for each bucket, exchange and use them to filter out channel
+</I>&gt;<i> announcements.
+</I>&gt;<i>
+</I>&gt;<i> We would add a new `use_channel_announcement_filters` optional feature
+</I>&gt;<i> bit (7 for example), and a new `channel_announcement_filters` message.
+</I>&gt;<i>
+</I>&gt;<i> When a node that supports channel announcement filters receives an
+</I>&gt;<i> `init` message with the `use_channel_announcement_filters` bit set, it
+</I>&gt;<i> sends back its channel filters.
+</I>&gt;<i>
+</I>&gt;<i> When a node that supports channel announcement filters receives
+</I>&gt;<i> a`channel_announcement_filters` message, it uses it to filter channel
+</I>&gt;<i> announcements (and, implicitly ,channel updates) before sending them.
+</I>&gt;<i>
+</I>&gt;<i> The filters we have in mind are simple:
+</I>&gt;<i> - Sort announcements by short channel id
+</I>&gt;<i> - Compute a marker height, which is `144 * ((now - 7 * 144) / 144)`
+</I>&gt;<i> (we round to multiples of 144 to make sync easier)
+</I>&gt;<i> - Group channel announcements that were created before this marker by
+</I>&gt;<i> groups of 144 blocks
+</I>&gt;<i> - Group channel announcements that were created after this marker by
+</I>&gt;<i> groups of 1 block
+</I>&gt;<i> - For each group, sort and concatenate all channel announcements short
+</I>&gt;<i> channel ids and hash the result (we could use sha256, or the first 16
+</I>&gt;<i> bytes of the sha256 hash)
+</I>&gt;<i>
+</I>&gt;<i> The new `channel_announcement_filters` would then be a list of
+</I>&gt;<i> (height, hash) pairs ordered by increasing heights.
+</I>&gt;<i>
+</I>&gt;<i> This implies that implementation can easily sort announcements by
+</I>&gt;<i> short channel id, which should not be very difficult.
+</I>&gt;<i> An additional step could be to send all short channel ids for all
+</I>&gt;<i> groups for which the group hash did not match. Alternatively we could
+</I>&gt;<i> use smarter filters
+</I>&gt;<i>
+</I>&gt;<i> The use case we have in mind is mobile nodes, or more generally nodes
+</I>&gt;<i> which are often offline and need to resync very often.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Fabrice
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180207/2ea76f0a/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180207/2ea76f0a/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000992.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+	<LI>Next message: <A HREF="001006.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1000">[ date ]</a>
+              <a href="thread.html#1000">[ thread ]</a>
+              <a href="subject.html#1000">[ subject ]</a>
+              <a href="author.html#1000">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Jamming Mitigation Call Summary - 02/06
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Jamming%20Mitigation%20Call%20Summary%20-%2002/06&In-Reply-To=%3CCAH%3DWSfTBCu0%3DN-Vsz%3D9voOUYDJrZ5B6R777xidYQiaNwK%3DYMdQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003839.html">
+   <LINK REL="Next"  HREF="003841.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Jamming Mitigation Call Summary - 02/06</H1>
+    <B>Carla Kirk-Cohen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Jamming%20Mitigation%20Call%20Summary%20-%2002/06&In-Reply-To=%3CCAH%3DWSfTBCu0%3DN-Vsz%3D9voOUYDJrZ5B6R777xidYQiaNwK%3DYMdQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Jamming Mitigation Call Summary - 02/06">kirkcohenc at gmail.com
+       </A><BR>
+    <I>Wed Feb  8 20:17:28 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003839.html">[Lightning-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+        <LI>Next message: <A HREF="003841.html">[Lightning-dev] Jamming Mitigation Call Summary - 02/06
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3840">[ date ]</a>
+              <a href="thread.html#3840">[ thread ]</a>
+              <a href="subject.html#3840">[ subject ]</a>
+              <a href="author.html#3840">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list,
+
+Unfortunately we had some technical issues with the recording for
+Monday's call so we're going to have to rely on my memory (a severely
+corrupted data store). Thankfully, Clara jotted down some notes as well,
+but please chime in if you attended and we've missed something out!
+
+Details for next call:
+* Monday 20 February
+* 18:00 UTC (possibly 19:00, be confirmed in a follow up email)
+* <A HREF="https://meet.jit.si/UnjammingLN">https://meet.jit.si/UnjammingLN</A>
+* Agenda: <A HREF="https://github.com/ClaraShk/LNJamming/issues/3">https://github.com/ClaraShk/LNJamming/issues/3</A>
+
+# Meeting Summary
+
+1. Proof of Forwarding
+We started the call with a discussion of the various &quot;proof of
+forwarding&quot; schemes that have been kicked around this mailing list
+in the past.
+
+Working of the assumption that upfront fees must always be sourced
+from the sender, we ran into similar issues around accumulated fees
+and differential rates even in the case where we have some proof of
+forward, because nodes can still choose to collaborate to &quot;forward&quot;
+a payment.
+
+Given the following topology and conditions:
+Alice ------ Bob ------ Carol ------ Dave ----- Evelyn
+
+* Alice is sending a payment to Evenlyn, a popular sink on the network.
+* Evenlyn has zero final-hop upfront fees (for simplicity's sake).
+* Bob and Carol are malicious actors, each charging 10 msat upfront.
+* Dave is an honest node with 4000 msat upfront fees (which is a rational
+  upfront fee for a channel to a sink node that would have high success
+  case fees).
+
+Using a proof of forward scheme where Alice places a secret in the
+_next_ node's onion which is required to claim upfront fees:
+* Bob may claim 4020 msat in upfront fees with a secret from Carol
+* Carol may claim 4010 msat in upfront fees with a secret from Dave
+* Dave may claim 4000 msat in upfront fees with a secret from Evelyn
+
+In the honest case, this nets out to 10 msat for Bob, 10 msat for
+Carol, and 4000 msat for Dave. In the dishonest case, Carol can
+disclose the forwarding secret to Bob, allowing them to claim the
+accumulated 4020 sat, then fail the payment anyway.
+
+We also spoke about the case where the downstream peer refuses to give
+up the secret, but this breakdown in cooperation is likely remedied by
+closing your channel. We didn't consider the case where upfront fees
+do not accumulate along the route, because this exposes us to a whole
+lot of (even worse) draining attacks.
+
+We once again discussed the complexity of this nature of jamming
+mitigation, how practical it would be to implement it and whether it
+is worthwhile pursuing if it will be an imperfect solution to upfront
+fee theft.
+
+2. Upfront Fees + Attributable Errors
+The next point of discussion was the combination of upfront fees with
+attributable errors [1] to allow senders to more severely punish
+nodes that choose to steal upfront fees rather than forward the HTLC
+(due to the incentive issues noted in [2] when there are large fee
+differentials across the route).
+
+This led to a discussion about how effectively senders can enforce
+good upfront fee behavior - a question that remains open. We discussed:
+- Strict punishment of nodes that fail payments with upfront fees.
+- Sender side protections against selection of routes with incentive
+  incompatible upfront fees.
+- The suboptimal, yet doable, solution of starting with an upper bound
+  on upfront fees. This has the drawback of not properly compensating
+  nodes that have a legitimate claim to high upfront fees because they
+  face high opportunity cost.
+
+3. Experimentation with Circuit Breaker
+We discussed the possibility of using circuit breaker[3] in the context
+of local reputation (or HTLC endorsement) in two different ways:
+(a) To begin surfacing the type of information that end users would
+require to decide to endorse a payment, and possibly automating
+that decision making.
+(b) In conjunction with an experimental TLV to add binary HTLC
+endorsement to update_add_htlc, though it was noted that this
+would require wider spread adoption of circuit breaker, because
+nodes that do not have it installed would not include the TLV on
+forwarding. This would also require LND changes to surface TLVs
+included with update_add_htlc on the interceptor API.
+
+As always, thank you to all that attended and hope to see ya'll in the
+next one!
+
+Best,
+Carla + Clara
+
+[1] <A HREF="https://github.com/lightning/bolts/pull/1044">https://github.com/lightning/bolts/pull/1044</A>
+[2]
+<A HREF="../2023-January/003834.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/003834.html</A>
+[3] <A HREF="https://github.com/lightningequipment/circuitbreaker">https://github.com/lightningequipment/circuitbreaker</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230208/c383d310/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230208/c383d310/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003839.html">[Lightning-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+	<LI>Next message: <A HREF="003841.html">[Lightning-dev] Jamming Mitigation Call Summary - 02/06
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3840">[ date ]</a>
+              <a href="thread.html#3840">[ thread ]</a>
+              <a href="subject.html#3840">[ subject ]</a>
+              <a href="author.html#3840">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

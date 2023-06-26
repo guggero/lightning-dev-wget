@@ -1,0 +1,288 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Jamming Mitigation Call Summary - 01/23
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Jamming%20Mitigation%20Call%20Summary%20-%2001/23&In-Reply-To=%3CCAH%3DWSfS_9Y3L9EPKRkqkNv9nbf03y4xtEXsg7n6-GXb9kfU_EQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003833.html">
+   <LINK REL="Next"  HREF="003838.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Jamming Mitigation Call Summary - 01/23</H1>
+    <B>Carla Kirk-Cohen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Jamming%20Mitigation%20Call%20Summary%20-%2001/23&In-Reply-To=%3CCAH%3DWSfS_9Y3L9EPKRkqkNv9nbf03y4xtEXsg7n6-GXb9kfU_EQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Jamming Mitigation Call Summary - 01/23">kirkcohenc at gmail.com
+       </A><BR>
+    <I>Mon Jan 30 15:24:56 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003833.html">[Lightning-dev] Async payments proof-of-payment: a wishlist for researchers]
+</A></li>
+        <LI>Next message: <A HREF="003838.html">[Lightning-dev] Jamming Mitigation Call Summary - 01/23
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3834">[ date ]</a>
+              <a href="thread.html#3834">[ thread ]</a>
+              <a href="subject.html#3834">[ subject ]</a>
+              <a href="author.html#3834">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list,
+
+On Monday last week we resumed our fortnightly channel jamming
+mitigation calls for 2023.
+
+Details for the next call:
+* Monday 02/06 @ 18:00 UTC
+* <A HREF="https://meet.jit.si/UnjammingLN">https://meet.jit.si/UnjammingLN</A>
+* Agenda: <A HREF="https://github.com/ClaraShk/LNJamming/issues/2">https://github.com/ClaraShk/LNJamming/issues/2</A>
+
+# Meeting Summary
+This email attempts to summarize the discussion, but is of course
+subject to my errors and opinions so the full transcript is available
+at [1]. It is (imperfectly) AI generated, so please reach out to myself
+or Clara if you'd like clarification for a specific section.
+
+1. Upgrade Mechanisms
+The first topic of discussion was around how we would go about
+upgrading the network to support an anti-jamming mitigation. Most
+solutions share the following characteristics:
+  * They will likely require a network wide upgrade: when a sender
+    makes a payment, the full path will need to understand the new
+    feature bit for it to be used.
+  * Sending nodes are unlikely to be incentivised to upgrade to
+    support a channel jamming mitigation, as jamming mitigations incur
+    additional cost (be it in the form of upfront fees, tokens or some
+    other mechanism).
+  * Routing nodes have no way of knowing whether a payment comes from
+    a node that is not upgraded, or simply doesn't want to pay the
+    additional cost introduced by a jamming mitigation.
+
+It was generally agreed that the network is still in an early enough
+stage that it is fair for relaying nodes to initially upgrade but not
+enforce the feature, and later look at forwarding traffic to determine
+whether it is appropriate to require the feature. This will require
+sending nodes to opt-in to the new feature before the network can
+widely enforce it, as no rational routing node will require a feature
+which would reduce its ability to serve un-upgraded traffic (unless
+under attack, which is not the case at present).
+
+A note was also made that wallets tend to upgrade less frequently, in
+part because some providers run forked versions of LN implementations,
+so this horizon may be quite long. It was emphasized that this type of
+network upgrade would require input from wallets, designers and
+application developers anyway, so hopefully by the time we look to
+deploy a change there is rough consensus among the Lightning community
+already.
+
+2. Upfront Fees
+Next, we discussed the draft proposal for upfront fees [2] that
+implements the first of a two-part jamming mitigation described in [3].
+As it stands, the PR describes the simplest possible way to introduce
+upfront fees to the protocol:
+  * Upfront fees are expressed as a ppm of a channel's success-case
+    fees, and charged on the outgoing link of a route.
+  * Nodes can advertise custom upfront fee rates if desired, but to
+    save gossip bandwidth we assume a network-wide default of 1%.
+  * Upfront fees accumulate along the route (as htlc payment amounts
+    do), and are simply pushed to the `to_remote` balance on
+    `update_add_htlc`.
+  * Final hop nodes advertise an upfront fee policy in bolt 11 invoices
+    (or bolt 12 blinded routes) which is sufficiently padded to
+    obfuscate their location in the route.
+
+The interaction between upfront fees and possible future protocol
+changes such as inbound fees and negative fees was briefly discussed,
+specifically the case where a node sets low (or negative) fees to
+attract traffic then fails payments to accumulate upfront fees. As is,
+all implementations&#8217; algorithms optimize for factors other than fees -
+specifically avoiding a node once it's produced failures - and we
+suspect that careful sender-side behavior will mitigate this risk.
+However, it was also acknowledged that a node that attempts this attack
+may be able to fool multiple individual senders and still be able to
+accumulate some fees.
+
+We then discussed the shortcomings of the &quot;simplest possible&quot; upfront
+fees in [2], specifically focused on the following scenario where
+nodes receive 1% of their success-case fees as an upfront payment:
+  * Alice is sending a payment to Dave, who is a popular sink node in
+    the network.
+  * Bob -&gt; Carol has low/default routing policy: 1000 msat success
+    case / 10 msat upfront fee
+  * Carol -&gt; Dave has high fees: 400,000 msat success case / 4000 msat
+    upfront fee
+  * Dave advertises no success case fee (is recipient) / 100 msat of
+    upfront fee chosen for his invoice.
+
+Alice ------ Bob ------ Carol ------ Dave
+
+Since we need to source all of these funds from the sender (Alice), the
+forwarding of funds is as follows:
+  * Alice pushes 4110 msat to Bob.
+  * Bob _should_ push 4100 msat to Carol, claiming his 10 msat upfront
+    fee.
+  * Carol _should_ push 100 msat to Dave, claiming her 4000 msat
+    upfront fee.
+
+However, Bob has no real incentive to forward the HTLC to Carol and
+push her the 4100 msat because that value is more than the fees he'll
+earn from successfully forwarding and settling the HTLC (10 msat
+upfront fees + 1000 msat success case fees). It's worth noting that
+this type of fee differential already exists in the network today - I
+got these example numbers by looking at the fee rates of the Loop
+node's peers [4].
+
+There were a few points discussed around this issue:
+  * Whether we should look into a more complicated approach that
+    includes a &quot;proof of forward&quot; secret in the next node's onion which
+    must be supplied to claim the upfront fee.
+  * Discussion about whether these order of magnitude fee differences
+    will exist in an efficient market (differing opinions).
+  * Whether Bob _would_ steal the upfront fee by dropping the payment,
+    as it'll impact nodes' desire to route through them in future.
+  * Is there a way to deliver upfront fees to nodes along the route
+    *without* them adding up along the route (other than the naive
+    version of sending each hop a payment, which comes with its own
+    problems)? Seems not, but bright ideas are wanted and welcome!
+  * That nodes will decide where they fall in the trade-off of setting
+    upfront fees to cover their opportunity cost for high routing fees
+    and market pressure to keep these fees low for the sake of
+    remaining competitive.
+
+A few people mentioned the desire to keep an upfront fee solution as
+simple as possible, but generally it seemed that a solution where the
+accumulated upfront fees at any point along a route exceed any single
+hop's expected success case fees is unacceptable because incentives
+are misaligned (even if we can properly attribute errors with [5]).
+
+We touched briefly on a few &quot;proof of forwarding&quot; solutions for
+upfront fees:
+  * Using a locking mechanism that relies on a secret that is provided
+    by the next node's onion.
+  * A taproot tree for all HTLCs where each leaf has a subset of HTLCs,
+    and fees could be incorporated here (summary note: apparently some
+    work has been done here, but I couldn't find the link).
+  * If we're confident that a more complicated solution will solve many
+    problems, then we should pursue them, otherwise a simple solution
+    is possibly a _good enough_ first step.
+
+There was some discussion about how we want to go about addressing
+spamming in the network:
+  * Is it good enough to deploy something today that just charges a
+    simple, capped upfront fee (eg 1 sat per hop) that solves jamming
+    for the current state of the network and allows us to learn
+    something then iterate?
+  * Should our first attempt at solving this issue be for a future
+    steady state where nodes have significant traffic and nodes face
+    real opportunity cost (in the form of lost revenue) if they are
+    targeted by a jamming attack?
+
+3. Circuit Breaker Update
+  * Circuit breaker has a UI now, and some issues are being opened in
+    the repo so people have at minimum gone through the effort to spin
+    it up.
+  * It's still pretty manual, but it does provide node operators with
+    information about the payment failures on their nodes (not easily
+    surfaced in many LN UIs).
+  * Hoping to get insights into stuck HTLCs and spam HTLCs so that we
+    can learn from real life experience.
+  * Circuit breaker is generally pushing in the same direction as the
+    reputation scheme in [3], just a more manual one. We could
+    possibly use it to visualize the endorsement system in [3] before
+    enforcing it.
+  * While circuit breaker isn't necessarily *the* solution to solving
+    jamming on LN, it provides us with some data points and a
+    practical way for individual operators to address spamming of
+    their nodes.
+
+3. Tokens Update
+Since our last discussion an architecture document was added to the
+proposal [6], details in the mailing list post [7]. The main goal is
+to try to dissociate the people paying the fees from those gaining the
+benefits from the credentials, so that credentials can be paid by a
+LSP (for example).
+
+4. Reputation discussions in LSP Specification
+Some attendees have been working on a reputation system for the LSP
+specification group [8]. This system is intended to provide standard
+metrics about what makes a node good/bad to connect to in the context
+of a decentralized marketplace. While this work looks at the problem
+from a different perspective, there's a possibility to consolidate
+the efforts. It seems particularly useful in the anti-jamming case
+where a node has newly connected to you, and needs a &quot;start state&quot;
+reputation score. The idea of defining what qualifies as good
+behavior in the Lightning Network is useful across the board. The
+LSP specification group also has bi-weekly calls, and welcomes
+additional participants!
+
+5. Call Cadence
+Attendees agreed to continue with calls every two weeks. General
+consensus was that we would aim for a 30 minute meeting with the
+option to extend to an hour if discussion warrants it.
+
+# What's next
+Thanks to everyone who attended last week's meeting, we hope to see
+more folks in the next one!
+
+There's a lot to discuss - brave readers who made it all the way to
+the bottom of this email will notice a fair number of question marks
+scattered about - and we're going to continue to break the problem
+down into smaller parts to discuss in the hope of making progress.
+
+Any change to the Lightning Network that aims to address channel
+jamming attacks will be a significant (but necessary) change to the
+protocol, and it's going to need input from many different
+stakeholders. Please reach out here or in private
+(<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">carla at chaincode.com</A> / <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">clara at chaincode.com</A>) if you have any questions
+/ concerns / comments!
+
+Cheers until next time,
+Carla and Clara
+(Yes, our names are confusing. No, you won't get used to it)
+
+[1]
+<A HREF="https://github.com/ClaraShk/LNJamming/blob/main/meeting-transcripts/23-01-23-transcript.md">https://github.com/ClaraShk/LNJamming/blob/main/meeting-transcripts/23-01-23-transcript.md</A>
+[2] <A HREF="https://github.com/lightning/bolts/pull/1052">https://github.com/lightning/bolts/pull/1052</A>
+[3] <A HREF="https://eprint.iacr.org/2022/1454.pdf">https://eprint.iacr.org/2022/1454.pdf</A>
+[4]
+<A HREF="https://mempool.space/lightning/node/021c97a90a411ff2b10dc2a8e32de2f29d2fa49d41bfbb52bd416e460db0747d0d">https://mempool.space/lightning/node/021c97a90a411ff2b10dc2a8e32de2f29d2fa49d41bfbb52bd416e460db0747d0d</A>
+[5] <A HREF="https://github.com/lightning/bolts/pull/1044">https://github.com/lightning/bolts/pull/1044</A>
+[6] <A HREF="https://github.com/lightning/bolts/pull/1043">https://github.com/lightning/bolts/pull/1043</A>
+[8] <A HREF="https://github.com/BitcoinAndLightningLayerSpecs/lsp/issues/12">https://github.com/BitcoinAndLightningLayerSpecs/lsp/issues/12</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230130/95a70748/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230130/95a70748/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003833.html">[Lightning-dev] Async payments proof-of-payment: a wishlist for researchers]
+</A></li>
+	<LI>Next message: <A HREF="003838.html">[Lightning-dev] Jamming Mitigation Call Summary - 01/23
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3834">[ date ]</a>
+              <a href="thread.html#3834">[ thread ]</a>
+              <a href="subject.html#3834">[ subject ]</a>
+              <a href="author.html#3834">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Two-party eltoo w/ punishment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Two-party%20eltoo%20w/%20punishment&In-Reply-To=%3CY7ehaRwlNYz/kIDl%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003818.html">
+   <LINK REL="Next"  HREF="003820.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Two-party eltoo w/ punishment</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Two-party%20eltoo%20w/%20punishment&In-Reply-To=%3CY7ehaRwlNYz/kIDl%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Two-party eltoo w/ punishment">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Jan  6 04:19:53 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003818.html">[Lightning-dev] Two-party eltoo w/ punishment
+</A></li>
+        <LI>Next message: <A HREF="003820.html">[Lightning-dev] Async payments proof-of-payment: a wishlist for	researchers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3819">[ date ]</a>
+              <a href="thread.html#3819">[ thread ]</a>
+              <a href="subject.html#3819">[ subject ]</a>
+              <a href="author.html#3819">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Jan 05, 2023 at 06:59:42PM -0500, Antoine Riard wrote:
+&gt;<i> &gt; A simple advantage to breaking the symmetry is that if A does a unilateral
+</I>&gt;<i> &gt; close, then B can immediately confirm that closure releasing all funds
+</I>&gt;<i> &gt; for both parties. Without breaking the symmetry, you can't distinguish
+</I>&gt;<i> &gt; that case from B attempting to confirm his own unilateral close, which
+</I>&gt;<i> &gt; would allow B to cheat.
+</I>&gt;<i> Yes, IIUC the proposed flow is UA.n -&gt; CB.n -&gt; money, and in this
+</I>&gt;<i> optimistic case, there is only one CLTV delay to respect the spend of the
+</I>&gt;<i> UA.
+</I>
+The only delay in the UA.n/CB.n case is if someone's trying to redeem
+an HTLC that times out in the future, in which case you might have UA.n,
+CB.n, (CB.n -&gt; A's balance), (CB.n -&gt; B's balance), (CB.n -&gt; A claiming
+HTLC x with preimage x') all in the same block, but (CB.n -&gt; A claiming
+HTLC y at timeout) happening 100 blocks later, when y times out.
+
+&gt;<i> (Note on the gist, the UA state description includes a Pa or tapscript &quot;IF
+</I>&gt;<i> CODESEP n OP_CLTV DROP ENDIF 1 CHECKSIG&quot; as spendable paths and the CA.n
+</I>&gt;<i> state description nSequence = 0, so I'm not sure how the update/justice
+</I>&gt;<i> delay is enforced)
+</I>
+(Note that the CLTV here is just for eltoo state ratcheting, and is
+always in the past so doesn't imply an actual delay)
+
+CA.n is only able to spend UB.n, not UA.n. (Or it can spend WA.n, but
+WA.n can only spend UB.k or prior WA.k, so it means much the same
+thing).
+
+That's achievable by having the CA.n signature use ANYPREVOUT rather than
+ANYPREVOUTANYSCRIPT (thus committing to UB.n/WA.n's shared scriptPubKey)
+and having different scriptPubKey's between UA.n and UB.n (which breaks
+the symmetry).
+
+SA.n spends UA.n or WB.n in the same way, except also sets nSequence to
+force a relative timelock.
+
+&gt;<i> &gt; If Alice is dishonest, and posts a very old state (n-x), then Bob could
+</I>&gt;<i> &gt; post up to x watchtower txs (WB.(n-x+1) .. WB.n) causing Alice to be
+</I>&gt;<i> &gt; unable to access her funds for up to (x+1)*to_self_delay blocks. But
+</I>&gt;<i> &gt; that's just a reason for her to not be dishonest in the first place.
+</I>&gt;<i> So I think there still is the case of Bob broadcasting a very old state and
+</I>&gt;<i> Alice's watchtowers colluding to prevent Alice's honest funds access,
+</I>&gt;<i> potentially preventing the HTLC-timeout, IIUC.
+</I>
+Alice was the dishonest one here, so it'd be Alice broadcasting an old
+state, preventing Bob from accessing funds.
+
+If you're not online and have no honest watchtowers, then Alice can just
+broadcast an old state, wait for the delay, and confirm the old state
+(UA.k -&gt; SA.k), and steal as much as she wants.
+
+If you are online, or have honest watchtowers, then your honest CB.n
+or WB.n can be confirmed in the same block as 2000 dishonest WB.(k+1),
+WA.(k+2) txs. The point of having a watchtower helping you out is that the
+watchtower can do fancier things than your lightning node on your phone,
+like observe the mempool and potentially have direct relationships with
+mining pools to overcome things like the 25 tx ancestor/descendant limit.
+
+&gt;<i> I don't know if we're not
+</I>&gt;<i> introducing some changes in the trust assumptions towards watchtowers where
+</I>&gt;<i> with vanilla eltoo a single compromised watchtower can be corrected by the
+</I>&gt;<i> honest channel holder or another watchtower, iirc.
+</I>
+The same scenario applies in traditional eltoo, except in that case
+Alice doesn't need to compromise any of Bob's watchtowers, she can
+just broadcast multiple states herself -- since the txs are symmetric,
+there's no difference between Alice.1 -&gt; Alice.2 and Alice.1 -&gt; Bob.2;
+so you can't allow the latter while preventing the former (and there's
+likewise no difference between those and Alice.1 -&gt; Watchtower.2).
+
+&gt;<i> &gt; No -- the RB.n transactions immediately release A's funds after applying
+</I>&gt;<i> &gt; the penalty, so if the watchtower colludes with A and has an old RB.y
+</I>&gt;<i> &gt; transaction, Alice can steal funds by posting UA.x and RB.y, provided that
+</I>&gt;<i> &gt; her balance now is sufficiently less than her balance then (ie bal.n &lt;
+</I>&gt;<i> &gt; bal.y - penalty).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; In this model, Bob shouldn't be signing RB.n or CB.n txs until Alice
+</I>&gt;<i> &gt; has already started a unilateral close and posted UA.n/UA.k.
+</I>&gt;<i> So the penalty transactions should not be delegated to untrusted
+</I>&gt;<i> watchtowers. 
+</I>
+Yes.
+
+&gt;<i> In case of RB.n signing key compromise, the whole channel
+</I>&gt;<i> funds might be lost.
+</I>
+Compromise of pretty much any of the signing keys allows all the channel
+funds to be lost; this is always true of the key used for signing
+cooperative closes, for instance.
+
+If you do want to delegate punishment, you could probably have an
+alternative setup where every watchtower transaction implies punishment.
+
+(I assume watchtower punishment needs to be all or nothing, otherwise a
+compromised watchtower would just rbf any attempts to punish, switching
+them over to non-punishment, which then encourages attackers to compromise
+watchtowers (and prioritise attacking people who use their compromised
+watchtowers), and you'd end up with &quot;nothing&quot; anyway...)
+
+Something like:
+
+no-punishment:
+  UA.n -&gt; delay -&gt; SA.n (keypath)
+  UA.k -&gt; CB.n         (k &lt;= n)
+
+punishment of Alice:
+  UA.k -&gt; RB.n         (k &lt; n - X)
+  UA.k -&gt; WB.n         (k &lt; n)
+  WB.k -&gt; WB.n         (k &lt; n)
+  WB.k -&gt; RB.n         (k &lt;= n)
+  WB.n -&gt; delay -&gt; TA.n
+
+where A only signs WB.n when the state has already updated to n+X,
+and TA.n/RB.n transfers the punishment amount from A's balance to B's
+balance compared to SA.n/CB.n.
+
+That introduces an extra signature per state for TA.n, and probably an
+additional one given the different constraints for RB.n when spending
+UA.k vs WB.k.
+
+Cheers,
+aj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003818.html">[Lightning-dev] Two-party eltoo w/ punishment
+</A></li>
+	<LI>Next message: <A HREF="003820.html">[Lightning-dev] Async payments proof-of-payment: a wishlist for	researchers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3819">[ date ]</a>
+              <a href="thread.html#3819">[ thread ]</a>
+              <a href="subject.html#3819">[ subject ]</a>
+              <a href="author.html#3819">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

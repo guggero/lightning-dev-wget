@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20200227120656.teydtz5ec2r5em2l%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002563.html">
+   <LINK REL="Next"  HREF="002573.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20200227120656.teydtz5ec2r5em2l%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">aj at erisian.com.au
+       </A><BR>
+    <I>Thu Feb 27 12:06:56 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002563.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002573.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2568">[ date ]</a>
+              <a href="thread.html#2568">[ thread ]</a>
+              <a href="subject.html#2568">[ subject ]</a>
+              <a href="author.html#2568">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Feb 24, 2020 at 01:29:36PM +1030, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On Fri, Feb 21, 2020 at 12:35:20PM +1030, Rusty Russell wrote:
+</I>&gt;<i> &gt;&gt; And if there is a grace period, I can just gum up the network with lots
+</I>&gt;<i> &gt;&gt; of slow-but-not-slow-enough HTLCs.
+</I>&gt;<i> &gt; Well, it reduces the &quot;gum up the network for &lt;timeout&gt; blocks&quot; to &quot;gum
+</I>&gt;<i> &gt; up the network for &lt;grace period&gt; seconds&quot;, which seems like a pretty
+</I>&gt;<i> &gt; big win. I think if you had 20 hops each with a 1 minute grace period,
+</I>&gt;<i> &gt; and each channel had a max_accepted_htlcs of 30, you'd need 25 HTLCs per
+</I>&gt;<i> &gt; second to block 1000 channels (so 2.7% of the 36k channels 1ml reports),
+</I>&gt;<i> &gt; so at the very least, successfully performing this attack would be
+</I>&gt;<i> &gt; demonstrating lightning's solved bitcoin's transactions-per-second
+</I>&gt;<i> &gt; limitation?
+</I>&gt;<i> But the comparison here is not with the current state, but with the
+</I>&gt;<i> &quot;best previous proposal we have&quot;, which is:
+</I>&gt;<i> 
+</I>&gt;<i> 1. Charge an up-front fee for accepting any HTLC.
+</I>&gt;<i> 2. Will hang-up after grace period unless you either prove a channel
+</I>&gt;<i>    close, or gain another grace period by decrypting onion.
+</I>
+In general I don't really like comparing ideas that are still in
+brainstorming mode; it's never clear whether there are unavoidable
+pitfalls in one or the other that won't become clear until they're
+actually implemented...
+
+Specifically, I'm not a fan of either channel closes or peeling the onion
+-- the former causes problems if you're trying to route across sidechains
+or have lightning as a third layer above channel factories or similar,
+and I'm not convinced even within Bitcoin &quot;proving a channel close&quot;
+is that meaningful, and passing around decrypted onions seems like it
+opens up privacy attacks.
+
+Aside from those philosophical complaints, seems to me the simplest
+attack would be:
+
+  * route 1000s of HTLCs from your node A1 to your node A2 via different,
+    long paths, using up the total channel capacity of your A1/A2 nodes,
+    with long timeouts
+  * have A2 offer up a transaction claiming that was the channel
+    close to A3; make it a real thing if necessary, but it's probably
+    fake-able
+  * then leave the HTLCs open until they time out, using up capacity
+    from all the nodes in your 1000s of routes. For every satoshi of
+    yours that's tied up, you should be able to tie up 10-20sat of other
+    people's funds
+
+That increases the cost of the attack by one on-chain transaction per
+timeout period, and limits the attack surface by how many transactions
+you can get started/completed within whatever the grace period is, but
+it doesn't seem a lot better than what we have today, unless onchain
+fees go up a lot.
+
+(If the up-front fee is constant, then A1 paid a fee, and A2 collected a
+fee so it's a net wash; if it's not constant then you've got a lot of
+hassle making it work with any privacy I think)
+
+&gt;<i> &gt;   A-&gt;B: here's a HTLC, locked in
+</I>&gt;<i> &gt;   B-&gt;C: HTLC proposal
+</I>&gt;<i> &gt;   C-&gt;B: sure: updated commitment with HTLC locked in
+</I>&gt;<i> &gt;   B-&gt;C: great, corresponding updated commitment, plus revocation
+</I>&gt;<i> &gt;   C-&gt;B: revocation
+</I>&gt;<i> Interesting; this adds a trip, but not in latency (since C can still
+</I>&gt;<i> count on the HTLC being locked in at step 3).
+</I>&gt;<i> I don't see how it helps B though?  It still ends up paying A, and C
+</I>&gt;<i> doesn't pay anything?
+</I>
+The updated commitment has C paying B onchain; if B doesn't receive that
+by the time the grace period's about over, B can cancel the HTLC with A,
+and then there's statemachine complexity for B to cancel it with C if
+C comes alive again a little later.
+
+&gt;<i> It forces a liveness check of C, but TBH I dread rewriting the state
+</I>&gt;<i> machine for this when we can just ping like we do now.
+</I>
+I'd be surprised if making musig work doesn't require a dread rewrite
+of the state machine as well, and then there's PTLCs and eltoo...
+
+&gt;<i> &gt;&gt; There's an old proposal to fast-fail HTLCs: Bob sends an new message &quot;I
+</I>&gt;<i> &gt;&gt; would fail this HTLC once it's committed, here's the error&quot; 
+</I>&gt;<i> &gt; Yeah, you could do &quot;B-&gt;C: proposal, C-&gt;B: no way!&quot; instead of &quot;sure&quot; to
+</I>&gt;<i> &gt; fast fail the above too. 
+</I>&gt;<i> &gt; And I think something like that's necessary (at least with my view of how
+</I>&gt;<i> &gt; this &quot;keep the HTLC open&quot; payment would work), otherwise B could send C a
+</I>&gt;<i> &gt; &quot;1 microsecond grace period, rate of 3e11 msat/minute, HTLC for 100 sat,
+</I>&gt;<i> &gt; timeout of 2016 blocks&quot; and if C couldn't reject it immediately would
+</I>&gt;<i> &gt; owe B 50c per millisecond it took to cancel.
+</I>&gt;<i> Well, surely grace period (and penalty rate) are either fixed in the
+</I>&gt;<i> protocol or negotiated up-front, not per-HTLC.
+</I>
+I think the &quot;keep open rate&quot; should depend on how many nodes have
+already been in the route (the more hops it's gone through, the more
+funds/channels you're tying up by holding onto the HTLC, so the more
+you should pay), while the grace period should depend on how many nodes
+there are still to go in the route (it needs to be higher to let each of
+those nodes deduct their delta from it). So I think you *should* expect
+those to change per HTLC than you're forwarding, as those factors will
+be different for different HTLCs.
+
+Cheers,
+aj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002563.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002573.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2568">[ date ]</a>
+              <a href="thread.html#2568">[ thread ]</a>
+              <a href="subject.html#2568">[ subject ]</a>
+              <a href="author.html#2568">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

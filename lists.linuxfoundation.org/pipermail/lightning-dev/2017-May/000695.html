@@ -1,0 +1,271 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Lightning payment format
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20payment%20format&In-Reply-To=%3C874lx1fd10.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000694.html">
+   <LINK REL="Next"  HREF="000706.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Lightning payment format</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Lightning%20payment%20format&In-Reply-To=%3C874lx1fd10.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [RFC] Lightning payment format">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu May  4 04:42:51 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000694.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+        <LI>Next message: <A HREF="000706.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#695">[ date ]</a>
+              <a href="thread.html#695">[ thread ]</a>
+              <a href="subject.html#695">[ subject ]</a>
+              <a href="author.html#695">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt; writes:
+&gt;&gt;&gt;<i> On the topic of signatures: as is proposed now, a user isn't able to verify
+</I>&gt;&gt;&gt;<i> the validity of the signature (and thereby authenticity of the payreq and
+</I>&gt;&gt;&gt;<i> integrity of the contents) without first having a (direction || chanID) -&gt;
+</I>&gt;&gt;&gt;<i> pubKey mapping. In my opinion, the payreqs are already so long that
+</I>&gt;&gt;&gt;<i> optimizing for size is a bit of a waste. By replacing the chanID with the
+</I>&gt;&gt;&gt;<i> compressed serialized public key, users will be able to immediately verify
+</I>&gt;&gt;&gt;<i> the signature without the use of an external mapping.
+</I>&gt;<i>
+</I>&gt;<i> As much as I pushed for using the short chanID in the onion, I too am
+</I>&gt;<i> a reluctant to use
+</I>&gt;<i> it here. In addition to laolu's arguments, I would say:
+</I>&gt;<i> - making the assumption that the network is well-known doesn't take
+</I>&gt;<i> into account the fact
+</I>&gt;<i> that announcements take time to propagate through the network
+</I>&gt;<i> (typically a few minutes with
+</I>&gt;<i> staggered broadcast every minute); ok it doesn't change often, but now
+</I>&gt;<i> we will need to worry
+</I>&gt;<i> about not using our most recently created/closed channels as reference.
+</I>&gt;<i> - we already know that we won't always be able to have a full view of
+</I>&gt;<i> the network in
+</I>&gt;<i> the future, so I feel like we should rely on it as less as possible
+</I>&gt;<i> - since payment requests are sent out-of-band, optimizing their size
+</I>&gt;<i> is maybe not as
+</I>&gt;<i> important as messages exchanged on the p2p network?
+</I>&gt;<i>
+</I>&gt;&gt;<i>As you pointed out offline, we can do key recovery from the signature[1],
+</I>&gt;&gt;<i>so the information is there already in fact :)  The chanid is really a
+</I>&gt;&gt;<i>courtesy, from this POV.
+</I>&gt;<i>
+</I>&gt;<i> That is really amazing! Why not completely ditch the chanid then? ;-)
+</I>
+OK, I have done this.  I added another byte which you need to figure out
+which key to recover as there may be multiples.
+
+I will add a dependency on the python libsecp256k1 so I can update the
+tool.
+
+Note: we will lose this ability when we switch to Schnorr, apparently.
+But then we'll have more data on actual usage by which to decide on
+tradeoffs.
+
+I've pushed this change.  Here's the patch:
+
+Subject: Drop channel ID in favor of key recovery.
+
+As suggested by roasbeef (Olaoluwa Osuntokun).  We add a byte to the
+signature, even though we only need 1 or 2 bits for recovery ID.
+
+The signature is actually over human readable part and data in 5-bit
+bytes, for simplicity of implementation (all current bech32 encoders
+work this way).
+
+Signed-off-by: Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+
+diff --git a/README.md b/README.md
+index b6ac088..3039333 100644
+--- a/README.md
++++ b/README.md
+@@ -12,9 +12,8 @@ Human readable part:
+ And data part:
+ 1. Version: 0 (5 bits)
+ 1. Payment hash (256 bits)
+-1. Dest channel id (high bit == which end) (64 bits)
+ 1. Zero or more tagged parts.
+-1. Signature (bitcoin-style, of SHA256(SHA256()) of above. (256 bits)
++1. Signature (bitcoin-style, of SHA256(SHA256(), plus recovery byte) of above. (520 bits)
+ 
+ Tagged parts are of format:
+ 1. type (5 bits)
+diff --git a/examples.sh b/examples.sh
+index 3da33ab..78c2be8 100755
+--- a/examples.sh
++++ b/examples.sh
+@@ -2,28 +2,27 @@
+ 
+ # Dummy placeholder values
+ RHASH=0001020304050607080900010203040506070809000102030405060708090102
+-CHANID=1122334455667788
+ CONVERSION_RATE=1200
+ # Random keypair for testing.
+ PRIVKEY=e126f68f7eafcc8b74f54d269fe206be715000f94dac067d1c04a8ca3b2db734
+ PUBKEY=03e7156ae33b0a208d0744199163177e909e80176e55d97a2f221ede0f934dd9ad
+ 
+-echo '# Please send 10 satoshi using rhash $RHASH to node at channel $CHANID (numerically-lesser end of those peers).'
+-./lightning-address.py encode 10000 $RHASH $CHANID $PRIVKEY
++echo &quot;# Please send 10 satoshi using rhash $RHASH to me @$PUBKEY&quot;
++./lightning-address.py encode 10000 $RHASH $PRIVKEY
+ echo
+ 
+-echo '# Please send $3 for a cup of coffee to the same peer'
+-./lightning-address.py encode --description='1 cup coffee' $((3 * 100000000000 / $CONVERSION_RATE)) $RHASH $CHANID $PRIVKEY
++echo &quot;# Please send \$3 for a cup of coffee to the same peer&quot;
++./lightning-address.py encode --description='1 cup coffee' $((3 * 100000000000 / $CONVERSION_RATE)) $RHASH $PRIVKEY
+ echo
+ 
+-echo '# Now send $24 for an entire list of things (hashed)'
+-./lightning-address.py encode --description-hashed='One piece of chocolate cake, one icecream cone, one pickle, one slice of swiss cheese, one slice of salami, one lollypop, one piece of cherry pie, one sausage, one cupcake, and one slice of watermelon' $((24 * 100000000000 / $CONVERSION_RATE)) $RHASH $CHANID $PRIVKEY
++echo &quot;# Now send \$24 for an entire list of things (hashed)&quot;
++./lightning-address.py encode --description-hashed='One piece of chocolate cake, one icecream cone, one pickle, one slice of swiss cheese, one slice of salami, one lollypop, one piece of cherry pie, one sausage, one cupcake, and one slice of watermelon' $((24 * 100000000000 / $CONVERSION_RATE)) $RHASH $PRIVKEY
+ echo
+ 
+ # NOTE: Does not implement real fallback format yet!
+ echo '# The same, with a fallback address mk2QpYatsKicvFVuTAQLBryyccRXMUaGHP'
+-./lightning-address.py encode --fallback=mk2QpYatsKicvFVuTAQLBryyccRXMUaGHP --description-hashed='One piece of chocolate cake, one icecream cone, one pickle, one slice of swiss cheese, one slice of salami, one lollypop, one piece of cherry pie, one sausage, one cupcake, and one slice of watermelon' $((24 * 100000000000 / $CONVERSION_RATE)) $RHASH $CHANID $PRIVKEY
++./lightning-address.py encode --fallback=mk2QpYatsKicvFVuTAQLBryyccRXMUaGHP --description-hashed='One piece of chocolate cake, one icecream cone, one pickle, one slice of swiss cheese, one slice of salami, one lollypop, one piece of cherry pie, one sausage, one cupcake, and one slice of watermelon' $((24 * 100000000000 / $CONVERSION_RATE)) $RHASH $PRIVKEY
+ echo
+ 
+ echo '# The same, with extra routing info to get to node 029e03a901b85534ff1e92c43c74431f7ce72046060fcf7a95c37e148f78c77255'
+-./lightning-address.py encode --route=029e03a901b85534ff1e92c43c74431f7ce72046060fcf7a95c37e148f78c77255/0102030405060708/20/3 --fallback=mk2QpYatsKicvFVuTAQLBryyccRXMUaGHP --description-hashed='One piece of chocolate cake, one icecream cone, one pickle, one slice of swiss cheese, one slice of salami, one lollypop, one piece of cherry pie, one sausage, one cupcake, and one slice of watermelon' $((24 * 100000000000 / $CONVERSION_RATE)) $RHASH $CHANID $PRIVKEY
++./lightning-address.py encode --route=029e03a901b85534ff1e92c43c74431f7ce72046060fcf7a95c37e148f78c77255/0102030405060708/20/3 --fallback=mk2QpYatsKicvFVuTAQLBryyccRXMUaGHP --description-hashed='One piece of chocolate cake, one icecream cone, one pickle, one slice of swiss cheese, one slice of salami, one lollypop, one piece of cherry pie, one sausage, one cupcake, and one slice of watermelon' $((24 * 100000000000 / $CONVERSION_RATE)) $RHASH $PRIVKEY
+diff --git a/lightning-address.py b/lightning-address.py
+index 1a3f670..c43d020 100755
+--- a/lightning-address.py
++++ b/lightning-address.py
+@@ -169,8 +169,8 @@ def lnencode(options):
+     
+     hrp = 'ln' + options.currency + amount
+     
+-    # version + paymenthash + channelid
+-    data = [0] + convertbits(bytearray.fromhex(options.paymenthash) + bytearray.fromhex(options.channelid), 8, 5)
++    # version + paymenthash
++    data = [0] + convertbits(bytearray.fromhex(options.paymenthash), 8, 5)
+     
+     for r in options.route:
+         pubkey,channel,fee,cltv = r.split('/')
+@@ -189,9 +189,10 @@ def lnencode(options):
+ 
+     # We actually sign the hrp, then the array of 5-bit values as bytes.
+     privkey = secp256k1.PrivateKey(bytes(bytearray.fromhex(options.privkey)))
+-    sig = privkey.ecdsa_serialize_compact(privkey.ecdsa_sign(
+-        bytearray([ord(c) for c in hrp] + data)))
+-    data = data + convertbits(sig, 8, 5)
++    sig = privkey.ecdsa_sign_recoverable(bytearray([ord(c) for c in hrp] + data))
++    # This doesn't actually serialize, but returns a pair of values :(
++    sig,recid = privkey.ecdsa_recoverable_serialize(sig)
++    data = data + convertbits(bytes(sig) + bytes([recid]), 8, 5)
+ 
+     print(bech32_encode(hrp, data))
+ 
+@@ -205,27 +206,19 @@ def lndecode(options):
+ 
+     if data[0] != 0:
+         sys.exit(&quot;Unknown version {}&quot;.format(data[0]))
++    data = data[1:]
+ 
+-    # Final signature takes 103 bytes (64 bytes base32 encoded)
++    # Final signature takes 104 bytes (65 bytes base32 encoded)
+     if len(data) &lt; 103:
+         sys.exit(&quot;Too short to contain signature&quot;)
+-    sigdecoded = convertbits(data[-103:], 5, 8, False)
+-    data = data[:-103]
+-
+-    if options.pubkey:
+-        pubkey = secp256k1.PublicKey()
+-        pubkey.deserialize(bytes(bytearray.fromhex(options.pubkey)))
+-        sig = pubkey.ecdsa_deserialize_compact(sigdecoded)
+-        if not pubkey.ecdsa_verify(bytearray([ord(c) for c in hrp] + data), sig):
+-            sys.exit(&quot;Bad signature&quot;)
+-        print(&quot;Signature: OK&quot;)
+-    else:
+-        print(&quot;Signature: Unknown&quot;)
+-
+-    # Preserve original data for signature check.
+-    origdata = data
+-    data = data[1:]
++    sigdecoded = convertbits(data[-104:], 5, 8, False)
++    data = data[:-104]
+ 
++    pubkey = secp256k1.PublicKey(flags=secp256k1.ALL_FLAGS)
++    sig = pubkey.ecdsa_recoverable_deserialize(sigdecoded[0:64], sigdecoded[64])
++    pubkey.public_key = pubkey.ecdsa_recover(bytearray([ord(c) for c in hrp] + data), sig)
++    print(&quot;Signed with public key: {}&quot;.format(bytearray(pubkey.serialize()).hex()))
++    
+     m = re.search(&quot;\d+&quot;, hrp)
+     if not m:
+         sys.exit(&quot;Does not contain amount&quot;)
+@@ -246,15 +239,14 @@ def lndecode(options):
+     if options.rate:
+         print(&quot;(Conversion: {})&quot;.format(amount / 10**11 * float(options.rate)))
+ 
+-    # (32 + 8) bytes turns into 64 bytes when base32 encoded.
+-    if len(data) &lt; 64:
+-        sys.exit(&quot;Not long enough ton contain payment hash and channel id&quot;)
++    # 32 bytes turns into 52 bytes when base32 encoded.
++    if len(data) &lt; 52:
++        sys.exit(&quot;Not long enough to contain payment hash&quot;)
+ 
+-    decoded = convertbits(data[:64], 5, 8, False)
+-    data = data[64:]
+-    assert len(decoded) == 32 + 8
+-    print(&quot;Payment hash: {}&quot;.format(bytearray(decoded[0:32]).hex()))
+-    print(&quot;Channel id: {}&quot;.format(bytearray(decoded[32:40]).hex()))
++    decoded = convertbits(data[:52], 5, 8, False)
++    data = data[52:]
++    assert len(decoded) == 32
++    print(&quot;Payment hash: {}&quot;.format(bytearray(decoded).hex()))
+ 
+     while len(data) &gt; 0:
+         tag,tagdata,data = pull_tagged(data)
+@@ -297,7 +288,6 @@ parser_enc.add_argument('--description-hashed',
+                         help='What is being purchased (for hashing)')
+ parser_enc.add_argument('amount', type=int, help='Amount in millisatoshi')
+ parser_enc.add_argument('paymenthash', help='Payment hash (in hex)')
+-parser_enc.add_argument('channelid', help='Channel id (in hex)')
+ parser_enc.add_argument('privkey', help='Private key (in hex)')
+ parser_enc.set_defaults(func=lnencode)
+ 
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000694.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+	<LI>Next message: <A HREF="000706.html">[Lightning-dev] [RFC] Lightning payment format
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#695">[ date ]</a>
+              <a href="thread.html#695">[ thread ]</a>
+              <a href="subject.html#695">[ subject ]</a>
+              <a href="author.html#695">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

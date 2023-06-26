@@ -1,0 +1,338 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [BOLT Draft] Onion Routing Spec
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3CCAO3Pvs-VnEGnY9QvWywpv3_mo6LKzwE_aMWvK%3DxTV86Ax-Tp6Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000556.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [BOLT Draft] Onion Routing Spec</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3CCAO3Pvs-VnEGnY9QvWywpv3_mo6LKzwE_aMWvK%3DxTV86Ax-Tp6Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [BOLT Draft] Onion Routing Spec">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Jul 27 18:13:55 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000556.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#557">[ date ]</a>
+              <a href="thread.html#557">[ thread ]</a>
+              <a href="subject.html#557">[ subject ]</a>
+              <a href="author.html#557">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Christian, welcome to the mailing list!
+
+Excellent work! I've been meaning to re-visit my implementation since I
+finished it last October but have been busy tending to other lnd related
+items.
+Thanks for the cleanups and optimizations you've added to my initial Sphinx
+implementation. Once we've finished fleshing out the initial specification,
+I'd
+be happy to get those changes merged!
+
+I've taken a look at the diff against the existing implementation, plus the
+current spec draft. I'd say the current spec draft is the *clearest*
+description of Sphinx I've encountered, especially the padding bits. IMO,
+the
+notation within the paper describing how to construct+process the
+mix-header is
+rather opaque.
+
+I see you've modified the encryption scheme of the end-to-end payload,
+switching from the arbitrary block-size block cipher (LIONESS) to purely a
+stream cipher (ChaCha20). Initially I was under the impression that this
+might
+compromise one of the security arguments of the scheme, but on closer
+inspection this is perfectly fine if one extends the header MAC to the
+entire
+payload as you've done. If one was staying true to the original
+construction,
+then this would eliminate the possibility of Single-Use Reply Blocks
+(SURB's)
+since the sender would be unable to construct the reply mix-header as she
+would
+be unaware of they responder's message. It's clear to me now that a MAC
+covering
+the end-to-end payload was omitted in the original version since the proof
+of
+computational indistinguishability of replies vs responses depends on the
+structure+processing being identical for both messages types. However I
+don't
+see us having any use for SURB's so this is an excellent change.
+Additionally,
+modifications to the end-to-end payload will instantly cause packet
+corruption,
+stopping invalid packets from propagating through the network.
+
+I really like the addition of the per-hop payload! It's a change to the
+original construction that I've seriously considered proposing. Such a
+payload
+should prove to be very useful in the future for information such as:
+limits on
+the per-hop absolute timeout, fee information, etc.
+
+The addition of a version byte is also very welcome. This'll streamline
+future
+modifications we may make to the mix-header format in the future, such as
+increasing the size of the per-hop payload, or switching to an alternative
+format to encoding the &quot;next hop&quot; address.
+
+The current draft doesn't specify the processor's action in the scenario
+that
+they're unable to locate the next hop node within their local routing table.
+Just to be explicit, I think a final paragraph should be inserted under the
+&quot;Packet Forwarding&quot; section detailing the abort procedure.
+
+
+&gt;<i> However, they could easily be made variable should we decide that sending
+</I>&gt;<i> mostly empty messages is wasteful.
+</I>
+I strongly think we should maintain the size uniformity of the packet
+throughout processing, changes in payload size between hop can give away
+information w.r.t a node's position within the route.
+
+We might want to consider dropping the end-to-end payload altogether
+though. I
+can't really think of a clear use case for the e2e payload within our
+specific
+application.  That would save us 1k bytes, reducing the size of the full
+mix-header to 1234 bytes. Accounting for the additional fields within an
+HTLC
+&quot;add&quot; message, plus some additional overhead, this should keep us below
+typical
+MTU sizes, avoiding fragmentation of HTLC &quot;add&quot; messages.
+
+&gt;<i> This specification is limited to version 0 packets and the structure of
+</I>&gt;<i> future version may change. The receiving node then splits the packet into
+</I>its
+&gt;<i> fields.
+</I>
+Packets with a non-zero version byte should be immediately rejected, as
+well as
+packets which aren't *exactly* 2258 bytes (or 1234 bytes if we drop the e2e
+payload).
+
+&gt;<i> The resulting HMAC is compared with the HMAC from the packet. Should the
+</I>&gt;<i> computed HMAC and the HMAC from the packet differ then the node MUST abort
+</I>&gt;<i> processing and report a route failure.
+</I>
+Perhaps we should explicitly specify that the HMAC equality check MUST be
+performed without leaking timing information (constant time comparison)? I
+can't think of a precise potential vulnerability otherwise since the scheme
+uses an encrypt-then-MAC construction with a semantically secure encryption
+scheme. I don't see any clear downsides in specifying that the comparison be
+made in constant.
+
+&gt;<i> The sender computes a route {n_1, ..., n_{r-1}, n_r}, where n_1 is a peer
+</I>of
+&gt;<i> the sender and n_r is the recipient.
+</I>
+In order to eliminate ambiguity, I think this should be more explicit,
+specifying that &quot;n_1&quot; is a *direct neighbor* of the sender
+
+&gt;<i> A special HMAC value of 20 0x00 bytes indicates that the currently
+</I>&gt;<i> processing hop is the intended recipient and that the packet should not be
+</I>&gt;<i> forwarded. At this point the end-to-end payload is fully decrypted and the
+</I>&gt;<i> route has terminated.
+</I>
+It seems that with the current construction, then the &quot;next hop&quot; address
+will
+also be zero bytes if a packet processor is the last hop in the route.
+Alternatively, if the sender is aware that the receiver is actually a
+&quot;virtual
+channel&quot;, then an additional address could be used instead of the
+zero-address
+to facilitate de-multiplexing at the last hop to the destination virtual
+channel.
+
+&gt;<i> In the pocessing phase the secret is the node's private key...
+</I>
+Typo here, it should read &quot;In the processing phase...&quot;
+
+I think two key onion-routing related aspects are under specified within the
+current draft: replay protection, and key rotation. Although we might want
+to
+place details concerning key rotation in a separate document covering the
+initial routing protocol as the two are closely related.
+
+First, lets talk replay protection. The current draft specifies that:
+
+&gt;<i> The node MUST keep a log of previously used shared secrets. Should the
+</I>shared
+&gt;<i> secret already be in the log it MUST abort processing the packet and
+</I>report a
+&gt;<i> route failure, since this is likely a replay attack, otherwise the shared
+</I>&gt;<i> secret is added to the log
+</I>
+This is definitely necessary, however as dictated this would require nodes
+to
+allocate a potentially *unbounded* amount of storage to the shared secret
+&quot;seen&quot; log. I think we can allow nodes to periodically truncate this log by
+adding an additional session time stamp to the mix-header, either placed
+directly after the version byte, or within the per-hop payload.
+
+With this absolute timestamp, each entry within the &quot;seen&quot; log becomes a
+two-tuple: the shared secret itself, and the corresponding timestamp
+specified
+within the mix-header. Before the absolute timestamp has passed, the entry
+within the log remains, and mix-headers received with duplicated shared
+secret
+are rejected. If we enforce an upper bound on the &quot;session lifetime&quot;, then
+nodes can periodically prune this log, discarding obsolete shared secrets.
+Once an entry has been pruned, although a node may not know if a shared
+secret
+is being duplicated, they can reject expired sessions according to the
+timestamp achieving a similar affect.
+
+Reasonable session times may be something around 30-minutes to an hour or
+two.
+
+With this scheme, I think that we can achieve near perfect replay protection
+without unbounded storage.
+
+On to the second aspect: key rotation. Ignoring the possible time-stamped
+log
+solution, the (possibly) only other way to allow nodes to prune their shared
+secret log is to periodically rotate keys. Once a node rotates a key, it can
+safely delete its *entire* previous shared secret log, as replay attacks
+will
+fail on the HMAC check. Independent of replay attack prevention, key
+rotation
+is useful in order to provide a degree of forward secrecy. Without key
+rotation, when a node is compromised by the adversary (assuming the node
+keeps
+*all* prior mix-headers), the adversary learns of the next-node within the
+route, and also the per-hop payload for the compromised node. With key
+rotation, assuming the prior keys are deleted, then the adversary is only
+able
+to decrypt partially ciphertexts from the current epoch.
+
+So then a question arises: how do we perform key rotation within the network
+globally with loose synchronization? I say loose synchronization since if
+rotations aren't synchronized to a degree, then the payments of source nodes
+may fail as an intermediate hop is unable to process the packet since it
+used an
+obsolete onion key. Therefore published onion keys should come in pairs
+(with
+overlapping lifetimes), and also be authenticated by a node's identity key.
+
+A key rotation scheme might look something like the following:
+    * A node publishes two keys, along with a block hash of a block beyond a
+      &quot;safe&quot; re-org distance, and a signature (under the identity pubkey)
+      covering the advertisement.
+    * The first key is intended for use until N blocks after the specified
+      block hash, with nodes switching to the second key afterwards.
+    * At the N/2 point, the original node publishes a new advertisement with
+      the second key from the original advertisement listed as the &quot;first&quot;
+key,
+      and a new fresh quasi-ephemeral onion key. The original node performs
+      this rotation at intervals at the mid-point of expiration of the
+oldest
+      key.
+    * Nodes who receive this new advertisement (aware of the previous)
+record
+      this as the node's next rotation key. Nodes who receive this
+      advertisement, unaware of the previous treat this as the node's
+initial
+      pair of quasi-ephemeral onion keys.
+
+With this scheme, rotations are synchronized very loosely, perhaps in the
+timespan of half-days, days, etc. There is a new cost however, when
+processing
+packets, a node must attempt to derive the shared secret with both active
+onion
+keys. Alternatively, instead of block hashes, we can use some other time
+based
+beacon as a switch over point in order to accommodate peers on multiple
+blockchains.
+
+I'll take a few more passes through the current draft spec, as well are your
+commits in your fork of my original implementation, following up with any
+other
+questions/comments.
+
+-- Laolu
+
+
+On Mon, Jul 25, 2016 at 9:23 AM Christian Decker &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt;
+wrote:
+
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> I took the liberty of taking apart Olaoluwa's Sphinx implementation and I
+</I>&gt;<i> came up with a spec draft that I'd like to propose [1]. It should roughly
+</I>&gt;<i> be Sphinx, pinning down the various key-generation and stream generation
+</I>&gt;<i> algorithms, and adding a per-hop payload.
+</I>&gt;<i>
+</I>&gt;<i> The per-hop payload is used to give instructions to individual hops, i.e.,
+</I>&gt;<i> how many coins to forward to the next hop. This means that the end-to-end
+</I>&gt;<i> payload, i.e., the message in the Sphinx protocol, is currently unused and
+</I>&gt;<i> could be omitted.
+</I>&gt;<i>
+</I>&gt;<i> The payloads are currently fixed size (20 bytes per-hop and 1024 bytes for
+</I>&gt;<i> end-to-end payload) to avoid making messages collatable by their size.
+</I>&gt;<i> However, they could easily be made variable should we decide that sending
+</I>&gt;<i> mostly empty messages is wasteful.
+</I>&gt;<i>
+</I>&gt;<i> The spec is implemented in Go [2] and in C [3]. The Go version is an
+</I>&gt;<i> adaptation of Olaoluwa's implementation, with some minor speedups, removing
+</I>&gt;<i> some duplicate information, stripping the header, and switching to ChaCha20
+</I>&gt;<i> for stream generation and encryption. I also added a small commandline tool
+</I>&gt;<i> that allows you to write packets to stdout so that we can feed an onion
+</I>&gt;<i> generated by the C version to the Go implementation and vice-versa :-)
+</I>&gt;<i>
+</I>&gt;<i> Feedback is very welcome. If people like the draft I'll create
+</I>&gt;<i> pull-requests for the spec and the implementations, but I'd like to keep
+</I>&gt;<i> the discussion on the mailing list :-)
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Christian
+</I>&gt;<i>
+</I>&gt;<i> [1]
+</I>&gt;<i> <A HREF="https://github.com/cdecker/lightning-rfc/blob/master/bolts/onion-protocol.md">https://github.com/cdecker/lightning-rfc/blob/master/bolts/onion-protocol.md</A>
+</I>&gt;<i> [2] <A HREF="https://github.com/cdecker/lightning-onion/tree/chacha20">https://github.com/cdecker/lightning-onion/tree/chacha20</A>
+</I>&gt;<i> [3] <A HREF="https://github.com/cdecker/lightning/tree/chacha20">https://github.com/cdecker/lightning/tree/chacha20</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160727/b804a493/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160727/b804a493/attachment-0001.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000556.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#557">[ date ]</a>
+              <a href="thread.html#557">[ thread ]</a>
+              <a href="subject.html#557">[ subject ]</a>
+              <a href="author.html#557">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

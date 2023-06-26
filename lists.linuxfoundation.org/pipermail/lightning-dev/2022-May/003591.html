@@ -1,0 +1,120 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3C7b97915f-3f2c-3d26-1ee8-8c8fc1865d69%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003589.html">
+   <LINK REL="Next"  HREF="003592.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3C7b97915f-3f2c-3d26-1ee8-8c8fc1865d69%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Thu May 26 22:19:17 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003589.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003592.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3591">[ date ]</a>
+              <a href="thread.html#3591">[ thread ]</a>
+              <a href="subject.html#3591">[ subject ]</a>
+              <a href="author.html#3591">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+On 5/26/22 1:25 PM, Rusty Russell wrote:
+&gt;<i> Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+</I>&gt;&gt;&gt;&gt;<i> I agree there should be *some* rough consensus, but rate-limits are a locally-enforced thing, not a
+</I>&gt;&gt;&gt;&gt;<i> global one. There will always be races and updates you reject that your peers dont, no matter the
+</I>&gt;&gt;&gt;&gt;<i> rate-limit, and while I agree we should have guidelines, we can't &quot;just make them the same&quot; - it
+</I>&gt;&gt;&gt;&gt;<i> both doesn't solve the problem and means we can't change them in the future.
+</I>&gt;&gt;&gt;<i>
+</I>&gt;&gt;&gt;<i> Sure it does!  It severly limits the set divergence to race conditions
+</I>&gt;&gt;&gt;<i> (down to block height divergence, in practice).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Huh? There's always some line you draw, if an update happens right on the line (which they almost
+</I>&gt;&gt;<i> certainly often will because people want to update, and they'll update every X hours to whatever the
+</I>&gt;&gt;<i> rate limit is), then ~half the network will accept the update and half won't. I don't see how you
+</I>&gt;&gt;<i> solve this problem.
+</I>&gt;<i> 
+</I>&gt;<i> The update contains a block number.  Let's say we allow an update every
+</I>&gt;<i> 100 blocks.  This must be &lt;= current block height (and presumably, newer
+</I>&gt;<i> than height - 2016).
+</I>&gt;<i> 
+</I>&gt;<i> If you send an update number 600000, and then 600100, it will propagate.
+</I>&gt;<i> 600099 will not.
+</I>
+Ah, this is an additional proposal on top, and requires a gossip &quot;hard fork&quot;, which means your new 
+protocol would only work for taproot channels, and any old/unupgraded channels will have to be 
+propagated via the old mechanism. I'd kinda prefer to be able to rip out the old gossip sync code 
+sooner than a few years from now :(.
+
+&gt;<i> If some nodes have 600000 and others have 600099 (because you broke the
+</I>&gt;<i> ratelimiting recommendation, *and* propagated both approx the same
+</I>&gt;<i> time), then the network will split, sure.
+</I>
+Right, so what do you do in that case, though? AFAIU, in your proposed sync mechanism if a node does 
+this once, you're stuck with all of your gossip reconciliations with every peer &quot;wasting&quot; one 
+difference &quot;slot&quot; for a day or however long it takes before the peer does a sane update. In my 
+proposed alternative it only appears once and then you move on (or maybe once more on startup, but 
+we can maybe be willing to take on some extra cost there?).
+
+&gt;&gt;&gt;<i> Maybe.  What's a &quot;non-update&quot; based sketch?  Some huge percentage of
+</I>&gt;&gt;&gt;<i> gossip is channel_update, so it's kind of the thing we want?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Oops, maybe we're on *very* different pages, here - I mean doing sketches based on &quot;the things that
+</I>&gt;&gt;<i> I received since the last sync, ie all the gossip updates from the last hour&quot; vs doing sketches
+</I>&gt;&gt;<i> based on &quot;the things I have, ie my full gossip store&quot;.
+</I>&gt;<i> 
+</I>&gt;<i> But that requires state.  Full store requires none, keeping it
+</I>&gt;<i> super-simple
+</I>
+Heh, I'm surprised you'd complain about this - IIUC your existing gossip storage system keeps this 
+as a side-effect so it'd be a single integer for y'all :p. In any case, if it makes the protocol a 
+chunk more efficient I don't see why its a big deal to keep track of the set of which invoices have 
+changed recently, you could even make it super efficient by just saying &quot;anything more recent than 
+timestamp X *except* a few exceptions that we got with some lag against the update timestamp&quot;.
+
+Better, the state is global, not per-peer, and a small fraction of the total state of the gossip 
+store anyway, so its not like its introducing some new giant or non-constant-factor blowup.
+
+Matt
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003589.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003592.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3591">[ date ]</a>
+              <a href="thread.html#3591">[ thread ]</a>
+              <a href="subject.html#3591">[ subject ]</a>
+              <a href="author.html#3591">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

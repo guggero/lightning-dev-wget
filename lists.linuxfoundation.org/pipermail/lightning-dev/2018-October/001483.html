@@ -1,0 +1,222 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] RFC: simplifications and suggestions on open/accept limits.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20RFC%3A%20simplifications%20and%20suggestions%20on%0A%20open/accept%20limits.&In-Reply-To=%3C28bdf5547afd8867fc27ada328c3ea5fd8b9be5c.camel%40gertjaap.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001464.html">
+   <LINK REL="Next"  HREF="001474.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] RFC: simplifications and suggestions on open/accept limits.</H1>
+    <B>Gert-Jaap Glasbergen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20RFC%3A%20simplifications%20and%20suggestions%20on%0A%20open/accept%20limits.&In-Reply-To=%3C28bdf5547afd8867fc27ada328c3ea5fd8b9be5c.camel%40gertjaap.nl%3E"
+       TITLE="[Lightning-dev] RFC: simplifications and suggestions on open/accept limits.">gertjaap at gertjaap.nl
+       </A><BR>
+    <I>Tue Oct 30 10:56:13 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001464.html">[Lightning-dev] RFC: simplifications and suggestions on open/accept	limits.
+</A></li>
+        <LI>Next message: <A HREF="001474.html">[Lightning-dev] The problem of false positives for double spend	attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1483">[ date ]</a>
+              <a href="thread.html#1483">[ thread ]</a>
+              <a href="subject.html#1483">[ subject ]</a>
+              <a href="author.html#1483">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty,
+
+I think your suggestion for funding_satoshis makes sense. Making a too
+small channel ends up being completely consumed by fees and in practice
+not usable. 
+
+As for htlc_minimum_msat I would not feel good about it being dropped.
+It is the only protection measure I saw in the standard against
+producing trimmed HTLCs. In my view the safe default is to set it above
+the dust limit to avoid it to get trimmed, and effectively end up
+routing trusted in-flight payment, that can't be enforced on-chain. 
+
+There might be reasons to define this differently per client as per
+everyone's own views, but I don't think it is a good idea to remove
+this behavior negotiation entirely, because it would effectively force
+any client to accept HTLCs of any minimum size.
+
+As for minimum_depth, I think this default should be chain-dependant.
+Given the standard describes the possibility to use different chains,
+limiting this to a fixed number in the standard seems like a risky
+choice. Given that it's optional that would mean anyone that wants to
+enforce a higher value would just stop supplying the field.
+
+Your e-mail made me think of another aspect that I wanted to raise. Not
+sure if this is appropriate in this thread or you suggest me to start a
+separate one, so feel free to correct me in that.
+
+While evaluating the specification, we noticed there is no way to
+negotiate the desire to not support sub-satoshi payments. You can
+negotiate not to accept HLTCs or channel balances below 1000 msat, but
+there's no way to negotiate you only accept multiples of 1000 msat
+(i.e. only whole satoshis). So even with a minimum of 1000 msat I am
+still expected to route payments of 1291 msat, which contains a sub-
+satoshi part.
+
+Would it be something to consider? Given the fact that any part below
+1000 msat cannot be enforced on-chain, I would prefer giving users the
+ability to opt out of that. There currently is none.
+
+So, either a transaction_min_msat_multiple (set to 1000 for only
+accepting whole satoshis) or accept_subsatoshi (1/0). The latter seems
+more useful since you probably wouldn't give the former any other value
+than either 1 or 1000.
+
+Gert-Jaap.
+
+
+On Wed, 2018-10-17 at 13:52 +1030, Rusty Russell wrote:
+&gt;<i> Hi all,
+</I>&gt;<i> 
+</I>&gt;<i>         Everywhere in the protocol where we negotiate, we've had
+</I>&gt;<i> problems: what do you do if you can't agree?  In most cases, we've
+</I>&gt;<i> settled on defacto generally-accepted values which aren't mentioned
+</I>&gt;<i> anywhere in the spec (I've skimmed codebases below, looked at defaults).
+</I>&gt;<i> I'd like to re-examine these in light of our real-life experience and
+</I>&gt;<i> see if we can simplify them, or at least make suggestions:
+</I>&gt;<i> 
+</I>&gt;<i> funding_satoshis
+</I>&gt;<i> ----------------
+</I>&gt;<i> 
+</I>&gt;<i> c-lightning: must be &gt;= 1000 (after reserve subtracted)
+</I>&gt;<i> Eclair: must be &gt;= 100000
+</I>&gt;<i> lnd: any
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: At 253 satoshi/kSipa, and dust at 546, 1000 is too low to be
+</I>&gt;<i> sane (one output would always be dust).  Eclair seems pessimistic
+</I>&gt;<i> though; Should we suggest that any channel under 3 x min(our_dust_limit,
+</I>&gt;<i> their_dust_limit) SHOULD be rejected as too small (ie. min is 546*3).
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> dust_limit_satoshis
+</I>&gt;<i> -------------------
+</I>&gt;<i> 
+</I>&gt;<i> c-lightning: gives 546, accepts any.
+</I>&gt;<i> Eclair: gives 546 (configurable), accepts &gt;= 546.
+</I>&gt;<i> lnd: gives 573, accepts any.
+</I>&gt;<i> 
+</I>&gt;<i> (Note: eclair's check here is overzealous, but friendly).
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: we have to make this variable in future anyway (IRL it
+</I>&gt;<i> depends on min_relay_fee, which in turn depends on backlog...).
+</I>&gt;<i> I'd love to just pick a number :(
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> max_htlc_value_in_flight_msat
+</I>&gt;<i> -----------------------------
+</I>&gt;<i> c-lightning: gives U64_MAX, accepts &gt;= 1000000.
+</I>&gt;<i> Eclair: gives 5000000000, accepts any.
+</I>&gt;<i> lnd: gives capacity - reserve, accepts &gt;= 5 * htlc_minimum_msat.
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: maybe drop it (must be U64_MAX?).
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> channel_reserve_satoshis
+</I>&gt;<i> ------------------------
+</I>&gt;<i> 
+</I>&gt;<i> c-lightning: gives 1% (rounded down), accepts &lt;= capacity - 1000000.
+</I>&gt;<i> Eclair: gives 1% (?), accepts &lt;= 5% (configurable)
+</I>&gt;<i> lnd: gives 1%, accepts &lt;= 20%
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: require it be 1% (rounded down).
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> htlc_minimum_msat
+</I>&gt;<i> -----------------
+</I>&gt;<i> 
+</I>&gt;<i> c-lightning: gives 0, accepts up to 0.1% of channel capacity.
+</I>&gt;<i> Eclair: gives 1, accepts any.
+</I>&gt;<i> lnd: gives 1000, accepts any.
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: maybe drop it (ie. must be 0?)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> to_self_delay
+</I>&gt;<i> -------------
+</I>&gt;<i> 
+</I>&gt;<i> c-lightning: gives 144, accepts &lt;= 2016
+</I>&gt;<i> Eclair: gives 144, accepts &lt;= 2000
+</I>&gt;<i> lnd: gives 144-2016 (proportional to funding), accepts &lt;= 10000
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: require it to be &lt;= 2016.  Weaker suggestion: make it 2016,
+</I>&gt;<i> or use lnd's proportional formula.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> max_accepted_htlcs
+</I>&gt;<i> ------------------
+</I>&gt;<i> 
+</I>&gt;<i> c-lightning: gives 483, accepts &gt; 0.
+</I>&gt;<i> Eclair: gives 30, accepts any.
+</I>&gt;<i> lnd: gives 483, accepts &gt;= 5
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: not sure why Eclair limits.  Maybe make it 483?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> minimum_depth
+</I>&gt;<i> -------------
+</I>&gt;<i> 
+</I>&gt;<i> c-lightning: gives 3, accepts &lt;= 10.
+</I>&gt;<i> Eclair: gives 3, accepts any.
+</I>&gt;<i> lnd: gives 3-6 (scaling with funding), accepts any.
+</I>&gt;<i> 
+</I>&gt;<i> SUGGESTION: This field is only a suggestion anyway; you can always wait
+</I>&gt;<i> longer before sending funding_locked.  Let's limit it to &lt;= 6?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Are there any other areas of hidden consensus should illuminate and may
+</I>&gt;<i> simplify?
+</I>&gt;<i> 
+</I>&gt;<i> Thanks!
+</I>&gt;<i> Rusty.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> 
+</I>-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 659 bytes
+Desc: This is a digitally signed message part
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181030/1eeb9ab7/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181030/1eeb9ab7/attachment.sig</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001464.html">[Lightning-dev] RFC: simplifications and suggestions on open/accept	limits.
+</A></li>
+	<LI>Next message: <A HREF="001474.html">[Lightning-dev] The problem of false positives for double spend	attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1483">[ date ]</a>
+              <a href="thread.html#1483">[ thread ]</a>
+              <a href="subject.html#1483">[ subject ]</a>
+              <a href="author.html#1483">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

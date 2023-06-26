@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Rescuing funding mistakes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rescuing%20funding%20mistakes&In-Reply-To=%3C878s6uedvj.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="002982.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Rescuing funding mistakes</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rescuing%20funding%20mistakes&In-Reply-To=%3C878s6uedvj.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Rescuing funding mistakes">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu Mar 11 00:24:32 UTC 2021</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="002982.html">[Lightning-dev] Funding Timeout Recovery proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2981">[ date ]</a>
+              <a href="thread.html#2981">[ thread ]</a>
+              <a href="subject.html#2981">[ subject ]</a>
+              <a href="author.html#2981">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>TL;DR: We had a user promise the wrong txid for a funding tx[1].  This of
+course requires remote cooperation to get their funds back.  This lead
+me to a temporary solution, but Christian suggested a more wideranging
+one.
+
+The problem
+-----------
+With single-sided[2] funding, the opener gives the txid and outnum of
+the funding tx.  It gets the signature for the first (noop) commitment
+tx, and then broadcasts the funding tx.  If it screwed up, because they
+RBF the funding tx, or other subtle problems, they cannot access their
+funds.  After some time, the remote node will give up and forget the
+channel.
+
+The hack
+--------
+I have added feature 104/105 as OPT_SHUTDOWN_WRONG_FUNDING, and added a
+TLV stream to the shutdown message, with 100 `wrong_funding` providing
+an alternate funding txid and outnum.[3]
+
+If the recipient supports it (config setting is called
+'experimental-shutdown-wrong-funding'), they make sure the channel is
+unused (next commitment and next revocation numbers both 1), and that
+the sender was the opener[4].  They then use these values as the input
+for the shutdown negotiation, and continue like normal.
+
+This is great, as it doesn't require interaction for the rescue.
+
+Limitations
+-----------
+The peer will forget the channel 2016 blocks after proposal (we don't
+actually delete it from the db, but it would require some fishing as we
+don't load it into memory).  So you have to figure out what went wrong
+and fix it in a timely manner.
+
+We are considering a stub state for old channels to allow some limited
+interaction with such dead channels, but it's not implemented for now.
+We want this for reestablish rexmit anyway.
+
+This also doesn't help the case of &quot;I accidentally all my funds to the
+channel 2of2 address&quot;[5], since we don't allow variation of the amount, and
+we only allow a single shutdown flow.
+
+Improvements
+------------
+Christian has been thinking in parallel, and suggested we send a
+signature for the last tx in the reestablish message.  That would allow
+them to recreate the last valid transaction themselves if they wanted
+to, but wouldn't help this case.
+
+Or more, we could sign anything they ask for dead channels (in our case,
+100 deep, all txs completely resolved, or 2016 later with no funding
+seen).
+
+More radically, I suggested we could actually give them our private key
+in this case, which would allow late post-hoc rescue of any strangeness
+they did.  Christian and I checked: we use hardened derivation and so
+it's fairly harmless.
+
+This last possibility would allow nice tooling around this rescue
+feature, but revealing a secret key is not something I would do lightly.[6]
+
+Thoughts?
+
+Thanks!
+Rusty.
+
+[1] We have a fundchannel_start / fundchannel_complete API, but the
+    latter takes *TXID* rather than a whole PSBT.  Calculating the txid is
+    non-trivial (P2SH-wrapped inputs!), and of course this presents
+    a giant footgun, as users simply use the TXID of the global tx
+    and it *sometimes* works.  API is changing before release![7]
+[2] Dual-funding avoids this entire problem by co-constructing the
+    funding tx, rather than presenting the txid/outnum as a fait
+    accompli.  Even if one side doesn't contribute, they calculate
+    the funding txid themselves.
+[3] <A HREF="https://github.com/ElementsProject/lightning/pull/4421">https://github.com/ElementsProject/lightning/pull/4421</A>
+[4] We disable `wrong_funding` for dual-opened-negotiated channels too.
+[5] t-bast said someone did this.  I think I died a little inside.
+[6] `option_boating_accident_as_a_service`?
+[7] For the love of God, GO ALL IN ON PSBT and don't do hybrid APIs like
+    this.  Rusty is dumb.  Don't be like Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="002982.html">[Lightning-dev] Funding Timeout Recovery proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2981">[ date ]</a>
+              <a href="thread.html#2981">[ thread ]</a>
+              <a href="subject.html#2981">[ subject ]</a>
+              <a href="author.html#2981">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

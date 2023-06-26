@@ -1,0 +1,264 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning in a Taproot future
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20in%20a%20Taproot%20future&In-Reply-To=%3C20191217140229.2s5ymucvewgbl5co%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002376.html">
+   <LINK REL="Next"  HREF="002387.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning in a Taproot future</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20in%20a%20Taproot%20future&In-Reply-To=%3C20191217140229.2s5ymucvewgbl5co%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Lightning in a Taproot future">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Dec 17 14:02:29 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002376.html">[Lightning-dev] Lightning in a Taproot future
+</A></li>
+        <LI>Next message: <A HREF="002387.html">[Lightning-dev] Lightning in a Taproot future
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2385">[ date ]</a>
+              <a href="thread.html#2385">[ thread ]</a>
+              <a href="subject.html#2385">[ subject ]</a>
+              <a href="author.html#2385">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Dec 15, 2019 at 03:43:07PM +0000, ZmnSCPxj via Lightning-dev wrote:
+&gt;<i> For now, I am assuming the continued use of the existing Poon-Dryja update mechanism.
+</I>&gt;<i> Decker-Russell-Osuntokun requires `SIGHASH_NOINPUT`/`SIGHASH_ANYPREVOUT`, and its details seem less settled for now than taproot details.
+</I>
+Supporting PTLCs instead of HTLCs is a global upgrade in that you need
+all nodes along your payment path to support it; moving from Poon-Dryja
+to Decker-Russell-Osuntokun is only relevant to individual peers. So I
+think it makes sense to do PTLCs first if the required features aren't
+both enabled at the same time.
+
+&gt;<i> Poon-Dryja with Schnorr
+</I>&gt;<i> -----------------------
+</I>
+I think MuSig between the two pairs is always superior to a NUMS point
+for the taproot internal key; you definitely want to calculate a point
+rather than use a constant, or you're giving away that it's lightning,
+and if you're calculating you might as well calculate something that can
+be used for a cooperative key path spend if you ever want to.
+
+&gt;<i> A potential issue with MuSig is the increased number of communication rounds needed to generate signatures.
+</I>
+I think you can reduce this via an alternative script path. In
+particular, if you want a script that the other guy can spend if they
+reveal the discrete log of point X, with musig you do:
+
+   P = H(H(A,B),1)*A + H(H(A,B),2)*B
+   [exchange H(RA),H(RB),RA,RB]
+
+   [send X]
+
+   sb = rb + H(RA+RB+X,P,m)*H(H(A,B),2)*b
+
+   [wait for sb]
+
+   sa = ra + H(RA+RB+X,P,m)*H(H(A,B),1)*a
+
+   [store RA+RB+X, sa+sb, supply sa, watch for sig]
+
+   sig = (RA+RB+X, sa+sb+x)
+
+So the 1.5 round trips are &quot;I want to do a PTLC for X&quot;, &quot;okay here's
+sb&quot;, &quot;great, here's sa&quot;.
+
+But with taproot you can have a script path as well, so you could have a
+script:
+
+   A CHECKSIGVERIFY B CHECKSIG
+
+and supply a partial signature:
+
+   R+X,s,X where s = r + H(R+X,A,m)*a
+
+to allow them to satisfy &quot;A CHECKSIGVERIFY&quot; if they know the discrete
+log of X, and of course they can sign with B at any time. This is only
+half a round trip, and can be done at the same time as sending the &quot;I
+want to do a PTLC for X&quot; message to setup the (ultimately cheaper) MuSig
+spend. It's an extra signature on the sender's side and an extra verification 
+on the receiver's side, but I think it works out fine.
+
+&gt;<i> Pointlocked Timelocked Contracts
+</I>&gt;<i> --------------------------------
+</I>&gt;<i> First, I will discuss how to create a certain kind of PTLCs, which I call &quot;purely scriptless&quot; PTLCs.
+</I>&gt;<i> In particular, I would like to point out that we *actually* use in current Poon-Dryja Lightning Network channels is *revocable* HTLCs, thus we need to have *revocable* PTLCs to replace them.
+</I>&gt;<i> * First, we must have a sender A, who is buying a secret scalar, and knows the point equivalent to that scalar.
+</I>&gt;<i> * Second, we have a receiver B, who knows this secret scalar (or can somehow learn this secret scalar).
+</I>&gt;<i> * A and B agree on the specifications of the PTLC: the point, the future absolute timelock, the value.
+</I>&gt;<i> * A creates (but *does not* sign or broadcast) a transaction that pays to a MuSig of A and B and shares the txid and output number with the relevant MuSig output.
+</I>&gt;<i> * A and B create a backout transaction.
+</I>&gt;<i>   * This backout has an `nLockTime` equal to the agreed absolute timelock.
+</I>&gt;<i>   * It spends the above MuSig output (this input must enable `nLockTime`, e.g. by setting `nSequence` to `0xFFFFFFFE`).
+</I>&gt;<i>   * It creates an output that is solely controlled by A.
+</I>&gt;<i> * A and B perform a MuSig ritual to sign the backout transaction.
+</I>&gt;<i> * A now signs and broadcast the first transaction, the one that has an output that represents the PTLC.
+</I>&gt;<i> * A and B wait for the above transaction to confirm deeply.
+</I>&gt;<i>   This completes the setup phase for the PTLC.
+</I>&gt;<i> * After this point, if the agreed-upon locktime is reached, A broadcasts the backout transaction and aborts the ritual.
+</I>&gt;<i> * A and B create a claim transaction.
+</I>&gt;<i>   * This has an `nLockTime` of 0, or a present or past blockheight, or disabled `nLockTime`.
+</I>&gt;<i>   * This spends the above MuSig output.
+</I>&gt;<i>   * This creates an output that is solely controlled by B.
+</I>&gt;<i> * A and B generate an adaptor signature for the claim transaction, which reveals the agreed scalar.
+</I>&gt;<i>   * This is almost entirely a MuSig ritual, except at `s` exchange, B provides `t + r + h(R | MuSig(A,B) | m) * MuSigTweak(A, B, B) * b` first, then demands `r + h(R | MuSig(A,B) | m) * MuSigTweak(A, B, A) * a` from A, then reveals `r + h(R | MuSig(A,B) | m) * MuSigTweak(A, B, B) * b` (or the completed signature, by publishing onchain), revealing the secret scalar `t` to A.
+</I>&gt;<i> * A is able to learn the secret scalar from the above adaptor signature followed by the full signature, completing the ritual.
+</I>
+(I think it makes more sense to provide &quot;r + H(R+T, P, m)*b&quot; instead of
+&quot;r+t + H(R,P,m)*b&quot; -- you might not know &quot;t&quot; at the point you need to
+start the signature exchange)
+
+I think the setup can be similar to BOLT-3:
+
+  Funding TX output:  MuSig(A,B)
+
+  Commitment Tx Held by A:
+    - locktime: obscured commitment number
+    - input: funding tx
+    - outputs:
+        balance A
+	balance B
+	PTLC paying to A
+	PTLC paying to B
+        [etc]
+
+balance B can pay directly to B
+
+balance A pays to MuSig(Rn,B) -- where Rn is the revocation key for the
+nth commitment, and A holds a presigned tx by B with relative locktime
+set, paying the funds to A.
+
+PTLCs also pay to MuSig(Rn,B) -- 
+
+for the one paying to A, A holds a tx
+partially presigned by B that needs the point's discrete log added to x
+with relative timelock; for the one paying to B, A holds a presigned tx
+by B that has absolute locktime set and pays to MuSig(Rn,B) for which
+A has another presigned tx by B that has relative locktime set.
+
+HTLC's also pay to MuSig(Rn,B) but they're tweaked by a script -- if
+they're paying to B, A just holds the same timelocked presigned tx's as
+for PTLCs; if they're paying to A, A will use a &quot;HASH160 X EQUALVERIFY
+A CHECKSIGVERIFY delay CSV&quot; script path instead.
+
+B has a similar commitment Tx; and A holds pre-signed tx's for the
+PTLC's there, except without the relative timelock txs.
+
+This adds up to B needing to provide A with signatures for:
+
+  the funding tx
+  A's balance
+  each PTLC/HTLC paying/refunding to A from A's commitment and the sub tx for each of those
+  each PTLC/HTLC paying/refunding to B from B's commitment
+
+and each of those signatures need to be updated every commitment update.
+
+Note that you need to receive all the partial signatures to spend the
+commitment tx before you provide your partial signature over the funding
+tx to authorise the commitment tx. So yet more rounds of communication.
+
+I think this approach would let you upgrade existing channels to support
+PTLCs without closing/reopening, though.
+
+
+
+I think you could do something eltoo-ish to simplify watchtowers:
+
+    Funding TX output: MuSig(A,B)
+
+    Commitment Tx Held by A:
+      - locktime: obscured commitment number
+      - inputs: funding tx
+      - outputs: MuSig(Rn,B)
+
+    Settlement Tx Held by A:
+      - nsequence: to_self_delay
+      - input: commitment tx held by A
+      - outputs:
+         balance A
+	 balance B
+	 PTLC paying to A
+	 PTLC paying to B
+
+    Secondary Settlement Tx Held by B:
+      - no abs/relative locktime
+      - input: commitment tx held by A
+      - outputs:
+         balance A
+	 balance B
+	 PTLC paying to A
+	 PTLC paying to B
+
+in which case once the commitment is revoked, B only needs to do a single
+signature of MuSig(Rn,B) to claim all the funds if A publishes the
+old commitment, without having to worry about any HTLC/PTLC info? The
+settlement tx can be a bit simplified I think too. Maybe the edge case
+when the absolute locktime is close to the relative locktime makes this
+painful, though I think it would make eltoo painful then too? Not sure
+if I'm missing something here. 
+
+(Note that this gives symmetric delays: if A unilaterally closes the
+channel by publishing the commitment tx, and B wants their funds, B can
+either immediately claim all the funds via the revocation secret if A
+was cheating, or has to publish the settlement tx first, at which point
+A can get all A's funds immediately as well)
+
+&gt;<i> Revocable Outputs and PTLCs
+</I>&gt;<i> ---------------------------
+</I>&gt;<i> * No wallet uses relative-timelock for ordinary spends, unlike abolute-locktime where Bitcoin Core always uses absolute-locktime `nLockTime` for ordinary spends.
+</I>
+I think the fact lightning relative timelocks will be &quot;round&quot; numbers,
+and the timelocked tx will be published as soon as possible will make
+it relatively easy to distinguish them from other spends anyway. Doing
+it scriptlessly is cheaper on chain though.
+
+Anyway, my picks are:
+
+ - [x] Poon-Dryja PTLCs prior to eltoo
+ - [x] scriptless revocation via MuSig(Rn,B) internal keys
+ - [x] support HTLCs via taproot
+ - [x] (optionally) allow use of script paths to minimise round trip
+       delay
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002376.html">[Lightning-dev] Lightning in a Taproot future
+</A></li>
+	<LI>Next message: <A HREF="002387.html">[Lightning-dev] Lightning in a Taproot future
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2385">[ date ]</a>
+              <a href="thread.html#2385">[ thread ]</a>
+              <a href="subject.html#2385">[ subject ]</a>
+              <a href="author.html#2385">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

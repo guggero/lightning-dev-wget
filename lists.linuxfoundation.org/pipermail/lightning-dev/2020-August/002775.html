@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Thoughts on Improving MPP
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20Improving%20MPP&In-Reply-To=%3CNvkQ7F9SxdfUzppYKk9vFbFUTL7Qt87_ePc0oPhw-6rZskkSAT_4KyQL3H-XiDygYgclcRO6JRuOBTMCP1Y1PGy2VwXzbKz05Bt-I_qNt_c%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="002776.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Thoughts on Improving MPP</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20Improving%20MPP&In-Reply-To=%3CNvkQ7F9SxdfUzppYKk9vFbFUTL7Qt87_ePc0oPhw-6rZskkSAT_4KyQL3H-XiDygYgclcRO6JRuOBTMCP1Y1PGy2VwXzbKz05Bt-I_qNt_c%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Thoughts on Improving MPP">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Aug  2 02:02:25 UTC 2020</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="002776.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2775">[ date ]</a>
+              <a href="thread.html#2775">[ thread ]</a>
+              <a href="subject.html#2775">[ subject ]</a>
+              <a href="author.html#2775">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Lightning world,
+
+This was originally written for C-Lightning, hence the C-Lightning-isms, but I realized the general principles were valid for all LN implementations.
+
+---
+
+First, let us consider some C-Lightning node who, for some reason, only has unpublished channels to the network (note: in my opinion, ***unpublished channels delenda est!***).  Let us suppose this node wishes to receive some amount of funds, from multiple different payers.
+
+Now, the payee node knows MPP exists, and thus, it is not very concerned that it has insufficient incoming capacity in a ***single*** channel to accept one of the payments.  Reasoning that MPP exists, it considers instead the *sum total* of all incoming capacities.  It sees that it has sufficient *sum total* incoming capacity that it can accept all payments from all payers, with some to spare.
+
+However, at the channel-level detail, *none* of the channels has sufficient capacity to accept a single one of the payments the C-Lightning node now expects to receive, in full.  So, what should the C-Lightning node put as routehints in a generated invoice?
+
+Another, is that we should note that I described &quot;payers&quot; with an &quot;s&quot; at the end.  In the English language as commonly used by puny humans, adding an &quot;s&quot; at the end of a noun is a common (but not universal) convention implying that the subject under discussion is actually composed of more than one item.  So not only must the C-Lightning node (all of whose channels are unpublished, thus cannot be paid unless it reveals at least some of the channels as routehints in the invoice) make an invoice with sufficient routehints to get an MPP delivered, it must make *multiple* invoices, such that the invoices it issues have as little overlap in their routehints as possible
+
+Otherwise, if we provide the **same** set of routehints in invoices to two **different** payers, both of them will interfere with each other, possibly to the point that neither can pay to the payee (since e.g. some of the available capacity is taken up by parts of one payment while the rest is taken up by parts of the other payment, and neither payment can then complete in full due to this deadlock).
+
+This is important in case the C-Lightning node receiver is completely unannounced (i.e. has only unpublished channels).  The payers cannot fall back to just trying directly routing on a different incoming channel of the receiver, as they may not have any knowledge of such channels.
+
+I suggest, then, that the C-Lightning node that wants to get paid, and uses only unpublished channels, should use a Round-Robin strategy for selecting routehints.
+
+To implement this, the `invoice` command maintains a persistent list of all channels the node has.  When a newly funded channel is locked-in by both sides (transitions to `CHANNELD_NORMAL`) it is simply appended to this list.  When a channel leaves `CHANNELD_NORMAL`it is simply removed from this list.  Let us call this the round-robin list.
+
+Then, when the `invoice` command is invoked, it generates routehints by executing a loop:
+
+* Maintain variables: a removed list (initially empty), a running sum amount (initially `AMOUNT_MSAT(0)`), and a set of proposed routehints (initially empty)
+* Round-robin: Remove a channel from the front of the round-robin list and put it in the end of the removed list.
+* If the channel has no incoming capacity, skip to the top of the loop again (`continue;`).
+* If the channel is a dead end (i.e. connects to a node which has no published channels elsewhere), skip as well (`continue;`).
+* Copy the scid and any other details to the set of proposed routehints.
+* Add the incoming capacity of the taken channel to the running sum.  If the running sum now exceeds the amount to be paid, append the removed list to the current round-robin list and leave the loop.
+* If the round-robin list is now empty, exit the loop (append the removed list to the current empty round-robin list) and report a `warning_capacity` that it looks like there is insufficient incoming capacity for this invoice.
+
+On exit of the above loop, we sort the set of proposed routehints, from highest incoming capacity to lowest, and use that set as the routehints for the invoice.
+
+(It would probably be a good idea as well to persist the round-robin list)
+
+The above ensures that as much as possible, different invoices will have different sets of channels routehinted (due to the round-robin behavior), but gracefully degrades (some overlap in routehints) if the number of channels available is low.
+
+An issue is privacy.  A probing fake payer could spam the receiver with multiple requests for invoices it never intends to pay.  This can let the fake payer discover, at minimum, the entry points used by the payee to connect to the public network (which cannot be removed, even if you somehow obscure the actual short-channel-IDs of the payee, since the payer has to know *what* node to reach to get to the payee), which the payer can then probe or otherwise hack or buy out in order to extract information about the economic activity of the payee (due to the Axiom of Terminus, any forward that goes *to* an unpublished channel, *is* the final hop to the actual final destination, so the entry points have accurate data on incoming payments of the unpublished payee via the channel with them).  If the payer simulates multiple payers (i.e. Sybils) the payee cannot attempt to reuse channels in routehints to the different simulated payers, as that would degrade the ability to pay since the capacity of the channels has to be shared by the different payers if those payers were not sockpuppets.  Thus the lie of improved privacy by unpublished channels is revealed, and therefore, in my opinion, unpublished channels delenda est.
+
+----
+
+Now, let us turn our attention to the payer of such an invoice.
+
+Currently, our `paymod` system uses a single sequence of routehints for all sub-payments of an MPP.
+
+Thus, if a payment is split in two, both sub-payments will start executing on the same routehint.
+
+Yet as considered above, the point of multiple routehints is that not a single one has sufficient capacity to receive, and the multiple routehints are provided which in total are needed to receive all the incoming funds.
+
+Thus, I suggest as well, that sub-payments should have different sequences of routehints to try.
+
+For example, currently, for sub-payments 0 and 1, they will try routehints A, B, C, D in this order:
+
+    0  1
+    A  A
+    B  B
+    C  C
+    D  D
+
+Instead of using the same shared sequence of routehints, on splitting, the split payments should use:
+
+     0  1
+     A  B
+     C  D
+     B  A
+     D  C
+
+That is, sub-payment 0 should try routehints in the order A, C, B, D, while the sub-payment 1 should try routehints in the order B, D, A, C.
+
+The reasoning is the same as with the argument for round-robin routehint selection: by having different sub-payments initially try different routehints, we improve our success by reducing their overlap in the use of shared resources, and therefore reduce the risk of deadlock (especially if the sub-payments are adaptively split into even more sub-payments).
+
+We can do this by a sort of round-robin, as well.  For each sub-payment we initially create an empty list of routehints.  Then we &quot;spread&quot; the routehints to each sub-payment.
+
+* If there are more sub-payments than routehints, then we repeat the routehints until we have given one routehint to each sub-payment.
+* If there are more routehints than sub-payments, then we repeat the sub-payments until we have completed the routehints.
+
+After the above initial distribution, we then go through all sub-payments, and for each sub-payment, append routehints in the original order, but skipping those that were already given to that sub-payment in the above initial distribution.
+
+For example, suppose we are distributing 3 routehints A B C to two sub-payments 0 1.  We do the initial distribution:
+
+    0  1
+    A  B
+    C
+
+And then we give each sub-payment the rest of the routehints:
+
+    0  1
+    A  B
+    C  A
+    B  C
+
+Another example, where we are distributing 2 routehints A B to four sub-payments 0 1 2 3.  Our initial distribution is:
+
+    0  1  2  3
+    A  B  A  B
+
+Then we give each sub-payment the rest of the routehints:
+
+    0  1  2  3
+    A  B  A  B
+    B  A  B  A
+
+Thus, each sub-payment gets the entire list of routehints, but in a different order.
+
+----
+
+Finally: the same argument --- that sub-payments should avoid using the same set of resources as much as possible -- applies to the *first* hop just as much as the *last* hop.
+
+Thus, one possibility is to also maintain a list of outgoing channels for each sub-payment, which sub-payments try in round-robin order.  And again, each sub-payment should get a different order from each other in a coordinated fashion which reduces their interference.
+
+We do this by, at the *start* of the payment before we split it up, taking all local channels and shuffling them.  Then we distribute the outgoing channels with the same algorithm as the above.
+
+Then, when a sub-payment executes, we use a similar algorithm as the `invoice` case where it selects routehints.
+
+* Maintain a removed list (initially empty).
+* Round-robin: Remove the channel at the front of the round-robin list, append to removed list.
+  * If the round-robin list is empty, then we should append the removed list to the round-robin list and consider splitting the payment.
+* If it has insufficient outgoing capacity, skip.
+* If it is a dead end, skip.
+* Otherwise it has sufficient capacity, break out of the loop (append the removed list to the round-robin list) and try routing via that channel.
+
+--
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="002776.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2775">[ date ]</a>
+              <a href="thread.html#2775">[ thread ]</a>
+              <a href="subject.html#2775">[ subject ]</a>
+              <a href="author.html#2775">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,87 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Decoy node_ids and short_channel_ids
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3CA7Q8Jvs0XRO_s-3Y4h1dfAdYgu3qnhJdTtP_5u6onaUP-x1T_2whnmvDsDtMGIjyO1yUVitV9pekwYEwPrbPD_1AW2I_9CccizGod2bMfc8%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002489.html">
+   <LINK REL="Next"  HREF="002491.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Decoy node_ids and short_channel_ids</H1>
+    <B>m.a.holden</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3CA7Q8Jvs0XRO_s-3Y4h1dfAdYgu3qnhJdTtP_5u6onaUP-x1T_2whnmvDsDtMGIjyO1yUVitV9pekwYEwPrbPD_1AW2I_9CccizGod2bMfc8%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Decoy node_ids and short_channel_ids">m.a.holden at protonmail.com
+       </A><BR>
+    <I>Mon Feb  3 06:50:20 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002489.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+        <LI>Next message: <A HREF="002491.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2490">[ date ]</a>
+              <a href="thread.html#2490">[ thread ]</a>
+              <a href="subject.html#2490">[ subject ]</a>
+              <a href="author.html#2490">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> (I'm seeking a clever way that Bob can assign them and trivially tell
+</I>&gt;<i> which ID is assigned to which peer, but I can't figure it out, so I
+</I>&gt;<i> guess Bob keeps a mapping and restricts each peer to 256 live scids?).
+</I>
+Hi Rusty.
+
+Here's a potential way for Alice and Bob to agree a set of 256 scids without any additional messages or changes to existing messages beyond a feature flag and a flag in open_channel, but comes with a computational cost.
+
+Alice and Bob agree on a random integer `r`. This could be negotiated on `open_channel`, but we shouldn't need to send additional information because we already have a random integer we can use: the `temporary_channel_id`. This is not known to anybody besides Alice and Bob.
+
+When a channel is locked, Bob computes n=256 scids, using something approximating `concat(n, trunc_bytes(sha256(ec_mult(2^n*r, Q)), 7))`, where `Q` is Alice's public key for the channel funding transaction.
+
+The chance of scid collisions between channels is 2^56, which is probably no cause for concern.
+
+Instead of keeping a map of 256 scids for each channel, Bob can use a cuckoo filter for efficiency. The filter can be used for a quick membership test and also as an associative map from scids to channels. It can also support scid deletion in the event of channel closure (at the cost of recomputing 256 ec_mults again).
+
+So when Bob receives a new HTLC to forward, he tests it against his cuckoo filter and retreives a candidate set of possible channels to which it may refer. For each channel, he takes the most significant byte of the scid as `m` and performs `trunc_bytes(sha256(ec_mult(2^m*r, Q)), 7)` and tests the least-significant 7 bytes of the result against the scid.
+
+Alice does not need to keep all of the scids she may use for invoices because they can be computed on the fly, but she will need to keep a copy of the `temporary_channel_id`.
+
+In the reverse direction of Alice forwarding HTLCs to Bob, Bob's public key for the funding transaction is used instead.
+
+Regards,
+Mark Holden
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002489.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+	<LI>Next message: <A HREF="002491.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2490">[ date ]</a>
+              <a href="thread.html#2490">[ thread ]</a>
+              <a href="subject.html#2490">[ subject ]</a>
+              <a href="author.html#2490">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Commitment transaction format	suggestions/proposals.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Commitment%20transaction%20format%0A%09suggestions/proposals.&In-Reply-To=%3CCAL3HpbeOk95k-TDLiN-%3DSLWfA5mx_avkMcUOmUSGoe6Y_DBrHQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000663.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Commitment transaction format	suggestions/proposals.</H1>
+    <B>Fabrice Drouin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Commitment%20transaction%20format%0A%09suggestions/proposals.&In-Reply-To=%3CCAL3HpbeOk95k-TDLiN-%3DSLWfA5mx_avkMcUOmUSGoe6Y_DBrHQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Commitment transaction format	suggestions/proposals.">fabrice.drouin at acinq.fr
+       </A><BR>
+    <I>Wed Jan 25 21:27:52 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000663.html">[Lightning-dev] Commitment transaction format suggestions/proposals.
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#664">[ date ]</a>
+              <a href="thread.html#664">[ thread ]</a>
+              <a href="subject.html#664">[ subject ]</a>
+              <a href="author.html#664">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 25 January 2017 at 01:53, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+&gt;&gt;<i> - for htlcs received we don't need to wait for the htlc timeout refund to claim the funds and we don't need to watch for HTLC-success transactions.
+</I>&gt;<i>
+</I>&gt;<i> For offered htlcs we still need to handle both the HTLC-success and
+</I>&gt;<i> commit tx cases though, since it can race with the other side.
+</I>&gt;<i> Similarly with received htlcs and HTLC-timeout transactions.
+</I>
+That's right, I removed the last part about not watching for HTLC
+success transactions from the issue description
+
+&gt;&gt;<i> ## Changes to the Offered HTLC Output script:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The solution we propose is to use a multisig 2-of-3 with `localkey`, `remotekey` and `revocationkey` for the Offered HTLC Output script:
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i> &lt;remotekey&gt; OP_SWAP
+</I>&gt;&gt;<i>     OP_SIZE 32 OP_EQUAL
+</I>&gt;&gt;<i> OP_NOTIF
+</I>&gt;&gt;<i>     # To me via HTLC-timeout transaction (timelocked) or to you with revocation key.
+</I>&gt;&gt;<i>     OP_DROP 2 OP_SWAP &lt;localkey&gt; &lt;revocationkey&gt; 3 OP_CHECKMULTISIG
+</I>&gt;&gt;<i> OP_ELSE
+</I>&gt;&gt;<i>     # To you with preimage.
+</I>&gt;&gt;<i>     OP_HASH160 &lt;ripemd-of-payment-hash&gt; OP_EQUALVERIFY
+</I>&gt;&gt;<i>     OP_CHECKSIG
+</I>&gt;&gt;<i> OP_ENDIF
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This output can be spent, as before, with the remote key and payment preimage, or with the remote key and local key,
+</I>&gt;&gt;<i> but it can be spent also be spent with the remote key and revocation key, with the following witness script:
+</I>&gt;<i>
+</I>&gt;<i> Clever abuse of multisig :) It can also be spent with the local and
+</I>&gt;<i> revocation keys, but that should never happen.  OK.
+</I>
+Yes, because of the very clever way revocation keys are computed: you
+don't know the revocation key that can be used to take all your funds
+if you publish a revoked commit tx. This is one of the many
+improvements in the new specs :)
+
+&gt;&gt;<i> &lt;remotekey&gt; OP_SWAP
+</I>&gt;&gt;<i>     OP_SIZE 32 OP_EQUAL
+</I>&gt;&gt;<i> OP_IF
+</I>&gt;&gt;<i>     # To me via HTLC-success transaction.
+</I>&gt;&gt;<i>     OP_HASH160 &lt;ripemd-of-payment-hash&gt; OP_EQUALVERIFY
+</I>&gt;&gt;<i>     2 OP_SWAP &lt;localkey&gt; 2 OP_CHECKMULTISIG
+</I>&gt;&gt;<i> OP_ELSE
+</I>&gt;&gt;<i>     OP_SIZE 0 OP_EQUAL
+</I>&gt;&gt;<i>     OP_IF
+</I>&gt;<i>
+</I>&gt;<i> Would OP_SIZE OP_NOTIF work here as an optimization?
+</I>
+Not any more because of the &quot;minimal IF constraints&quot; which was added a
+few months ago (see
+<A HREF="https://github.com/bitcoin/bitcoin/commit/c72c5b1e3bd42e84465677e94aa83316ff3d9a14">https://github.com/bitcoin/bitcoin/commit/c72c5b1e3bd42e84465677e94aa83316ff3d9a14</A>)
+
+&gt;&gt;<i>         # To you after timeout.
+</I>&gt;&gt;<i>         OP_DROP &lt;locktime&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP
+</I>&gt;&gt;<i>         OP_CHECKSIG
+</I>&gt;&gt;<i>     OP_ELSE
+</I>&gt;&gt;<i>         # To you if you have the revocation key
+</I>&gt;&gt;<i>         OP_SWAP 2 OP_SWAP &lt;revocationkey&gt; 2 OP_CHECKMULTISIG
+</I>&gt;&gt;<i>     OP_ENDIF
+</I>&gt;&gt;<i> OP_ENDIF
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This output can be spent, as before, with the payment preimage and the remote and local keys, with the remote key after a delay,
+</I>&gt;&gt;<i> but it can also be spent with the remote key and revocation key, with the following witness script:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ```
+</I>&gt;&gt;<i> 0 &lt;remote-sig&gt; &lt;revocation-sig&gt;
+</I>
+I can be improved like this:
+
+    &lt;remotePubkey&gt; OP_SWAP
+    OP_SIZE 32 OP_EQUAL
+    OP_IF
+      OP_HASH160 paymentHash) &lt;ripemd-of-payment-hash&gt; OP_EQUALVERIFY
+      OP_2 OP_SWAP &lt;localKey&gt; OP_2 OP_CHECKMULTISIG
+    OP_ELSE
+      OP_SIZE OP_0 OP_EQUAL
+      OP_IF
+        OP_DROP &lt;lockTime&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP OP_CHECKSIG
+      OP_ELSE
+        OP_SWAP OP_DROP &lt;revocationPubKey&gt; OP_CHECKSIG
+      OP_ENDIF
+    OP_ENDIF
+
+It can now be spent with: &lt;revocation-sig&gt;
+
+Cheers,
+
+Fabrice
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000663.html">[Lightning-dev] Commitment transaction format suggestions/proposals.
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#664">[ date ]</a>
+              <a href="thread.html#664">[ thread ]</a>
+              <a href="subject.html#664">[ subject ]</a>
+              <a href="author.html#664">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

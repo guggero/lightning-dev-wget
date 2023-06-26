@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] CVE-2020-26895: LND Low-S Tx-Relay Standardness
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CVE-2020-26895%3A%20LND%20Low-S%20Tx-Relay%20Standardness&In-Reply-To=%3CCAFfwr8HqEC1e6Dj-Nf5%3DgH9tj6rvZEyUFpgsKqwGopXfUCNAOw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002853.html">
+   <LINK REL="Next"  HREF="002857.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] CVE-2020-26895: LND Low-S Tx-Relay Standardness</H1>
+    <B>Conner Fromknecht</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CVE-2020-26895%3A%20LND%20Low-S%20Tx-Relay%20Standardness&In-Reply-To=%3CCAFfwr8HqEC1e6Dj-Nf5%3DgH9tj6rvZEyUFpgsKqwGopXfUCNAOw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] CVE-2020-26895: LND Low-S Tx-Relay Standardness">conner at lightning.engineering
+       </A><BR>
+    <I>Tue Oct 20 21:52:27 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002853.html">[Lightning-dev] Watchtowers cannot sweep HTLCs if	option_anchor_outputs is enabled (regression)
+</A></li>
+        <LI>Next message: <A HREF="002857.html">[Lightning-dev] CVE-2020-26896: LND Invoice Preimage Extraction
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2858">[ date ]</a>
+              <a href="thread.html#2858">[ thread ]</a>
+              <a href="subject.html#2858">[ subject ]</a>
+              <a href="author.html#2858">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA256
+
+Hi all,
+
+Today we are writing to disclose the details of CVE-2020-26895 as a follow up to
+the partial disclosure sent to lightning-dev [1].
+
+## Abstract
+
+Prior to v0.10.0-beta, a malicious peer could force an lnd node to accept a
+high-S ECDSA signature when updating new off-chain states. Though the signatures
+are valid according to consensus rules, the mempool policy would reject
+transactions containing high-S values, potentially leading to loss of funds if
+time-sensitive transactions cannot be relayed and confirmed. We have no evidence
+of the bug being exploited in the wild.
+
+It affects all classes of lnd nodes: routing, merchant, mobile, etc.
+
+The vulnerability was reported privately to the lnd team by Antoine Riard.
+
+## Background
+
+The lightning-rfc specifies a fixed-width, 64-byte encoding used to transmit
+ECDSA signatures in the Lightning protocol, which differs from the DER-encoding
+used at the consensus layer. For regular, on-chain transactions, signature
+serialization is handled by the btcec library's Signature.Serialize() method
+[2]. This method always normalizes signatures to their low-S variant before
+performing the DER-encoding to ensure that the btcec library can't _produce_
+high-S signatures.
+
+Early in lnd's history, however, serialization modeled off btcec was added to
+produce DER-encoded signatures directly from the fixed-width representation,
+bypassing the conversion into big.Int representation used internally by btcec.
+In doing so, retaining the low-S normalization behavior was overlooked, and so
+Sig.ToSignatureBytes() [3] would return high-S DER signatures whenever the
+fixed-size signature was encoded with a high-S value.
+
+During unilateral closure, this can be exploited by an attacker to cause a
+second-level HTLC-success transaction from being accepted to the mempool. If the
+victim is unable to patch before the HTLC's CLTV expires, the attacker can then
+broadcast their HTLC-timeout transaction and recover the full value of the HTLC
+minus fees. On the other hand, lnd&#8217;s cooperative close fully verifies the remote
+party&#8217;s signatures using full policy-aware verification. As a result, the only
+exploitation vector occurs during the force close scenario.
+
+## Updates to Lighting RFC
+
+As noted by Riard during the process, the lightning-rfc is lacking in terms of
+specifying how nodes should validate signatures accepted off-chain. Notably, the
+signatures should be checked for conformation to both consensus _and_ tx-relay
+standardness rules, and rejected otherwise. Riard has confirmed that he is
+planning to submit an update to the specification incorporating these
+recommendations.
+
+## Patch
+
+This vulnerability was fixed in v0.10.0-beta by converting all witness
+construction methods in lnd to accept signatures according to the
+input.Signature interface introduced in PR 4172 [4], which requires the passed
+object to have a Serialize() method. lnwire.Sig does not have a Serialize()
+method, and so cannot satisfy the interface. As a result, the relevant call
+sites were updated to pass in a btcec.Signature, forcing witness signature
+serialization through btcec's Serialize() method which includes low-S
+normalization.
+
+Note: A high-S signature can be converted to a low-S one manually w/o software
+changes, or by a 3rd party, assuming one is aware of the reason for rejection.
+
+Though the above recommendation to the spec by Riard also mitigates the issue,
+this approach was chosen because it could retroactively patch affected nodes if
+they are upgraded before the HTLC deadline expires, as well as its covertness.
+After upgrading, any outstanding broadcasts would be reattempted, this time
+normalizing any previously-persisted high-S signatures into their low-S variant.
+
+Following the disclosure, lnd will also introduce the full tx-relay standardness
+checks that are to be added to the lightning-rfc, as this offers a more general
+and complete approach to ensuring lnd always adheres to standardness rules.
+
+## Timeline
+
+04/03/2020 - Initial report from Antoine Riard
+04/10/2020 - PR 4172 merged into master
+04/29/2020 - lnd v0.10.0-beta released
+08/20/2020 - lnd v0.11.0-beta released
+10/08/2020 - Partial Disclosure sent to lightning-dev and lnd mailing list [1]
+10/20/2020 - Full Disclosure sent to lightning-dev and lnd mailing list
+
+## References
+
+[1] <A HREF="002819.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/002819.html</A>
+[2] <A HREF="https://github.com/btcsuite/btcd/blob/ba530c4abb35ea824a1d3c01d74969b5564c3b08/btcec/signature.go#L47">https://github.com/btcsuite/btcd/blob/ba530c4abb35ea824a1d3c01d74969b5564c3b08/btcec/signature.go#L47</A>
+[3] <A HREF="https://github.com/lightningnetwork/lnd/blob/0f94b8dc624cf0e96ddc8fe1b8e3bf4b3fc4c074/lnwire/signature.go#L92">https://github.com/lightningnetwork/lnd/blob/0f94b8dc624cf0e96ddc8fe1b8e3bf4b3fc4c074/lnwire/signature.go#L92</A>
+[4] <A HREF="https://github.com/lightningnetwork/lnd/pull/4172">https://github.com/lightningnetwork/lnd/pull/4172</A>
+[5] <A HREF="https://gist.github.com/ariard/fb432a9d2cd3ba24fdc18ccc8c5c6eb4">https://gist.github.com/ariard/fb432a9d2cd3ba24fdc18ccc8c5c6eb4</A>
+
+Huge thanks to Antoine Riard for the responsible disclosure and for helping to
+make lnd more safu. More information can be found in Antoine&#8217;s disclosure [5].
+
+Regards,
+Conner Fromknecht
+
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCAAdFiEEnI1hhop8SSADsnRO59c3tn+lkscFAl+PWykACgkQ59c3tn+l
+ksf7Yg//WqZjtkw4Ol1fsbK+lfAkt6UENAq6Pja4/ZatkFI+U9Of3SwCNA5aAP1p
+XSSk4tQptNJi3o8IoUSGLuFZVOzc6SB/vrU3l+MMVcAfgnSj1N5rqW1OLv3Lm/fH
+Jz8eSvPtSEdtFt1JOC1VEd4ZEukjB8T6P/d4yudptUTk0tMrkLhLcN7byflxttU/
+vG2JTtLl0uO+A2rhHkNvoUYqNLEOQssoAmShEBu+8uK56xGkRJQoBWvWN+yJDWor
+MsI9awUzWrvlGU4qCD2WxVWjK7/SXK7cz4PC1XaNr0RqhucXm6lL2wn4r/G1Qqx6
+z6ztMG3rHNnLI43Y1DVn2qPiLyhx1cBe/X8U9EUmA1jDv3zCKo9MmRx1gS69DQx+
+rWBx3N6AIevs3aU6fF2IrwMfrX/0Xb0HT/fIDq1qhN46UZaxJTUuRkQkpJHNNajI
+ze5mmussTg/cdPlSkYTt7/h0CgWN6DAEGVYp6hsPqGoH7jrsEB+wRtsihHRAXevX
+dcHZRoB4OG/oKs5vYZk2LIRKr1miNSdas5T0rJA7voGMMJEa5L8nKqGfzMXsudAv
+n+gVXCLPx3KjTF8yQrNu277ptGIy4AG71MQoOdxkzLtbzm2vfyDMNd14Qk3KWHVz
+NACF4EXcq+oebSIj5kkiNx2jei0hdYVJGPHp8XkewRb0KuB2yDw=
+=Sd09
+-----END PGP SIGNATURE-----
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002853.html">[Lightning-dev] Watchtowers cannot sweep HTLCs if	option_anchor_outputs is enabled (regression)
+</A></li>
+	<LI>Next message: <A HREF="002857.html">[Lightning-dev] CVE-2020-26896: LND Invoice Preimage Extraction
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2858">[ date ]</a>
+              <a href="thread.html#2858">[ thread ]</a>
+              <a href="subject.html#2858">[ subject ]</a>
+              <a href="author.html#2858">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

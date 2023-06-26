@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DRAFT: interactive tx construction protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P1jAWs5KkLYPaLNPehnJiAcp3Dq_RK_udxOnekkbp7D8Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002522.html">
+   <LINK REL="Next"  HREF="002525.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DRAFT: interactive tx construction protocol</H1>
+    <B>lisa neigut</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P1jAWs5KkLYPaLNPehnJiAcp3Dq_RK_udxOnekkbp7D8Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] DRAFT: interactive tx construction protocol">niftynei at gmail.com
+       </A><BR>
+    <I>Tue Feb 11 18:12:48 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002522.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+        <LI>Next message: <A HREF="002525.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2523">[ date ]</a>
+              <a href="thread.html#2523">[ thread ]</a>
+              <a href="subject.html#2523">[ subject ]</a>
+              <a href="author.html#2523">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> s = k + H(kG || kJ || P || P2 || utxo || receiving-node) x
+</I>
+&gt;<i> and as before transfer opening: (P, P2, u, s, e) with receiving-node
+</I>implicitly reconstructed to do the verification of the Schnorr sig. It's
+basically a message in a signature.
+
+Oh that's *much* nicer than calculating a second commitment. Verification
+by any node that's not the intended recipient will fail, as they'll use the
+wrong node_id (their own).
+
+It seems unnecessary to me to commit to the utxo, since the pubkey pair
+effectively does that. What's the motivation for including it? Though, now
+that I think about it, it does seem imperative to verify that the pubkey
+provided is in fact locked to by the utxo script, which we can do since the
+script will have been provided in the `tx_add_input` message.
+
+Seems worth nothing that, given such a proof, you can grind to find out who
+the intended node was. However, if the failure is indeed because of the
+&quot;venus flytrap&quot; attack I mentioned above, it'd pretty obviously be the node
+sending you the invalid signature (or a node that they spoofed/MITM'd),
+which isn't much of a leak.  Actually, this 'grindability' might be quite
+useful for finding the originator of the attack, if needed. There's no
+reason for you to leak a PoDLE signature, but if you do you're
+potentially tying an H2 commitment offer to your node id. Seems very nice
+indeed!
+
+One of the stated goals of implementing PoDLEs was to be &quot;compatible with
+JoinMarket&quot;, but I believe this compatibility goal only extends as far as
+the H2 construction (and not the proof), so we're ok there with this tweak.
+
+Cheers!
+niftynei
+
+On Tue, Feb 11, 2020 at 10:05 AM AdamISZ via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> niftynei, ZmnSCPxj and list:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Zmn** pinged me about this discussion and I thought I could add something
+</I>&gt;<i> directly:
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> First, re:
+</I>&gt;<i> &gt; I'd like to propose that we add a second commitment requirement to the
+</I>&gt;<i> PoDLE that JoinMarket uses, to limit the use of a commitment's validity to
+</I>&gt;<i> be only between an initiator and a single peer. Otherwise you can enable
+</I>&gt;<i> something I'll call the &quot;pouncing venus-flytrap attack&quot;[1].
+</I>&gt;<i>
+</I>&gt;<i> Here's some thoughts that may give context to this (excellent) observation:
+</I>&gt;<i>
+</I>&gt;<i> This issue didn't crop up (well, kinda! I do remember discussion about it)
+</I>&gt;<i> in our use case because takers always send out to 5-12 (typically) makers
+</I>&gt;<i> at once, and the HP2 only needs to get broadcast by one to stop any reuse.
+</I>&gt;<i> But whichever way you look at it, it's a very good point! And in LN case,
+</I>&gt;<i> seems like a very substantial attack (certainly no question it could be
+</I>&gt;<i> allowed for 2 party protocol).
+</I>&gt;<i>
+</I>&gt;<i> In case a brief summary of JM mechanism is helpful, I added some info on
+</I>&gt;<i> the the taker-maker conversation at the end of this mail [1].
+</I>&gt;<i>
+</I>&gt;<i> Second, re:
+</I>&gt;<i> &gt; ## Mitigation
+</I>&gt;<i> &gt; Have each initiator provide two commitments: one to the shared/global J
+</I>&gt;<i> &gt; point and one to a point that is found from the hash of the
+</I>&gt;<i> non-initiating
+</I>&gt;<i> &gt; node's node_id.[2]
+</I>&gt;<i>
+</I>&gt;<i> I get the thinking here, and it makes a lot of sense, but I do think it
+</I>&gt;<i> can be done more compactly.
+</I>&gt;<i> If the commitment is H(P2), the opening of the commitment could be altered
+</I>&gt;<i> to include the receiving node:
+</I>&gt;<i>
+</I>&gt;<i> s = k + H(kG || kJ || P || P2 || utxo || receiving-node) x
+</I>&gt;<i>
+</I>&gt;<i> and as before transfer opening: (P, P2, u, s, e) with receiving-node
+</I>&gt;<i> implicitly reconstructed to do the verification of the Schnorr sig. It's
+</I>&gt;<i> basically a message in a signature.
+</I>&gt;<i>
+</I>&gt;<i> As you note, we wouldn't want to ban usage of a H(P2) value based on an
+</I>&gt;<i> incorrect opening; we just use that failure to decide to not hand over our
+</I>&gt;<i> utxo information (as receiver of the commitment). But unless I missed
+</I>&gt;<i> something, doing it the above way is the more logical/compact choice.
+</I>&gt;<i>
+</I>&gt;<i> Seems like there's a lot of fine nuance here. A malicious counterparty can
+</I>&gt;<i> always choose to blacklist. In Joinmarket we accept (because of our
+</I>&gt;<i> stringent no-identity policy) some roughness and assume some meaningful
+</I>&gt;<i> level of honest participation. A Taker issuing a request to 10 cps hopes
+</I>&gt;<i> that at least some number (min 4 by default) will actually respond to an
+</I>&gt;<i> honest request; if say 8 of 10 do so, he will do the coinjoin with those.
+</I>&gt;<i> That it is brittle or flaky is why we allow 3 tries for each qualifying
+</I>&gt;<i> utxo (qualified on age, size), and also allow custom insertion of
+</I>&gt;<i> additional utxos (although it's rarely if ever needed). It works fine in
+</I>&gt;<i> practice, for now, but it is not watertight; if you have overwhelmingly
+</I>&gt;<i> malicious counterparties you are kinda screwed from other angles, as well
+</I>&gt;<i> as this one. Meanwhile on the Maker side we're trying to create a kind of
+</I>&gt;<i> 'herd immunity'; as long as some few of them are honest, word will get out
+</I>&gt;<i> about used commitments which will stop free spam queries,
+</I>&gt;<i>   at least (but it's not a super strong defence!).
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> [1] Taker-Maker convo (excerpt); some notes re: commitments/PoDLE.
+</I>&gt;<i> ===
+</I>&gt;<i> !fill amount, oid, commitment (HP2)
+</I>&gt;<i> -- this is where a taker sends to each maker an hp2 value. This is the
+</I>&gt;<i> step intended to enforce scarcity, and the assumption in JM was always that
+</I>&gt;<i> this would basically inevitably get shared. Because there are typically
+</I>&gt;<i> 5-12 makers involved, this seemed a reasonably safe assumption.
+</I>&gt;<i> If the commitment value is already used and thus not valid, it gets
+</I>&gt;<i> broadcast immediately. If it's not, it only gets shared as part of the
+</I>&gt;<i> !ioauth step below.
+</I>&gt;<i>
+</I>&gt;<i> !pubkey key
+</I>&gt;<i>
+</I>&gt;<i> -- this is just the maker giving an ephemeral key for the encryption
+</I>&gt;<i>
+</I>&gt;<i> !auth (s, e, u, P, P2)
+</I>&gt;<i> -- (encrypted) this is the taker opening the above commitment. It's rather
+</I>&gt;<i> weird at first sight, because he is opening immediately after committing,
+</I>&gt;<i> with apparently no step inbetween; but in fact the implicit intermediate
+</I>&gt;<i> step is the broadcast (exactly what is being questioned with 'venus
+</I>&gt;<i> flytrap').
+</I>&gt;<i>
+</I>&gt;<i> !ioauth maker-utxo-data
+</I>&gt;<i> -- notice the maker is only sending this utxo data (encrypted of course)
+</I>&gt;<i> after proof of ownership of the utxo above.
+</I>&gt;<i> It's only at this step that the hp2 commitment value is (a) added to the
+</I>&gt;<i> maker's local &quot;used up&quot; list, and (b)privmsged to 1  randomly chosen other
+</I>&gt;<i> bots in the trading pit, who then pubmsgs it to everyone (and that happens
+</I>&gt;<i> multiple times because multiple makers in tx), and they in turn record it
+</I>&gt;<i> as &quot;used&quot;.
+</I>&gt;<i>
+</I>&gt;<i> The mechanism is both not very strong - we use 3 allowed attempts per utxo
+</I>&gt;<i> - and imperfect in its &quot;justice&quot;; such commitments can be &quot;used up&quot; by
+</I>&gt;<i> failures of one's counterparties. But it does serve to stop trivial global
+</I>&gt;<i> snooping, and doesn't cost anything in terms of identity or locked funds,
+</I>&gt;<i> so it has served a purpose (we did actually see such attacks before it, and
+</I>&gt;<i> not after it).
+</I>&gt;<i>
+</I>&gt;<i> I'd also note that in terms of the venus flytrap attack mentioned, there
+</I>&gt;<i> could be a small time window between one maker receiving !auth and at least
+</I>&gt;<i> one other honest maker getting to broadcast step at !ioauth; while I don't
+</I>&gt;<i> think that's very practical in our use case, it is for sure a theoretical
+</I>&gt;<i> concern and removing it could be either slightly, or extremely, important
+</I>&gt;<i> in another use case.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Adam Gibson/waxwing/AdamISZ
+</I>&gt;<i>
+</I>&gt;<i> Sent with ProtonMail Secure Email.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200211/d140fadd/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200211/d140fadd/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002522.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+	<LI>Next message: <A HREF="002525.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2523">[ date ]</a>
+              <a href="thread.html#2523">[ thread ]</a>
+              <a href="subject.html#2523">[ subject ]</a>
+              <a href="author.html#2523">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

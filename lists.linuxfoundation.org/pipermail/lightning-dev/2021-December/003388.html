@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] Take 2: Removing the Dust Limit
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Take%202%3A%20Removing%20the%20Dust%20Limit&In-Reply-To=%3CCAPv7TjZBU2v2Nfw2_8Qz33rUWKJ%3DuJ7u%2B_5tFxjM94mk%3DRnmOA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003384.html">
+   <LINK REL="Next"  HREF="003391.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] Take 2: Removing the Dust Limit</H1>
+    <B>Ruben Somsen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Take%202%3A%20Removing%20the%20Dust%20Limit&In-Reply-To=%3CCAPv7TjZBU2v2Nfw2_8Qz33rUWKJ%3DuJ7u%2B_5tFxjM94mk%3DRnmOA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] Take 2: Removing the Dust Limit">rsomsen at gmail.com
+       </A><BR>
+    <I>Wed Dec  8 10:46:22 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003384.html">[Lightning-dev] [bitcoin-dev] Take 2: Removing the Dust Limit
+</A></li>
+        <LI>Next message: <A HREF="003391.html">[Lightning-dev] [bitcoin-dev] Take 2: Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3388">[ date ]</a>
+              <a href="thread.html#3388">[ thread ]</a>
+              <a href="subject.html#3388">[ subject ]</a>
+              <a href="author.html#3388">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Jeremy,
+
+I brought up the exact same thing at coredev, but unfortunately I came up
+with a way in which the 0 sat output could still enter the UTXO set under
+those rules:
+
+- Parent P1 (0 sat per byte) has 2 outputs, one is 0 sat
+- Child C1 spends the 0 sat output for a combined feerate of 1 sat per byte
+and they enter the mempool as a package
+- Child C2 spends the other output of P1 with a really high feerate and
+enters the mempool
+- Fees rise and child C1 falls out of the mempool, leaving the 0 sat output
+unspent
+
+For this to not be a problem, the 0 sat output needs to provably be the
+only spendable output. As you pointed out to me a few days ago, having a
+relative timelock on the other outputs would do the trick (and this happens
+to be true for spacechains), but that will only be provable if all script
+conditions are visible prior to spending time (ruling out p2sh and taproot,
+and conflicting with standardness rules for transactions).
+
+It's worth noting out that you can't really make a policy rule that says
+the 0 sat output can't be left unspent (i.e. C1 can't be evicted without
+also evicting P1), as this would not mirror economically rational behavior
+for miners (they would get more fees if they evicted C1, so we must assume
+they will, if the transaction ever reaches them).
+
+This last example really points out the tricky situation we're dealing
+with. In my opinion, we'd only want to relay 0 sat outputs if we can
+guarantee that it's never economically profitable to mine them without them
+getting spent in the same block.
+
+Finally, here's a timestamped link to a diagram that shows where 0 sat
+outputs would be helpful for spacechains (otherwise someone would have to
+pay the dust up front for countless outputs):
+<A HREF="https://youtu.be/N2ow4Q34Jeg?t=2556">https://youtu.be/N2ow4Q34Jeg?t=2556</A>
+
+Cheers,
+Ruben
+
+
+
+
+On Wed, Dec 8, 2021 at 9:35 AM Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; wrote:
+
+&gt;<i> Hi Jeremy,
+</I>&gt;<i>
+</I>&gt;<i> Right now, lightning anchor outputs use a 330 sats amount. Each commitment
+</I>&gt;<i> transaction has two such outputs, and only one of them is spent to help the
+</I>&gt;<i> transaction get confirmed, so the other stays there and bloats the utxo
+</I>&gt;<i> set.
+</I>&gt;<i> We allow anyone to spend them after a csv of 16 blocks, in the hope that
+</I>&gt;<i> someone will claim a batch of them when the fees are low and remove them
+</I>&gt;<i> from the utxo set. However, that trick wouldn't work with 0-value outputs,
+</I>&gt;<i> as
+</I>&gt;<i> no-one would ever claim them (doesn't make economical sense).
+</I>&gt;<i>
+</I>&gt;<i> We actually need to have two of them to avoid pinning: each participant is
+</I>&gt;<i> able to spend only one of these outputs while the parent tx is unconfirmed.
+</I>&gt;<i> I believe N-party protocols would likely need N such outputs (not sure).
+</I>&gt;<i>
+</I>&gt;<i> You mention a change to the carve-out rule, can you explain it further?
+</I>&gt;<i> I believe it would be a necessary step, otherwise 0-value outputs for
+</I>&gt;<i> CPFP actually seem worse than low-value ones...
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i> Bastien
+</I>&gt;<i>
+</I>&gt;<i> Le mer. 8 d&#233;c. 2021 &#224; 02:29, Jeremy via bitcoin-dev &lt;
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+</I>&gt;<i>
+</I>&gt;&gt;<i> Bitcoin Devs (+cc lightning-dev),
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Earlier this year I proposed allowing 0 value outputs and that was shot
+</I>&gt;&gt;<i> down for various reasons, see
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-August/019307.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-August/019307.html</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I think that there can be a simple carve out now that package relay is
+</I>&gt;&gt;<i> being launched based on my research into covenants from 2017
+</I>&gt;&gt;<i> <A HREF="https://rubin.io/public/pdfs/multi-txn-contracts.pdf.">https://rubin.io/public/pdfs/multi-txn-contracts.pdf.</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Essentially, if we allow 0 value outputs BUT require as a matter of
+</I>&gt;&gt;<i> policy (or consensus, but policy has major advantages) that the output be
+</I>&gt;&gt;<i> used as an Intermediate Output (that is, in order for the transaction to be
+</I>&gt;&gt;<i> creating it to be in the mempool it must be spent by another tx)  with the
+</I>&gt;&gt;<i> additional rule that the parent must have a higher feerate after CPFP'ing
+</I>&gt;&gt;<i> the parent than the parent alone we can both:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1) Allow 0 value outputs for things like Anchor Outputs (very good for
+</I>&gt;&gt;<i> not getting your eltoo/Decker channels pinned by junk witness data using
+</I>&gt;&gt;<i> Anchor Inputs, very good for not getting your channels drained by at-dust
+</I>&gt;&gt;<i> outputs)
+</I>&gt;&gt;<i> 2) Not allow 0 value utxos to proliferate long
+</I>&gt;&gt;<i> 3) It still being valid for a 0 value that somehow gets created to be
+</I>&gt;&gt;<i> spent by the fee paying txn later
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Just doing this as a mempool policy also has the benefits of not
+</I>&gt;&gt;<i> introducing any new validation rules. Although in general the IUTXO concept
+</I>&gt;&gt;<i> is very attractive, it complicates mempool :(
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I understand this may also be really helpful for CTV based contracts
+</I>&gt;&gt;<i> (like vault continuation hooks) as well as things like spacechains.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Such a rule -- if it's not clear -- presupposes a fully working package
+</I>&gt;&gt;<i> relay system.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I believe that this addresses all the issues with allowing 0 value
+</I>&gt;&gt;<i> outputs to be created for the narrow case of immediately spendable outputs.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Cheers,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Jeremy
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> p.s. why another post today? Thank Greg
+</I>&gt;&gt;<i> <A HREF="https://twitter.com/JeremyRubin/status/1468390561417547780">https://twitter.com/JeremyRubin/status/1468390561417547780</A>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> --
+</I>&gt;&gt;<i> @JeremyRubin &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+</I>&gt;&gt;<i> &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> bitcoin-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev">https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211208/7634150b/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211208/7634150b/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003384.html">[Lightning-dev] [bitcoin-dev] Take 2: Removing the Dust Limit
+</A></li>
+	<LI>Next message: <A HREF="003391.html">[Lightning-dev] [bitcoin-dev] Take 2: Removing the Dust Limit
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3388">[ date ]</a>
+              <a href="thread.html#3388">[ thread ]</a>
+              <a href="subject.html#3388">[ subject ]</a>
+              <a href="author.html#3388">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

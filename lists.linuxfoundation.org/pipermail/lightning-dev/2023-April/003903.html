@@ -1,0 +1,136 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splice Lock Race Condition Solution
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Lock%20Race%20Condition%20Solution&In-Reply-To=%3CCAN%2BF7jnoiTqJd3Y%3D7JMPEmitXKCn1AnvdB6GJsGpEG23bua2ag%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003902.html">
+   <LINK REL="Next"  HREF="003904.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splice Lock Race Condition Solution</H1>
+    <B>Dustin Dettmer</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Lock%20Race%20Condition%20Solution&In-Reply-To=%3CCAN%2BF7jnoiTqJd3Y%3D7JMPEmitXKCn1AnvdB6GJsGpEG23bua2ag%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Splice Lock Race Condition Solution">dustin at koinkeep.com
+       </A><BR>
+    <I>Tue Apr  4 19:45:03 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003902.html">[Lightning-dev] Proposed changes to the splicing specification
+</A></li>
+        <LI>Next message: <A HREF="003904.html">[Lightning-dev] Splice Lock Race Condition Solution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3903">[ date ]</a>
+              <a href="thread.html#3903">[ thread ]</a>
+              <a href="subject.html#3903">[ subject ]</a>
+              <a href="author.html#3903">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey,
+
+In testing the `splice_locked` workflow I discovered a race condition which
+is critical we solve correctly. The core problem happens if any channel
+activity occurs in the time after `splice_locked` is sent and before
+`splice_locked` is received.
+
+`splice_locked` is defined as being locked once it is both sent and
+received. It is fairly trivial to build a test case for this -- have a node
+continually spamming payments while `splice_lock`ing is occurring and the
+race condition will trigger relatively often.
+
+The race condition effects two messages in particular: `commitment_signed`
+and `announcement_signatures`. Below is an example of how it occurs with
+commitment but the flow is essentially the same for announcement:
+
+Legend:
+Item -&gt; means sent
+Item &lt;- means received
+Chan X (implies a channel at block height X)
+(Since these happen at different times)
+Splice locked race condition example
+Node A. Node B.
+* Channel starts at block height 100
+splice_locked -&gt;
+&lt;- splice_locked
+&lt;- commitments_signed (Chan 100)
+-&gt; splice_locked
+Node B now considers splice locked (Chan 106)
+&lt;- commitments_signed (Chan 106)
+splice_locked &lt;-
+Node A now considers splice locked (Chan 106)
+commitments_signed &lt;- (Chan 100)
+commitments_signed &lt;- (Chan 106)
+Node A considers the commitments_signed for Chan 100 invalid.
+The commitments_signed for Chan 106 is, however, valid.
+This example uses commitments_signed but remains a problem for any message
+that depends on channel state.
+
+The solution requires the temporary storing of two items:
+* [scid] last_short_channel_id (the pre-splice short channel id)
+* [bool] splice_await_commitment_succcess
+
+After sending &amp; receiving `splice_locked` (so called 'mutual splice lock),
+the last_short_channel_id should be set to the pre-splice short channel id
+and splice_await_commitment_succcess should be flagged to true.
+
+If an `announcement_signatures` is received with an scid matching
+`last_short_channel_id` the message should be ignored and the channel
+connection should not be aborted (as it normally would).
+
+If a `commitment_signed` message is received with the
+tlv splice_info-&gt;splice_channel_id set to something other than the
+successfully confirmed splice channel_id, the message should be ignored.
+
+Once a revoke_and_ack is successfully sent OR received,
+`last_short_channel_id` and `splice_await_commitment_succcess` should be
+reset and normal validation of `announcement_signatures` and
+`commitment_signed` should be resumed.
+
+This solves the race condition while preserving as strict a validation of
+messages as possible and removes the need to add new fields to these
+messages.
+
+Cheers,
+Dusty
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230404/15da6a65/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230404/15da6a65/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003902.html">[Lightning-dev] Proposed changes to the splicing specification
+</A></li>
+	<LI>Next message: <A HREF="003904.html">[Lightning-dev] Splice Lock Race Condition Solution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3903">[ date ]</a>
+              <a href="thread.html#3903">[ thread ]</a>
+              <a href="subject.html#3903">[ subject ]</a>
+              <a href="author.html#3903">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

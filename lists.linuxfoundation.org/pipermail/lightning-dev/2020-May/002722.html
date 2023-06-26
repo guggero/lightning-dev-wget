@@ -1,0 +1,302 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Array-based%20Routemap%20Representation%2C%0A%09and%20the%20Advantages%20of%20Cheney%202-Finger%20Garbage%20Collection&In-Reply-To=%3CVIHbn95gIKKoduRqcNBSa7Up_fab76z_ZLW-5Rv7K2_76J3ECteA63rUyNBLDiV453NcNQyY5fxlRYwftsR0v1teiXoA_E5xroc4rTr2bDs%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002731.html">
+   <LINK REL="Next"  HREF="002723.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Array-based%20Routemap%20Representation%2C%0A%09and%20the%20Advantages%20of%20Cheney%202-Finger%20Garbage%20Collection&In-Reply-To=%3CVIHbn95gIKKoduRqcNBSa7Up_fab76z_ZLW-5Rv7K2_76J3ECteA63rUyNBLDiV453NcNQyY5fxlRYwftsR0v1teiXoA_E5xroc4rTr2bDs%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu May 21 05:01:36 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002731.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+        <LI>Next message: <A HREF="002723.html">[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2722">[ date ]</a>
+              <a href="thread.html#2722">[ thread ]</a>
+              <a href="subject.html#2722">[ subject ]</a>
+              <a href="author.html#2722">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+Reducing routemap representation size is important to compensate for possible future increases in public Lightning Network size, and also make it more practical to run a Lightning Network node on less-capable devices.
+
+In this (mildly deranged) writeup, I propose a routemap representation with very minimal reduction in size, but allows for the implicit creation of a routefinding heuristic for pathfinding.
+
+Array-based Storage
+===================
+
+In a modern world where nearly every device uses a 64-bit processor, a pointer takes up 8 bytes, but an index to a reasonably-sized array can be stored in 4 bytes only.
+
+In memory garbage collection, one technique known as &quot;big bag of pages&quot; basically organizes objects according to size.
+Objects of equal size (and often, same basic type) are put in the same page.
+Thus each page is actually an array of such objects, some of which are in-use, some of which are not.
+
+Any Lightning routemap requires two kinds of objects: nodes and channels.
+We can organize the routemap such that it is stored in two arrays: an array of nodes, and an array of channels.
+
+Since they are now stored in two large arrays, references to channels and references to nodes do not have to be pointers: instead, they can be indices into the array.
+Indeed, if we limit array sizes to 65536 nodes and 65536 channels (reasonable given the current size of the public network), we can get away with using only 2 bytes per reference.
+
+Now an important advantage of the &quot;big bag of pages&quot; is that the objects are the same size (and usually type).
+Nodes are arguably variable-size: they can have 1 to many channels.
+
+However, a technique to avoid variable-size objects is to simply use linked lists.
+We can take some of the space advantages, and have nodes only contain a reference to their first channel.
+Then each channel has two next pointers.
+As channels need references to the nodes they connect together anyway, we can store the reference-to-node right next to the next pointer for the list of channels of that node, so that if we are traversing the list of channels of a particular node, we know the correct next pointer to use.
+(Basically, we are embedding the list into the channel object itself, and a channel is a member of two lists, one for each node on each end)
+
+With this, nodes and channels are fixed size, and we can use a regular array to represent them.
+Limiting the routemap to 65535 channels and 65535 nodes, we can get away with 2 bytes per reference.
+(However, it is probably more reasonable to use 4-byte array indices, as the number of public channels may exceed 60,000 in a few years, maye.)
+As a regular array as well, the memory manager needs less overhead in managing the objects in an array, versus managing lots of objects of varying size: there is no need to store the size of each object separately, for instance, and any overheads incurred in binning and rounding up object sizes is reduced by simply asking two large array from the memory manager.
+
+Deletion of Channels and Nodes
+==============================
+
+Routemaps are living things, and random nodes may close channels and disappear from the network completely.
+
+Now, when a channel is closed, we simply remove the channel from both lists it is on.
+With singly-linked lists this is an O(N) operation on the number of channels a node has, which might be acceptable if we assume that closes are rare.
+
+Of course, when the channel is closed, its storage --- its entry in the channels array --- can now be reused.
+The reasonable thing to do is to use a freelist and to add the entry to a singly-linked list of free channel entries.
+
+However, freelists are boring bog-standard and unexciting solutions, so let us instead consider an insane idea: use Cheney 2-finger Garbage Collection.
+
+Cheney 2-finger Garbage Collection
+==================================
+
+<A HREF="https://en.wikipedia.org/wiki/Cheney%27s_algorithm">https://en.wikipedia.org/wiki/Cheney%27s_algorithm</A>
+
+The Cheney algorithm is a copying semispace collector.
+
+* Copying: live objects are copied, then entire large spaces of garbage and copied-from memory is recovered and reused.
+* Semispace: when moving, we have a fromspace and tospace: fromspace is where objects are moved *from* and tospace is where live objects are moved *to*.
+
+As a copying algorithm, we need to know if an object has been moved, and *where* it gets moved to.
+This can be done in two ways:
+
+* Broken Heart tag.
+  The fromspace object header is overwritten with a specific code, and the object memory storage is overwritten with a reference to its new location.
+* Forwarding pointer.
+  Every object includes a forwarding pointer that is permanently a part of its storage, defaults to nil, and (when a collection is ongoing) is a reference to its new location.
+
+Since we want to be able to continue to use fromspace in pathfinding operations even as we are collecting garbage (i.e. incremental collection), we will use a specific forwarding pointer rather than overwriting the object with a broken heart tag.
+
+Now we describe a little the Cheney 2-finger garbage collector.
+Suppose we have the below object graph:
+
+     A --- B --- C --- D
+     |   /       |
+     |  /        |
+     | /         |
+     E --- F --- G
+
+Let us suppose that the object A is the &quot;root&quot; object, i.e. it is definitely an object we want to keep around, and any objects accessible from A are also objects we want to keep aroud.
+
+Now, as the moniker &quot;2-finger&quot; suggests, the Cheney algorithm requires two pointers.
+One is the &quot;scan&quot; pointer and the other is the &quot;allocation&quot; pointer.
+Both pointers are references to the tospace memory area, and, in our application, can be simple array indices rather than full pointers.
+
+First we copy the root object into the tospace, then point the scan pointer at it, and the allocation pointer after it:
+
+    A
+    ^ ^
+
+Since the scan pointer is currently pointing at A, we scan A and check it for references to objects that are not in tospace.
+We can check this easily by seeing if an object it refers to has a nil forwarding pointer: if it is nil, then it has not been copied into tospace yet.
+The A object has references to B and E, so we copy those at the allocation pointer and advance the allocation pointer to after the newly-copied objects:
+
+    A B E
+    ^     ^
+
+Now we are done with scanning A, so we advance the scan pointer to the next object, B:
+
+    A B E
+      ^   ^
+
+We scan B, and notice it has references to A, E, and C.
+A and E already have forwarding pointers to their tospace copies, but C does not have this yet, so we copy C at the allocation pointer and advance the allocation pointer:
+
+    A B E C
+      ^     ^
+
+We continue with this process, resulting in a tospace with the objects stored in this order:
+
+    A B E C F D G
+
+Cheney is a breadth-first stackless collector: we do not have to &quot;recurse into&quot; objects in order to perform a deep scan of the object graph (stackless).
+It is breadth-first since the order in which it scans objects is by &quot;spreading&quot; out from the root object A, instead of deeply recursing into an object subgraph and traversing deeply (depth-first).
+
+Breadth-first is generally frowned upon in modern systems, since most object accesses are deep rather than wide, and thus breadth-first tends to arrange objects in ways that are not cache-friendly if most object access is deep.
+Obviously, ZmnSCPxj has gone insane and should not be listened to.
+
+Breadth-first Ordering as Pathfinding Heuristic
+===============================================
+
+Let us now review the object graph, and how the objects will be ordered by Cheney:
+
+     A --- B --- C --- D
+     |   /       |
+     |  /        |
+     | /         |
+     E --- F --- G
+
+    A B E C F D G
+
+Suppose we are at object C, and we have a pathfinding task of going from C to A.
+What is a nice fast heuristic for finding a path from C to A?
+
+C has links to B, D and G.
+In the ordering created by the Cheney algorithm, B is to the left of C, while D and G are to its right.
+So we start our path by looking at which of the object B, D, and G have the lowest address (i.e. which is leftmost in the Cheney-generated ordering).
+B is the leftmost in the order that Cheney produces, thus it is likely the one that is closest to the root node A.
+
+So we start with C -&gt; B.
+We are now at B, which has links to A, C, and E.
+When looking at the ordering of objects produced by Cheney (equivalently, the object with the lowest address), A is the one that is ordered earliest.
+So we make our route C -&gt; B -&gt; A, and find we are at our destination!
+
+What this all means is that the Cheney breadth-first ordering also creates a nice heuristic.
+If A is &quot;our&quot; node, then in order to create a route from our node to any arbitrary payee, we simply start at the payee and head down links to nodes that have lower addresses, and inevitably we will go towards &quot;our&quot; node, the special root node that is at the lowest address in the order Cheney gives us.
+(in our application we would use indices, but it still holds that the lower index is nearer to &quot;our&quot; root node).
+
+Note that this is not perfect, which is why this is a &quot;heuristic&quot; and not &quot;hard inviolate rule that must be followed or else the world will burn&quot;.
+Pathfinding algorithms can use this as a guide for which nodes to open first, but can evaluate paths using fees and so on as well.
+
+The heuristic is had &quot;for free&quot; --- we need *some* &quot;address&quot; or &quot;index&quot; to refer to objects anyway, and the fact that, with Cheney, the address itself encodes a heuristic for which node is (most likely) nearer to the special root destination, is basically a pure win.
+
+Disk
+====
+
+Now the big issue is that Cheney is a semispace collector, which basically means that during collection we need twice the memory, which absolutely sucks.
+Obviously ZmnSCPxj has gone insane and just wants us to spend twice as much memory on the routemap right after shaving only a few bytes off the representations of nodes and channels.
+
+However, nothing in the algorithm actually requires that tospace be in core memory.
+We could instead write the tospace objects into a disk file.
+Cheney &quot;just&quot; requires two pointers, which we can implement simply as opening the tospace file twice, once for append (allocation pointer) and one for read/write (scan pointer).
+
+We need two tospace files, one for node objects and one for channel objects, but in any case, once the Cheney run has completed, we can close the disk files, wait for any pending pathfinding queries to complete (and temporarily block new pathfinding queries), then reload the in-memory arrays from the tospace file(s).
+
+This may make this technique slightly more palatable for lower-power devices, which often still have some slightly larger amount of free disk space compared to memory space.
+
+Incremental Collection
+======================
+
+We have observed that garbage collection is itself the same algorithm that creates our pathfinding heuristic to guide pathfinding to finding the shortest path to a specific destination.
+Now, of course we want to do Cheney runs a bit more often than a normal garbage-collected environment would use, in order to refresh our heuristic when the routemap changes (new channels are created, channels are closed).
+
+Of course, while a collection run is ongoing, new changes to the routemap are still occurring, because of course writing out the routemap to disk and then reloading it is not a fast operation.
+We can handle this by making our collection algorithm incremental.
+
+Incremental algorithms are assisted by the so-called &quot;tri-color abstraction&quot;.
+<A HREF="https://en.wikipedia.org/wiki/Tracing_garbage_collection#Tri-color_marking">https://en.wikipedia.org/wiki/Tracing_garbage_collection#Tri-color_marking</A>
+Objects can be black, gray, or white.
+
+* Black - the object is definitely live, and all its referred objects have already been marked as live.
+  Or, this object has completed this run of the collection and need not be revisited by the collector algorithm.
+* Gray - the object is definitely live, but it may contain references to objects that the collector has not moved or marked as live.
+* White - the object may or may not be live; the collector has not scanned any references to it yet.
+
+The interesting thing is that the Cheney collector gives some very easy ways to determine if a fromspace object is black, gray, or white, without adding any more memory to represent those sets, just the forwarding pointers and the two fingers (which are needed to operate the Cheney algorithm anyway):
+
+* Black - the fromspace object has a non-nil forwarding pointer, and the forwarding pointer is less than the scan pointer.
+* Gray - the fromspace object has a non-nil forwarding pointer, and the forwarding pointer is greater than the scan pointer (and less than the allocation pointer, but that is an invariant that will not be violated unless your implementation is buggy).
+* White - the fromspace object has a nil forwarding pointer yet.
+
+The importance of the tri-color abstraction lies in the following rule:
+
+* No black object can have a reference to a white object.
+
+This is because the collection algorithm has already &quot;finished with&quot; scanning black objects.
+Thus, if the above invariant is violated, then the collection algorithm will stop working correctly.
+
+So, let us consider what we need to do when the routemap is modified:
+
+* If a channel is closed, if the channel has a forwarding pointer to the channel tospace, we just update the equivalent object in tospace and delete it as well.
+  This cannot cause a violation in the tri-color invariant.
+* If a new channel is announced, we need to determine the colors of the nodes on both ends, and handle as follows:
+  * Black and Black: just add a new channel to the channel tospace as well, and update the tospace nodes to include it.
+  * Black and Gray: same as above.
+  * Black and White: Copy the white object to the node tospace, update the allocation pointer; this promotes the White object to Gray, then fall back to the Black and Gray case above.
+  * Gray and Gray: do nothing; the channel will eventually be added by the collector algorithm once one node or the other is reached by the scan pointer.
+  * Gray and White: do nothing, for similar reasons.
+  * White and White: do nothing, for similar reasons.
+
+With this, we can pause the Cheney collection at any time to accept incoming changes to the routemap graph, thus retaining responsiveness even while we are performing a collection.
+
+Further, queries for routes can continue using the fromspace copy of the routemap.
+Thus, even while the routemap is being collected, pathfinding algorithms can continue running, again retaining responsiveness even while the collection is being performed.
+As mentioned before, the only thing that would require blocking of pathfinding would be the switch between fromspace and tospace at the end of Cheney collection, which hopefully is not too slow.
+
+Tenuring
+========
+
+Because the graph is so self-centered (the root is &quot;our&quot; own node), if our node happens to not have any path to some subgraph, then they are treated as garbage and are not copied to tospace.
+
+This is largely fine, if there is no path from our node to that subgraph then we cannot route payments to that subgraph anyway, thus their loss is perfectly fine.
+
+Of course, in the future some new channel may be created from the &quot;island&quot; to our node, and then we would have to re-download the gossip for the nodes on that island, which is bad because bandwidth.
+
+To help against this, we could select some nodes with particularly long-lived channels (short channel IDs include the block that the channel was locked in, are a convenient way to determine the age of a channel, and are needed anyway in order to encode onion routes).
+We can add these tenured nodes to the root set, executing Cheney as follows:
+
+* First put our own node to the root set and execute Cheney as normal.
+* When Cheney completes (scan pointer == allocation pointer), check if any tenered nodes are still white (have no forwarding pointer) and add them to the gray set (copy them to tospace and advance the allocation pointer).
+  * If any tenured nodes were promoted (scan pointer &lt; allocation pointer), rerun Cheney.
+
+This still retains our important property that earlier nodes in tospace are nearer to our own node, while still retaining disconnected islands attached to long-lived nodes in case they become reconnected to our own node in the future.
+
+The set of tenured nodes can be scanned in-between Cheney runs, and can be scanned in a &quot;background&quot; manner as well.
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002731.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+	<LI>Next message: <A HREF="002723.html">[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2722">[ date ]</a>
+              <a href="thread.html#2722">[ thread ]</a>
+              <a href="subject.html#2722">[ subject ]</a>
+              <a href="author.html#2722">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal for syncing channel updates
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20syncing%20channel%20updates&In-Reply-To=%3CCAL3HpbehZ5GiDg9CabemkdLykpTfM1xOvtO4BfoZagzP7N57ag%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001425.html">
+   <LINK REL="Next"  HREF="001427.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal for syncing channel updates</H1>
+    <B>Fabrice Drouin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20syncing%20channel%20updates&In-Reply-To=%3CCAL3HpbehZ5GiDg9CabemkdLykpTfM1xOvtO4BfoZagzP7N57ag%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Proposal for syncing channel updates">fabrice.drouin at acinq.fr
+       </A><BR>
+    <I>Thu Oct  4 12:46:19 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001425.html">[Lightning-dev] RouteBoost: Adding 'r=' fields to BOLT 11 invoices to flag capacity
+</A></li>
+        <LI>Next message: <A HREF="001427.html">[Lightning-dev] Proposal for syncing channel updates
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1426">[ date ]</a>
+              <a href="thread.html#1426">[ thread ]</a>
+              <a href="subject.html#1426">[ subject ]</a>
+              <a href="author.html#1426">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+This a a proposal for an extension of our current &#8220;channel queries&#8221;
+that should allow nodes to properly sync their outdated channel
+updates. I already opened a issue on the RFC&#8217;s github repo
+(<A HREF="https://github.com/lightningnetwork/lightning-rfc/issues/480">https://github.com/lightningnetwork/lightning-rfc/issues/480</A>) but
+decided to post here too to, to have a less &#8220;constrained&#8221; discussion.
+And it looks like a fairly standard synchronisation problem so maybe
+someone will think of others similar schemes that have been used in a
+different context.
+
+Thanks,
+
+Fabrice
+
+Background: Routing Table Sync
+
+(If you&#8217;re familiar with LN you can just skip this section)
+
+LN is a p2p network of nodes, which can be represented as a graph
+where nodes are vertices and channels are edges, and where you can pay
+any node you can find a route to:
+- each nodes maintains a routing table i.e. a full view of the LN graph
+- to send a payment, nodes use their local routing table to compute a
+route to the destination, and send a onion-like message to the first
+node on that route, which will forward it to the next node and so on
+until it reaches its destination
+
+The routing table includes:
+- &#8220;static&#8221; information: channel announcements
+- &#8220;dynamic&#8221; information: channel updates (relay fees)
+(It also includes node announcements, which are not needed for route
+computation)
+Using our graph analogy, channel updates would be edge parameters
+(cost, max capacity, min payment amount, &#8230;). They can change often,
+usually when nodes decide to change their relay fee policy, but also
+to signify that a channel is temporarily unusable. A new channel
+update will replace the previous one.
+
+Channel ids are identified with an 8 bytes &quot;short transaction id&quot;: we
+use the blockchain coordinates of the funding tx: block height (4
+bytes) + tx index (2 bytes) + output index (2 bytes)
+
+Chanel updates include a channel id, a direction (for a channel
+between Alice and Bob there are 2 channel updates: one for Alice-&gt;Bob
+and one for Bob-&gt;Alice), fee parameters, and a 4 bytes timestamp.
+
+To compute routes, nodes need a way to keep their routing table
+up-to-date: we call it &quot;routing table sync&quot; or &quot;routing sync&quot;.
+
+There is something else to consider: route finding is only needed when
+you're * sending * payments, not when you're relaying them or
+receiving them. A node that sits in the &quot;middle&quot; of the LN network and
+just keeps relaying payments would work even if it has no routing
+information at all.
+
+Likewise, a node that just creates payment requests and receives
+payments does not need a routing table.
+
+On the other end of the spectrum, a LN &quot;wallet&quot; that is mostly used to
+send payments will not work very well it its routing table is missing
+info or contains outdated info, so routing sync is a very important
+issue for LN wallets, which are also typically offline more often than
+other nodes.
+
+If your wallet is missing channel announcements it may not be able to
+find a route, and if its channel updates are outdated it may compute a
+route that includes channels that are temporarily disabled, or use fee
+rates that are too old and will be refused by relaying nodes. In this
+case nodes can return errors that include their most recent channel
+update, so that the sender can try again, but this will only work well
+if just a few channel updates are outdated.
+
+So far, these are the &#8220;routing table sync&#8221; schemes that have been
+specified and implemented:
+
+Step #1: just send everything
+
+The first routing sync scheme was very simple: nodes would request
+that peers they connect to send them a complete &quot;dump&quot; of their entire
+routing table. It worked well at the beginning but was expensive for
+both peers and quickly became impractical.
+
+Step #2: synchronise channel announcements
+
+New query messages where added to the LN protocol to improve routing
+table sync: nodes can ask their peers for all their channel ids in a
+given block range, compare that list to their own channel ids and
+query the ones they're missing (as well as related channel updates).
+
+Nodes can also send a timestamp-based filter to their peers (&quot;only
+send me  channel updates that match this timestamp filter&quot;).
+
+It's a nice improvement but there are still issues with nodes that are
+offline very often: they will be able to sync their channel
+announcements, but not their channel updates.
+
+Suppose that at T0 a node has 1000 channel updates that are outdated.
+It comes back online, starts syncing its routing table, and goes
+offline after a few minutes. It now has 900 channel updates that are
+outdated.
+At T1 = T0 + 8 hours it comes back online again. If it uses T0 to
+filter out channel updates, it will never receive the info it is
+missing for its 900 outdated channel updates. Using our &quot;last time I
+was online at&quot; timestamp as a gossip filter does not work here.
+
+=&gt; Proposed solution: timestamp-based channel updates sync
+
+We need a better method for syncing channel updates. And it is not
+really a set reconciliation problem (like syncing channel
+announcements for example): we&#8217;re not missing items, we&#8217;re missing
+updates for existing items.
+
+So I propose to extend query parameters to include channel update timestamps:
+
+When A connects to B, it ask for a list of [channel id (8 bytes)|
+channel update timestamp #1 (4 bytes)| channel update timestamp #2 (4
+bytes)] in a given [start_height, number_of_blocks] block range
+
+B replies with a list of [channel id (8 bytes)| channel update
+timestamp #1 (4 bytes)| channel update timestamp #2 (4 bytes)]
+
+A checks its local routing table, and sends a query that includes a
+list of [channel id (8 bytes) | flag (1 byte)], where flag is a
+combination of
+send me the channel announcement for this channel id
+send me the channel update #1 for this channel id
+send me the channel update #2 for this channel id
+
+B replies with the requested items.
+
+This will allow B to know very quickly how far behind it is, and
+display a &#8220;sync progress&#8221; indicator as it receives the items it
+requested.
+
+We&#8217;ve been testing this strategy on our mobile wallet for a few weeks
+and so far our test results are positive: it fixes the issue we had
+when  local routing tables were missing a lot of &#8220;temporarily
+disabled&#8221; channel updates. And it&#8217;s fairly easy to support these new
+queries for implementations that already support channel range
+queries.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001425.html">[Lightning-dev] RouteBoost: Adding 'r=' fields to BOLT 11 invoices to flag capacity
+</A></li>
+	<LI>Next message: <A HREF="001427.html">[Lightning-dev] Proposal for syncing channel updates
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1426">[ date ]</a>
+              <a href="thread.html#1426">[ thread ]</a>
+              <a href="subject.html#1426">[ subject ]</a>
+              <a href="author.html#1426">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

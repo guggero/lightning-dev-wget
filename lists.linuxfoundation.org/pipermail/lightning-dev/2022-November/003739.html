@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fat Errors
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fat%20Errors&In-Reply-To=%3CCA%2Bn-rRv-erUwboRLHNR4n4wYf73LxCrzcXKN4KRnYu-4uqVSHA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003734.html">
+   <LINK REL="Next"  HREF="003741.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fat Errors</H1>
+    <B>Thomas HUET</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fat%20Errors&In-Reply-To=%3CCA%2Bn-rRv-erUwboRLHNR4n4wYf73LxCrzcXKN4KRnYu-4uqVSHA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Fat Errors">thomas.huet at acinq.fr
+       </A><BR>
+    <I>Thu Nov  3 15:12:00 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003734.html">[Lightning-dev] Fat Errors
+</A></li>
+        <LI>Next message: <A HREF="003741.html">[Lightning-dev] Fat Errors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3739">[ date ]</a>
+              <a href="thread.html#3739">[ thread ]</a>
+              <a href="subject.html#3739">[ subject ]</a>
+              <a href="author.html#3739">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Joost,
+
+This is a very interesting proposal that elegantly solves the problem, with
+however a very significant size increase. I can see two ways to keep the
+size small:
+- Each node just adds its hmac in a naive way, without deleting any part of
+the message to relay. You seem to have disqualified this option because it
+increases the size of the relayed message but I think it merits more
+consideration. It is much simpler and the size only grows linearly with the
+length of the route. An intermediate node could try to infer its position
+relative to the failing node (which should not be the recipient) but
+without knowing the original message size (which can easily be randomized
+by the final node), is that really such a problem? It may be but I would
+argue it's a good trade-off.
+- If we really want to keep the constant size property, as you've suggested
+we could use a low limit on the number of nodes. I would put the limit even
+lower, at 8 or less. We could still use longer routes but we would only get
+hmacs for the first 8 hops and revert to the legacy system if the failure
+happens after the first 8 hops. That way we keep the size low and 8 hops
+should be good enough for 99% of the payments, and even when there are more
+hops we would know that the first 7 hops are clean.
+
+Thanks again for your contribution, I hope we'll soon be able to attribute
+failures trustlessly.
+
+Thomas
+
+Le mar. 1 nov. 2022 &#224; 22:10, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Hey Rusty,
+</I>&gt;<i>
+</I>&gt;<i> Great to hear that you want to try to implement the proposal. I can polish
+</I>&gt;<i> my golang proof of concept code a bit and share if that's useful? It's just
+</I>&gt;<i> doing the calculation in isolation. My next step after that would be to see
+</I>&gt;<i> what it looks like integrated in lnd.
+</I>&gt;<i>
+</I>&gt;<i> 16 hops sounds fine to me too, but in general I am not too concerned about
+</I>&gt;<i> the size of the message. Maybe a scheme is possible where the sender
+</I>&gt;<i> signals the max number of hops, trading off size against privacy. Probably
+</I>&gt;<i> an unnecessary complication though.
+</I>&gt;<i>
+</I>&gt;<i> I remember the prepay scheme, but sounds quite a bit more invasive than
+</I>&gt;<i> just touching encode/relay/decode of the failure message. You also won't
+</I>&gt;<i> have the timing information to identify slow nodes on the path.
+</I>&gt;<i>
+</I>&gt;<i> Joost.
+</I>&gt;<i>
+</I>&gt;<i> On Tue, Oct 25, 2022 at 9:58 PM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; writes:
+</I>&gt;&gt;<i> &gt; Hi list,
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; I wanted to get back to a long-standing issue in Lightning: gaps in
+</I>&gt;&gt;<i> error
+</I>&gt;&gt;<i> &gt; attribution. I've posted about this before back in 2019 [1].
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Hi Joost!
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         Thanks for writing this up fully.  Core lightning also doesn't
+</I>&gt;&gt;<i> penalize properly, because of the attribution problem: solving this lets
+</I>&gt;&gt;<i> us penalize a channel, at least.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         I want to implement this too, to make sure I understand it
+</I>&gt;&gt;<i> correctly, but having read it twice it seems reasonable.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         How about 16 hops?  It's the closest power of 2 to the legacy hop
+</I>&gt;&gt;<i> limit, and makes this 4.5k for payloads and hmacs.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>         There is, however, a completely different possibility if we want
+</I>&gt;&gt;<i> to use a pre-pay scheme, which I think I've described previously.  You
+</I>&gt;&gt;<i> send N sats and a secp point; every chained secret returned earns the
+</I>&gt;&gt;<i> forwarder 1 sat[1].  The answers of course are placed in each layer of
+</I>&gt;&gt;<i> the onion.  You know how far the onion got based on how much money you
+</I>&gt;&gt;<i> got back on failure[2], though the error message may be corrupted.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Cheers,
+</I>&gt;&gt;<i> Rusty.
+</I>&gt;&gt;<i> [1] Simplest is truncate the point to a new secret key.  Each node would
+</I>&gt;&gt;<i>     apply a tweak for decorrelation ofc.
+</I>&gt;&gt;<i> [2] The best scheme is that you don't get paid unless the next node
+</I>&gt;&gt;<i>     decrypts, actually, but that needs more thought.
+</I>&gt;&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221103/ddb54b9c/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221103/ddb54b9c/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003734.html">[Lightning-dev] Fat Errors
+</A></li>
+	<LI>Next message: <A HREF="003741.html">[Lightning-dev] Fat Errors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3739">[ date ]</a>
+              <a href="thread.html#3739">[ thread ]</a>
+              <a href="subject.html#3739">[ subject ]</a>
+              <a href="author.html#3739">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

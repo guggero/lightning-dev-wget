@@ -1,0 +1,110 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%09make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%0A%09and%20potential%20fixes&In-Reply-To=%3Cog2-I0x6QcT6YBe6uatY4FUHOUTWjdL8LM4_xNeoo_m9kOel3Db6WBrs6634GwB-n5o3FHxvLztYsyCnVTtlvd2ZNczGNm7o5ggX6qJTBqQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002735.html">
+   <LINK REL="Next"  HREF="002737.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Disclosure%20of%20a%20fee%20blackmail%20attack%20that%20can%0A%09make%20a%20victim%20loose%20almost%20all%20funds%20of%20a%20non%20Wumbo%20channel%0A%09and%20potential%20fixes&In-Reply-To=%3Cog2-I0x6QcT6YBe6uatY4FUHOUTWjdL8LM4_xNeoo_m9kOel3Db6WBrs6634GwB-n5o3FHxvLztYsyCnVTtlvd2ZNczGNm7o5ggX6qJTBqQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Jun 17 12:21:10 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002735.html">[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+</A></li>
+        <LI>Next message: <A HREF="002737.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2736">[ date ]</a>
+              <a href="thread.html#2736">[ thread ]</a>
+              <a href="subject.html#2736">[ subject ]</a>
+              <a href="author.html#2736">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Rene,
+
+Thank you for the report, this is good.
+
+&gt;<i> 1. The current solution is to just not use up the max value of htlc's.&#160;Eclaire&#160;and c-lightning by default only use up to 30 htlcs.
+</I>&gt;<i> 2. Probably the best fix (not sure if I understand the consequences correctly) is coming from this PR to bitcoin core (c.f.&#160;<A HREF="https://github.com/bitcoin/bitcoin/pull/15681&#160;by">https://github.com/bitcoin/bitcoin/pull/15681&#160;by</A> @TheBlueMatt . If I get it correctly with that we could always have low fees and ask the person who want to claim their outputs to pay fees. This excludes overpayment and could happen at a later stage when fees are not spiked. Still the victim who offered the htlcs would have to spend those outputs at some time.
+</I>&gt;<i> 3. Don't overpay fees in commitment transactions. We can't foresee the future anyway
+</I>
+Fee futures could help against this.
+I remember writing about this some time ago but cannot find where (not sure if it was in lightning-dev or bitcoin-dev).
+
+As a rough sketch, a client contacts a fee insurance service.
+For a fixed fee, the client arranges such that the fee insurance service pays for fees in case of a condition where feerates increase.
+
+This is done by arranging a 2-of-2 output spending the insurance premium payment and some maximum fee the insurance service provides.
+Initially sign an `nLockTime`d transaction that represents the end of the insurance service contract.
+Then at each commitment tx, sign a variety of feerates spending the CPFP carve-out and the insurance 2-of-2, utilizing the insurnace funds for doing the CPFP.
+
+&gt;<i> 4. Don't add htlcs for which the on chain fee is higher than the HTLCs value (like we do with sub dust amounts and sub satoshi amounts. This would at least make the attack expensive as the attacker would have to bind a lot of liquidity.
+</I>
+Seems a reasonable heuristic.
+
+&gt;<i> 5. Somehow be able to aggregate htlc's. In a world where we use payment points instead of preimages we might be able to do so. It would be really cool if separate HTLC's could be combined to 1 single output. I played around a little bit but I have not come up with a scheme that is more compact in all cases. Thus I just threw in the idea.
+</I>
+This seems impossible; once you add the points of two unrelated PTLCs, in order to separate them again once you learn the aggregate scalar, you need to learn the scalar of one separately from the scalar of the other, but the aggregate PTLC does not impose the requirement from the receiver to reveal each of the scalars separately.
+
+You *could* require multiple signatures instead of a single signature, in which case each completed signature can reveal a separate scalar behind a point.
+Revealing the points and the signatures is 96 bytes, plus a few more bytes for opcodes, divided by 4 because witness, so about equivalent to 24 block space per PTLC you merge.
+
+This cost would be paid by the receiver of the HTLC.
+The timelock branch can be made not to have to reveal any of the points, by Taproot-signing the timelock branch, or using a separate tapscript (at the cost of additional 32 witness bytes to select branches, if my taproot understanding holds).
+
+--
+
+Combining timelocks is also bad.
+If you combine two PTLCs with different timelocks, which do you choose, the larger or the smaller?
+
+* If you choose the larger, the sender of the PTLCs could have a larger outgoing timelock than the its incoming PTLC, then possibly might lose money when the incoming PTLC times out but the outgoing timelock is not yet timed out and can still be claimed by scalar revelation.
+* If you choose the smaller, then the next hop might not have enough block time to deliver the payment, in which case later hops on the route will fail more often (possibly an acceptable tradeoff? c-lightning does shadow routing which overallocates timelock anyway...).
+* If you cannot combine different timelocks, the attacker can arrange PTLCs with timelocks from now+2 to now+484 to mount the attack.
+
+--
+
+You could try aggregating using `OP_CHECKTEMPLATEVERIFY`, or equivalently with a pre-signed transaction, but that just moves the revelation cost to the receiver of the PTLC, which multiple signatures above does just as well.
+It does have the advantage of retaining the timelocks.
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002735.html">[Lightning-dev] Disclosure of a fee blackmail attack that can make a victim loose almost all funds of a non Wumbo channel and potential fixes
+</A></li>
+	<LI>Next message: <A HREF="002737.html">[Lightning-dev] Disclosure of a fee blackmail attack that can	make a victim loose almost all funds of a non Wumbo channel	and potential fixes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2736">[ date ]</a>
+              <a href="thread.html#2736">[ thread ]</a>
+              <a href="subject.html#2736">[ subject ]</a>
+              <a href="author.html#2736">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

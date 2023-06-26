@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PTLCs early draft specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3P7CztQxqdGvtXRPKsh7C_yUaZg9PA9a5GZ4414yJfT0A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003376.html">
+   <LINK REL="Next"  HREF="003378.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PTLCs early draft specification</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3P7CztQxqdGvtXRPKsh7C_yUaZg9PA9a5GZ4414yJfT0A%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] PTLCs early draft specification">bastien at acinq.fr
+       </A><BR>
+    <I>Mon Dec  6 17:21:12 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003376.html">[Lightning-dev] [bitcoin-dev] Sending OP_RETURN via Bitcoin
+</A></li>
+        <LI>Next message: <A HREF="003378.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3377">[ date ]</a>
+              <a href="thread.html#3377">[ thread ]</a>
+              <a href="subject.html#3377">[ subject ]</a>
+              <a href="author.html#3377">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+There was a great recent post on the mailing list detailing how we could
+do PTLCs on lightning with a lot of other goodies [0]. This proposal
+contained heavy changes to the transaction structure and the update
+protocol. While it's certainly something we'll want to do in the long
+run, I wanted to explore the minimal set of changes we would need to be
+able to deploy PTLCs as soon as possible.
+
+The current result is a somewhat high-level article, where each section
+could be a separate update of the lightning protocol [1].
+
+I tried to make PTLCs work with minimal changes to the transaction
+structure and the update protocol, but they introduce a fundamental
+change which forces us to make more changes than I'd like.
+
+With HTLCs, the payment secret (the preimage of the payment hash) was
+directly revealed in the witness of a spending transaction.
+
+With PTLCs, this isn't the case anymore. The payment secret is a private
+key, and a spending transaction only reveals that key if you have a
+matching adaptor signature. This forces us to make two changes:
+
+1. We must obtain adaptor signatures before sending our commit_sig
+2. We must use a pre-signed HTLC-success transaction not only with our
+local commit, but also with the remote commit
+
+This means that we will need more round-trips whenever we update our
+commitment. I'd like to find the right design trade-off where we don't
+introduce too many changes in the protocol while minimizing the number
+of additional round-trips.
+
+We currently exchange the following messages:
+
+Alice                       Bob
+      update_add_htlc
+  ---------------------------&gt;
+      update_add_htlc
+  ---------------------------&gt;
+      update_add_htlc
+  ---------------------------&gt;
+        commit_sig
+  ---------------------------&gt;
+       revoke_and_ack
+  &lt;---------------------------
+        commit_sig
+  &lt;---------------------------
+       revoke_and_ack
+  ---------------------------&gt;
+
+It works well because the commit_sig sent by Alice only contains signatures
+for Bob's transactions (commit and htlc transactions), and the commit_sig
+sent by Bob only contains signatures for Alice's transactions, and Alice
+and Bob don't need anything else to spend outputs from either commitment.
+
+But with PTLCs, Bob needs a signature from Alice to be able to fulfill a
+PTLC from Alice's commitment. And Alice needs Bob to provide an adaptor
+signature for that transaction before she can give him her signature.
+We don't have the clean ordering that we had before.
+
+The designs I came up with that keep the current messages and just insert
+new ones are either too costly (too many additional round-trips) or too
+complex (most likely broken in some edge cases).
+
+I believe we need to change the commit_sig / revoke_and_ack protocol if
+we want to find the sweet spot I'm looking for. I'd like to collect ideas
+from this list's participants on how we could do that. This is probably
+something that should be bundled with option_simplified_commitment [2]
+(or at least we must ensure that option_simplified_commitment is a first
+step towards the protocol we'll need for PTLCs). It's also important to
+note that the protocol changes must work for both HTLCs and PTLCs, and
+shouldn't change the structure of the transactions (not more than the
+simple addition of PTLC outputs done in [1]).
+
+Cheers,
+Bastien
+
+[0]
+<A HREF="../2021-October/003278.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/003278.html</A>
+[1] <A HREF="https://github.com/t-bast/lightning-docs/pull/16">https://github.com/t-bast/lightning-docs/pull/16</A>
+[2] <A HREF="https://github.com/lightning/bolts/pull/867">https://github.com/lightning/bolts/pull/867</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211206/c474a332/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211206/c474a332/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003376.html">[Lightning-dev] [bitcoin-dev] Sending OP_RETURN via Bitcoin
+</A></li>
+	<LI>Next message: <A HREF="003378.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3377">[ date ]</a>
+              <a href="thread.html#3377">[ thread ]</a>
+              <a href="subject.html#3377">[ subject ]</a>
+              <a href="author.html#3377">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

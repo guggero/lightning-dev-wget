@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Atomic swap
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Atomic%20swap&In-Reply-To=%3CCAMXsxZNa6kSTzLecSrwGb15yq%2BkvB7Rkq9ZN3K1JkKte8wwUrw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000182.html">
+   <LINK REL="Next"  HREF="000185.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Atomic swap</H1>
+    <B>Pierre</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Atomic%20swap&In-Reply-To=%3CCAMXsxZNa6kSTzLecSrwGb15yq%2BkvB7Rkq9ZN3K1JkKte8wwUrw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Atomic swap">pm+lists at acinq.fr
+       </A><BR>
+    <I>Mon Sep 14 13:35:02 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000182.html">[Lightning-dev] Timeframes for refunds and revocation
+</A></li>
+        <LI>Next message: <A HREF="000185.html">[Lightning-dev] Atomic swap
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#184">[ date ]</a>
+              <a href="thread.html#184">[ thread ]</a>
+              <a href="subject.html#184">[ subject ]</a>
+              <a href="author.html#184">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello there,
+
+I've been thinking about how we could implement the idea some brilliant
+people had here :
+<A HREF="https://bitcointalk.org/index.php?topic=1134319.msg11966748#msg11966748.">https://bitcointalk.org/index.php?topic=1134319.msg11966748#msg11966748.</A>
+
+Basically it would allow to securely move funds in/out an existing channel.
+
+The main use cases would include:
+1) funding balanced channels
+2) provide a way for merchants to seamlessy cash out their funds
+
+I can't see why we couldn't use the existing htlc contracts to implement
+this, it is just another payment after all. But I am certainly missing
+something ;-)
+
+Here is what it would look like with rusty-style protobuf messages (swap
+in/out are pretty much symmetrical) :
+
+* SWAP IN *
+
+// Whoever wishes to increase her balance in the channel sends this
+swap_in_offer {
+    // How much I would like to increase my balance
+    required uint32 amount = 1;
+    // The hash that will be used to do the atomic swap
+    required sha256_hash r_hash = 2;
+    // txid of the swap tx, should that be mutated the sender would only be
+screwing over himself
+    required sha256_hash txid = 3;
+}
+
+swap_in_accept {
+    // Maybe we should specify a mindepth here
+}
+
+swap_in_decline {
+    oneof reason {
+        // the other party needs to be able to compensate the swap in the
+channel
+        bool cannot_swap_more_than_balance = 1;
+    };
+}
+
+regular swap in flow :
+
+Bob -&gt; Alice : swap_in_offer
+Alice -&gt; Bob : swap_in_accept
+(Bob publishes the swap tx, which pays &lt;amount&gt; BTC to (&lt;alice_final_key&gt; &amp;
+r) OR (refund &amp; TIMEOUT))
+(tx reaches mindepth)
+(alice makes sure the scriptpubkey of this tx indeeds pays her providing r)
+Alice -&gt; Bob : update_add_htlc (with same amount and r_hash)
+Bob -&gt; Alice : update_accept
+Bob -&gt; Alice : update_fulfill_htlc  (reveals the r)
+(Alice spends the swap tx)
+
+----------------------------------------------------------
+
+* SWAP OUT *
+
+// Whoever wishes to move funds outside the channel sends this
+swap_out_offer {
+    // I would like to cash out this amount
+    required uint32 amount = 1;
+}
+
+swap_out_accept {
+    // The hash that will be used to do the atomic swap
+    required sha256_hash r_hash = 1;
+    // txid of the swap tx, should that be mutated the sender would only be
+screwing over himself
+    required sha256_hash txid = 2;
+}
+
+swap_out_decline {
+    oneof reason {
+        // you can't get more than your balance !
+        bool cannot_swap_more_than_balance = 1;
+        // the other party needs to have corresponding funds available
+outside of the channel (meaning it has in fact twice the funds)
+        bool funds_not_available = 2;
+  };
+}
+
+regular swap out flow :
+
+Bob -&gt; Alice : swap_out_offer
+Alice -&gt; Bob : swap_out_accept
+(Alice publishes the swap tx, which pays &lt;amount&gt; BTC to (&lt;bob_final_key&gt; &amp;
+r) OR (refund &amp; TIMEOUT))
+(tx reached mindepth)
+(bob makes sure the scriptpubkey of this tx indeeds pays him providing r)
+Bob -&gt; Alice : update_add_htlc (with same amount and r_hash)
+Alice -&gt; Bob : update_accept
+Alice -&gt; Bob : update_fulfill_htlc (reveals the r)
+(Bob spends the swap tx)
+
+
+Cheers,
+
+Pierre
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150914/4638a33b/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150914/4638a33b/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000182.html">[Lightning-dev] Timeframes for refunds and revocation
+</A></li>
+	<LI>Next message: <A HREF="000185.html">[Lightning-dev] Atomic swap
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#184">[ date ]</a>
+              <a href="thread.html#184">[ thread ]</a>
+              <a href="subject.html#184">[ subject ]</a>
+              <a href="author.html#184">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

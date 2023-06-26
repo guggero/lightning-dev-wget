@@ -1,0 +1,331 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Dynamic Commitments Part 2: Taprooty Edition
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dynamic%20Commitments%20Part%202%3A%20Taprooty%20Edition&In-Reply-To=%3CCALZpt%2BGWLC%3D8udeyrWvHxMejEfcb4Xj%2BZqLPLOcig0H_gZ797g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003532.html">
+   <LINK REL="Next"  HREF="003534.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Dynamic Commitments Part 2: Taprooty Edition</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dynamic%20Commitments%20Part%202%3A%20Taprooty%20Edition&In-Reply-To=%3CCALZpt%2BGWLC%3D8udeyrWvHxMejEfcb4Xj%2BZqLPLOcig0H_gZ797g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Dynamic Commitments Part 2: Taprooty Edition">antoine.riard at gmail.com
+       </A><BR>
+    <I>Sat Mar 26 00:27:19 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003532.html">[Lightning-dev] Dynamic Commitments Part 2: Taprooty Edition
+</A></li>
+        <LI>Next message: <A HREF="003534.html">[Lightning-dev] lightning channels,	stablecoins and fifty shades of privacy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3533">[ date ]</a>
+              <a href="thread.html#3533">[ thread ]</a>
+              <a href="subject.html#3533">[ subject ]</a>
+              <a href="author.html#3533">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Laolu,
+
+Thanks for the proposal, quick feedback.
+
+&gt;<i> It *is* still the case that _ultimately_ the two transactions to close the
+</I>&gt;<i> old segwit v0 funding output, and re-open the channel with a new segwit v1
+</I>&gt;<i> funding output are unavoidable. However this adapter commitment lets peers
+</I>&gt;<i> _defer_ these two transactions until closing time.
+</I>
+I think there is one downside coming with adapter commitment, which is the
+uncertainty of the fee overhead at the closing time. Instead of closing
+your segwit v0 channel _now_ with known fees, when your commitment is empty
+of time-sensitive HTLCs, you're taking the risk of closing during fees
+spikes, due a move triggered by your counterparty, when you might have
+HTLCs at stake.
+
+It might be more economically rational for a LN node operator to pay the
+upgrade cost now if they wish  to benefit from the taproot upgrade early,
+especially if long-term we expect block fees to increase, or wait when
+there is a &quot;normal&quot; cooperative closing.
+
+So it's unclear to me what the economic gain of adapter commitments ?
+
+&gt;<i> In the remainder of this mail, I'll describe an alternative
+</I>&gt;<i> approach that would allow upgrading nearly all channel/commitment related
+</I>&gt;<i> values (dust limit, max in flight, etc), which is inspired by the way the
+</I>&gt;<i> Raft consensus protocol handles configuration/member changes.
+</I>
+Long-term, I think we'll likely need a consensus protocol anyway for
+multi-party constructions (channel factories/payment pools). AFAIU this
+proposal doesn't aim to roll out a full-fledged consensus protocol *now*
+though it could be wise to ensure what we're building slowly moves in this
+direction. Less critical code to maintain across bitcoin
+codebases/toolchains.
+
+&gt;<i> The role of the signature it to prevent &quot;spoofing&quot; by one of the parties
+</I>&gt;<i> (authenticate the param change), and also it serves to convince a party
+</I>that
+&gt;<i> they actually sent a prior commitment propose update during the
+</I>&gt;<i> retransmission phase.
+</I>
+What's the purpose of data origin authentication if we assume only
+two-parties running over Noise_XK ?
+
+I think it's already a security property we have. Though if we think we're
+going to reuse these dynamic upgrades for N counterparties communicating
+through a coordinator, yes I think it's useful.
+
+&gt;<i> In the past, when ideas like this were brought up, some were concerned
+</I>that
+&gt;<i> it wouldn't really be possible to do this type of updates while existing
+</I>&gt;<i> HTLCs were in flight (hence some of the ideas to clear out the commitment
+</I>&gt;<i> beforehand).
+</I>
+The dynamic upgrade might serve in an emergency context where we don't have
+the leisury to wait for the settlement of the pending HTLCs. The timing of
+those ones might be beyond the coordination of link counterparties. Thus,
+we have to allow upgrade of non-empty commitments (and if there are
+undesirable interferences between new commitment types and HTLCs/PTLCs
+present, deal case-by-case).
+
+Antoine
+
+Le jeu. 24 mars 2022 &#224; 18:53, Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; a
+&#233;crit :
+
+&gt;<i> Hi y'all,
+</I>&gt;<i>
+</I>&gt;<i> ## Dynamic Commitments Retrospective
+</I>&gt;<i>
+</I>&gt;<i> Two years-ish ago I made a mailing list post on some ideas re dynamic
+</I>&gt;<i> commitments [1], and how the concept can be used to allow us to upgrade
+</I>&gt;<i> channel types on the fly, and also remove pesky hard coded limits like the
+</I>&gt;<i> 483 HTLC in-flight limit that's present today. Back then my main target was
+</I>&gt;<i> upgrading all the existing channels over to the anchor output commitment
+</I>&gt;<i> variant, so the core internal routing network would be more resilient in a
+</I>&gt;<i> persistent high fee environment (which hasn't really happened over the past
+</I>&gt;<i> 2 years for various reasons tbh). Fast forward to today, and with taproot
+</I>&gt;<i> now active on mainnet, and some initial design work/sketches for
+</I>&gt;<i> taproot-native channels underway, I figure it would be good to bump this
+</I>&gt;<i> concept as it gives us a way to upgrade all 80k+ public channels to taproot
+</I>&gt;<i> without any on chain transactions.
+</I>&gt;<i>
+</I>&gt;<i> ## Updating Across Witness Versions w/ Adapter Commitments
+</I>&gt;<i>
+</I>&gt;<i> In my original mail, I incorrectly concluded that the dynamic commitments
+</I>&gt;<i> concept would only really work within the confines of a &quot;static&quot; multi-sig
+</I>&gt;<i> output, meaning that it couldn't be used to help channels upgrade to future
+</I>&gt;<i> segwit witness versions.  Thankfully this reply [2] by ZmnSCPxj, outlined a
+</I>&gt;<i> way to achieve this in practice. At a high level he proposes an &quot;adaptor
+</I>&gt;<i> commitment&quot; (similar to the kickoff transaction in eltoo/duplex), which is
+</I>&gt;<i> basically an upgrade transaction that spends one witness version type, and
+</I>&gt;<i> produces an output with the next (upgraded) type. In the context of
+</I>&gt;<i> converting from segwit v0 to v1 (taproot), two peers would collaboratively
+</I>&gt;<i> create a new adapter commitment that spends the old v0 multi-sig output,
+</I>&gt;<i> and
+</I>&gt;<i> produces a _new_ v1 multi-sig output. The new commitment transaction would
+</I>&gt;<i> then be anchored using this new output.
+</I>&gt;<i>
+</I>&gt;<i> Here's a rough sequence diagram of the before and after state to better
+</I>&gt;<i> convey the concept:
+</I>&gt;<i>
+</I>&gt;<i>   * Before: fundingOutputV0 -&gt; commitmentTransaction
+</I>&gt;<i>
+</I>&gt;<i>   * After fundingOutputV0 -&gt; fundingOutputV1 (the adapter) -&gt;
+</I>&gt;<i>     commitmentTransaction
+</I>&gt;<i>
+</I>&gt;<i> It *is* still the case that _ultimately_ the two transactions to close the
+</I>&gt;<i> old segwit v0 funding output, and re-open the channel with a new segwit v1
+</I>&gt;<i> funding output are unavoidable. However this adapter commitment lets peers
+</I>&gt;<i> _defer_ these two transactions until closing time. When force closing two
+</I>&gt;<i> transactions need to be confirmed before the commitment outputs can be
+</I>&gt;<i> resolved. However, for co-op close, you can just spend the v0 output, and
+</I>&gt;<i> deliver to the relevant P2TR outputs. The adapter commitment can leverage
+</I>&gt;<i> sighash anyonecanpay to let both parties (assuming it's symmetric) attach
+</I>&gt;<i> additional inputs for fees (to avoid introducing the old update_fee related
+</I>&gt;<i> static fee issues), or alternatively inherit the anchor output pattern at
+</I>&gt;<i> this level.
+</I>&gt;<i>
+</I>&gt;<i> ## Existing Dynamic Commitments Proposals
+</I>&gt;<i>
+</I>&gt;<i> Assuming this concept holds up, then we need an actual concrete protocol to
+</I>&gt;<i> allow for dynamic commitment updates. Last year, Rusty made a spec PR
+</I>&gt;<i> outlining a way to upgrade the commitment type (leveraging the new
+</I>&gt;<i> commitment type feature bits) upon channel re-establish [3]. The proposal
+</I>&gt;<i> relies on another message that both sides send (`stfu`) to clear the
+</I>&gt;<i> commitment (similar to the shutdown semantics) before the switch over
+</I>&gt;<i> happens. However as this is tied to the channel re-establish flow, it
+</I>&gt;<i> doesn't allow both sides to do things like only allow your peer to attach N
+</I>&gt;<i> HTLCs to start with, slowing increasing their allotted slots and possibly
+</I>&gt;<i> reducing them (TCP AIMD style).
+</I>&gt;<i>
+</I>&gt;<i> ## A Two-Phase Dynamic Commitment Update Protocol
+</I>&gt;<i>
+</I>&gt;<i> IMO if we're adding in a way to do commitment/channel upgrades, then it may
+</I>&gt;<i> be worthwhile to go with a more generalized, but slightly more involved
+</I>&gt;<i> route instead. In the remainder of this mail, I'll describe an alternative
+</I>&gt;<i> approach that would allow upgrading nearly all channel/commitment related
+</I>&gt;<i> values (dust limit, max in flight, etc), which is inspired by the way the
+</I>&gt;<i> Raft consensus protocol handles configuration/member changes.
+</I>&gt;<i>
+</I>&gt;<i> For those that aren't aware, Raft is a consensus protocol analogous to
+</I>&gt;<i> Paxos
+</I>&gt;<i> (but isn't byzantine fault tolerant out of the box) that was designed as a
+</I>&gt;<i> more understandable alternative to Paxos for a pedagogical environment.
+</I>&gt;<i> Typically the algorithm is run in the context of a fixed cluster with N
+</I>&gt;<i> machines, but supports adding/removing machines from the cluster with a
+</I>&gt;<i> configuration update protocol. At a high level the way this works is that a
+</I>&gt;<i> new config is sent to the leader, with the leader synchronizing the config
+</I>&gt;<i> change with the other members of the cluster. Once a majority threshold is
+</I>&gt;<i> reached, the leader then commits the config change with the acknowledged
+</I>&gt;<i> parties using the new config (basically a two phase commit). I'm skipping
+</I>&gt;<i> over some edge cases here that can arise if the new nodes participate
+</I>&gt;<i> consensus too early, which can cause a split majority leading to two
+</I>&gt;<i> leaders
+</I>&gt;<i> being elected.
+</I>&gt;<i>
+</I>&gt;<i> Applying this to the LN context is a bit simpler than a generalized
+</I>&gt;<i> protocol, as we typically just have two parties involved. The initiator is
+</I>&gt;<i> already naturally a &quot;leader&quot; in our context, as they're the only ones that
+</I>&gt;<i> can do things like trigger fee updates.
+</I>&gt;<i>
+</I>&gt;<i> ### Message Structure
+</I>&gt;<i>
+</I>&gt;<i> At a high level I propose we introduce two new messages, with the fields
+</I>&gt;<i> looking something like this for `commitment_update_propose`:
+</I>&gt;<i>  * type: 0 (`channel_id`)
+</I>&gt;<i>    * value: [`32*byte`:`chan_id`]
+</I>&gt;<i>  * type: 1 (`propose_sig`)
+</I>&gt;<i>    * value: [`64*byte`:`sig`]
+</I>&gt;<i>  * type: 2 (`update_payload`)
+</I>&gt;<i>    * value: [`*byte`:`tlv_payload`]
+</I>&gt;<i>
+</I>&gt;<i> and this `commitment_update_apply`:
+</I>&gt;<i>  * type: 0 (`channel_id`)
+</I>&gt;<i>    * value: [`32*byte`:`chan_id`]
+</I>&gt;<i>  * type: 1 (`local_propose`)
+</I>&gt;<i>    * value: [`*byte`:`commitment_update_propose`]
+</I>&gt;<i>  * type: 2 (`remote_propose`)
+</I>&gt;<i>    * value: [`*byte`:`commitment_update_propose`]
+</I>&gt;<i>
+</I>&gt;<i> ### Protocol Flow
+</I>&gt;<i>
+</I>&gt;<i> The core idea here is that either party can propose a commitment/channel
+</I>&gt;<i> param update, but only the initiator can actually apply it. The
+</I>&gt;<i> `commitment_update_propose` encodes the new set of updates, with a
+</I>&gt;<i> signature
+</I>&gt;<i> covering the TLV blob for the new params (more on why that's needed later).
+</I>&gt;<i> The `commitment_update_apply` includes up to _two_
+</I>&gt;<i> `commitment_update_propose` messages (one for the initiator and one for the
+</I>&gt;<i> responder, as nested TLV messages). The `commitment_update_propose` message
+</I>&gt;<i> would be treated like any other `update_*` message, in that it takes a new
+</I>&gt;<i> commitment signature to properly commit/apply it.
+</I>&gt;<i>
+</I>&gt;<i> The normal flow takes the form of both sides sending a
+</I>&gt;<i> `commitment_update_propose` message, with the initiator finally committing
+</I>&gt;<i> both by sending a `commitment_update_apply` message. In the event that only
+</I>&gt;<i> the responder wants to apply a param change/update, then the initiator can
+</I>&gt;<i> reply immediately with a `commitment_update_apply` message that doesn't
+</I>&gt;<i> include a param change for their commitment (or they just echo the
+</I>&gt;<i> parameters if they're acceptable).
+</I>&gt;<i>
+</I>&gt;<i> ### Handling Retransmissions
+</I>&gt;<i>
+</I>&gt;<i> The role of the signature it to prevent &quot;spoofing&quot; by one of the parties
+</I>&gt;<i> (authenticate the param change), and also it serves to convince a party
+</I>&gt;<i> that
+</I>&gt;<i> they actually sent a prior commitment propose update during the
+</I>&gt;<i> retransmission phase. As the `commitment_update_propose` message would be
+</I>&gt;<i> retransmitted like any other message, if the initiator attempts to commit
+</I>&gt;<i> the update but the connection dies, they'll retransmit it as normal along
+</I>&gt;<i> with their latest signature.
+</I>&gt;<i>
+</I>&gt;<i> ### Nested TLV Param Generality
+</I>&gt;<i>
+</I>&gt;<i> The messages as sketched out here just have an opaque nested TLV field
+</I>&gt;<i> which
+</I>&gt;<i> makes it extensible to add in other things like tweaking the total number
+</I>&gt;<i> of
+</I>&gt;<i> max HTLCs, the current dust values, min/max HTLCs, etc (all things that are
+</I>&gt;<i> currently hard coded for the lifetime of the channel). An initial target
+</I>&gt;<i> would likely just be a `chan_type` field, with future feature bits
+</I>&gt;<i> governing
+</I>&gt;<i> _what_ type of commitment updates both parties understand in the future.
+</I>&gt;<i>
+</I>&gt;<i> In the past, when ideas like this were brought up, some were concerned that
+</I>&gt;<i> it wouldn't really be possible to do this type of updates while existing
+</I>&gt;<i> HTLCs were in flight (hence some of the ideas to clear out the commitment
+</I>&gt;<i> beforehand). I don't see a reason why this fundamentally _shouldn't_ be
+</I>&gt;<i> allowed, as from the point of view of the channel update state machine, all
+</I>&gt;<i> updates (adds/removes) get applied as normal, but with this _new_
+</I>&gt;<i> commitment
+</I>&gt;<i> type/params. The main edge case we'll need to consider is cases where the
+</I>&gt;<i> new params make older HTLCs invalid for some reason.
+</I>&gt;<i>
+</I>&gt;<i> ## Conclusion
+</I>&gt;<i>
+</I>&gt;<i> Using the adapter commitment idea combined with a protocol for updating
+</I>&gt;<i> commitments on the fly, would potentially allow us to update all 80k+
+</I>&gt;<i> segwit
+</I>&gt;<i> v0 channels to the base level of taprooty channels without any on chain
+</I>&gt;<i> transactions. The two transactions (open+close) must happen eventually, but
+</I>&gt;<i> by holding another layer of spends off-chain we can defer them (potentially
+</I>&gt;<i> indefinitely, as we have channels today that have been opened for over a
+</I>&gt;<i> year).
+</I>&gt;<i>
+</I>&gt;<i> Deploying a generalised on-the-fly dynamic commitment update protocol gives
+</I>&gt;<i> us a tool to future proof the _existing_ anchored multi-sig outputs in the
+</I>&gt;<i> chain, and also a way to remove many of the hard coded parameters we have
+</I>&gt;<i> today in the protocol. One overly inflexible parameter we have today in the
+</I>&gt;<i> network is the 483 HTLC limit. Allowing this value to float would allow
+</I>&gt;<i> peers to apply similar congestion avoidance algorithm that are used in TCP
+</I>&gt;<i> today, and also give us a way to protect the network against future
+</I>&gt;<i> unforeseen widespread policy changes (like a raising of the dust limit).
+</I>&gt;<i>
+</I>&gt;<i> -- Laolu
+</I>&gt;<i>
+</I>&gt;<i> [1]:
+</I>&gt;<i> <A HREF="../2020-July/002763.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-July/002763.html</A>
+</I>&gt;<i> [2]:
+</I>&gt;<i> <A HREF="../2020-July/002770.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-July/002770.html</A>
+</I>&gt;<i> [3]: <A HREF="https://github.com/lightning/bolts/pull/868">https://github.com/lightning/bolts/pull/868</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220325/9c2be8e0/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220325/9c2be8e0/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003532.html">[Lightning-dev] Dynamic Commitments Part 2: Taprooty Edition
+</A></li>
+	<LI>Next message: <A HREF="003534.html">[Lightning-dev] lightning channels,	stablecoins and fifty shades of privacy
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3533">[ date ]</a>
+              <a href="thread.html#3533">[ thread ]</a>
+              <a href="subject.html#3533">[ subject ]</a>
+              <a href="author.html#3533">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

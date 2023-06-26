@@ -1,0 +1,433 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proof-of-closure as griefing attack mitigation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proof-of-closure%20as%20griefing%20attack%20mitigation&In-Reply-To=%3CzRvCRGi9jTqqYliAcfkLpYNfm0adce20yB2WUrXoNx0yAujH8d9tD66mMvDF1BmQclJ4HkMO8H97NWOi03Yms4swCaj7zbyc5tfmV_hT4AI%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002632.html">
+   <LINK REL="Next"  HREF="002634.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proof-of-closure as griefing attack mitigation</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proof-of-closure%20as%20griefing%20attack%20mitigation&In-Reply-To=%3CzRvCRGi9jTqqYliAcfkLpYNfm0adce20yB2WUrXoNx0yAujH8d9tD66mMvDF1BmQclJ4HkMO8H97NWOi03Yms4swCaj7zbyc5tfmV_hT4AI%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Proof-of-closure as griefing attack mitigation">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Apr 16 05:09:21 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002632.html">[Lightning-dev] Proof-of-closure as griefing attack mitigation
+</A></li>
+        <LI>Next message: <A HREF="002634.html">[Lightning-dev] Proof-of-closure as griefing attack mitigation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2633">[ date ]</a>
+              <a href="thread.html#2633">[ thread ]</a>
+              <a href="subject.html#2633">[ subject ]</a>
+              <a href="author.html#2633">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Subhra,
+
+&gt;<i> &quot; C cannot unlock until 144 blocks, so D can delay its response for up to 143 blocks without any effect on its channels, this is *exactly* the griefing attack.&quot;- Is there any way to account for the amount of time elapsed in the redeem script so that when D goes on chain just before elapse of the locktime, a decision can be enforced like &quot;do not pay the full amount to D because of the response delay &quot;?
+</I>&gt;<i>
+</I>
+No, not without breaking certain principles of Bitcoin.
+
+In particular, one possible solution would be to have multiple staggered transactions that are timelocked at particular times, so for example if it responds at +1 it gets more money than if it responds at +2, +3, +4 etc.
+
+However, because of the way timelock works, the transaction that is valid at +1 remains valid at any future time.
+This is the principle &quot;a transaction that becomes valid is always valid in the future unless double-spent&quot;.
+Bitcoin Core uses this to reduce validation overhead: it only needs to validate a transaction (i.e. execute the SCRIPT, which is one of the slower operations) on entry to the mempool.
+Then, once the transaction is in the mempool, it is known to be valid forever unless double-spent, so Bitcoin does not need to re-evaluate its SCRIPT.
+
+Any mechanism that requires invalidating previous transactions requires double-spending those transactions and using some other mechanism to ensure that the invalidated transaction is not useable again.
+This involves significant amounts of transactions that will need to be presented onchain in this case (because D is expected to lose money in this mechanism, it will definitely not participate in consensus that will advance the channel state such that it loses money, so the channel has to be dropped onchain anyway to perform this enforcement).
+
+Another principle is &quot;SCRIPT can only check the transaction it is executing for&quot;.
+Thus, a `redeemScript` will only be able to execute on the transaction that presents it, and a `scriptPubKey` can only be executed on the transaction spending that output.
+This means that SCRIPT can only inspect the transaction that it is executing on, and cannot look at anything else in the universe.
+This principle simplifies initial block download --- in order to validate a SCRIPT, you only need to look at each individual transaction in a block without having to know any data other than that specific transaction.
+
+For example, `OP_CHECKLOCKTIMEVERIFY` does ***not*** work by checking the blockheight or claimed sidereal time that the block that contains it has.
+Instead, it works by checking the `nLockTime` field of the *transaction* it is executing under.
+By this, the SCRIPT interpreter only needs to input the transaction that is triggering the execution of the SCRIPT, and does not need access to external state, time, etc. etc.
+
+These two principles in combination make it difficult-to-impossible to create a mechanism to deduct funds from D because of response delay.
+
+Regards,
+ZmnSCPxj
+
+&gt;<i> On Mon, Apr 13, 2020 at 9:13 AM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Good morning Subhra,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Ok. But this is a worse situation where C pays money to D but bound to keep its resource locked for a longer duration, unlike D not responding and C being able to unlock after the elapse of lock time.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; It is exactly the griefing attack scenario: it is the lock time at D that is the problem.
+</I>&gt;<i> &gt; As such, it is not &quot;worse&quot;, it is ***exactly*** the griefing attack scenario.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; C cannot unlock until 144 blocks, so D can delay its response for up to 143 blocks without any effect on its channels, this is *exactly* the griefing attack.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Regards,
+</I>&gt;<i> &gt; ZmnSCPxj
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; On Mon, Apr 13, 2020, 08:21 ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Good morning Subhra,
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; Hello,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &#160; &#160; &#160; So based on what you have stated as possible scenario of griefing attack, does delay in providing the preimage also counted as a form of griefing in htlc? Like given the path A-&gt;B-&gt;C-&gt;D, what if C and D has a lock time of 144 blocks and D responds after 142 block time elapses, claiming the money locked with D?
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; That ***is*** the griefing attack.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; On Wed, Apr 1, 2020, 11:49 ZmnSCPxj via Lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;<i> &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Introduction
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ============
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Given the fact that contracts on offchain protocols need to be enforceable onchain as well, timelocks involved in multi-hop payments are measured in blocks.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This is because the blockchain can only (third-party-verifiably) enforce timeouts in units of entire blocks.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This leads to very long timeouts for payment delivery, thus multi-hop offchain payment attempts can be, deliberately or accidentally, be in a &quot;pending&quot; state up to the very large timeouts involved.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Deliberately setting up a multi-hop payment such that it will be in a &quot;pending&quot; state for long periods of time is colloquially known as a &quot;griefing attack&quot;.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; In this article, we assess various proposed solutions to mitigate the effects of griefing attacks, and propose a particular solution, proof-of-closure, as well, that requires significant changes to the update state machine.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Digression: Why Grief?
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ======================
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Before embarking on our investigation for solutions to the griefing problem, we should first wonder if griefing is, in fact, a problem.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This brings up the question of: why would anybody grief at all?
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Humans, like cats and other less-sapient pieces of walking meat, often find enjoyment in causing the suffering of others for no immediate direct gain to themselves, as a public demonstration of dominance over those they make suffer (aka &quot;shits and giggles&quot;, which, if executed correctly, can lead to eventual direct gains to themselves or their progeny or relatives or allies, but such details are often outside the ken of the very beings who execute such survival strategies: brains are pieces of meat that have been hacked to act as action-reaction engines, but are not sophisticated enough to execute as pure rationality engines at all times).
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Fortunately, in the Bitcoin world, only purely rational beings of pure selfishness can exist in the long run, thus we can neglect such motivations as mere noise.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; First, let us investigate *how* griefing attacks can be performed.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * An intermediate node in a multi-hop attempt can delay forwarding or failing an incoming HTLC.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A final node in a payment attempt can delay claiming an incoming HTLC.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Let us consider a purely rational intermediate node of pure selfishness:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * If it forwards as soon as possible, it can earn fees, and also speed up the release of the HTLC-locked funds so that they can reuse those funds as liquidity for further payment attempts.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * Thus, delaying an HTLC is not selfishly-rational for an intermediate node.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, for an intermediate node, it seems there is no selfishly-rational motivation to execute a griefing attack on an arbitrary payment attempt.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; We can then conclude that an intermediate that delays a payment would do so, not of its own rational self-interest, but as an accident, such as an unforeseen connectivity or power failure.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; However, things are different when we consider a non-arbitrary payment.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Suppose a node were to make a payment attempt to itself, and deliberately delay claiming this self-payment.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This lets any single node, *who happens to own large liquidity*, to lock up the liquidity of other nodes.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The motivation to lock up the liquidity of other nodes is to *eliminate competition*.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Suppose we have a network as below:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; &#160; A -- B -- C
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; &#160; &#160; \&#160; &#160; &#160;/
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; &#160; &#160; &#160;\&#160; &#160;/
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; &#160; &#160; &#160; \ /
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; &#160; &#160; &#160; &#160;E
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; When A and C want to transact with one another, they may choose to route via either B or E.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; B and E are therefore competitors in the business of forwarding payments.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; But suppose E has much larger channels AE and CE than the channels of AB and CB.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; For example, suppose E has 100mBTC perfectly-balanced channels while B has only 10mBTC perfectly-balanced channels, as all things should be in simplified models of reality.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; E can then &quot;take out the competition&quot; by making a 5mBTC self-payment along E-&gt;A-&gt;B-&gt;C-&gt;E and a 5mBTC self-payment along E-&gt;C-&gt;B-&gt;A-&gt;E, then refusing to claim the payment, tying up all the liquidity of the channels of B.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; By doing so, it can ensure that A and C will always fail to pay via B, even if they wish to transact in amounts less than 5mBTC.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; E thereby eliminates B as a competitor.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This demonstrates that griefing attacks will be motivated, such that such attacks will be performed by payers and payees *against intermediate nodes*.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Intermediate nodes have no motivation to attack payers and payees (those are their potential customers in the business of forwarding payments, and attacking potential customers is bad business: such attacking intermediate nodes will be removed economically in the long run).
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; However, payers and payees can become motivated to attack intermediate nodes, if the &quot;payer&quot; and &quot;payee&quot; are actually competitor intermediate nodes.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; (We can observe that this is always a possibility even outside of Lightning: a service or product provider has no incentive to attack its customers (&quot;the customer is always right&quot;), but have an incentive to *pretend* to be a customer of a competitor and attack them.)
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; We will keep this fact in mind: active griefing attacks are attacks *on* intermediate nodes, not *by* intermediate nodes, because there is no economic incentive for intermediate nodes to attack their customers.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Previous Proposed Solutions
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ===========================
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Time-Spent Reporting
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; --------------------
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; At each channel along the route, the time spent by a node to handle its forwarding is recorded, and reported upstream in the route.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Unfortunately, this solution protects payers from intermediate nodes and payees: it does not protect intermediate nodes from colluding payers and payees.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Even if an intermediate node knows that a particular node is consistently slow via a previous time-spent report, it will not be able, with our current onion routing, determine if an onion packet it just received will or will not go through the known-slow node.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, an intermediate node would not be able to defend against distant payees that, with a colluding payer, will not claim a particular payment.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; As we have established, an active griefing atttack will never be deliberately performed by a selfishly-rational intermediate node.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, this solution protects against the wrong thing: it protects payers against slow/unreliable intermediate nodes, it does not protect intermediate nodes against malicious payer/payee collusions.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; It protects only against intermediate nodes that inadvertently go offline during forwarding, but such nodes will inevitably lose out on the forwarding market anyway, and will disappear in the long run.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Up-Front Payment
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ----------------
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Payers pay for an attempt, not just the successful completion of an attempt.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; A variation on this is that the payer (or payee) continuously pays as long as the payment is pending.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Further variations include paying by other means, such as just locking funds or paying with proof-of-work.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; While it certainly erects economic barriers against payer/payee collusions attacking intermediate nodes, it *also* erects economic barriers against normal, non-malicious payments.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; We can consider that economic barriers against non-malicious, low-value, high-frequency payments (&quot;micropayments&quot;) may be enough that such payments become infeasible if we impose up-front payment for mere attempts.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, while this solution is certainly something we can consider, we must be reluctant to use it due to its up-front, strict-evaluation behavior.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Proof-Of-Closure
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ================
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Observing the above, we want the properties for a &quot;good&quot; solution to griefing attacks to be:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * It should protect intermediate nodes against payer/payee collusions.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * It should only come into play upon detection of an attack.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; We now present proof-of-closure, which (we hope) has the above properties.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; We can consider instead a softer timeout, distinct from the HTLC block-based timeout.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This softer timeout is measurable in fractions of a second, e.g. units of 0.1 seconds.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Each node on the network advertises, in addition to a block-based `cltv_delta`, a `timeout_delta` in units of 0.1 seconds.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Further, each invoice contains, in addition to a block-based `final_cltv`, a `final_timeout` in units of 0.1 seconds.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, there are two timeouts:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * The current &quot;hard&quot; block-based timeout that is enforceable onchain.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A new &quot;soft&quot; sidereal-time-based timeout that is not onchain enforceable.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The soft timeout, as mentioned, is not enforceable onchain.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Instead, enforcement of the soft timeout *is* the act of putting the channel state onchain.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Now, for the current &quot;hard&quot; block-based timeout, we already have a reaction.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; If the HTLC &quot;hard&quot; timeout is approaching:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * Drop the channel onchain and enforce the hard timeout onchain to reclaim the funds in the HTLCs.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * Wait for the onchain action to be deeply resolved (either timelock or hashlock branch is confirmed deeply) and report the result (success or fail) upstream.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; What happens if the &quot;soft&quot; timeout is violated?
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * Drop the channel onchain.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * Report the channel closure upstream.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The &quot;hard&quot; timeout is cancelled in any of these two conditions:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A success is reported via `update_fulfill_htlc`, OR,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A failure is reported via `update_fail_htlc` AND the HTLC is irrevocably removed from the latest commitments/state(s) of the channel.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The &quot;soft&quot; timeout is cancelled in any of these three conditions, the first two of which are the same as above:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A success is reported via `update_fulfill_htlc`, OR,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A failure is reported via `update_fail_htlc` AND the HTLC is irrevocably removed from the latest commitments/state(s) of the channel, OR
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A channel closure is reported.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Let us fill this in more detail.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Suppose we have a payment route A-&gt;B-&gt;C-&gt;E.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Both the &quot;hard&quot; block timeouts and the &quot;soft&quot; second timeouts decrement monotonically at each hop.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, the payee E has the shortest &quot;hard&quot; and &quot;soft&quot; timeouts (as normal).
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * Suppose E then delays claiming the payment and violates the &quot;soft&quot; timeout.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * C then drops the CE channel onchain.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * C reports, before its own timeout (slightly larger than the timeout imposed on E), the closing of the channel CE, to B.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * B validates this report, and if valid, propagates the report to A.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * A validates this report, and if valid, accepts that the payment will be &quot;stuck&quot; for up to the hard timeout it imposed on B.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; C has to report back to B in order to prevent B from closing the BC channel, and B has to report back to A in order to prevent A from closing the AB channel.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The decrementing seconds-unit timeouts are needed for each hop, for the same reason that decrementing block-unit timeouts are needed.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Since E is motivated to attack intermediate nodes because it wants to redirect payment forwards through itself rather than its competitotrs, having one of its channels closed (which prevents it from being used for forwarding) is directly opposed to its end goal of getting more money, thus, we can believe the action of closing a channel involved in a griefing attack is sufficient disincentive.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The major drawback is that enforcement of the soft timeout *is* a channel closure, which is generally a negative for the network.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This is not a remote attack vector, since a node can only trigger this closure if it is able to stall the fulfillment or failure of an HTLC on a channel, which generally means the node triggering this closure can only do so for its own channels (or it is able to, via a separate mechanism, remotely crash a different node).
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Proving Channel Closes
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ----------------------
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; What C *really* needs to prove is that:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * It is *willing* to close a channel due to a violation of the soft timeout.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * The channel it is willing to close was, in fact, involved in the same payment attempt.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; With the above, B can believe that C was innocent of wrongdoing, because:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * C would only be wiling to close a channel in case of a protocol violation, in this case, a violation of the soft timeout.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * The channel it closed was closed because of this payment attempt, and not because of another payment attempt, or some other unrelated channel being unilaterally closed.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; First, what C needs to prove is *NOT*, in fact, actual channel closure: it needs to prove a *willingness* to close a channel.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, it does not require the channel to actually be *closed* yet, i.e. it does not have to wait for onchain activity that the channel closure is in a mempool and is confirmed deeply onchain etc etc.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, to prove a *willingness to close* rather than an actual close, C can provide the unilateral close of the channel CE.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The act of unilaterally closing a channel is the publication of the transaction(s) making up the unilateral close.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, if C is *willing* to close the channel, it is willing to publish the transaction(s) involved, and thus, providing the unilateral close to B and further upstream, shows a willingness to close the channel.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; B then validates the provided proof-of-closure by checking that the unilateral close transaction is either onchain, in the mempool, or that it spends a TXO that is not currently spent by another transaction.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; In the case the unilateral close transaction is not confirmed and in the mempool, B can speed up its propagation on the Bitcoin layer by putting it in its own mempool as well --- after all, C is willing to close the channel to exonerate itself and punish the actual culprit, and B putting the unilateral close in its own mempool can only help C in what it is willing to do.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Secondly, C needs to prove that the channel it is willing to close involves the payment attempt, and is not some other channel closure that it is attempting to use to fulfill its own soft timeout.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Since the unilateral close transaction *is* the proof-of-closure, B (and A) can inspect the transaction outputs and see (with some additional data from C) that one of the outputs is to an HTLC that matches the payment hash.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, B (and A) can believe that the proof-of-closure proves that whoever is presenting it is free of wrongdoing, as whoever is actually causing the delay has been punished (by someone being willing to close a channel with the culprit), and that the proof-of-closure commits to this particular payment attempt and no other (because it commits to a particular payment hash).
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Further, if CE is closed by E dropping it onchain rather than C, C will still be able to fulfill its own soft timeout by taking the closing transaction from E, which should still contain the HTLC.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Indeed, neither A nor B will particularly care (nor need to know) who dropped the channel onchain, or (for A) that the channel participants are C and E.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Update State Shenanigans
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ------------------------
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Bitcoin update mechanisms are complicated things, and it may be possible for an attacking payee E to fool around with the update state machine to make it difficult for C to report a willingness to close CE.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; In particular, I quote here the relevant passages from `lightning-rfc`, `02-peer-protocol.md`, which is an implementation of the Poon-Dryja update mechanism:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; Thus each update traverses through the following states:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 1. pending on the receiver
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 2. in the receiver's latest commitment transaction
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 3. ... and the receiver's previous commitment transaction has been revoked,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;&#160; &#160; and the update is pending on the sender
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 4. ... and in the sender's latest commitment transaction
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 5. ... and the sender's previous commitment transaction has been revoked
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The payee E is the &quot;receiver&quot; in this context.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; In this case, once the update has reached step 2, then E has a commitment transaction that it can put onchain, that contains an HTLC it can claim.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; From this step onward, C cannot send a failure (i.e. it cannot send back an `update_fail_htlc`) back to B, because E could drop its latest commitment onchain and claim the HTLC onchain.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; However, until step 4, C does not have a unilateral close containing the HTLC, and thus cannot provide a proof-of-closure that contains an HTLC that refers to the payment.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, between steps 2 to 4, C cannot safely respond to its own soft timeout.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; C cannot respond with a failure, as E could then drop its latest commitment transaction onchain and claim the payment from C, and extract money from C that way.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; C also cannot respond with a proof-of-closure, as it does not have a transaction that it can use to provide this proof.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The best that C can do would be to impose an even shorter timeout between steps 2 and 4 above, and to drop its current commitment transaction (which does not contain the HTLC yet and thus does not constitute a valid proof-of-closure) onchain.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; In between the time it drops the commitment transaction and its own incoming soft timeout, there is a chance, however small, that this transaction will be confirmed, and the channel will (with high probability) settle in a state where the HTLC is not instantiated, thus C can safely fail its incoming HTLC (not show a proof-of-closure, since that is not possible for C to do) without risk of loss, just prior to its own soft timeout.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Of course, C is still at risk here: E could collude with miners via a side-channel fee offer to confirm its commitment transaction with the HTLC present, and ensure that C is liable for the HTLC value.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; With Decker-Russell-Osuntokun, we can remove this risk by requiring a ritual as follows:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; 1.&#160; C requests exclusive access to update their single shared state.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; * This can be done via a variety of sub-protocols, including a fair coin toss in case of near-simultaneous requests for exclusive locks on both sides.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; 2.&#160; C provides the details of the new HTLC to E.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; 3.&#160; C and E generate the new state transaction and exchange signatures for it.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; 4.&#160; C and E generate (without signing) the new update transaction.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; 5.&#160; E provides the signature (or share of signature, if MuSig) for the new update transaction to C.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; 6.&#160; C provides the signature for the new update transaction to E, which releases the exclusive lock on the shared state atomically with the finalization of the new update transaction.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Prior to step 5, C can simply fail the incoming HTLC from B in case its own soft timeout is near.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Even if E performs step 5 after C has already failed the incoming HTLC from B, C can simply not perform step 6 and drop the channel onchain with the previous update and state transactions.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; With Poon-Dryja, we will have to rearrange the order in which we perform things, effectively adding an extra communications turnaround between the participants.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Specifically, the order would have to be revised to:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 1. pending on the sender
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 2. in the sender's latest commitment transaction
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 3. ... and the sender's previous commitment transaction has been revoked,
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt;&#160; &#160; and the update is pending on the receiver
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 4. ... and in the receiver's latest commitment transaction
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &gt; 5. ... and the receiver's previous commitment transaction has been revoked
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This allows the sender (C in our context) to provide a proof-of-closure after step 2, and before step 2, C can safely return a failure with `update_fail_htlc` (and refuse to proceed beyond step 2, thus ensuring it can still use the previous commitment that still has no HTLC).
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Of course, this change will require redesigning the update state machine, increasing the number of communication turnarounds, and creating a subtle incompatbility when transitioning a payment from a hop that knows only the old update state machine to a hop that knows the new update state machine.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Purely Falsified Proof-Of-Closure
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ---------------------------------
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Of course, the attacking node E might want to create a false proof-of-closure.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; E can do this by simulating a Lightning channel: lock an amount of funds in a 2-of-2 (where E controls both keys), then spend it in a set of transactions mimicking the unilateral close.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; We observe, however, that the overhead of simulating a Lightning channel is the same as the overhead of actually creating and closing a Lightning channel.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Since the punishment of proof-of-closure is to force attackers to have their channels closed, we can consider that this simulation of a channel open and close is sufficient as well.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Future-Proofing
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ---------------
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; This sketch of proof-of-closure can be used for any update mechanism:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * With Poon-Dryja, C can use its own commitment transaction as the proof-of-closure.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * With Decker-Wattenhofer, C can give all the offchain transactions up to the last stage in the multi-stage decrementing-`nSequence` mechanism.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * With Deckker-Russell-Osuntokun, C can give the latest update and state trnsaction.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Basically, we expect that for now, and in the future, any update mechanism worth consideration will have a concept of &quot;unilateral close&quot; where a channel can be dropped onchain, using data that only one of the channel participants holds.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Such a unilateral close will be a sequence of one or more valid transactions, terminating in a transaction containing an HTLC-like contract in one of its outputs.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, to validate the unilateral close, it is only required to validate all the transactions contained in the proof-of-closure, and see that the last transaction has an HTLC output.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; The limitations are thus:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * The acceptable forms of HTLC would need to be agreed-upon by the entire network.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * Implementations would need to be able to assess, in a Bitcoin-consensus-compatible way, whether a transaction is valid or not.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Payment Decorrelation and Payment Points
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; ----------------------------------------
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Of course, having a single payment hash for the entire payment attempt is a privacy loss, which we intend to fix in the near future by using payment points, and adding a blinding scalar at each hop, aka. payment decorrelation.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, in the future, there will not be any HTLC, but instead a PTLC.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Further, the payment point at each hop will be changed at each hop, in order to prevent decorrelation.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Thus, C needs to provide proofs:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * That an apparent singlesig on the unilateral close output is in fact a PTLC.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; C needs to provide:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; * A target point P.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; * A partial signature that would spend that singlesig for a particular sighash.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; * An adaptor signature which, with knowledge of the completed signature, adaptor signature, and sighash message, would have revealed the scalar behind P.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; * That the PTLC belongs to the same payment attempt as what B offered to C.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; C needs to provide:
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; &#160; * The C-only blinding factor that is the difference between the payment point of the B-to-C PTLC and the C-to-E PTLC on the unilateral close.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Then, when B needs to propagate the proof-of-closure back to A, B simply adds its own blinding factor to the reported blinding factor, in order to convince A that this is the same payment attempt.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; As we have brought up privacy, we observe that, when this mechanism triggers, there is a mild privacy loss, in that intermediate nodes now know some channel closure that is related to this payment, and can thus determine the exact path that the payment attempt went through, at least until the channel being closed.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; However, proof-of-closure is only propagated in case of violation of the soft timeout, so for normal non-malicious payments, proof-of-closure does not cause any privacy loss.
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; &gt; &gt; &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Yours sincerely,
+</I>&gt;<i> Subhra Mazumdar.
+</I>
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002632.html">[Lightning-dev] Proof-of-closure as griefing attack mitigation
+</A></li>
+	<LI>Next message: <A HREF="002634.html">[Lightning-dev] Proof-of-closure as griefing attack mitigation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2633">[ date ]</a>
+              <a href="thread.html#2633">[ thread ]</a>
+              <a href="subject.html#2633">[ subject ]</a>
+              <a href="author.html#2633">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

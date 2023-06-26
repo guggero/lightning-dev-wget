@@ -1,0 +1,88 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Difference between ignoring htlc request due to	wrong payment hash vs refusing to release preimage in LND
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Difference%20between%20ignoring%20htlc%20request%20due%20to%0A%09wrong%20payment%20hash%20vs%20refusing%20to%20release%20preimage%20in%20LND&In-Reply-To=%3CLVR5Tk2eXbYIAeHMA1Bx1jylQtUXERdxD0pDpa1khWZHciSjrSV3drPreg1U7G5P9aJkPHatdmxn3Vhpalg17aD0RWqLaUE_ibuT5ppOGZY%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002603.html">
+   <LINK REL="Next"  HREF="002606.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Difference between ignoring htlc request due to	wrong payment hash vs refusing to release preimage in LND</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Difference%20between%20ignoring%20htlc%20request%20due%20to%0A%09wrong%20payment%20hash%20vs%20refusing%20to%20release%20preimage%20in%20LND&In-Reply-To=%3CLVR5Tk2eXbYIAeHMA1Bx1jylQtUXERdxD0pDpa1khWZHciSjrSV3drPreg1U7G5P9aJkPHatdmxn3Vhpalg17aD0RWqLaUE_ibuT5ppOGZY%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Difference between ignoring htlc request due to	wrong payment hash vs refusing to release preimage in LND">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Mar 24 11:27:32 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002603.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+        <LI>Next message: <A HREF="002606.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2605">[ date ]</a>
+              <a href="thread.html#2605">[ thread ]</a>
+              <a href="subject.html#2605">[ subject ]</a>
+              <a href="author.html#2605">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Subhra,
+
+&gt;<i> Another question related to the paper <A HREF="https://arxiv.org/abs/2003.00003.">https://arxiv.org/abs/2003.00003.</A> Over here, it is stated in page 13, &quot;Surge of unresolved HTLCs while probing: Recalling steps 5-7 in Figure 4, each probe sets up a chain of irredeemable HTLCs (since a matching preimage would have to be brute-forced). Eventually, running multiple probes over the same channels will escrow its funds in these HTLCs, effectively DOSing the probe route and forcing the nodes to wait until the HTLCs time out before being able to forward other payments. This is an issue we encountered over and over during 4.2 and 4.3, often giving us one shot at probing before having to wait multiple hours for the HTLCs to expire. This is also why we chose the channels leading up to our final target to have a much higher balance, so that we would have enough..&quot; So there was no matching preimage with receiver as per Fig 4. So that means in the route say A-&gt;B-&gt;C-&gt;D, if D doesn't have a matching preimage and suppose C-&gt;D uses lock time of 144 blocks, B-&gt;C 288 blocks and A-&gt;B uses a locktime of 432 blocks, so won't be the case funds in A-&gt;B and B-&gt;C still remains locked for the mentioned locktime?
+</I>
+It is helpful to remember that inside a channel, every contract has an implicit branch &quot;if both of us in this channel agree, we can spend this contract funds any way we want&quot;.
+
+This is because every contract is dependent on a transaction spending from a 2-of-2, and both parties can always sign a new 2-of-2 transaction without that contract --- it is just that both have to agree to do this.
+
+In case of a reported failure, the receiving node in the channel basically says &quot;just between the two of us, I will not be able to claim this HTLC using the hashlock branch anyway because &lt;BOLT 4 failure code reason&gt;, so this will inevitably be claimable to you in the timelock anyway, so we might as well just agree to re-assign the HTLC funds back to you right now&quot;.
+
+The sending node is then willing to sign off on this outside-of-the-contract agreement, since it lets it get the funds back before the timelock expires, and to reuse those funds otherwise.
+
+Thus, even if D griefs up to 143 blocks it wants, at the 144th block C can report immediately back to B and then A with the above failure mechanism.
+
+B and C are incentivized to do this quickly since it would allow the funds to be reused again in a different, probably-will-not-be-griefed near-future payment, which might earn them fees in the future.
+
+Thus if B and C are not controlled by the A+D conglomerate then they have no incentive to extend the griefing attack further.
+
+Of course, if either B or C is offline at the time, then the new state where the HTLC is removed out-of-contract is not possible to sign with both parties.
+
+&gt;<i> I know this is not the definition of griefing attack but then can this possibly mimic the situation where receiver denies having the correct preimage?
+</I>
+No, since B and C are incentivized to report this immediately in order to free up the funds in order for them to forward &quot;soon&quot;.
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002603.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+	<LI>Next message: <A HREF="002606.html">[Lightning-dev] Difference between ignoring htlc request due to wrong payment hash vs refusing to release preimage in LND
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2605">[ date ]</a>
+              <a href="thread.html#2605">[ thread ]</a>
+              <a href="subject.html#2605">[ subject ]</a>
+              <a href="author.html#2605">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

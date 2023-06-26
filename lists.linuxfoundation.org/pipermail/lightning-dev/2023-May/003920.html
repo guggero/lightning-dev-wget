@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Liquidity griefing for 0-conf dual-funded txs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Liquidity%20griefing%20for%200-conf%20dual-funded%20txs&In-Reply-To=%3CCACdvm3P%2BDS90C-2ZCqJFmXOZkFu7ZDFjVFjNmCXi5C9jOR-ekw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003930.html">
+   <LINK REL="Next"  HREF="003931.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Liquidity griefing for 0-conf dual-funded txs</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Liquidity%20griefing%20for%200-conf%20dual-funded%20txs&In-Reply-To=%3CCACdvm3P%2BDS90C-2ZCqJFmXOZkFu7ZDFjVFjNmCXi5C9jOR-ekw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Liquidity griefing for 0-conf dual-funded txs">bastien at acinq.fr
+       </A><BR>
+    <I>Fri May  5 16:21:50 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003930.html">[Lightning-dev] Call For Review - LSPSpec LSPS1 LSPS2
+</A></li>
+        <LI>Next message: <A HREF="003931.html">[Lightning-dev] Liquidity griefing for 0-conf dual-funded txs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3920">[ date ]</a>
+              <a href="thread.html#3920">[ thread ]</a>
+              <a href="subject.html#3920">[ subject ]</a>
+              <a href="author.html#3920">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+One of the challenges created by the introduction of dual funded
+transactions [1] in lightning is how to protect against liquidity
+griefing attacks from malicious peers [2].
+
+Let's start by reviewing this liquidity griefing issue. The dual funding
+protocol starts by exchanging data about the utxos each peer adds to the
+shared transaction, then exchange signatures and broadcast the resulting
+transaction. If peers lock their utxos as soon as they've decided to add
+them to the shared transaction, the remote node may go silent. If that
+happens, the honest node has some liquidity that is locked and unusable.
+
+This cannot easily be fixed by simply unlocking utxos *after* detecting
+that the remote node is fishy, because the remote node would still have
+succeeded at locking your liquidity for a (small) duration, and could
+start other instances of that attack with different node_ids.
+
+An elegant solution to this issue is to never lock utxos used in dual
+funded transactions. If a remote node goes silent in the middle of an
+instance of the protocol, your utxos will automatically be re-used in
+another instance of the protocol. The only drawback with that approach
+is that when you have multiple concurrent instances of dual funding with
+honest peers, some of them may fail because they are double-spent by one
+of the concurrent instances. This is acceptable, since the protocol
+should complete fairly quickly when peers are honest, and at worst, it
+can simply be restarted when failure is detected.
+
+But that solution falls short when using 0-conf, because accidentally
+double-spending a 0-conf channel (because of concurrent instances) can
+result in loss of funds for one of the peers (if payments were made on
+that channel before detecting the double-spend). It seems like using
+0-conf forces us to lock utxos to avoid this issue, which means that
+nodes offering 0-conf services expose themselves to liquidity griefing.
+
+Another related issue is that nodes that want to offer 0-conf channels
+must ensure that the utxos they use for 0-conf are isolated from the
+utxos they use for non 0-conf, otherwise it is not possible to properly
+lock utxos, because of the following race scenario:
+
+- utxoA is selected for a non 0-conf funding attempt and not locked
+  (to protect against liquidity griefing)
+- utxoA is also selected for a 0-conf funding attempt (because it is
+  found unlocked in the wallet) and then locked
+- the funding transaction for the 0-conf channel is successfully
+  published first and that channel is instantly used for payments
+- the funding transaction for the non 0-conf channel is then published
+  and confirms, accidentally double-spending the 0-conf channel
+
+This can be fixed by using a &quot;soft lock&quot; when selecting utxos for a non
+0-conf funding attempt. 0-conf funding attempts must ignore soft locked
+utxos while non 0-conf funding attempts can (should) reuse soft locked
+utxos.
+
+In eclair, we are currently doing &quot;opportunistic&quot; 0-conf:
+
+- if we receive `channel_ready` immediately (which means that our peer
+  trusts us to use 0-conf)
+- and we're the only contributor to the funding transaction (our peer
+  doesn't have any input that they could use to double-spend)
+- and the transaction hasn't been RBF-ed yet
+
+Then we immediately send `channel_ready` as well and start using that
+channel (because we know we won't double spend ourselves). This is nice
+because it lets us use 0-conf in a way where only one side of the
+channel needs to trust the other side (instead of both sides trusting
+each other).
+
+Unfortunately, we cannot do that anymore when mixing 0-conf and non
+0-conf funding attempts, because the utxos may be soft locked,
+preventing us from &quot;upgrading&quot; to 0-conf.
+
+You have successfully reached the end of this quite technical post,
+congrats! My goal with this post is to gather ideas on how we could
+improve that situation and offer good enough protections against
+liquidity griefing for nodes offering 0-conf services. Please share
+your ideas! And yes, I know, 0-conf is a massive implementation pain
+point that we would all like to remove from our codebases, but hey,
+users like it &#175;\_(&#12484;)_/&#175;
+
+Cheers,
+Bastien
+
+[1] <A HREF="https://github.com/lightning/bolts/pull/851">https://github.com/lightning/bolts/pull/851</A>
+[2] <A HREF="https://github.com/lightning/bolts/pull/851#discussion_r997537630">https://github.com/lightning/bolts/pull/851#discussion_r997537630</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230505/9638cc46/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230505/9638cc46/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003930.html">[Lightning-dev] Call For Review - LSPSpec LSPS1 LSPS2
+</A></li>
+	<LI>Next message: <A HREF="003931.html">[Lightning-dev] Liquidity griefing for 0-conf dual-funded txs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3920">[ date ]</a>
+              <a href="thread.html#3920">[ thread ]</a>
+              <a href="subject.html#3920">[ subject ]</a>
+              <a href="author.html#3920">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

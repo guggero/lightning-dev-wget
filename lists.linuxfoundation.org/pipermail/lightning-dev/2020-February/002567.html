@@ -1,0 +1,353 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Sphinx Rendezvous Update
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Sphinx%20Rendezvous%20Update&In-Reply-To=%3CCACdvm3OPCBiv6oc6XRpHbPXdL-Sri%3DXu-KnjXT%3D%3DhONZBLvMQg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002566.html">
+   <LINK REL="Next"  HREF="002569.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Sphinx Rendezvous Update</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Sphinx%20Rendezvous%20Update&In-Reply-To=%3CCACdvm3OPCBiv6oc6XRpHbPXdL-Sri%3DXu-KnjXT%3D%3DhONZBLvMQg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Sphinx Rendezvous Update">bastien at acinq.fr
+       </A><BR>
+    <I>Tue Feb 25 16:24:29 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002566.html">[Lightning-dev] Sphinx Rendezvous Update
+</A></li>
+        <LI>Next message: <A HREF="002569.html">[Lightning-dev] On massive channel closing and fee bumping
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2567">[ date ]</a>
+              <a href="thread.html#2567">[ thread ]</a>
+              <a href="subject.html#2567">[ subject ]</a>
+              <a href="author.html#2567">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Christian,
+
+This is great, thanks for sharing!
+What's really nice with your proposal is that there is effectively no onion
+payload for `RV` in the partial onion, which frees up more space than mine.
+
+I believe this makes it quite usable in Bolt 11 invoices, without blowing up
+the size of the QR code (but more experimentation is needed on that).
+
+As an example such an onion, with 5 legacy hops (65 byte each) results
+&gt;<i> in a 325 + 66 bytes onion, and we save 975 bytes.
+</I>
+
+While having flexibility when choosing the length of the prefill stream
+feels nice,
+wouldn't it be safer to impose a fixed size to avoid any kind of heuristic
+at `RV`
+to try to guess how many hops there are between him and the recipient?
+
+Compute a shared secret using a random ephemeral private key and
+&gt;<i> `RV`s public key, and then generate a prefill-key
+</I>
+
+While implementing, I felt that the part about the shared secret used to
+generate
+the prefill stream is a bit blurry (your proposal on Github doesn't phrase
+it the
+same way). I think it's important to stress that this secret is derived
+from both
+`ephkey` and `RV`'s private key, so that `RV+1` can't compute the same
+stream.
+
+Another thing that may be worth mentioning is error forwarding. Since the
+recipient generated the onion, `RV` won't have the shared secrets (that's by
+design). So it's expected that payment errors won't be readable by `RV`, but
+it's probably a good idea if `RV` returns an indication to the sender that
+the
+payment failed *after* the rendezvous point.
+
+An important side-note is that your proposal is really quick and simple to
+implement
+from the existing Sphinx code. I have made ASCII diagrams of the scheme
+(see [1]).
+This may help readers visualize it more easily.
+
+It still has the issue that each hop's amount/cltv is fixed at invoice
+generation
+time by the recipient. That means MPP cannot be used, and if any channel
+along the
+path updates their fee the partial onion becomes invalid (unless you
+overpay the fees).
+
+Trampoline should be able to address that since it provides more freedom to
+each
+trampoline node to find an efficient way to forward to the next trampoline.
+It's not yet obvious to me how I can mix these two proposals to make it
+work though.
+I'll spend more time experimenting with that.
+
+Thanks,
+Bastien
+
+[1]
+<A HREF="https://gist.github.com/t-bast/ab42a7f52eb2e73105557957c8359601#Christian">https://gist.github.com/t-bast/ab42a7f52eb2e73105557957c8359601#Christian</A>
+
+Le lun. 24 f&#233;vr. 2020 &#224; 19:22, Christian Decker &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt;
+a &#233;crit :
+
+&gt;<i> Hi Bastien,
+</I>&gt;<i>
+</I>&gt;<i> seems you were a bit quicker than I was with my writeup of my
+</I>&gt;<i> proposal. I came up with a scheme that allows us to drop a large part of
+</I>&gt;<i> the partial onion, so that it can indeed fit into an outer onion, and
+</I>&gt;<i> the rendez-vous node RV can re-construct the original packet from the
+</I>&gt;<i> included data [1].
+</I>&gt;<i>
+</I>&gt;<i> The construction comes down to initializing the part of the routing info
+</I>&gt;<i> string that is not going to be used, in such a way that the incremental
+</I>&gt;<i> unwrappings at the nodes in the partial onion cancels out. Like you
+</I>&gt;<i> mentioned in your mail it comes down extending the filler generation to
+</I>&gt;<i> also cover the unused part and then applying all the encryption streams
+</I>&gt;<i> xored to the unused space. By doing this we get the middle part of the
+</I>&gt;<i> onion consisting of only 0x00 bytes.
+</I>&gt;<i>
+</I>&gt;<i> I then decided to apply an additional ChaCha20 stream to this prefill,
+</I>&gt;<i> such that the onion will not consist of mostly 0x00 bytes which would be
+</I>&gt;<i> a dead giveaway to `RV+1` that `RV` was a rendez-vous node.
+</I>&gt;<i>
+</I>&gt;<i> The process for the partial onion creator boils down to:
+</I>&gt;<i>
+</I>&gt;<i>  - Compute a path from `RV` of its choice to recipient `R`.
+</I>&gt;<i>  - Compute a shared secret using a random ephemeral private key and
+</I>&gt;<i>   `RV`s public key, and then generate a prefill-key
+</I>&gt;<i>  - Compute the prefill by combining the correct substrings of the
+</I>&gt;<i>    encryption streams for the nodes along the path, then add the
+</I>&gt;<i>    ChaCha20 stream keyed with the prefill-key.
+</I>&gt;<i>  - Wrap the onion, including payloads for each of the nodes along path
+</I>&gt;<i>    `RV` to `R`
+</I>&gt;<i>  - Trim out the unused space, which now will match the obfuscation
+</I>&gt;<i>    stream generated with the prefill-key
+</I>&gt;<i>
+</I>&gt;<i> As an example such an onion, with 5 legacy hops (65 byte each) results
+</I>&gt;<i> in a 325 + 66 bytes onion, and we save 975 bytes. See [2] for an example
+</I>&gt;<i> of how this looks like.
+</I>&gt;<i>
+</I>&gt;<i> The sender `S` then just does the following:
+</I>&gt;<i>
+</I>&gt;<i>  - Compute a route from `S` to `RV`
+</I>&gt;<i>  - Build an onion with the route, specifying the trimmed partial onion
+</I>&gt;<i>    as payload, along with the usual parameters, for `RV`
+</I>&gt;<i>  - Initiate payment with the constructed onion
+</I>&gt;<i>
+</I>&gt;<i> Upon receiving an incoming HTLC with a partial onion the rendez-vous
+</I>&gt;<i> node `RV` then just does the following:
+</I>&gt;<i>
+</I>&gt;<i>  - Verify all parameters as usual
+</I>&gt;<i>  - Extract the partial onion
+</I>&gt;<i>  - Use the ephemeral key from the partial onion to generate the shared
+</I>&gt;<i>    secret and the prefill key
+</I>&gt;<i>  - Generate the prefill stream and insert it in the correct place,
+</I>&gt;<i>    before the HMAC. This reconstitutes the original routing packet
+</I>&gt;<i>  - Swap out the original onion with the reconstituted onion and forward.
+</I>&gt;<i>
+</I>&gt;<i> My writeup [1] is an early draft, but I wanted to get it out early to
+</I>&gt;<i> give the discussion a basis to work off. I'll revisit it a couple of
+</I>&gt;<i> times before opening a PR, but feel free to shout at me if I have
+</I>&gt;<i> forgotten to consider something :-)
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Christian
+</I>&gt;<i>
+</I>&gt;<i> [1]
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/rendez-vous/proposals/0001-rendez-vous.md">https://github.com/lightningnetwork/lightning-rfc/blob/rendez-vous/proposals/0001-rendez-vous.md</A>
+</I>&gt;<i> [2] <A HREF="https://gist.github.com/cdecker/ec06452bc470749d9f6d2de73651c5fd">https://gist.github.com/cdecker/ec06452bc470749d9f6d2de73651c5fd</A>
+</I>&gt;<i>
+</I>&gt;<i> Bastien TEINTURIER via Lightning-dev
+</I>&gt;<i> &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; writes:
+</I>&gt;<i> &gt; Good morning list,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; After exploring decoys [1], which is a cheap way of doing route blinding,
+</I>&gt;<i> &gt; I'm turning back to exploring rendezvous.
+</I>&gt;<i> &gt; The previous mails on the mailing list mentioned that there was a
+</I>&gt;<i> &gt; technicality
+</I>&gt;<i> &gt; to make the HMACs check out, but didn't provide a lot of details.
+</I>&gt;<i> &gt; The issue is that the filler generation needs to take into account some
+</I>&gt;<i> hops
+</I>&gt;<i> &gt; that will be added *later*, by the payer.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; However it is quite easy to work-around, with a few space trade-offs.
+</I>&gt;<i> &gt; Let's consider a typical rendezvous setup, where Alice wants to be paid
+</I>&gt;<i> via
+</I>&gt;<i> &gt; rendezvous Bob, and Carol wants to pay that invoice:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Carol -&gt; ... -&gt; Bob -&gt; ... -&gt; Alice
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If Alice knows how many bytes Carol is going to use for her part of the
+</I>&gt;<i> &gt; onion
+</I>&gt;<i> &gt; payloads, Alice can easily take them into account when generating her
+</I>&gt;<i> &gt; filler by
+</I>&gt;<i> &gt; pre-pending the same amount of `0` bytes. It seems reasonable to impose a
+</I>&gt;<i> &gt; fixed
+</I>&gt;<i> &gt; number of onion bytes for each side of the rendezvous (650 each?) so
+</I>&gt;<i> Alice
+</I>&gt;<i> &gt; would
+</I>&gt;<i> &gt; know that amount.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; When Carol completes the onion with her part of the route, she simply
+</I>&gt;<i> needs
+</I>&gt;<i> &gt; to
+</I>&gt;<i> &gt; generate filler data for her part of the route following the normal
+</I>&gt;<i> Sphinx
+</I>&gt;<i> &gt; protocol
+</I>&gt;<i> &gt; and apply it to the onion she found in the invoice.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; But the tricky part is that she needs to give Bob a way of generating the
+</I>&gt;<i> &gt; same
+</I>&gt;<i> &gt; filler data to unapply it. Then all HMACs correctly check out.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I see two ways of doing that:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * Carol simply sends that filler (650 bytes), probably via a TLV in
+</I>&gt;<i> &gt; `update_add_htlc`.
+</I>&gt;<i> &gt; This means every intermediate hop needs to forward that, which is painful
+</I>&gt;<i> &gt; and
+</I>&gt;<i> &gt; potentially leaking too much data.
+</I>&gt;<i> &gt; * Carol provides Bob with the rho keys used to generate her filler, and
+</I>&gt;<i> the
+</I>&gt;<i> &gt; length
+</I>&gt;<i> &gt; used by each hop. This leaks to Bob an upper bound on the number of hops
+</I>&gt;<i> &gt; and the
+</I>&gt;<i> &gt; number of bytes sent to each hop.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Since shift-and-xor kind of crypto is hard to read as equations, but very
+</I>&gt;<i> &gt; easy to
+</I>&gt;<i> &gt; read as diagrams, I spent a bit of time doing beautiful ASCII art [2].
+</I>&gt;<i> &gt; Don't hesitate
+</I>&gt;<i> &gt; to have a look at it to find more details about how that works. You can
+</I>&gt;<i> &gt; also print
+</I>&gt;<i> &gt; that on t-shirts to look fancy at conferences. I also have some sample
+</I>&gt;<i> code
+</I>&gt;<i> &gt; working
+</I>&gt;<i> &gt; in eclair [3] for those who can read Scala without getting headaches.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Are there other tricks we can use to reconcile both sides of the onion at
+</I>&gt;<i> &gt; Bob's?
+</I>&gt;<i> &gt; Maybe cdecker (or someone else) has an ace up his sleeve for me there? :)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; One important thing to note is that rendezvous on normal onions will be
+</I>&gt;<i> &gt; costly to
+</I>&gt;<i> &gt; integrate into invoices: it takes 1366 bytes to include one onion, and if
+</I>&gt;<i> &gt; we want
+</I>&gt;<i> &gt; to handle route failures or let the sender use multi-part, we will need
+</I>&gt;<i> to
+</I>&gt;<i> &gt; have a
+</I>&gt;<i> &gt; handful of pre-encrypted onions in the invoice (hence a few kB, which may
+</I>&gt;<i> &gt; not be
+</I>&gt;<i> &gt; practical for QR codes).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; But I did mention before that doing rendezvous on the trampoline onion
+</I>&gt;<i> &gt; could have
+</I>&gt;<i> &gt; better properties [4]. When doing that, having Carol transmit her filler
+</I>&gt;<i> &gt; data only
+</I>&gt;<i> &gt; to Bob, via the outer onion payload becomes practical and doesn't leak
+</I>&gt;<i> &gt; information.
+</I>&gt;<i> &gt; Multi-part would work with a single trampoline onion in the invoice (~500
+</I>&gt;<i> &gt; bytes),
+</I>&gt;<i> &gt; because nodes can do MPP between trampoline nodes thanks to the
+</I>&gt;<i> &gt; onion-in-onion
+</I>&gt;<i> &gt; construction. We simply need to decide the size of the trampoline onion
+</I>&gt;<i> to
+</I>&gt;<i> &gt; allow
+</I>&gt;<i> &gt; each side of the rendezvous to be able to insert a number of hops we're
+</I>&gt;<i> &gt; comfortable
+</I>&gt;<i> &gt; with. You can find more details in the &quot;Rendezvous on a trampoline&quot;
+</I>&gt;<i> section
+</I>&gt;<i> &gt; of [2].
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I'm really interested in other approaches to making rendezvous work with
+</I>&gt;<i> &gt; the HMACs
+</I>&gt;<i> &gt; correctly checking out. If people on this list have drafts, intuitions or
+</I>&gt;<i> &gt; random
+</I>&gt;<i> &gt; thoughts about possible constructions, please share them, I'd be happy to
+</I>&gt;<i> &gt; dive into
+</I>&gt;<i> &gt; them to explore alternatives to the one I found, hoping we can make this
+</I>&gt;<i> &gt; work and
+</I>&gt;<i> &gt; provide this feature to our users in the near future.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; A small side-note on Hornet. Hornet does offer many features that I
+</I>&gt;<i> believe
+</I>&gt;<i> &gt; we will
+</I>&gt;<i> &gt; want in Lightning in the future. It may seem that doing a custom
+</I>&gt;<i> rendezvous
+</I>&gt;<i> &gt; scheme
+</I>&gt;<i> &gt; is a waste of time since we'll ditch it once/if we implement Hornet.
+</I>&gt;<i> While
+</I>&gt;<i> &gt; that is
+</I>&gt;<i> &gt; true in the long run, I believe that if we're able to find a rendezvous
+</I>&gt;<i> &gt; scheme that
+</I>&gt;<i> &gt; isn't too much work to implement, it makes sense to have something
+</I>&gt;<i> &gt; available soon-ish.
+</I>&gt;<i> &gt; Hornet will likely be a longer-term effort that we won't get as soon as
+</I>&gt;<i> &gt; we'd like
+</I>&gt;<i> &gt; (especially since it will probably require a network-wide update). But
+</I>&gt;<i> who
+</I>&gt;<i> &gt; knows, maybe
+</I>&gt;<i> &gt; we may see that we are trying to create many features that are already
+</I>&gt;<i> &gt; built into Hornet
+</I>&gt;<i> &gt; (rendezvous, directed message support, etc) and will decide to implement
+</I>&gt;<i> &gt; Hornet sooner
+</I>&gt;<i> &gt; than expected?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Bastien
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; [1]
+</I>&gt;<i> &gt;
+</I>&gt;<i> <A HREF="../2020-January/002435.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/002435.html</A>
+</I>&gt;<i> &gt; [2] <A HREF="https://gist.github.com/t-bast/ab42a7f52eb2e73105557957c8359601">https://gist.github.com/t-bast/ab42a7f52eb2e73105557957c8359601</A>
+</I>&gt;<i> &gt; [3] <A HREF="https://github.com/ACINQ/eclair/tree/sphinx-rendezvous">https://github.com/ACINQ/eclair/tree/sphinx-rendezvous</A>
+</I>&gt;<i> &gt; [4]
+</I>&gt;<i> &gt;
+</I>&gt;<i> <A HREF="../2019-October/002237.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/002237.html</A>
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200225/8301e226/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200225/8301e226/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002566.html">[Lightning-dev] Sphinx Rendezvous Update
+</A></li>
+	<LI>Next message: <A HREF="002569.html">[Lightning-dev] On massive channel closing and fee bumping
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2567">[ date ]</a>
+              <a href="thread.html#2567">[ thread ]</a>
+              <a href="subject.html#2567">[ subject ]</a>
+              <a href="author.html#2567">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

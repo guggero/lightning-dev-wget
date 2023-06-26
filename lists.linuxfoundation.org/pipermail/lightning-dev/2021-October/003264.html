@@ -1,0 +1,290 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2021-41591/%20CVE-2021-41592%0A%20/%20CVE-2021-41593%20%22Dust%20HTLC%20Exposure%20Considered%20Harmful%22&In-Reply-To=%3CCALZpt%2BHfUyE3UPg7SqS%2Bhr-Mx4JRdUyheo8-xS9ByFAkwWhMrg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003263.html">
+   <LINK REL="Next"  HREF="003265.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2021-41591/%20CVE-2021-41592%0A%20/%20CVE-2021-41593%20%22Dust%20HTLC%20Exposure%20Considered%20Harmful%22&In-Reply-To=%3CCALZpt%2BHfUyE3UPg7SqS%2Bhr-Mx4JRdUyheo8-xS9ByFAkwWhMrg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;">antoine.riard at gmail.com
+       </A><BR>
+    <I>Mon Oct  4 19:11:59 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003263.html">[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+</A></li>
+        <LI>Next message: <A HREF="003265.html">[Lightning-dev] Fast Forwards By Channel-in-Channel Construction,	Or: Spillman-Decker-Wattenhofer-Poon-Dryja-Towns
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3264">[ date ]</a>
+              <a href="thread.html#3264">[ thread ]</a>
+              <a href="subject.html#3264">[ subject ]</a>
+              <a href="author.html#3264">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I've been informed by Mitre, the correct CVE assignment:
+* c-lightning : CVE-2021-41592
+* lnd: CVE-2021-41593
+
+Not the assignement disclosed in the initial mail.
+
+Le lun. 4 oct. 2021 &#224; 11:09, Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt; a
+&#233;crit :
+
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> I'm writing a report to disclose specification-level vulnerabilities
+</I>&gt;<i> affecting the Lightning implementations.
+</I>&gt;<i>
+</I>&gt;<i> The vulnerabilities are expected to be patched in:
+</I>&gt;<i> * Eclair: v0.6.2+ (CVE-2021-41591)
+</I>&gt;<i> * LND: v0.13.3+ (CVE-2021-41592)
+</I>&gt;<i> * LDK: v0.0.102 (not released as production software yet)
+</I>&gt;<i>
+</I>&gt;<i> The vulnerabilities are also affecting c-lightning (CVE-2021-41593).
+</I>&gt;<i>
+</I>&gt;<i> Those vulnerabilities can be exploited in a wide range of attacks, going
+</I>&gt;<i> from fee blackmailing of node operators, burning liquidity of your
+</I>&gt;<i> competing LSPs or even stealing your counterparty channel balance if you
+</I>&gt;<i> avail mining capabilities. Exercise of the vulnerability revealed that a
+</I>&gt;<i> majority of the balance funds can be at loss.
+</I>&gt;<i>
+</I>&gt;<i> Credit to Eugene Siegel (Crypt-iQ) for reporting the trimmed-to-dust
+</I>&gt;<i> exploitation and multiple insights about attacks.
+</I>&gt;<i>
+</I>&gt;<i> Thanks to Bastien Teinturier and Matt Corallo for numerous contributions
+</I>&gt;<i> about mitigations development.
+</I>&gt;<i>
+</I>&gt;<i> # Problem
+</I>&gt;<i>
+</I>&gt;<i> The current BOLT specification only requires Alice's `dust_limit_satoshis`
+</I>&gt;<i> (applied on Alice's commitment) to be under Alice's
+</I>&gt;<i> `channel_reserve_satoshis` (applied on Bob). As those 2 parameters are
+</I>&gt;<i> selectable by Alice, she can inflate the dust limit until reaching the
+</I>&gt;<i> implementation-defined max value (e.g LND: 20% of chan capacity, LDK: 100%
+</I>&gt;<i> of chan capacity).
+</I>&gt;<i>
+</I>&gt;<i> Any in-flight incoming HTLC under Alice's dust limit will be converted as
+</I>&gt;<i> miner fees on Alice's commitment. This HTLC is deducted from Bob's balance
+</I>&gt;<i> and as such they're still owned by Bob, until resolution (i.e a RAA
+</I>&gt;<i> removing the HTLC from Alice's commitment). This limitation only applies
+</I>&gt;<i> per-HTLC. No implementation enforces a limit on the sum of in-flight HTLCs
+</I>&gt;<i> burned as fees. Therefore, Alice is free to inflict a substantial loss to
+</I>&gt;<i> Bob funds by publishing her commitment on-chain.
+</I>&gt;<i>
+</I>&gt;<i> In-flight outgoing HTLC are also committed as fees on Bob's commitment if
+</I>&gt;<i> they're under Bob's threshold. Alice can also exploit from this angle by
+</I>&gt;<i> circular routing HTLCs until reaching Bob's
+</I>&gt;<i> `max_htlc_value_in_flight_msat`. Alice withholds HTLCs resolution until Bob
+</I>&gt;<i> goes on-chain to timeout an offered HTLC or claim an accepted HTLC.
+</I>&gt;<i>
+</I>&gt;<i> Dust HTLC processing can be also exploited at `update_fee` reception.
+</I>&gt;<i>
+</I>&gt;<i> As the BOLT3's fees computation encompasses the negotiated feerate from
+</I>&gt;<i> `update_fee` for the 2nd-stage HTLC fees to decide if the HTLC must be
+</I>&gt;<i> trimmed, the amount of balance at risk is a function of current mempool
+</I>&gt;<i> feerates.
+</I>&gt;<i>
+</I>&gt;<i> The maximum of funds at risk on a counterparty commitment is:
+</I>&gt;<i>
+</I>&gt;<i> counterparty's `max_accepted_htlcs` * (`htlc_success_tx_kw` * opener's
+</I>&gt;<i> `feerate_per_kw` + counterparty's `dust_limit_satoshis`) + holder's
+</I>&gt;<i> `max_accepted_htlcs` * (`htlc_timeout_tx_kw` * opener's `feerate_per_kw` +
+</I>&gt;<i> counterparty's `dust_limit_satoshis`)
+</I>&gt;<i>
+</I>&gt;<i> If the opener is also the attacker, the negotiated feerate can be
+</I>&gt;<i> manipulated beyond the &quot;honest&quot; mempool feerates only upper bounded
+</I>&gt;<i> implementation-defined value (before fixes, LDK: 2 * high-feerate of our
+</I>&gt;<i> fee-estimator). If the opener is the victim, the negotiated feerate is
+</I>&gt;<i> still a safety concern in case of spontaneous mempool spikes.
+</I>&gt;<i>
+</I>&gt;<i> Note, `anchors_zero_htlc_fee` channels are not affected by the feerate
+</I>&gt;<i> inflation as the trimmed-to-dust fee computation mechanism for 2nd-stage
+</I>&gt;<i> HTLC is removed. They're still at risk of the sum of the HTLCs under the
+</I>&gt;<i> dust limit being maliciously burned.
+</I>&gt;<i>
+</I>&gt;<i> # Solution
+</I>&gt;<i>
+</I>&gt;<i> A first mitigation is to verify the counterparty's announced
+</I>&gt;<i> `dust_limit_satoshis` at channel opening (`open_channel`/`accept_channel`)
+</I>&gt;<i> reception and reject if it's estimated too large (see #894)
+</I>&gt;<i>
+</I>&gt;<i> For LDK, we choose the value of 660 satoshis as it's beyond the highest
+</I>&gt;<i> dust threshold enforced by Bitcoin Core (p2pkh: 546) with a margin of
+</I>&gt;<i> safety. Propagation of Lightning time-sensitive transactions shouldn't be
+</I>&gt;<i> affected.
+</I>&gt;<i>
+</I>&gt;<i> A second mitigation is to define a new configurable limit
+</I>&gt;<i> `max_dust_htlc_exposure` and apply this one at incoming and outgoing of
+</I>&gt;<i> HTLC.
+</I>&gt;<i>
+</I>&gt;<i> For LDK, we choose the value of 5 000 000 milli-satoshis as we gauged this
+</I>&gt;<i> value as a substantial loss for our class of users. Setting this too low
+</I>&gt;<i> may prevent the sending or receipt of low-value HTLCs on high-traffic
+</I>&gt;<i> nodes. A node operator should fine-tune this value in function of what
+</I>&gt;<i> qualifies as an acceptable loss.
+</I>&gt;<i>
+</I>&gt;<i> We would like to ensure that the node isn't suddenly exposed to
+</I>&gt;<i> significantly more trimmed balance if the feerate increases when we have
+</I>&gt;<i> several HTLCs pending which are near the dust limit.
+</I>&gt;<i>
+</I>&gt;<i> To achieve this goal, we introduce a new `dust_buffer_feerate` defined as
+</I>&gt;<i> the maximum of either 2530 sats per kWU or 125% of the current
+</I>&gt;<i> `feerate_per_kw` (implementation-defined values).
+</I>&gt;<i>
+</I>&gt;<i> Then, upon an incoming HTLC, if the HTLC's `amount_msat` is inferior to
+</I>&gt;<i> the counterparty's `dust_limit_satoshis` plus the HTLC-timeout fee at the
+</I>&gt;<i> `dust_buffer_feerate`. If the `amount_msat` plus the
+</I>&gt;<i> `dust_balance_on_counterparty_tx` is superior to `max_dust_htlc_exposure`,
+</I>&gt;<i> the HTLC should be failed once it's committed.
+</I>&gt;<i>
+</I>&gt;<i> Upon an outgoing HTLC, if the HTLC's `amount_msat` is inferior to the
+</I>&gt;<i> counterparty's `dust_limit_satoshis`  plus the HTLC-success fee at the
+</I>&gt;<i> `dust_buffer_feerate`. If the `amount_msat` plus the
+</I>&gt;<i> `dust_balance_on_counterparty_tx` is superior to `max_dust_htlc_exposure`,
+</I>&gt;<i> the HTLC should not be sent and fail without forwarding.
+</I>&gt;<i>
+</I>&gt;<i> The check symmetry must also be applied on holder commitment transactions.
+</I>&gt;<i> See PR #919 for more details.
+</I>&gt;<i>
+</I>&gt;<i> A last mitigation is ensuring that at `update_fee` reception, the pending
+</I>&gt;<i> `dust_balance` at the new proposed feerate isn't superior to
+</I>&gt;<i> `max_dust_htlc_exposure_msat`.
+</I>&gt;<i>
+</I>&gt;<i> # Background
+</I>&gt;<i>
+</I>&gt;<i> The dust limit is a base layer policy stopping the relay of a transaction
+</I>&gt;<i> if one of its outputs is under a given threshold. The goal of this policy
+</I>&gt;<i> is to prevent the pollution of the UTXO set with low-value outputs and as
+</I>&gt;<i> such increase the amount of work done by full-nodes.
+</I>&gt;<i>
+</I>&gt;<i> Lightning commitment transactions should be able to propagate at any point
+</I>&gt;<i> during the channel lifetime to unilaterally enforce on-chain a balance. A
+</I>&gt;<i> Lightning commitment transaction with one of its outputs below the dust
+</I>&gt;<i> limit would fail to relay and thus jeopardizes funds safety.
+</I>&gt;<i>
+</I>&gt;<i> To prevent this, BOLT2 requires counterparties to announce a
+</I>&gt;<i> `dust_limit_satoshis` during channel opening (at
+</I>&gt;<i> `open_channel`/`accept_channel` exchange). This `dust_limit_satoshis` must
+</I>&gt;<i> be under the same party's `channel_reserve_satoshis`. This value is static
+</I>&gt;<i> for the channel lifetime.
+</I>&gt;<i>
+</I>&gt;<i> During commitment signatures exchange, each counterparty's limit is
+</I>&gt;<i> applied on each counterparty's commitment (e.g A's `dust_limit_satoshis` is
+</I>&gt;<i> applied on A's commitment, though both A and B have to generate and sign
+</I>&gt;<i> the transaction). An output below this limit is trimmed to fees and won't
+</I>&gt;<i> materialize on the commitment.
+</I>&gt;<i>
+</I>&gt;<i> The specification didn't require that the `open_channel`/`accept_channel`
+</I>&gt;<i> receiver verify that the announced `dust_limit_satoshis` isn't too large.
+</I>&gt;<i>
+</I>&gt;<i> The specification didn't require that the sum of the dust HTLC committed
+</I>&gt;<i> as fees was verified against an upper bound.
+</I>&gt;<i>
+</I>&gt;<i> # Discovery
+</I>&gt;<i>
+</I>&gt;<i> Vulnerabilities around our dust HTLC processing have been known for years
+</I>&gt;<i> by some LN developers/researchers.
+</I>&gt;<i>
+</I>&gt;<i> During Q1 2019, private discussions on the Rust-Lightning-side (LDK before
+</I>&gt;<i> marketing rebranding) about potential safety risks around dust HTLC
+</I>&gt;<i> processing.
+</I>&gt;<i>
+</I>&gt;<i> In November 2019, Rusty Russell (c-lightning) opened an issue against the
+</I>&gt;<i> specification mentioning the lack of check of counterparty's dust limit
+</I>&gt;<i> (#696).
+</I>&gt;<i>
+</I>&gt;<i> In May 2020, I published a high-level attack scenario &quot;Miners Dust
+</I>&gt;<i> Inflation attacks on Lightning Network&quot;, leveraging this lack.
+</I>&gt;<i>
+</I>&gt;<i> In February 2021, I did a test of the first vulnerability against LND
+</I>&gt;<i> software and successfully burnt the majority of the targeted node balance
+</I>&gt;<i> in fees. As it sounds to me like a check missing in the specification, I
+</I>&gt;<i> notified CL/LND/Eclair/LDK maintainers. Mitigations started to be developed
+</I>&gt;<i> on the LDK-side.
+</I>&gt;<i>
+</I>&gt;<i> In July 2021, in the context of `option_dusty_htlcs_uncounted`
+</I>&gt;<i> discussions, Eugene Spiegel (LND) reported on how to exploit the
+</I>&gt;<i> trimmed-to-dust mechanism at `update_fee` reception. Discussions followed
+</I>&gt;<i> on the best way to mitigate this new vector.
+</I>&gt;<i>
+</I>&gt;<i> During August 2021, mitigations were developed and released on the
+</I>&gt;<i> LDK-side. vulnerabilities were disclosed to other Lightning projects (Muun
+</I>&gt;<i> wallet, Electrum). From the LDK-side, a public disclosure date was proposed.
+</I>&gt;<i>
+</I>&gt;<i> Still during August 2021, the Bitcoin Core dust limit was actively
+</I>&gt;<i> discussed on the mailing list. Changes of this dust limit would have
+</I>&gt;<i> affected the ongoing development of the mitigations.
+</I>&gt;<i>
+</I>&gt;<i> While this report highlights the lack of well-defined communication
+</I>&gt;<i> process across Lightning teams,  developers from 3 different
+</I>&gt;<i> implementations have actively participated in the vulnerabilities
+</I>&gt;<i> diagnostic and mitigations development of those long-standing specification
+</I>&gt;<i> issues affecting the whole Lightning ecosystem.
+</I>&gt;<i>
+</I>&gt;<i> All mistakes and opinions are my own and please verify any information
+</I>&gt;<i> reported.
+</I>&gt;<i>
+</I>&gt;<i> # Timeline
+</I>&gt;<i>
+</I>&gt;<i> * 2021-04-19: Working exploit of the vulnerability against LND,
+</I>&gt;<i> CL/LND/Eclair/LDK maintainers notified
+</I>&gt;<i> * 2021-07-21: Finding by Eugene Siegel on how to exploit the
+</I>&gt;<i> trimmed-to-dust mechanism at `update_fee` reception
+</I>&gt;<i> * 2021-08-11: BOLT PR #894 opened by Bastien Teinturier, covering the lack
+</I>&gt;<i> of verification of counterparty per-HTLC `dust_limit_satoshis`
+</I>&gt;<i> * 2021-08-16: Mitigations developed in LDK, communication of a public
+</I>&gt;<i> disclosure date
+</I>&gt;<i> * 2021-08-26: Notification to Muun wallet, non-affected
+</I>&gt;<i> * 2021-08-27: Notification to Electrum wallet
+</I>&gt;<i> * 2021-10-04: Full Disclosure of CVEs
+</I>&gt;<i> * 2021-10-04: Submit BOLT PR #919 covering the remaining vulnerabilities
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211004/30c51399/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211004/30c51399/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003263.html">[Lightning-dev] Full Disclosure: CVE-2021-41591/ CVE-2021-41592 / CVE-2021-41593 &quot;Dust HTLC Exposure Considered Harmful&quot;
+</A></li>
+	<LI>Next message: <A HREF="003265.html">[Lightning-dev] Fast Forwards By Channel-in-Channel Construction,	Or: Spillman-Decker-Wattenhofer-Poon-Dryja-Towns
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3264">[ date ]</a>
+              <a href="thread.html#3264">[ thread ]</a>
+              <a href="subject.html#3264">[ subject ]</a>
+              <a href="author.html#3264">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

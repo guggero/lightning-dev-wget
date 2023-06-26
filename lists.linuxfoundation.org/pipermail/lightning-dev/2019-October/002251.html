@@ -1,0 +1,244 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CPFP%20Carve-Out%20for%20Fee-Prediction%20Issues%20in%0A%20Contracting%20Applications%20%28eg%20Lightning%29&In-Reply-To=%3CCAD5xwhhK4xexDe%3DaBv78BsK5BvE%3D4S0OcqeXYHVAfN3wTOr51Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002248.html">
+   <LINK REL="Next"  HREF="002255.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)</H1>
+    <B>Jeremy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CPFP%20Carve-Out%20for%20Fee-Prediction%20Issues%20in%0A%20Contracting%20Applications%20%28eg%20Lightning%29&In-Reply-To=%3CCAD5xwhhK4xexDe%3DaBv78BsK5BvE%3D4S0OcqeXYHVAfN3wTOr51Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)">jlrubin at mit.edu
+       </A><BR>
+    <I>Sun Oct 27 19:13:09 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002248.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+        <LI>Next message: <A HREF="002255.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2251">[ date ]</a>
+              <a href="thread.html#2251">[ thread ]</a>
+              <a href="subject.html#2251">[ subject ]</a>
+              <a href="author.html#2251">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Johan,
+
+The issues with mempool limits for OP_SECURETHEBAG are related, but have
+distinct solutions.
+
+There are two main categories of mempool issues at stake. One is relay
+cost, the other is mempool walking.
+
+In terms of relay cost, if an ancestor can be replaced, it will invalidate
+all it's children, meaning that no one paid for that broadcasting. This can
+be fixed by appropriately assessing Replace By Fee update fees to
+encapsulate all descendants, but there are some tricky edge cases that make
+this non-obvious to do.
+
+The other issue is walking the mempool -- many of the algorithms we use in
+the mempool can be N log N or N^2 in the number of descendants. (simple
+example: an input chain of length N to a fan out of N outputs that are all
+spent, is O(N^2) to look up ancestors per-child, unless we're caching).
+
+The other sort of walking issue is where the indegree or outdegree for a
+transaction is high. Then when we are computing descendants or ancestors we
+will need to visit it multiple times. To avoid re-expanding a node, we
+currently cache it with a set. This uses O(N) extra memory and makes O(N
+Log N) (we use std::set not unordered_set) comparisons.
+
+I just opened a PR which should help with some of the walking issues by
+allowing us to cheaply cache which nodes we've visited on a run. It makes a
+lot of previously O(N log N) stuff O(N) and doesn't allocate as much new
+memory. See: <A HREF="https://github.com/bitcoin/bitcoin/pull/17268.">https://github.com/bitcoin/bitcoin/pull/17268.</A>
+
+
+Now, for OP_SECURETHEBAG we want a particular property that is very
+different from with lightning htlcs (as is). We want that an unlimited
+number of child OP_SECURETHEBAG txns may extend from a confirmed
+OP_SECURETHEBAG, and then at the leaf nodes, we want the same rule as
+lightning (one dangling unconfirmed to permit channels).
+
+OP_SECURETHEBAG can help with the LN issue by putting all HTLCS into a tree
+where they are individualized leaf nodes with a preceding CSV. Then, the
+above fix would ensure each HTLC always has time to close properly as they
+would have individualized lockpoints. This is desirable for some additional
+reasons and not for others, but it should &quot;work&quot;.
+
+
+
+--
+@JeremyRubin &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+&lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+
+
+On Fri, Oct 25, 2019 at 10:31 AM Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt;
+wrote:
+
+&gt;<i> I don&#8217;te see how? Let&#8217;s imagine Party A has two spendable outputs, now
+</I>&gt;<i> they stuff the package size on one of their spendable outlets until it is
+</I>&gt;<i> right at the limit, add one more on their other output (to meet the
+</I>&gt;<i> Carve-Out), and now Party B can&#8217;t do anything.
+</I>&gt;<i>
+</I>&gt;<i> On Oct 24, 2019, at 21:05, Johan Tor&#229;s Halseth &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">johanth at gmail.com</A>&gt; wrote:
+</I>&gt;<i>
+</I>&gt;<i> &#65279;
+</I>&gt;<i> It essentially changes the rule to always allow CPFP-ing the commitment as
+</I>&gt;<i> long as there is an output available without any descendants. It changes
+</I>&gt;<i> the commitment from &quot;you always need at least, and exactly, one non-CSV
+</I>&gt;<i> output per party. &quot; to &quot;you always need at least one non-CSV output per
+</I>&gt;<i> party. &quot;
+</I>&gt;<i>
+</I>&gt;<i> I realize these limits are there for a reason though, but I'm wondering if
+</I>&gt;<i> could relax them. Also now that jeremyrubin has expressed problems with the
+</I>&gt;<i> current mempool limits.
+</I>&gt;<i>
+</I>&gt;<i> On Thu, Oct 24, 2019 at 11:25 PM Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> I may be missing something, but I'm not sure how this changes anything?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> If you have a commitment transaction, you always need at least, and
+</I>&gt;&gt;<i> exactly, one non-CSV output per party. The fact that there is a size
+</I>&gt;&gt;<i> limitation on the transaction that spends for carve-out purposes only
+</I>&gt;&gt;<i> effects how many other inputs/outputs you can add, but somehow I doubt
+</I>&gt;&gt;<i> its ever going to be a large enough number to matter.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Matt
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> On 10/24/19 1:49 PM, Johan Tor&#229;s Halseth wrote:
+</I>&gt;&gt;<i> &gt; Reviving this old thread now that the recently released RC for bitcoind
+</I>&gt;&gt;<i> &gt; 0.19 includes the above mentioned carve-out rule.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; In an attempt to pave the way for more robust CPFP of on-chain contracts
+</I>&gt;&gt;<i> &gt; (Lightning commitment transactions), the carve-out rule was added in
+</I>&gt;&gt;<i> &gt; <A HREF="https://github.com/bitcoin/bitcoin/pull/15681.">https://github.com/bitcoin/bitcoin/pull/15681.</A> However, having worked
+</I>&gt;&gt;<i> on
+</I>&gt;&gt;<i> &gt; an implementation of a new commitment format for utilizing the Bring
+</I>&gt;&gt;<i> &gt; Your Own Fees strategy using CPFP, I&#8217;m wondering if the special case
+</I>&gt;&gt;<i> &gt; rule should have been relaxed a bit, to avoid the need for adding a 1
+</I>&gt;&gt;<i> &gt; CSV to all outputs (in case of Lightning this means HTLC scripts would
+</I>&gt;&gt;<i> &gt; need to be changed to add the CSV delay).
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Instead, what about letting the rule be
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; The last transaction which is added to a package of dependent
+</I>&gt;&gt;<i> &gt; transactions in the mempool must:
+</I>&gt;&gt;<i> &gt;   * Have no more than one unconfirmed parent.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; This would of course allow adding a large transaction to each output of
+</I>&gt;&gt;<i> &gt; the unconfirmed parent, which in effect would allow an attacker to
+</I>&gt;&gt;<i> &gt; exceed the MAX_PACKAGE_VIRTUAL_SIZE limit in some cases. However, is
+</I>&gt;&gt;<i> &gt; this a problem with the current mempool acceptance code in bitcoind? I
+</I>&gt;&gt;<i> &gt; would imagine evicting transactions based on feerate when the max
+</I>&gt;&gt;<i> &gt; mempool size is met handles this, but I&#8217;m asking since it seems like
+</I>&gt;&gt;<i> &gt; there has been several changes to the acceptance code and eviction
+</I>&gt;&gt;<i> &gt; policy since the limit was first introduced.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; - Johan
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; On Wed, Feb 13, 2019 at 6:57 AM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>
+</I>&gt;&gt;<i> &gt; &lt;mailto:<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;&gt; wrote:
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>
+</I>&gt;&gt;<i> &gt;     &lt;mailto:<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt;&gt; writes:
+</I>&gt;&gt;<i> &gt;     &gt;&gt;&gt; Thus, even if you imagine a steady-state mempool growth, unless
+</I>&gt;&gt;<i> the
+</I>&gt;&gt;<i> &gt;     &gt;&gt;&gt; &quot;near the top of the mempool&quot; criteria is &quot;near the top of the
+</I>&gt;&gt;<i> next
+</I>&gt;&gt;<i> &gt;     &gt;&gt;&gt; block&quot; (which is obviously *not* incentive-compatible)
+</I>&gt;&gt;<i> &gt;     &gt;&gt;
+</I>&gt;&gt;<i> &gt;     &gt;&gt; I was defining &quot;top of mempool&quot; as &quot;in the first 4 MSipa&quot;, ie.
+</I>&gt;&gt;<i> next
+</I>&gt;&gt;<i> &gt;     &gt;&gt; block, and assumed you'd only allow RBF if the old package wasn't
+</I>&gt;&gt;<i> &gt;     in the
+</I>&gt;&gt;<i> &gt;     &gt;&gt; top and the replacement would be.  That seems incentive
+</I>&gt;&gt;<i> &gt;     compatible; more
+</I>&gt;&gt;<i> &gt;     &gt;&gt; than the current scheme?
+</I>&gt;&gt;<i> &gt;     &gt;
+</I>&gt;&gt;<i> &gt;     &gt; My point was, because of block time variance, even that criteria
+</I>&gt;&gt;<i> &gt;     doesn't hold up. If you assume a steady flow of new transactions and
+</I>&gt;&gt;<i> &gt;     one or two blocks come in &quot;late&quot;, suddenly &quot;top 4MWeight&quot; isn't
+</I>&gt;&gt;<i> &gt;     likely to get confirmed until a few blocks come in &quot;early&quot;. Given
+</I>&gt;&gt;<i> &gt;     block variance within a 12 block window, this is a relatively likely
+</I>&gt;&gt;<i> &gt;     scenario.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     [ Digging through old mail. ]
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     Doesn't really matter.  Lightning close algorithm would be:
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     1.  Give bitcoind unileratal close.
+</I>&gt;&gt;<i> &gt;     2.  Ask bitcoind what current expidited fee is (or survey your
+</I>&gt;&gt;<i> mempool).
+</I>&gt;&gt;<i> &gt;     3.  Give bitcoind child &quot;push&quot; tx at that total feerate.
+</I>&gt;&gt;<i> &gt;     4.  If next block doesn't contain unilateral close tx, goto 2.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     In this case, if you allow a simpified RBF where 'you can replace if
+</I>&gt;&gt;<i> &gt;     1. feerate is higher, 2. new tx is in first 4Msipa of mempool, 3.
+</I>&gt;&gt;<i> &gt;     old tx isnt',
+</I>&gt;&gt;<i> &gt;     it works.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     It allows someone 100k of free tx spam, sure.  But it's simple.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     We could further restrict it by marking the unilateral close
+</I>&gt;&gt;<i> somehow to
+</I>&gt;&gt;<i> &gt;     say &quot;gonna be pushed&quot; and further limiting the child tx weight (say,
+</I>&gt;&gt;<i> &gt;     5kSipa?) in that case.
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;     Cheers,
+</I>&gt;&gt;<i> &gt;     Rusty.
+</I>&gt;&gt;<i> &gt;     _______________________________________________
+</I>&gt;&gt;<i> &gt;     Lightning-dev mailing list
+</I>&gt;&gt;<i> &gt;     <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> &gt;     &lt;mailto:<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>&gt;
+</I>&gt;&gt;<i> &gt;     <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191027/184af597/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191027/184af597/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002248.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in	Contracting Applications (eg Lightning)
+</A></li>
+	<LI>Next message: <A HREF="002255.html">[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2251">[ date ]</a>
+              <a href="thread.html#2251">[ thread ]</a>
+              <a href="subject.html#2251">[ subject ]</a>
+              <a href="author.html#2251">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

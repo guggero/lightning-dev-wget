@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Mitigations for loop attacks
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3Cj0vd7Vm8a5Vvk2c6iO_Pt2HA6Yd88VFdJTB1LzPzMfX2ce0UDJEpXp4ha71UiIfemLjS7a4qRBM0GLS9be6E2CqN6Ek7ban5yqLhw49erUc%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001284.html">
+   <LINK REL="Next"  HREF="001286.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Mitigations for loop attacks</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3Cj0vd7Vm8a5Vvk2c6iO_Pt2HA6Yd88VFdJTB1LzPzMfX2ce0UDJEpXp4ha71UiIfemLjS7a4qRBM0GLS9be6E2CqN6Ek7ban5yqLhw49erUc%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Mitigations for loop attacks">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed May 16 00:04:44 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001284.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+        <LI>Next message: <A HREF="001286.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1285">[ date ]</a>
+              <a href="thread.html#1285">[ thread ]</a>
+              <a href="subject.html#1285">[ subject ]</a>
+              <a href="author.html#1285">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning,
+
+&gt;&gt;<i> But I can make you look like a delaying node whenever I want.  The only
+</I>&gt;&gt;<i> way to ensure that I lose more reputation than you do is to leak
+</I>&gt;&gt;<i> information about route length for *everyone*.  And even then, it's just
+</I>&gt;&gt;<i> a matter of numbers.  I can make successful payments to myself through
+</I>&gt;&gt;<i> the same peers (but not you!) to stay above their threshold so my
+</I>&gt;&gt;<i> reputation is intact.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> So it's basically a question of how expensive is it for me to throw you
+</I>&gt;&gt;<i> off the network?  You have to tune that number carefully.
+</I>&gt;<i>
+</I>&gt;<i> Remember, reputation is local to each node, so the only way you can raise your reputation with me is by participating in successful circuits *with me*. If you route successful payments on circuits with other peers, you may raise your reputation with them, but will do nothing to convince me to send more payments through you. So it is not true that you can make me look like a delaying node whenever you want; after a few bad interactions, I will stop routing through you until you participate in enough successful payments *with me* as the downstream to earn back your reputation.
+</I>&gt;<i>
+</I>&gt;<i> I agree this number needs to be tuned carefully, but ideally this (the reputation rate loss) is something that can be tuned individually by routers according to their risk tolerance and history of attacks on the network. I think it's far preferable to have a number that can be tuned in the face of DoS attacks than being caught with no protection whatsoever.
+</I>
+Consider the below network:
+
+    .Rusty1
+    .  |
+    .  v
+    .ZmnSCPxj-&gt;Jim
+    .  |      /
+    .  v     L
+    .  Rusty2
+
+Rusty1 can make me think highly of Rusty2, by routing many payments to Rusty2 which Rusty2 immediately accepts/forwards.  Then Rusty1 can make me think lowly of Jim, by forwarding payments via Jim to Rusty2, and having Rusty2 delay the payment so that Jim loses reputation badly.  Then in the future unrelated forwards that would have passed through ZmnSCPxj-&gt;Jim will be rejected by me because I think Jim has low reputation.
+
+This holds even if local reputation is used.
+
+Jim argues that this is unimportant, since (assuming all HTLC values are almost equal) Jim will stop forwarding to Rusty2 (due to imposing a higher &quot;reputation loss rate&quot; on Rusty2 than I impose in Jim) before I stop forwarding to Jim.
+
+This can still be manipulated if Rusty1 opens a direct channel to Jim.  Then Rusty1 can route payments Rusty1-&gt;Jim-&gt;Rusty2 that succeed quickly, then route payments Rusty1-&gt;ZmnSCPxj-&gt;Jim-&gt;Rusty2 that stall.  Thus Rusty2 can have the Jim-&gt;Rusty2 reputation boosted, while alternating with reputation losses that make ZmnSCPxj-&gt;Jim reputation go down.  Since local reputation is used, ZmnSCPxj and Jim will not talk to each other about how Rusty2 seems to stall when not routing a payment from Rusty1.  Rusty1 can now manipulate the reputation view of ZmnSCPxj and Jim of each other while keeping Rusty2 reputation somewhat high.
+
+&gt;&gt;<i> But we're busy trying to remove all the methods of deanonymizing the
+</I>&gt;&gt;<i> network, and you seem to be adding a new one, *and* providing an
+</I>&gt;&gt;<i> incentive to deanonymize.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Yes, which is why we have mitigations in place (which are still probably
+</I>&gt;&gt;<i> insufficient).  I really don't want to add another vector.
+</I>&gt;<i>
+</I>&gt;<i> This gets to the heart of the tradeoff between network efficiency and privacy. I admit that my proposal sacrifices on privacy, and I personally find it acceptable given the added protection against DoS attacks, but I understand the counterargument as well.
+</I>&gt;<i>
+</I>&gt;<i> One additional thing to consider, though, is that if DoS attacks are problematic and there is no protection, many nodes may stop routing payments entirely. Onion routing through a network with very few possible circuits certainly is less private than revealing additional circuit information on a decentralized routing network.
+</I>&gt;<i>
+</I>&gt;&gt;<i> So now I'll try to deanonymize all payments so I can determine this.
+</I>&gt;&gt;<i> Those who do this best will be rewarded, and those who don't try will be
+</I>&gt;&gt;<i> knocked off the network, probably by those who can!
+</I>&gt;<i>
+</I>&gt;<i> I'm not following, how are you deanonymizing payments? Having more information about downstream hops can help one make better routing decisions, but if the reputation system works properly, you should only need to care about the reputation of the next hop.
+</I>
+As mentioned, the CLTV total leaks information on how far the payee is.  I might decide to keep track of a reputation score, not of the local peers I have, but on the entire network.  If the CLTV total at my outgoing is high, then if the outgoing HTLC takes a long time to respond, I will distribute a small reputation loss to a large number of nodes that are accessible from the outgoing channel; if the CLTV total at my outgoing is low, I will distribute a large reputation loss to a small number of nodes that are accessible from the outgoing channel.  I now have the incentive to make this estimation even more accurate in the future.
+
+&gt;<i>
+</I>&gt;<i>
+</I>&gt;&gt;<i> So I'd like to see a real design of the reputation system.  If it's
+</I>&gt;&gt;<i> practical (which is a significant hurdle), we then need to carefully
+</I>&gt;&gt;<i> evaluate whether we're creating significant disincentives to
+</I>&gt;&gt;<i> neighbourliness.
+</I>&gt;<i>
+</I>&gt;<i> I tried to mostly describe the design in the first email, but it's kind of disorganized. I'll try to sketch it out here more succinctly.
+</I>&gt;<i>
+</I>&gt;<i> Each node has a local configuration of its &quot;reputation loss rate&quot; per channel in units of Hz. This configured rate is not explicitly advertised to peers. Each update_add_htlc has an additional field the &quot;reputation loss rate&quot; in units of satoshis per second, calculated as the reputation loss rate of the upstream HTLC plus the local reputation loss rate times the offered HTLC value. This value can be obfuscated somewhat by the origin of the payment and at each hop with some amount of noise, subject to the concerns raised in my discussion with ZmnSCPxj. When forwarding an HTLC, the upstream hop measures the elapsed time between delivery of a commitment signature on the add and receipt of the fail/update.
+</I>&gt;<i>
+</I>&gt;<i> For each peer node, keep a reputation score in units of satoshis. For each peer, when a payment completes where they are the upstream or downstream hop, add the amount collected in fees to their reputation score. For each payment where they are the downstream hop, subtract from their reputation score the reputation loss rate on the offered HTLC times its elapsed time. Reputation score is not explicitly shared between peered nodes, but can be estimated to within differences in elapsed time measurements.
+</I>
+Please describe the below:
+
+1.  Behavior if payment succeeds after T time.
+2.  Behavior if payment fails after T time.
+
+It seems you only described &quot;Behavior if payment succeeds after T time&quot;.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180515/67ca3cc4/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180515/67ca3cc4/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001284.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+	<LI>Next message: <A HREF="001286.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1285">[ date ]</a>
+              <a href="thread.html#1285">[ thread ]</a>
+              <a href="subject.html#1285">[ subject ]</a>
+              <a href="author.html#1285">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

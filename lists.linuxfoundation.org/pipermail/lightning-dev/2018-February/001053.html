@@ -1,0 +1,134 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C871sh8b9bd.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001050.html">
+   <LINK REL="Next"  HREF="001057.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C871sh8b9bd.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Mon Feb 26 05:37:26 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001050.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+        <LI>Next message: <A HREF="001057.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1053">[ date ]</a>
+              <a href="thread.html#1053">[ thread ]</a>
+              <a href="subject.html#1053">[ subject ]</a>
+              <a href="author.html#1053">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; writes:
+&gt;<i> Hi Rusty,
+</I>&gt;<i>
+</I>&gt;&gt;<i> 1. query_short_channel_id
+</I>&gt;&gt;<i> IMPLEMENTATION: trivial
+</I>&gt;<i>
+</I>&gt;<i> *thumbs up*
+</I>
+OK, I'm implementing this now, with data packing so we can have more
+than one.  (Current 0 and the straight array, will then be able to
+assess how impactful adding a simple encoder is).
+
+&gt;&gt;<i> 2. query_channel_range/reply_channel_range
+</I>&gt;&gt;<i> IMPLEMENTATION: requires channel index by block number, zlib
+</I>&gt;<i>
+</I>&gt;<i> For the sake of expediency of deployment, if we add a byte (or two) to
+</I>&gt;<i> denote the encoding/compression scheme, we can immediately roll out the
+</I>&gt;<i> vanilla (just list the ID's), then progressively roll out more
+</I>&gt;<i> context-specific optimized schemes.
+</I>
+Meh, zlib is pretty trivial for all implementations though.
+
+Will implement and see how long it takes me though.
+
+&gt;&gt;<i> 3. A gossip_timestamp field in `init`
+</I>&gt;&gt;<i> This is a new field appended to `init`: the negotiation of this feature
+</I>&gt;<i> bit
+</I>&gt;&gt;<i> overrides `initial_routing_sync`
+</I>&gt;<i>
+</I>&gt;<i> As I've brought up before, from my PoV, we can't append any additional
+</I>&gt;<i> fields to the innit message as it already contains *two* variable sized
+</I>&gt;<i> fields (and no fixed size fields). Aside from this, it seems that the
+</I>&gt;<i> `innit` message should be simply for exchange versioning information, which
+</I>&gt;<i> may govern exactly *which* messages are sent after it. Otherwise, by adding
+</I>&gt;<i> _additional_ fields to the `innit` message, we paint ourselves in a corner
+</I>&gt;<i> and can never remove it. Compared to using the `innit` message to set up the
+</I>&gt;<i> initial session context, where we can safely add other bits to nullify or
+</I>&gt;<i> remove certain expected messages.
+</I>
+I don't see this argument at all; we can add fields, we can remove them,
+but we still have to transmit them which wastes a little space.
+
+Adding a new field and insist it be next packet is a weird ordering
+contraint, which AFAICT is unique in the protocol.
+
+&gt;<i> Another advantage of making this a distinct message, is that either party
+</I>&gt;<i> can at any time update this horizon/filter to ensure that they only receive
+</I>&gt;<i> the *freshest* updates.Otherwise, one can image a very long lived
+</I>&gt;<i> connections (say weeks) and the remote party keeps sending me very dated
+</I>&gt;<i> updates (wasting bandwidth) when I only really want the *latest*.
+</I>&gt;<i>
+</I>&gt;<i> This can incorporate decker's idea about having a high+low timestamp. I
+</I>&gt;<i> think this is desirable as then for the initial sync case, the receiver can
+</I>&gt;<i> *precisely* control their &quot;verification load&quot; to ensure they only process a
+</I>&gt;<i> particular chunk at a time.
+</I>
+This is a more convincing argument.  I guess we'll have to index by
+timestamp (we currently index by receive order only); I was hoping we
+could get away with a single brute-force traverse when the peer
+initially connected.
+
+So, let's say `channel_range_queries` means don't send *any* gossip
+messages until asked (presumably from `gossip_set_timestamp_range`);
+we'd implement this by setting the peer's timestamp range to 0,0.
+
+Receiving a new `gossip_set_timestamp_range` would override any
+previous.
+
+OK, I'm hacking together now to see if I've missed anything before
+proposing a proper spec...
+
+Cheers,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001050.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+	<LI>Next message: <A HREF="001057.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1053">[ date ]</a>
+              <a href="thread.html#1053">[ thread ]</a>
+              <a href="subject.html#1053">[ subject ]</a>
+              <a href="author.html#1053">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

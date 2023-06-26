@@ -1,0 +1,456 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Code%20for%20sub%20second%20runtime%20of%20piecewise%0A%20linarization%20to%20quickly%20approximate%20the%20minimum%20convex%20cost%20flow%20problem%0A%20%28makes%20fast%20multi%20part%20payments%20with%20large%20amounts%20possible%29&In-Reply-To=%3CCAJ5H3Z5-arrjq3yDQNJnvwW_OwRf6WkORHFfU77GsZy_8rzipw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003512.html">
+   <LINK REL="Next"  HREF="003515.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Code%20for%20sub%20second%20runtime%20of%20piecewise%0A%20linarization%20to%20quickly%20approximate%20the%20minimum%20convex%20cost%20flow%20problem%0A%20%28makes%20fast%20multi%20part%20payments%20with%20large%20amounts%20possible%29&In-Reply-To=%3CCAJ5H3Z5-arrjq3yDQNJnvwW_OwRf6WkORHFfU77GsZy_8rzipw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Mon Mar 14 11:56:24 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003512.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+        <LI>Next message: <A HREF="003515.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3514">[ date ]</a>
+              <a href="thread.html#3514">[ thread ]</a>
+              <a href="subject.html#3514">[ subject ]</a>
+              <a href="author.html#3514">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear Carsten, Martin and fellow lightning developers,
+
+first of all thank you very much for independently verifying and
+acknowledging my recent findings about the runtime of finding a pieceweise
+linearized approximation to the min cost flow problem, for working on
+integrating them into lnd-manageJ and for your excellent questions &amp;
+thoughts.
+
+On Sun, Mar 13, 2022 at 8:17 PM Carsten Otto via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+
+&gt;<i> 1) What's the reasoning behind combining parallel channels?
+</I>&gt;<i>
+</I>
+Generally speaking this is pure pragmatism on my end to simplify my life as
+handling parallel channels in some cases blows up complexity of code and
+simulations. However I think from a probabilistic point of view ( see below
+) the combination is more accurate to reflect the actual likelihood that
+the liquidity is available.
+
+I agree that parallel channels make things a lot more complicated, but I
+&gt;<i> also see the benefit from a node operator's point of view. That being
+</I>&gt;<i> said, wouldn't it suffice to treat parallel channels individually?
+</I>&gt;<i>
+</I>
+I think that should work and especially when including fees to the cost
+function and considering how nodes handle routing requests on parallel
+channels we might have to do so anyway. The suggested flows will probably
+change in a way that disfavors parallel channels even if their virtual
+capacity is larger than an alternative single channel (see below)
+
+1.1) A payment of size 2 needs to be split into 1+1 to fit through
+&gt;<i> parallel channels of size 1+1. Combining the 1+1 channels into a virtual
+</I>&gt;<i> channel of size 2 only complicates the code that has to do come up with
+</I>&gt;<i> a MPP that doesn't over-saturate the actual channels. On the other hand,
+</I>&gt;<i> I don't think the probability for the virtual channel of size 2 is more
+</I>&gt;<i> realistic than reasoning about two individual channels and their
+</I>&gt;<i> probabilities - but I didn't even try to see the math behind that.
+</I>&gt;<i> Please prove me wrong? :)
+</I>&gt;<i>
+</I>
+* The likelihood that a 1 Satoshi capacity channel has 1 Satoshi to route
+is 1/2.
+* The likelihood that 2 channels of capacity 1 have each 1 satoshi
+available to route is 1/2*1/2 = 1/4
+* Combining both parallel channels to one virtual channel of capacity 2 and
+asking if 2 satoshis are available to route gives a likelihood of 1/3 which
+is larger than 1/4.
+
+However I believe in practice one cannot just send a 2 satoshi onion and
+expect the routing node to split the amount  correctly / accordingly
+between the two parallel channels. (I might be wrong here). So in that case
+modelling and computing probabilities for parallel channels might be
+necessary anyway though the math indicates that splitting liquidity in
+parallel channels will get you selected less frequently for routing.
+
+1.2) The Mission Control information provided by lnd can be used to
+&gt;<i> place a minimum available balance on each of the parallel channels. If
+</I>&gt;<i> we know that node A isn't able to forward N sats to node B, we can treat
+</I>&gt;<i> all parallel channels between A and B (in that direction) to have a
+</I>&gt;<i> capacity of at most N-1 sats. How would this look like if we combined
+</I>&gt;<i> the parallel channels into a virtual one? Note that it may still be
+</I>&gt;<i> possible to route two individual payments/onions of size N-1 sats from A
+</I>&gt;<i> to B, given two parallel channels with that many sats on A's side.
+</I>&gt;<i>
+</I>
+I think you talk a about a maximum available balance of a channel (and not
+min available balance)?
+In the case of parallel channels I am not even sure if such information is
+accurate as it is my understanding that the routing node may decide to use
+the parallel channel to forward the amount even though the other channel
+was specified in the onion.
+Assuming that routing nodes indeed do so we would have learnt that neither
+channel has an effective capacity of N. So the combined virtual channel
+could be seen as 2N-1. However if routing nodes don't locally split a
+forwarding request across both channels we would know that calaculating
+with 2N-1 is bad as a request of N could not be fulfilled. I guess it is
+for the implementations that support parallel channels to figure out the
+details here.
+
+2) Optimal Piecewise Linearization
+&gt;<i>
+</I>&gt;<i> See Twitter [3].
+</I>&gt;<i>
+</I>&gt;<i> Is it worth it cutting a channel into pieces of different sizes, instead
+</I>&gt;<i> of just having (as per your example) 5 pieces of the same size? If it
+</I>&gt;<i> makes a noticeable difference, adding some complexity to the code might
+</I>&gt;<i> be worth it.
+</I>&gt;<i>
+</I>
+I will certainly do experiments or be happy if others are faster to do them
+which compare the quality of the approximation with optimal piecewise
+linearization to my choice of fixed intervals and the selection of various
+numbers of segments. As long as we don't have numbers it is hard to guess
+if it is worthwhile adding the complexity. Looking at the current results
+it seems that my (geometricly motivated but) arbitrary choice might end up
+to be good and easy enough. However we might very well see quite an
+improvement of the approximation if we find better piecewise linearizations.
+
+
+&gt;<i> 3) Size of Piecewise Linearization
+</I>&gt;<i>
+</I>&gt;<i> My gut feeling is that cutting a 1 BTC channel into 5 pieces is
+</I>&gt;<i> different from cutting a 0.01 BTC channel into 5 pieces. Would it make
+</I>&gt;<i> sense to use different values of N depending on the channel size?
+</I>&gt;<i>
+</I>
+The main difference here is that a channel of 1 BTC is highly preferable
+from a probabilistic payment delivery perspective over a channel of 0.01
+BTC. Even approximating the 1 BTC channel with 1000 intervalls of 0.001 BTC
+should still have a lower unit cost in all pieces of the first 0.01 BTC of
+the liquidity than the first piece of the 0.01 BTC channel. So I think
+splitting all channels in the equal number of pieces is pretty well
+motivated but let me elaborate on this:
+
+The motivation of splitting all channels into the same number of pieces
+comes from the observation that from a probabilistic point of view (and
+very roughly speaking!) we want to find a flow that puts the same (high)
+success probability on all edges. Using 20% of the capacity gives an 80%
+probability that the liquidity is available. This in turn has a 51.2%
+chance to be successful on a three hop path which in my experience is a
+good probability to aim for as on average one is expected to need two
+attempts. Since the linearized pieces - if included in the flow - tend to
+be fully saturated I decided that it makes sense to put them in 5 buckets
+of 20% each. If you read the code carefully I don't even approximate the
+cost correctly at the 2nd, 3rd, 4th and 5th piece. I just multiplied the
+linearized unit cost of the first piece with 2,3,4 and 5 respectively Which
+approximates the negative log probability with a quadratic cost function.
+But as we can see those geometrically motivated choices work already pretty
+well. Again I plan to invest more time to find a better approximation and
+we might end up using it. But I don't expect too much gain from doing so.
+
+ If you look at the output of the flow in the iPython notebook (Which I
+will copy to the end of the mail for your convenience) you see that most
+channels did not fully saturate the first piece and have a likelihood
+between 80% and 100% where as some channels saturated the first piece
+producing a likelihood of 80% and few channels saturated also the second
+piece giving a likelihood of 60%.
+
+Thus I expect that the real value from studying the optimal piece wise
+linear approximation will give us a better understanding of where to prune
+segments away. If we note that in this flow not a single channel used the
+third, forth and fifth piece we could have removed 60% of all edges and
+doubled the runtime and still compute the same resulting flow.
+
+
+&gt;<i> 4) Leftovers after Piecewise Linearization
+</I>&gt;<i>
+</I>&gt;<i> If I cut some channel into N pieces, I might end up with up to N-1 sats
+</I>&gt;<i> that don't end up in any of the N pieces, effectively making the channel
+</I>&gt;<i> look smaller than it is. For smaller values of N that's obviously not an
+</I>&gt;<i> issue (given the uncertainty we're dealing with), but it might be more
+</I>&gt;<i> problematic if quantization is used with larger values. Any thoughts on
+</I>&gt;<i> this?
+</I>&gt;<i>
+</I>
+I am not sure if I understand your question / issue here. The splitting
+works by selecting N points on the domain of the function and splitting the
+domain into segments at those points. This should never leave sats over.
+The quantization which doesn't boost the runtime too much anyway happens
+before piecewise linearization. So as long as the domain is larger than N
+the piecewiese linearization should not bring up a situation where sats are
+left over. If the quantization however makes a channel so small  that we
+cannot even create 5 (or N) disjoint segments then I guess the likelihood
+for being included into the final result is too small anyway. But I agree
+that an actual implementation might have to watch out for such edge cases.
+
+Again this yield interesting pruning opportunities to reduce the seize of
+the network before doing the expensive min cost flow computation. For
+example I could prune channels with high unit costs on the first segment.
+Especially if they are further away from the source and destination node.
+This would overall reduce the size of the graph and improve runtime.
+Already last July I had a pretty well working heurist that was able to
+through away about 90% of all channels and would pretty much always find
+the same flow in the pruned network as on the full network. I should really
+prioritize the pruning work again now that we have fast solvers.
+
+5) Fees (and other properties?)
+&gt;<i>
+</I>&gt;<i> How can we integrate fees into the function? I must admit, I haven't
+</I>&gt;<i> even thought about that, yet. A copy-paste answer would be great,
+</I>&gt;<i> though! :) Maybe it's also a good idea to punish channels based on their
+</I>&gt;<i> CLTV delta? Ratio of enabled channels? Age? Manual punishment score? ...
+</I>&gt;<i>
+</I>
+plugging in fees (assuming only channels that set a base fee of zero) is
+very easy and straight forward.
+
+Let's recall from the code that the piecewise linearized unit cost is
+computed as follows
+
+unit_cost = int(max_cap/cap)for i in range(N):
+     #arc format is src, dest, capacity, unit_cost
+     arcs.append((src,dest,int(cap/(N*QUANTIZATION)),(i+1)*unit_cost))
+
+As described in our paper for a good (and to be determined) value of \mu we
+could just create the linear combination between the two features which
+would change the line to:
+
+     arcs.append((src,dest,int(cap/(N*QUANTIZATION)),(i+1)*unit_cost +
+mu*fee_rate_ppm))
+
+Note two things:
+1. the only requirement for the solver to work is that \mu*fee_rate_ppm
+needs to be an integer. So in case \mu was smaller than 1 we could also
+scale the term from the linearized log probabilities by putting a larger mu
+to the feature arising from the cost of the uncertainty.
+
+     arcs.append((src,dest,int(cap/(N*QUANTIZATION)),mu*(i+1)*unit_cost
++ fee_rate_ppm))
+
+
+2. the cost from the routing fees is the same on each segment of the
+piecewise linearization which makes a lot of sense because the current
+feerate is indeed a unit cost that does not change with how heavily you
+plan to use a channel independently how the cost that comes from the
+probability grows.
+
+With respect to other features I guess the entire topic of feature
+engineering for our cost function should be a separate threat / topic and
+line of research but as you asked I will give you some short thoughts on
+this here:
+
+As pointed out to the c-lightning team in
+<A HREF="https://github.com/ElementsProject/lightning/pull/4771#issuecomment-930173831">https://github.com/ElementsProject/lightning/pull/4771#issuecomment-930173831</A>
+and
+the following comment I believe that optimizing for CLTV is a poor choice
+and in min cost flow computations it might very well be non linear anyway
+and thus tricky to include in a meaningful way.Sure one could transform it
+to a unit cost by doing something like CLTV*max_cap/cap and add it to the
+cost function like the ppm. But I still do not really see why this is
+useful. On the other hand I very much believe we should start to
+investigate features that predict channel latency to setup / settle an HTLC
+as suggested in the last paragraph of this comment
+<A HREF="https://github.com/lightningdevkit/rust-lightning/issues/1170#issuecomment-972396747">https://github.com/lightningdevkit/rust-lightning/issues/1170#issuecomment-972396747</A>
+However
+I fear that latency measures again are non linear though they could again
+be translated to a unit cost with the same trick as the CLTV.
+
+
+&gt;<i> 6) Non-Zero Base Fee
+</I>&gt;<i>
+</I>&gt;<i> See Twitter [4].
+</I>&gt;<i>
+</I>&gt;<i> According to Stefan [5] it should be possible to integrate ZmnSCPxj's ideas
+</I>&gt;<i> to make this work with non-zero base fees. How?
+</I>&gt;<i> Simpler approach: Twitter [6].
+</I>&gt;<i>
+</I>
+I don't have much to add to the base fee discussion at this point besides
+the emphasize that the above described linearization trick for CLTV or
+latency based features will not properly work for the base fee because one
+actually has to pay the full base fee at the end - independently of how
+much you saturate the channel. This might mess up the optimization.
+
+
+&gt;<i> 7) Private Channels
+</I>&gt;<i>
+</I>&gt;<i> [very niche topic, not really that interesting nor urgent]
+</I>&gt;<i>
+</I>&gt;<i> I'm a fan of adding private channels to provide more outbound liquidity,
+</I>&gt;<i> mainly to reduce gossip and hide my intentions. If my total liquidity to
+</I>&gt;<i> some peer is below the amount announced in public channels, I don't see
+</I>&gt;<i> any meaningful complication. However, I might have a public channel of
+</I>&gt;<i> size N and several private channels bringing my local liquidity to some
+</I>&gt;<i> value &gt;N. It's rather obvious that not announcing this fact is a bad
+</I>&gt;<i> idea, as any #pickhardtpayments implementation would think I have 0-N on
+</I>&gt;<i> my side of the channel(s). Assuming I'm willing to accept this tradeoff,
+</I>&gt;<i> do you see other complications or issues with hidden liquidity?
+</I>&gt;<i>
+</I>&gt;<i> My gut feeling is that this isn't an issue, at all, as channel balances
+</I>&gt;<i> change all the time, which is something the algorithm already has to
+</I>&gt;<i> deal with.
+</I>&gt;<i>
+</I>
+As you noted from a probabilistic payment delivery point of view I might be
+interested in signaling all the liquidity that is being provided between
+two peers and I shoot myself if I hide it. That being said you might have
+reasons to do so and additionally I never rejected the idea to extend the
+current probabilistic model with a probabilistic node or channel provenance
+value that would be similar to the ideas in lnd's mission control or the
+routescore by <A HREF="https://lnrouter.app.">https://lnrouter.app.</A> Given the fact that with hidden
+liquidity the probabilities are constantly underestimated such a provenance
+score will probably be higher than the one of other channels fixing the
+&quot;introduced issue&quot; of hidden liquidity
+
+8) Quality of Approximation
+&gt;<i>
+</I>&gt;<i> There are some problems in computer science that are hard/impossible to
+</I>&gt;<i> approximate, in the sense that any kind of deviation from the optimum
+</I>&gt;<i> could cause the computed results to be extremely bad. Do you have some
+</I>&gt;<i> idea (or proof) that your kind of approximation isn't causing a major
+</I>&gt;<i> issue? I guess a piece-wise linearization with an infinite number of
+</I>&gt;<i> pieces corresponds to the optimal result. Given a finite number of
+</I>&gt;<i> pieces, how large is the difference to the optimum?
+</I>&gt;<i>
+</I>
+We don't have to go to infinite to find a solution without error. We can
+stay with the finite number that corresponds to the channels capacity and
+make segments of 1 satoshi each encoding what this satoshi would actually
+cost in the original function (assuming all values in the original function
+were integers).
+
+I have not spent the time to properly express the error in dependence of
+the number of segments N or even empirically study its tradeoffs in
+practice (as I haven't even included the optimal piecewise linearization
+yet) However the actual flow (see below) as well as the results from Dr.
+Martin Berger
+<A HREF="003513.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/003513.html</A>
+indicate
+that the error should be possible to be managed and stay small enough in
+practice. That being said and as above it certainly makes sense to invest a
+bit of time on how to conduct the piecewise linearization properly.
+
+Output of the computed flow from the iPython notebok with a piece wise
+linearization of 5 equal sized segments per channel
+
+
+Planning to deliver 0.50 BTC from 5051(03efccf...) to 13006
+(021c97a...) via an approximated optimally reliable payment flow...
+
+Runtime of flow computation: 0.85 sec
+Minimum approximated quadratic cost:  815932
+
+ Arc 			      Flow / Capacity 	probability 	Fee (sats)
+5051 -&gt; 8463     	  6700000 / 16777215 	0.600649	8957.900000
+5051 -&gt; 3437     	  1800000 / 9000000 	0.800000	2406.600000
+5051 -&gt; 9162     	  1240000 / 6200000 	0.800000	1657.880000
+5051 -&gt; 14746     	  6700000 / 16777215 	0.600649	8957.900000
+5051 -&gt; 14832     	  2000000 / 10000000 	0.800000	2674.000000
+6257 -&gt; 14832     	  3350000 / 2411344242 	0.998611	335.100000
+14832 -&gt; 12446     	  5350000 / 6200000000 	0.999137	6.350000
+7870 -&gt; 6257     	  3350000 / 20000000 	0.832500	34.500000
+14746 -&gt; 12446     	  6700000 / 100000000 	0.933000	3350.000000
+7914 -&gt; 13006     	  6700000 / 200000000 	0.966500	33501.000000
+5051 -&gt; 550     	  3300000 / 15000000 	0.780000	4412.100000
+11396 -&gt; 13192     	  6700000 / 1000000000 	0.993300	2010.000000
+5051 -&gt; 11396     	  6700000 / 16777215 	0.600649	8957.900000
+7199 -&gt; 9162     	  3350000 / 445000000 	0.992472	848.550000
+9162 -&gt; 12446     	  16590000 / 3900000000 	0.995746	17.590000
+5051 -&gt; 13287     	  2000000 / 10000000 	0.800000	2674.000000
+5051 -&gt; 1843     	  6700000 / 16777215 	0.600649	8957.900000
+5051 -&gt; 11257     	  3350000 / 16777215 	0.800324	4478.950000
+1953 -&gt; 12446     	  2160000 / 750000000 	0.997120	1080.000000
+550 -&gt; 1843     	  3300000 / 30000000 	0.890000	1155.000000
+12756 -&gt; 12446     	  2000000 / 16775679 	0.880780	301.000000
+5051 -&gt; 12756     	  2000000 / 10000000 	0.800000	2674.000000
+3437 -&gt; 12446     	  1800000 / 400000000 	0.995500	225.001000
+6713 -&gt; 7914     	  6700000 / 200000000 	0.966500	837.501000
+11257 -&gt; 7199     	  3350000 / 16777215 	0.800324	663.300000
+10914 -&gt; 9162     	  2000000 / 500000000 	0.996000	1000.001000
+5051 -&gt; 7870     	  3350000 / 16777215 	0.800324	3.781000
+8463 -&gt; 5288     	  6700000 / 500000000 	0.986600	837.501000
+2781 -&gt; 10914     	  2000000 / 500000000 	0.996000	401.000000
+13192 -&gt; 6713     	  6700000 / 500000000 	0.986600	16750.000000
+32 -&gt; 2781     	  2000000 / 210000000 	0.990476	200.000000
+5051 -&gt; 9530     	  2160000 / 10811137 	0.800206	2.591000
+9530 -&gt; 1953     	  2160000 / 16777215 	0.871254	438.336000
+1843 -&gt; 9162     	  10000000 / 300000000 	0.966667	2500.000000
+5051 -&gt; 14642     	  2000000 / 10000000 	0.800000	2.431000
+14642 -&gt; 13006     	  2000000 / 50000000 	0.960000	6001.000000
+13287 -&gt; 32     	  2000000 / 16777215 	0.880791	500.000000
+12446 -&gt; 13006     	  34600000 / 200000000 	0.827000	103766.400000
+5288 -&gt; 13006     	  6700000 / 100000000 	0.933000	15216.700000
+
+Probability of entire flow: 0.0032
+Total fee: 248793.763 sats
+Effective fee rate: 0.498 %
+Arcs included in payment flow: 39
+
+Don't get confused by a low probability. The first attampt always has
+high uncertainty. We will learn fast in each consequitive round.
+
+
+With kind regards Rene Pickhardt
+
+-- 
+&gt;<i> Dr. Carsten Otto
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">carsten at c-otto.de</A>
+</I>&gt;<i> <A HREF="https://c-otto.de">https://c-otto.de</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>
+
+-- 
+<A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220314/77da14bd/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220314/77da14bd/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003512.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+	<LI>Next message: <A HREF="003515.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3514">[ date ]</a>
+              <a href="thread.html#3514">[ thread ]</a>
+              <a href="subject.html#3514">[ subject ]</a>
+              <a href="author.html#3514">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

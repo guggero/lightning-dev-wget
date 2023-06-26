@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] BOLT11 In the World of Scriptless Scripts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181102031945.uyf74qr73wspsktb%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001489.html">
+   <LINK REL="Next"  HREF="001491.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] BOLT11 In the World of Scriptless Scripts</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181102031945.uyf74qr73wspsktb%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] BOLT11 In the World of Scriptless Scripts">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Nov  2 03:19:45 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001489.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+        <LI>Next message: <A HREF="001491.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1490">[ date ]</a>
+              <a href="thread.html#1490">[ thread ]</a>
+              <a href="subject.html#1490">[ subject ]</a>
+              <a href="author.html#1490">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Nov 02, 2018 at 10:20:46AM +1030, Rusty Russell wrote:
+&gt;<i>         There's been some discussion of what the lightning payment flow
+</I>&gt;<i> might look like in the future, and I thought I'd try to look forwards so
+</I>&gt;<i> we can avoid painting ourselves into a corner now.  I haven't spent time
+</I>&gt;<i> on concrete design and implementation to be sure this is correct,
+</I>&gt;<i> however.
+</I>
+I think I'd like to see v1.1 of the lightning spec include
+experimental/optional support for using secp256k1 public/private keys
+for payment hashes/preimages. That assumes using either 2-party ECDSA
+magic or script magic until it's viable to do it via Schnorr scriptless
+scripts, but that seems like it's not totally infeasible? I think the
+components would need to be:
+
+ - invoices: will the preimage for the hash be a secp256k1 private key
+   or a sha256 preimage? (or payer's choice?)
+ - channel announcements: do you support secp256k1 for hashes or just
+   sha256?
+ - node features: how do you support secp256k1? not at all (default),
+   via 2p-ecdsa, via script magic, (eventually) via schnorr, ...?
+
+I think this is (close to) a necessary precondition for payment
+decorrelation, AMP, and third-party verifiable proof-of-payment.
+
+&gt;<i> Desired Status
+</I>&gt;<i> --------------
+</I>&gt;<i> Ideally, you could create one invoice which could be paid arbitrary many
+</I>&gt;<i> times, by different individuals.  eg. &quot;My donation invoice is on my web
+</I>&gt;<i> page&quot;, or &quot;I've printed out the invoice for a widget and stuck it to the
+</I>&gt;<i> widget&quot;, or &quot;Pay this invoice once a month please&quot;.
+</I>&gt;<i> 
+</I>&gt;<i> Also, you should be able to prove you've paid, in a way I can't just
+</I>&gt;<i> copy the proof and claim I paid, too, even if I'm the merchant, and that
+</I>&gt;<i> you agreed to my terms, eg. &quot;I'm paying for 500 widgets to be shipped to
+</I>&gt;<i> Rusty in Australia&quot;.
+</I>
+So, I think at a high level the logic here goes:
+
+  1. Alice: &quot;Buy a t-shirt from me for $5!&quot;
+  2. Bob: &quot;Alice, I want to buy a t-shirt from you, here's $5&quot;
+  3. Alice: &quot;Receipt: Bob bought a t-shirt from me&quot;
+  4. Bob: &quot;Your Honour, here's my receipt from Alice for a t-shirt, please
+     make her deliver on it!&quot;
+
+Going backwards; for the last step to be useful, the receipt has to be
+a signature with the Alice's public key -- if it were anything short of
+that, Alice will claim Bob could have just made up all the numbers. For a
+Schnorr sig, that means (R,s) with the vendor choosing R and not revealing
+R's preimage as that would reveal their private key.
+
+If both vendor and customer know R, then to get the signature, you need
+the private key holder to reveal s which is just revealing the secp256k1
+private key corresponding to S, calculated as:
+
+    S = R + H(P,R,&quot;Bob bought a $5 t-shirt from me&quot;)*P
+
+where P is Alice's public key. If R is calculated via the Schnorr BIP's
+recommendation, then r = H(p, &quot;Bob bought a $5 t-shirt from me&quot;) -- ie,
+based on the private key and the message being signed.
+
+Even if you calculate r differently, I don't think you can do this
+without Bob and Alice interacting to get the nonce R prior to sending
+the transaction, which seems effectively the same as having dynamic
+invoice hashes, though.
+
+Maybe querying for a nonce through the lightning network would make
+sense though, which would allow the &quot;invoice&quot; to be static, and all the
+dynamic things would be via lightning p2p? That step could perhaps be
+combined with the 0 satoshi payment probes that Fabrice proposes in
+
+ <A HREF="../2018-October/001484.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-October/001484.html</A>
+
+but I think replying with a public nonce value would need a new message
+type of some sort?
+
+
+
+I think AMP is independent, other than also using secp256k1 preimages
+rather than SHA256. I think AMP splits and joins are just:
+
+ - if you're joining incoming payments, don't forward until you've
+   got all the HTLCs, and ensure you can generate the secret for each
+   incoming payment from the single outgoing payment
+
+ - if you're splitting an incoming payment into many outgoing payments,
+   ensure you can claim the incoming payment from *any* outgoing
+   payments' secret
+
+Which I think in practice just means knowing x_i for each input, and
+y_j for each output other than the first, and verifying:
+
+    I_i = O_1 + x_i*G
+    O_j = O_1 + y_j*G
+
+(this gives I_i = O_j + (x_i-y_j)*G and the corresponding secret being
+i_i = o_j + x_i - y_j) allowing you to claim all incoming HTLCs given
+the secret from any outgoing HTLC)
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001489.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+	<LI>Next message: <A HREF="001491.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1490">[ date ]</a>
+              <a href="thread.html#1490">[ thread ]</a>
+              <a href="subject.html#1490">[ subject ]</a>
+              <a href="author.html#1490">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

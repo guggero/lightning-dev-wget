@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal for skip channel confirmation.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20skip%20channel%20confirmation.&In-Reply-To=%3Cd5b6b02d-30ec-5384-1a45-9747f1dfd701%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002780.html">
+   <LINK REL="Next"  HREF="002782.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal for skip channel confirmation.</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20skip%20channel%20confirmation.&In-Reply-To=%3Cd5b6b02d-30ec-5384-1a45-9747f1dfd701%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Proposal for skip channel confirmation.">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Mon Aug 24 19:22:33 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002780.html">[Lightning-dev] Proposal for skip channel confirmation.
+</A></li>
+        <LI>Next message: <A HREF="002782.html">[Lightning-dev] Proposal for skip channel confirmation.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2781">[ date ]</a>
+              <a href="thread.html#2781">[ thread ]</a>
+              <a href="subject.html#2781">[ subject ]</a>
+              <a href="author.html#2781">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>A few notes.
+
+Given gossip messages will be rejected by many nodes if no such on-chain transaction exists, I don't think you can 
+&quot;re-broadcast&quot; gossip messages at that time, instead I believe you simply need to not gossip until the funding 
+transaction has some confirmations. Still, this shouldn't prevent receiving payments, as invoices carrying a last-hop 
+hint should be able to indicate any short_channel_id value and have it be accepted.
+
+It may make sense to reuse some &quot;private short channel ID negotiation&quot; feature for the temporary 0-conf short channel id 
+value.
+
+One thing this protocol doesn't capture is unidirectional 0-conf - maybe the channel initiator is happy to receive 
+payments (since its their funds which opened the channel, this is reasonable), but the channel initie-ee (?) isn't 
+(which, again, is reasonable). This leaves only the push_msat value pay-able, and only once, but is a perfectly 
+reasonable trust model and I believe some wallets use this today.
+
+Matt
+
+On 8/24/20 4:16 AM, Roei Erez wrote:
+&gt;<i> Hello everyone,
+</I>&gt;<i> 
+</I>&gt;<i> I would like to discuss the ability to skip a channel funding
+</I>&gt;<i> transaction confirmation, making the channel fully operational before
+</I>&gt;<i> its on-chain confirmation (aka a zero-conf channel).
+</I>&gt;<i> Till confirmation, this channel requires trust between its two parties
+</I>&gt;<i> and in the case of a remote initiator, it puts the received funds of
+</I>&gt;<i> the local party at risk.
+</I>&gt;<i> Nevertheless, there are cases where it makes sense to support this
+</I>&gt;<i> behavior. For example, in cases both parties decide to trust each
+</I>&gt;<i> other. Or, in cases where trust between the parties already exists
+</I>&gt;<i> (buying a pre-loaded channel from a service like Bitrefill).
+</I>&gt;<i> 
+</I>&gt;<i> The motivation is gained from the &quot;Immediate on-boarding&quot; use case:
+</I>&gt;<i> * Bob is connected to a routing node and issues an invoice with a
+</I>&gt;<i>     routing hint that points to a fake channel between Bob and that node.
+</I>&gt;<i> * When Alice pays Bob's invoice, the routing node intercepts the HTLC
+</I>&gt;<i>     and holds it.
+</I>&gt;<i> * Then, the routing node does the following:
+</I>&gt;<i>    * Opens a channel to Bob where Bob has a choice of skipping funding
+</I>&gt;<i>       confirmation (channel is open and active).
+</I>&gt;<i>    * Pays Bob the original Alices' invoice (potentially, minus a service fee)
+</I>&gt;<i> 
+</I>&gt;<i>  From Bob perspective it is his choice on whether to agree for the
+</I>&gt;<i> payment via this channel (and by that increase the trust) or disagree
+</I>&gt;<i> and wait for confirmation.
+</I>&gt;<i> Another practical way for Bob is to skip confirmation and &quot;hold&quot; the
+</I>&gt;<i> payment by not providing the pre-image.
+</I>&gt;<i> 
+</I>&gt;<i> Right now different implementations support zero-conf channels in
+</I>&gt;<i> different ways. These implementations have defined their own way on
+</I>&gt;<i> how to agree on a short_channel_id (fake one) before the transaction
+</I>&gt;<i> is confirmed.
+</I>&gt;<i> 
+</I>&gt;<i> The following suggests some changes to the funding flow to support that:
+</I>&gt;<i>    1. accept_channel message - in case the fundee wants to skip
+</I>&gt;<i>        confirmation he sends minimum_depth=0
+</I>&gt;<i>    2. funding_signed message - no change.
+</I>&gt;<i>    3. funding_locked message - if fundee has sent minimum_depth=0, then
+</I>&gt;<i>        both parties send funding_locked while the channel_id is derived using a
+</I>&gt;<i>        convention agreed on both. One proposal for such convention is to take it
+</I>&gt;<i>        from the temporary_channel_id provided in previous open_channel
+</I>&gt;<i>        message as follows:
+</I>&gt;<i>          * Use the first 8 bytes to initialize an unsigned integer,
+</I>&gt;<i>             call it shortID
+</I>&gt;<i>          * Apply this transformation:  shortID / 2^6 + 100,000
+</I>&gt;<i>          * The above transformation ensures the block height falls in the
+</I>&gt;<i>             range of 100,000 - 2^18+100,000. The rationale is that the id will
+</I>&gt;<i>             never point to a valid mined transaction and the first 100,000 blocks
+</I>&gt;<i>             are left for testing in other chains.
+</I>&gt;<i>          * Assuming the temporary_channel_id is some random number, it is
+</I>&gt;<i>            not likely that the derived short_channel_id will conflict with other
+</I>&gt;<i>            channels in both peers but both peers should validate that before
+</I>&gt;<i>            sending funding_locked.
+</I>&gt;<i>    4. When the channel is confirmed gossip messages such as
+</I>&gt;<i>        channel_update are re-broadcasted and refers to the confirmed
+</I>&gt;<i>        channel_id (such as the case with re-org).
+</I>&gt;<i> 
+</I>&gt;<i> I created a PR in LND that implements these changes
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lnd/pull/4424">https://github.com/lightningnetwork/lnd/pull/4424</A>
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Roei
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> 
+</I></PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002780.html">[Lightning-dev] Proposal for skip channel confirmation.
+</A></li>
+	<LI>Next message: <A HREF="002782.html">[Lightning-dev] Proposal for skip channel confirmation.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2781">[ date ]</a>
+              <a href="thread.html#2781">[ thread ]</a>
+              <a href="subject.html#2781">[ subject ]</a>
+              <a href="author.html#2781">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

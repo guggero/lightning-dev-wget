@@ -1,0 +1,307 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Onion messages rate-limiting
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20rate-limiting&In-Reply-To=%3C990de4a2-39f6-5b38-5fd1-05619b8a7330%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003634.html">
+   <LINK REL="Next"  HREF="003637.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Onion messages rate-limiting</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20rate-limiting&In-Reply-To=%3C990de4a2-39f6-5b38-5fd1-05619b8a7330%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Onion messages rate-limiting">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Thu Jun 30 02:19:04 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003634.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+        <LI>Next message: <A HREF="003637.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3635">[ date ]</a>
+              <a href="thread.html#3635">[ thread ]</a>
+              <a href="subject.html#3635">[ subject ]</a>
+              <a href="author.html#3635">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks Bastien for writing this up! This is a pretty trivial and straightforward way to rate-limit 
+onion messages in a way that allows legitimate users to continue using the system in spite of some 
+bad actors trying (and failing, due to being rate-limited) to DoS the network.
+
+I do think any spec for this shouldn't make any recommendations about willingness to relay onion 
+messages for anonymous no-channel third parties, if anything deliberately staying mum on it and 
+allowing nodes to adapt policy (and probably rate-limit no-channel third-parties before they rate 
+limit any peer they have a channel with). Ultimately, we have to assume that nodes will attempt to 
+send onion messages by routing through the existing channel graph, so there's little reason to worry 
+too much about ensuring ability to relay for anonymous parties.
+
+Better yet, as Val points out, requiring a channel to relay onion messages puts a very real, 
+nontrivial (in a world of msats) cost to getting an onion messaging channel. Better yet, with 
+backpressure ability to DoS onion message links isn't denominated in number of messages, but instead 
+in number of channels you are able to create, making the backpressure system equivalent to today's 
+HTLC DoS considerations, whereas explicit payment allows an attacker to pay much less to break the 
+system.
+
+As for the proposal to charge for onion messages, I'm still not at all sure where its coming from. 
+It seems to flow from a classic &quot;have a hammer (a system to make micropayments for things), better 
+turn this problem into a nail (by making users pay for it)&quot; approach, but it doesn't actually solve 
+the problem at hand.
+
+Even if you charge for onion messages, users may legitimately want to send a bunch of payments in 
+bulk, and trivially overflow a home or Tor nodes' bandwidth. The only response to that, whether its 
+a DoS attack or a legitimate user, is to rate-limit, and to rate-limit in a way that tells the user 
+sending the messages to back off! Sure, you could do that by failing onion messages with an error 
+that updates the fee you charge, but you're ultimately doing a poor-man's (or, I suppose, 
+rich-man's) version of what Bastien proposes, not adding some fundamental difference.
+
+Ultimately, paying suffers from the standard PoW-for-spam issue - you cannot assign a reasonable 
+cost that an attacker cares about without impacting the system's usability due to said cost. Indeed, 
+making it expensive enough to mount a months-long DDoS without impacting legitimate users be pretty 
+easy - at 1msat per relay of a 1366 byte onion message you can only saturate an average home users' 
+30Mbps connection for 30 minutes before you rack up a dollar in costs, but if your concern is 
+whether someone can reasonably trivially take out the network for minutes at a time to make it have 
+perceptibly high failure rates, no reasonable cost scheme will work. Quite the opposite - the only 
+reasonable way to respond is to respond to a spike in traffic while maintaining QoS is to rate-limit 
+by inbound edge!
+
+Ultimately, what we have here is a networking problem, that has to be solved with networking 
+solutions, not a costing problem, which can be solved with payment. I can only assume that the 
+desire to add a cost to onion messages ultimately stems from a desire to ensure every possible 
+avenue for value extraction is given to routing nodes, but I think that desire is misplaced in this 
+case - the cost of bandwidth is diminutive compared to other costs of routing node operation, 
+especially when you consider sensible rate-limits as proposed in Bastien's email.
+
+Indeed, if anyone were proposing rate-limits which would allow anything close to enough bandwidth 
+usage to cause &quot;lightning is turning into Tor and has Tor's problems&quot; to be a legitimate concern I'd 
+totally agree we should charge for its use. But no one is, nor has anyone ever seriously, to my 
+knowledge, proposed such a thing. If lightning messages get deployed and start eating up even single 
+Mbps's on a consistent basis on nodes, we can totally revisit this, its not like we are shutting the 
+door to any possible costing system if it becomes necessary, but rate-limiting has to happen either 
+way, so we should start there and see if we need costing, not jump to costing on day one, hampering 
+utility.
+
+Matt
+
+On 6/29/22 8:22 PM, Olaoluwa Osuntokun wrote:
+&gt;<i> Hi t-bast,
+</I>&gt;<i> 
+</I>&gt;<i> Happy to see this finally written up! With this, we have two classes of
+</I>&gt;<i> proposals for rate limiting onion messaging:
+</I>&gt;<i> 
+</I>&gt;<i>  &#160; 1. Back propagation based rate limiting as described here.
+</I>&gt;<i> 
+</I>&gt;<i>  &#160; 2. Allowing nodes to express a per-message cost for their forwarding
+</I>&gt;<i>  &#160; services, which is described here [1].
+</I>&gt;<i> 
+</I>&gt;<i> I still need to digest everything proposed here, but personally I'm more
+</I>&gt;<i> optimistic about the 2nd category than the 1st.
+</I>&gt;<i> 
+</I>&gt;<i> One issue I see w/ the first category is that a single party can flood the
+</I>&gt;<i> network and cause nodes to trigger their rate limits, which then affects the
+</I>&gt;<i> usability of the onion messages for all other well-behaving parties. An
+</I>&gt;<i> example, this might mean I can't fetch invoices, give up after a period of
+</I>&gt;<i> time (how long?), then result to a direct connection (perceived payment
+</I>&gt;<i> latency accumulated along the way).
+</I>&gt;<i> 
+</I>&gt;<i> With the 2nd route, if an attacker floods the network, they need to directly
+</I>&gt;<i> pay for the forwarding usage themselves, though they may also directly cause
+</I>&gt;<i> nodes to adjust their forwarding rate accordingly. However in this case, the
+</I>&gt;<i> attacker has incurred a concrete cost, and even if the rates rise, then
+</I>&gt;<i> those that really need the service (notifying an LSP that a user is online
+</I>&gt;<i> or w/e) can continue to pay that new rate. In other words, by _pricing_ the
+</I>&gt;<i> resource utilization, demand preferences can be exchanged, leading to more
+</I>&gt;<i> efficient long term resource allocation.
+</I>&gt;<i> 
+</I>&gt;<i> W.r.t this topic, one event that imo is worth pointing out is that a very
+</I>&gt;<i> popular onion routing system, Tor, has been facing a severe DDoS attack that
+</I>&gt;<i> has lasted weeks, and isn't yet fully resolved [2]. The on going flooding
+</I>&gt;<i> attack on Tor has actually started to affect LN (iirc over half of all
+</I>&gt;<i> public routing nodes w/ an advertised address are tor-only), and other
+</I>&gt;<i> related systems like Umbrel that 100% rely on tor for networking traversal.
+</I>&gt;<i> Funnily enough, Tor developers have actually suggested adding some PoW to
+</I>&gt;<i> attempt to mitigate DDoS attacks [3]. In that same post they throw around
+</I>&gt;<i> the idea of using anonymous tokens to allow nodes to give them to &quot;good&quot;
+</I>&gt;<i> clients, which is pretty similar to my lofty Forwarding Pass idea as relates
+</I>&gt;<i> to onion messaging, and also general HTLC jamming mitigation.
+</I>&gt;<i> 
+</I>&gt;<i> In summary, we're not the first to attempt to tackle the problem of rate
+</I>&gt;<i> limiting relayed message spam in an anonymous/pseudonymous network, and we
+</I>&gt;<i> can probably learn a lot from what is and isn't working w.r.t how Tor
+</I>&gt;<i> handles things. As you note near the end of your post, this might just be
+</I>&gt;<i> the first avenue in a long line of research to best figure out how to handle
+</I>&gt;<i> the spam concerns introduced by onion messaging. From my PoV, it still seems
+</I>&gt;<i> to be an open question if the same network can be _both_ a reliable
+</I>&gt;<i> micro-payment system _and_ also a reliable arbitrary message transport
+</I>&gt;<i> layer. I guess only time will tell...
+</I>&gt;<i> 
+</I>&gt;<i>  &gt; The `shared_secret_hash` field contains a BIP 340 tagged hash
+</I>&gt;<i> 
+</I>&gt;<i> Any reason to use the tagged hash here vs just a plain ol HMAC? Under the
+</I>&gt;<i> hood, they have a pretty similar construction [4].
+</I>&gt;<i> 
+</I>&gt;<i> [1]: <A HREF="../2022-February/003498.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/003498.html</A> 
+</I>&gt;<i> &lt;<A HREF="../2022-February/003498.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/003498.html</A>&gt;
+</I>&gt;<i> [2]: <A HREF="https://status.torproject.org/issues/2022-06-09-network-ddos/">https://status.torproject.org/issues/2022-06-09-network-ddos/</A> 
+</I>&gt;<i> &lt;<A HREF="https://status.torproject.org/issues/2022-06-09-network-ddos/">https://status.torproject.org/issues/2022-06-09-network-ddos/</A>&gt;
+</I>&gt;<i> [3]: <A HREF="https://blog.torproject.org/stop-the-onion-denial/">https://blog.torproject.org/stop-the-onion-denial/</A> 
+</I>&gt;<i> &lt;<A HREF="https://blog.torproject.org/stop-the-onion-denial/">https://blog.torproject.org/stop-the-onion-denial/</A>&gt;
+</I>&gt;<i> [4]: <A HREF="https://datatracker.ietf.org/doc/html/rfc2104">https://datatracker.ietf.org/doc/html/rfc2104</A> &lt;<A HREF="https://datatracker.ietf.org/doc/html/rfc2104">https://datatracker.ietf.org/doc/html/rfc2104</A>&gt;
+</I>&gt;<i> 
+</I>&gt;<i> -- Laolu
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> On Wed, Jun 29, 2022 at 1:28 AM Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A> &lt;mailto:<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt;&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;<i>     During the recent Oakland Dev Summit, some lightning engineers got together to discuss DoS
+</I>&gt;<i>     protection for onion messages. Rusty proposed a very simple rate-limiting scheme that
+</I>&gt;<i>     statistically propagates back to the correct sender, which we describe in details below.
+</I>&gt;<i> 
+</I>&gt;<i>     You can also read this in gist format if that works better for you [1].
+</I>&gt;<i> 
+</I>&gt;<i>     Nodes apply per-peer rate limits on _incoming_ onion messages that should be relayed (e.g.
+</I>&gt;<i>     N/seconds with some burst tolerance). It is recommended to allow more onion messages from
+</I>&gt;<i>     peers with whom you have channels, for example 10/seconds when you have a channel and 1/second
+</I>&gt;<i>     when you don't.
+</I>&gt;<i> 
+</I>&gt;<i>     When relaying an onion message, nodes keep track of where it came from (by using the `node_id` of
+</I>&gt;<i>     the peer who sent that message). Nodes only need the last such `node_id` per outgoing connection,
+</I>&gt;<i>     which ensures the memory footprint is very small. Also, this data doesn't need to be persisted.
+</I>&gt;<i> 
+</I>&gt;<i>     Let's walk through an example to illustrate this mechanism:
+</I>&gt;<i> 
+</I>&gt;<i>     * Bob receives an onion message from Alice that should be relayed to Carol
+</I>&gt;<i>     * After relaying that message, Bob stores Alice's `node_id` in its per-connection state with Carol
+</I>&gt;<i>     * Bob receives an onion message from Eve that should be relayed to Carol
+</I>&gt;<i>     * After relaying that message, Bob replaces Alice's `node_id` with Eve's `node_id` in its
+</I>&gt;<i>     per-connection state with Carol
+</I>&gt;<i>     * Bob receives an onion message from Alice that should be relayed to Dave
+</I>&gt;<i>     * After relaying that message, Bob stores Alice's `node_id` in its per-connection state with Dave
+</I>&gt;<i>     * ...
+</I>&gt;<i> 
+</I>&gt;<i>     We introduce a new message that will be sent when dropping an incoming onion message because it
+</I>&gt;<i>     reached rate limits:
+</I>&gt;<i> 
+</I>&gt;<i>     1. type: 515 (`onion_message_drop`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`rate_limited`:`u8`]
+</I>&gt;<i>         * [`shared_secret_hash`:`32*byte`]
+</I>&gt;<i> 
+</I>&gt;<i>     Whenever an incoming onion message reaches the rate limit, the receiver sends `onion_message_drop`
+</I>&gt;<i>     to the sender. The sender looks at its per-connection state to find where the message was coming
+</I>&gt;<i>     from and relays `onion_message_drop` to the last sender, halving their rate limits with that peer.
+</I>&gt;<i> 
+</I>&gt;<i>     If the sender doesn't overflow the rate limit again, the receiver should double the rate limit
+</I>&gt;<i>     after 30 seconds, until it reaches the default rate limit again.
+</I>&gt;<i> 
+</I>&gt;<i>     The flow will look like:
+</I>&gt;<i> 
+</I>&gt;<i>     Alice                      Bob                      Carol
+</I>&gt;<i>        |                         |                         |
+</I>&gt;<i>        |      onion_message      |                         |
+</I>&gt;<i>        |------------------------&gt;|                         |
+</I>&gt;<i>        |                         |      onion_message      |
+</I>&gt;<i>        |                         |------------------------&gt;|
+</I>&gt;<i>        |                         |    onion_message_drop   |
+</I>&gt;<i>        |                         |&lt;------------------------|
+</I>&gt;<i>        |    onion_message_drop   |                         |
+</I>&gt;<i>        |&lt;------------------------|                         |
+</I>&gt;<i> 
+</I>&gt;<i>     The `shared_secret_hash` field contains a BIP 340 tagged hash of the Sphinx shared secret of the
+</I>&gt;<i>     rate limiting peer (in the example above, Carol):
+</I>&gt;<i> 
+</I>&gt;<i>     * `shared_secret_hash = SHA256(SHA256(&quot;onion_message_drop&quot;) || SHA256(&quot;onion_message_drop&quot;) || sphinx_shared_secret)`
+</I>&gt;<i> 
+</I>&gt;<i>     This value is known by the node that created the onion message: if `onion_message_drop` propagates
+</I>&gt;<i>     all the way back to them, it lets them know which part of the route is congested, allowing them
+</I>&gt;<i>     to retry through a different path.
+</I>&gt;<i> 
+</I>&gt;<i>     Whenever there is some latency between nodes and many onion messages, `onion_message_drop` may
+</I>&gt;<i>     be relayed to the incorrect incoming peer (since we only store the `node_id` of the _last_ incoming
+</I>&gt;<i>     peer in our outgoing connection state). The following example highlights this:
+</I>&gt;<i> 
+</I>&gt;<i>       Eve                       Bob                      Carol
+</I>&gt;<i>        |      onion_message      |                         |
+</I>&gt;<i>        |------------------------&gt;|      onion_message      |
+</I>&gt;<i>        |      onion_message      |------------------------&gt;|
+</I>&gt;<i>        |------------------------&gt;|      onion_message      |
+</I>&gt;<i>        |      onion_message      |------------------------&gt;|
+</I>&gt;<i>        |------------------------&gt;|      onion_message      |
+</I>&gt;<i>                                  |------------------------&gt;|
+</I>&gt;<i>     Alice                       |    onion_message_drop   |
+</I>&gt;<i>        |      onion_message      |                    +----|
+</I>&gt;<i>        |------------------------&gt;|      onion_message |    |
+</I>&gt;<i>        |                         |--------------------|---&gt;|
+</I>&gt;<i>        |                         |                    |    |
+</I>&gt;<i>        |                         |                    |    |
+</I>&gt;<i>        |                         |                    |    |
+</I>&gt;<i>        |    onion_message_drop   |&lt;-------------------+    |
+</I>&gt;<i>        |&lt;------------------------|                         |
+</I>&gt;<i> 
+</I>&gt;<i>     In this example, Eve is spamming but `onion_message_drop` is propagated back to Alice instead.
+</I>&gt;<i>     However, this scheme will _statistically_ penalize the right incoming peer (with a probability
+</I>&gt;<i>     depending on the volume of onion messages that the spamming peer is generating compared to the
+</I>&gt;<i>     volume of legitimate onion messages).
+</I>&gt;<i> 
+</I>&gt;<i>     It is an interesting research problem to find formulas for those probabilities to evaluate how
+</I>&gt;<i>     efficient this will be against various types of spam. We hope researchers on this list will be
+</I>&gt;<i>     interested in looking into it and will come up with a good model to evaluate that scheme.
+</I>&gt;<i> 
+</I>&gt;<i>     To increase the accuracy of attributing `onion_message_drop`, more data could be stored in the
+</I>&gt;<i>     future if it becomes necessary. We need more research to quantify how much accuracy would be
+</I>&gt;<i>     gained by storing more data and making the protocol more complex.
+</I>&gt;<i> 
+</I>&gt;<i>     Cheers,
+</I>&gt;<i>     Bastien
+</I>&gt;<i> 
+</I>&gt;<i>     [1]<A HREF="https://gist.github.com/t-bast/e37ee9249d9825e51d260335c94f0fcf">https://gist.github.com/t-bast/e37ee9249d9825e51d260335c94f0fcf</A>  &lt;<A HREF="https://gist.github.com/t-bast/e37ee9249d9825e51d260335c94f0fcf">https://gist.github.com/t-bast/e37ee9249d9825e51d260335c94f0fcf</A>&gt;
+</I>&gt;<i> 
+</I>&gt;<i>     _______________________________________________
+</I>&gt;<i>     Lightning-dev mailing list
+</I>&gt;<i>     <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A> &lt;mailto:<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>&gt;
+</I>&gt;<i>     <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>     &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>&gt;
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003634.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+	<LI>Next message: <A HREF="003637.html">[Lightning-dev] Onion messages rate-limiting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3635">[ date ]</a>
+              <a href="thread.html#3635">[ thread ]</a>
+              <a href="subject.html#3635">[ subject ]</a>
+              <a href="author.html#3635">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

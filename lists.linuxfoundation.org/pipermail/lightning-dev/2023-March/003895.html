@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposed changes to the splicing specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposed%20changes%20to%20the%20splicing%20specification&In-Reply-To=%3CCACdvm3O2AZx6NeFk1nB6YnL3%3DFW4S9i9cBpsvEXZcxU3_gXQsA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003894.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposed changes to the splicing specification</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposed%20changes%20to%20the%20splicing%20specification&In-Reply-To=%3CCACdvm3O2AZx6NeFk1nB6YnL3%3DFW4S9i9cBpsvEXZcxU3_gXQsA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Proposed changes to the splicing specification">bastien at acinq.fr
+       </A><BR>
+    <I>Fri Mar 31 09:04:24 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003894.html">[Lightning-dev] [Splicing] On the topic of commit_sigs +	revoke_and_ack
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3895">[ date ]</a>
+              <a href="thread.html#3895">[ thread ]</a>
+              <a href="subject.html#3895">[ subject ]</a>
+              <a href="author.html#3895">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+As some of you may know, we've been hard at work experimenting with
+splicing [1]. Splicing is a complex feature with a large design space.
+It was interesting to iterate on two separate implementations (eclair
+and cln) and discover the pain points, edge cases and things that could
+be improved in the protocol specification.
+
+After a few months trying out different approaches, we'd like to share
+changes that we believe make the splicing protocol simpler and more
+robust.
+
+We call &quot;active commitments&quot; the set of valid commitment transactions to
+which updates must be applied. While one (or more) splices are ongoing,
+there is more than one active commitment. When signing updates, we send
+one `commitment_signed` message per active commitment. We send those
+messages in the order in which the corresponding funding transactions
+have been created, which lets the receiver implicitly match every
+`commitment_signed` to their respective funding transaction.
+
+Once we've negotiated a new splice and reached the signing steps of the
+interactive-tx protocol, we send a single `commitment_signed` for that
+new commitment. We don't revoke the previous commitment(s), as this adds
+an unnecessary step. Conceptually, we're simply adding a new commitment
+to our active commitments set.
+
+A sample flow will look like this:
+
+   Alice                           Bob
+     |             stfu             |
+     |-----------------------------&gt;|
+     |             stfu             |
+     |&lt;-----------------------------|
+     |          splice_init         |
+     |-----------------------------&gt;|
+     |          splice_ack          |
+     |&lt;-----------------------------|
+     |                              |
+     |       &lt;interactive-tx&gt;       |
+     |&lt;----------------------------&gt;|
+     |                              |
+     |         tx_complete          |
+     |-----------------------------&gt;|
+     |         tx_complete          |
+     |&lt;-----------------------------|
+     |         commit_sig           | Sign the new commitment.
+     |-----------------------------&gt;|
+     |         commit_sig           | Sign the new commitment.
+     |&lt;-----------------------------|
+     |        tx_signatures         |
+     |-----------------------------&gt;|
+     |        tx_signatures         |
+     |&lt;-----------------------------|
+     |                              |
+     |       update_add_htlc        | Alice and Bob use the channel while
+the splice transaction is unconfirmed.
+     |-----------------------------&gt;|
+     |       update_add_htlc        |
+     |-----------------------------&gt;|
+     |         commit_sig           | Sign the old commitment.
+     |-----------------------------&gt;|
+     |         commit_sig           | Sign the new commitment.
+     |-----------------------------&gt;|
+     |       revoke_and_ack         |
+     |&lt;-----------------------------|
+     |         commit_sig           | Sign the old commitment.
+     |&lt;-----------------------------|
+     |         commit_sig           | Sign the new commitment.
+     |&lt;-----------------------------|
+     |       revoke_and_ack         |
+     |-----------------------------&gt;|
+     |                              |
+     |        splice_locked         | The splice transaction confirms.
+     |-----------------------------&gt;|
+     |        splice_locked         |
+     |&lt;-----------------------------|
+     |                              |
+     |       update_add_htlc        | Alice and Bob can use the channel and
+forget the old commitment.
+     |-----------------------------&gt;|
+     |         commit_sig           | Sign the new commitment.
+     |-----------------------------&gt;|
+     |       revoke_and_ack         |
+     |&lt;-----------------------------|
+     |         commit_sig           | Sign the new commitment.
+     |&lt;-----------------------------|
+     |       revoke_and_ack         |
+     |-----------------------------&gt;|
+     |                              |
+
+You can find many more details and sample flows in [2].
+
+We require nodes to store data about the funding transaction as soon as
+they send their `commitment_signed` message. This lets us handle every
+disconnection scenario safely, allowing us to either resume the signing
+steps on reconnection or forget the funding attempt. This is important
+because if peers disagree on the set of active commitments, this will
+lead to a force-close. In order to achieve that, we only need to add
+the `next_funding_txid` to the `channel_reestablish` message, and fill
+it when we're missing signatures from our peer. Again, you can find more
+details and sample flows in [2].
+
+Finally, after trying various approaches, we believe that the funding
+amounts that peer exchange in `splice_init` and `splice_ack` should be
+relative amounts based on each peer's current channel balance.
+
+If Alice sends `funding_amount = 200_000 sats`, it means she will be
+adding 200 000 sats to the channel's capacity (splice-in).
+
+If she sends `funding_amount = -50_000 sats`, it means she will be
+removing 50 000 sats from the channel's capacity (splice-out).
+
+This makes it easier to compute the new channel balances (otherwise we
+have to deal with millisatoshi to satoshi truncation) and better matches
+the UX that node operators are expecting, which means there is less need
+to glue code between the RPC exposed to the node operator and the actual
+underlying protocol.
+
+We've also discovered that implementing 0-conf splicing is tricky: you
+need to be very careful about scenarios where your peer force-closes
+using an *inactive* commitment that ends up double-spending what you
+think is the only *active* commitment but is unconfirmed. We'd be happy
+to discuss that in more details with other implementers to reduce the
+risk of introducing new vulnerabilities when shipping that feature.
+
+Cheers,
+Bastien
+
+[1] <A HREF="https://github.com/lightning/bolts/pull/863">https://github.com/lightning/bolts/pull/863</A>
+[2] <A HREF="https://gist.github.com/t-bast/1ac31f4e27734a10c5b9847d06db8d86">https://gist.github.com/t-bast/1ac31f4e27734a10c5b9847d06db8d86</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230331/9188b5fb/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230331/9188b5fb/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003894.html">[Lightning-dev] [Splicing] On the topic of commit_sigs +	revoke_and_ack
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3895">[ date ]</a>
+              <a href="thread.html#3895">[ thread ]</a>
+              <a href="subject.html#3895">[ subject ]</a>
+              <a href="author.html#3895">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,271 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Efficient Factories For Lightning Channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Efficient%20Factories%20For%20Lightning%20Channels&In-Reply-To=%3Czml59gjZWS3I1TjYv58sSYUTZG2qj_1Tup64hVEC-8SRrS-wQ2uIqEUHGjmhT7IBAiKQDP4u_HK6IDpjwkzXwKOyatMjPntF1N9Q-hReDuw%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003826.html">
+   <LINK REL="Next"  HREF="003828.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Efficient Factories For Lightning Channels</H1>
+    <B>jlspc</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Efficient%20Factories%20For%20Lightning%20Channels&In-Reply-To=%3Czml59gjZWS3I1TjYv58sSYUTZG2qj_1Tup64hVEC-8SRrS-wQ2uIqEUHGjmhT7IBAiKQDP4u_HK6IDpjwkzXwKOyatMjPntF1N9Q-hReDuw%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Efficient Factories For Lightning Channels">jlspc at protonmail.com
+       </A><BR>
+    <I>Sun Jan 15 21:13:08 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003826.html">[Lightning-dev] A new Bitcoin implementation integrated with	Core Lightning
+</A></li>
+        <LI>Next message: <A HREF="003828.html">[Lightning-dev] Jamming mitigation call for 2023
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3827">[ date ]</a>
+              <a href="thread.html#3827">[ thread ]</a>
+              <a href="subject.html#3827">[ subject ]</a>
+              <a href="author.html#3827">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>TL;DR
+=====
+
+* Factories that create and update a large number of Lightning channels efficiently are essential for scaling the Lightning Network.
+* This post presents the first known protocol for Lightning factories that can be closed unilaterally in O(1) time using O(1) on-chain transactions.
+  - If P parties use the protocol, they create P conflicting Commitment transactions, any of which can be used to establish the factory's state.
+  - As a result, each party must maintain P copies of the state of each channel created by the factory.
+  - Another factory protocol is presented that eliminates the need to maintain P copies of each channel state (at the expense of requiring more on-chain bytes).
+* Both factory protocols are modifications of the Tunable-Penalty Channel protocol and share many of its properties, including:
+  - tunable penalties for putting old transactions on-chain, and
+  - watchtowers with storage that's logarithmic in the number of factory states supported (but linear in the number of parties in the factory).
+
+Overview
+========
+
+Factories that allow multiple two-party Lightning channels to be created, re-sized and closed with a small number of on-chain transactions are essential to the scalability of Bitcoin [2].
+Let P denote the number of parties, C denote tha number of channels created, and S denote the number of factory states supported.
+The most efficient previously-known factory, created by Burchert, Decker and Wattenhofer [2], can be closed unilaterally in O(log S) time using O(log S) on-chain transactions and O(C + log S) on-chain bytes.
+A single fixed transaction is used to instantiate the factory's channels when it's closed unilaterally, so the parties using the factory can maintain just a one version of each off-chain channel state.
+Performing a unilateral close with O(log S) on-chain transactions requires that the party closing the factory interact with the blockchain at O(log S) different blockheights (so a unilateral close is an O(log S)-shot procedure [4]), which could be awkward for some users [8].
+
+This paper presents two protocols for factories that can be closed unilaterally in O(1) time using O(1) on-chain transactions.
+The first protocol, called the Tunable-Penalty Factory (TPF) protocol, requires only O(C) on-chain bytes for a unilateral close, but it can use P different transactions to instantiate the factory's channels, thus forcing the parties using the factory to maintain P different versions of each off-chain channel state.
+The second protocol, called the Single-Commitment (SC) protocol, requires O(C + log S) on-chain bytes for a unilateral close, but it uses only a single transaction to instantiate the factory's channels, so multiple versions of off-chain channel states aren't required.
+The TPF protocol is particularly simple and allows a 2-shot unilateral close (that is, the party closing the channel only has to perform actions at 2 different blockheights).
+
+Both protocols are based on the Tunable-Penalty Channel (TPC) protocol [5] and they share many of its properties, including:
+* tunable penalties for putting old transactions on-chain, and
+* watchtowers with storage that's logarithmic in the number of factory states supported (but linear in the number of parties in the factory).
+
+No change to the underlying Bitcoin protocol is required.
+
+A more complete description, including a proof of correctness and better figures, is available in a paper [6].
+
+The Tunable-Penalty Factory (TPF) Protocol
+==========================================
+
+The TPF protocol is a slight modification of the TPC protocol [5].
+
+Each party using the TPC protocol has their own on-chain Individual transaction, the output of which they spend with their State transaction.
+This State transaction is a control transaction and its first output's value is equal to the desired penalty for putting an old State transaction on-chain.
+This first output can be spent by the same party's Commitment transaction for the same state, but only after a relative delay equal to the maximum of the parties' to_self_delay parameters.
+The relative delay gives the other party time to revoke an old State transaction by spending its first output and thus claiming the penalty.
+The State transaction also has an HTLC control output for each HTLC that is active in that state.
+The TPC protocol revokes old State transactions with per-commitment keys that can be known to all parties, rather than with revocation keys that cannot be known by the party putting the revocable transaction on-chain [5].
+
+The TPC protocol is modified to create the TPF protocol by:
+* eliminating the HTLC control outputs from the State transactions,
+* modifying the Commitment transactions to have channel outputs, each of which is owned by two parties in the factory, and
+* supporting P &gt; 2 parties by allowing each party to have their own Individual, State and Commitment transactions.
+
+The TPF protocol is shown below:
+
++-+ A..Z                           +----+ AD
+|<i>F|------+-------------------------| CC |-----
+</I>+-+      |                         |    |
+         |                         |    | BC
+         |                         |    |-----
+         |                         |    |
+         .                         |    | MZ
+         .                         |    |-----
+         .                         +----+
+         |
+         |                         +----+ AD
+         +-------------------------|C_Ai|-----
+         |                         |    |
+         |                         |    | BC
+         |                         |    |-----
+         |                         |    |
+         |               tsdAZ &amp; A |    | MZ
+         |             +-----------|    |-----
+         |             |           +----+
+         |             |
+         |             |           +----+ AD
+         +-------------------------|C_Bi|-----
+         |             |           |    |
+         |             |           |    | BC
+         |             |           |    |-----
+         |             |           |    |
+         .             | tsdAZ &amp; B |    | MZ
+         .           +-------------|    |-----
+         .           | |           +----+
+         |           | |
+         |           | |           +----+ AD
+         +-------------------------|C_Zi|-----
+         |           | |           |    |
+         .           | |           |    | BC
+         .           | |           |    |-----
+         .           | |           |    |
+         |           | | tsdAZ &amp; Z |    | MZ
+         V         +---------------|    |-----
+                   | | |           +----+
+                   | | |
++----+ A  +-----+  | | | pckeyAi
+|<i>In_A|----|St_Ai|------+-----------
+</I>+----+    |     |  | |
+          +-----+  | |
+                   | |
++----+ B  +-----+  | |   pckeyBi
+|<i>In_B|----|St_Bi|----+-------------
+</I>+----+    |     |  |
+          +-----+  |
+  .          .     .
+  .          .     .
+  .          .     .
+                   |
++----+ Z  +-----+  |     pckeyZi
+|<i>In_Z|----|St_Zi|--+---------------
+</I>+----+    |     |
+          +-----+
+
+where:
+F is the Funding transaction,
+CC is the Cooperative Close transaction,
+In_{A..Z} is {A..Z's} Individual transaction,
+St_{A..Z}i is {A..Z's} State transaction for state i, and
+C_{A..Z}i is {A..Z's} Commitment transaction for state i.
+
+Requirements for output cases are as follows:
+{A..Z}: {A..Z}'s signature (a single party's signature),
+A..Z: A..Z's signature (every parties' signature),
+pairs of capital letters indicate signatures from those two parties,
+pckey{A..Z}i: a signature using a per-commitment key for revoking {A..Z}'s state i transaction, and
+tsdAZ: a relative delay equal to the maximum of {A..Z}'s to_self_delay parameters.
+
+In order to establish a new factory state, all parties:
+* calculate the State and Commitment transactions for the new state (this step includes exchanging per-commitment pubkeys for the new state with each of the other parties),
+* exchange partial signatures for the new state's Commitment transactions, and
+* exchange per-commitment keys for the old state, thus revoking it.
+
+All parties constantly look for old (revoked) State transactions put on-chain by other parties, and if they find such a transaction they use the corresponding per-commitment key to spend its first output, thus obtaining the penalty funds and revoking the old state.
+Once a State transaction has been on-chain for tsdAZ without its first output being spent, the party that put the State transaction on-chain can attempt to put their corresponding Commitment transaction on-chain at any time.
+Any party can close the factory unilaterally by putting their current State transaction on-chain, waiting until it has been on-chain for tsdAZ, and then submitting their corresponding Commitment transaction to the blockchain.
+
+As was the case with the TPC protocol, per-commitment keys can use the Lightning protocol's compact storage technique for revocation keys to consume only O(log S) storage to revoke a maximum of S old transactions that could be put on-chain by a single other party [7][5].
+Therefore, each party requires O(P*log S) storage to hold the per-commitment keys for all of the P parties.
+
+The Single-Commitment (SC) Factory Protocol
+===========================================
+
+Note that the TPF factory protocol uses P conflicting Commitment transactions to establish the factory state and to instantiate the factory's channels.
+Therefore, a separate channel state must be maintained and updated for each of the P versions of the channel that could be instantiated, thus increasing the computation, storage, and communication for channels by a factor of P.
+The result could be quite expensive if there are a large number of parties in the factory.
+
+The SC protocol eliminates this factor of P blow-up by having all of the parties use a single shared Commitment transaction.
+Like the TPF protocol, the SC protocol uses revocable State transactions, each of which spends a single party's Individual transaction output, to ensure that only the current Commitment transaction can be put on-chain.
+The challenge is how to use a single shared Commitment transaction that depends on the value of an unrevoked State transaction without actually spending any of the outputs of that State transaction (as spending a State transaction output would make the Commitment transaction's input dependent on which party's State transaction it spends, thus preventing the use of a single shared Commitment transaction).
+This challenge is solved by introducing a shared Trigger transaction and a per-user Mold transaction, where the Commitment and Mold transactions compete for the Trigger transaction's outputs.
+The Mold transaction is put on-chain prior to the Commitment transaction, and it constrains the Commitment transactions that can be put on-chain somewhat like how a mold shapes a liquid that is poured into it.
+
+Specifically, the Trigger transaction has one value output and log_2(S) control outputs, numbered 0 .. log_2(S) - 1. Commitment transaction i, 0 &lt;= i &lt;= S - 1, spends those Trigger control outputs b, 0 &lt;= b &lt;= log_2(S) - 1, such that bit position b of the binary representation of i is a 0.
+Each Mold transaction i, 0 &lt;= i &lt;= S - 1, spends the output of the same party's State i transaction, and Trigger control outputs b, 0 &lt;= b &lt;= log_2(S) - 1, such that bit position b of the binary representation of i is a 1.
+This construction guarantees that if a Mold transaction for state i is on-chain, only Commitment transactions for states j &gt;= i can be put on-chain.
+
+States 0 through S - 1 are supported, with the exception of states of the form 2^b where 1 &lt;= b &lt;= log_2(S) - 1.
+These exceptions are made to guarantee that it is impossible to put Mold transactions on-chain for two consecutive states (other than states 0 and 1) where they would prevent any current Commitment transaction from being put on-chain.
+When state i is supported but state i+1 is not, the next state after i is i+2.
+
+The protocol operation is similar to that of the TPF protocol, except parties closing the channel unilaterally submit the Trigger transaction and their current State transaction to the blockchain, and once their State transaction has been on-chain for tsdAZ, submit their Mold transaction for the same state to the blockchain.
+Once the Trigger transaction has been on-chain for 3tsdAZ, they submit to the blockchain the Commitment transaction for the same state as the on-chain Mold transaction.
+
+Also, all parties monitor the blockchain for the Trigger transaction, and if they find it they use the above protocol for closing the factory as soon as possible.
+
+Because only Mold transactions for unrevoked State transactions can be put on-chain, and because only the latest State transactions can be unrevoked, only the latest (and thus current) Commitment transactions can be put on-chain.
+
+A figure for the SC protocol, and a detailed proof of correctness, are in the paper [6].
+
+Related Work
+============
+
+The concept of creating a channel factory for Lightning, as well as the most efficient published protocol for such a factory, was presented by Burchert, Decker and Wattenhofer [2].
+The protocols presented here differ in only requiring O(1) time and O(1) on-chain transactions for a unilateral factory close.
+
+A number of researchers have proposed changes to Bitcoin in order to support simpler and more efficient factories.
+The eltoo factory protocol [3] has a particularly simple structure and it allows the parties to maintain only one version of each off-chain channel state.
+It requires O(1) time, O(1) on-chain transactions and O(1) on-chain bytes for a unilateral close.
+However, a malicious party could delay the closing of the factory until O(S) transactions are put on-chain, if the malicious party is willing to pay the required fees.
+The eltoo protocol differs from the protocols presented here by requiring a change to Bitcoin, namely the support for BIP 118 [1].
+
+The TPF and SC protocols are based on the TPC protocol presented by Law [5].
+
+Conclusions
+===========
+
+This post presents new factory protocols that require O(1) time and O(1) on-chain transactions for a unilateral close.
+They are the first factory protocols known that achieve those bounds with the existing Bitcoin protocol.
+
+The ability to unilaterally close a factory with just two or three submissions to the blockchain, with a fixed delay between them, is quite a bit simpler than closing previously-published factories [2].
+As a result, it's hoped that TPF and SC factories will lead to the increased use of factories in practice, thus improving the scalability of Bitcoin and Lightning.
+
+Regards,
+John
+
+References
+==========
+[1] &quot;BIP 118: SIGHASH_ANYPREVOUT&quot;, available at <A HREF="https://anyprevout.xyz/">https://anyprevout.xyz/</A> and <A HREF="https://github.com/bitcoin/bips/pull/943.">https://github.com/bitcoin/bips/pull/943.</A>
+[2] Burchert, Decker and Wattenhofer, &quot;Scalable Funding of Bitcoin Micropayment Channel Networks&quot;, available at <A HREF="http://dx.doi.org/10.1098/rsos.180089.">http://dx.doi.org/10.1098/rsos.180089.</A>
+[3] Decker, Russell and Osuntokun. eltoo: A Simple Layer2 Protocol for Bitcoin. Available at <A HREF="https://blockstream.com/eltoo.pdf.">https://blockstream.com/eltoo.pdf.</A>
+[4] Law, &quot;Watchtower-Free Lightning Channels For Casual Users&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-watchtower-free.">https://github.com/JohnLaw2/ln-watchtower-free.</A>
+[5] Law, &quot;Lightning Channels With Tunable Penalties&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-tunable-penalties.">https://github.com/JohnLaw2/ln-tunable-penalties.</A>
+[6] Law, &quot;Efficient Factories For Lightning Channels&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-efficient-factories.">https://github.com/JohnLaw2/ln-efficient-factories.</A>
+[7] Russell, &quot;Efficient Per-Commitment Secret Storage&quot;, available at <A HREF="https://github.com/lightning/bolts/blob/master/03-transactions.md#efficient-per-commitment-secret-storage.">https://github.com/lightning/bolts/blob/master/03-transactions.md#efficient-per-commitment-secret-storage.</A>
+[8] ZmnSCPxj, &quot;Channel Eviction From Channel Factories By New Covenant Operations&quot;, available at <A HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/003479.html.">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/003479.html.</A>
+
+Sent with [Proton Mail](<A HREF="https://proton.me/">https://proton.me/</A>) secure email.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230115/1c24b7f0/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230115/1c24b7f0/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003826.html">[Lightning-dev] A new Bitcoin implementation integrated with	Core Lightning
+</A></li>
+	<LI>Next message: <A HREF="003828.html">[Lightning-dev] Jamming mitigation call for 2023
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3827">[ date ]</a>
+              <a href="thread.html#3827">[ thread ]</a>
+              <a href="subject.html#3827">[ subject ]</a>
+              <a href="author.html#3827">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

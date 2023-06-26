@@ -1,0 +1,101 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Watchtowers cannot sweep HTLCs if	option_anchor_outputs is enabled (regression)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Watchtowers%20cannot%20sweep%20HTLCs%20if%0A%09option_anchor_outputs%20is%20enabled%20%28regression%29&In-Reply-To=%3Czfikm_OzpZcWWMOx42Vv_SRG3GkpT46IRf3aJ-jONPOYGqSmhrWsyTu2JAA_IJ0HNs4mqlUP9jfkKLa7UD_eSREk6OXBkjtZyZQGtL-YYzQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002841.html">
+   <LINK REL="Next"  HREF="002858.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Watchtowers cannot sweep HTLCs if	option_anchor_outputs is enabled (regression)</H1>
+    <B>SomberNight</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Watchtowers%20cannot%20sweep%20HTLCs%20if%0A%09option_anchor_outputs%20is%20enabled%20%28regression%29&In-Reply-To=%3Czfikm_OzpZcWWMOx42Vv_SRG3GkpT46IRf3aJ-jONPOYGqSmhrWsyTu2JAA_IJ0HNs4mqlUP9jfkKLa7UD_eSREk6OXBkjtZyZQGtL-YYzQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Watchtowers cannot sweep HTLCs if	option_anchor_outputs is enabled (regression)">somber.night at protonmail.com
+       </A><BR>
+    <I>Mon Oct 19 20:31:15 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002841.html">[Lightning-dev] Lightning-dev Digest, Vol 62, Issue 14
+</A></li>
+        <LI>Next message: <A HREF="002858.html">[Lightning-dev] CVE-2020-26895: LND Low-S Tx-Relay Standardness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2853">[ date ]</a>
+              <a href="thread.html#2853">[ thread ]</a>
+              <a href="subject.html#2853">[ subject ]</a>
+              <a href="author.html#2853">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+Recently I've been looking at refactoring some of the watchtower code in Electrum, and not wanting to have to do it again soon, was also considering how it should be adapted to option_anchor_outputs.
+
+This made me realise there does not seem to be a way for a watchtower to trustlessly sweep HTLCs if option_anchor_outputs is enabled for the channel (unlike without the option).
+
+Specifically, consider the scenario where the breacher also broadcasted second-stage HTLC transactions (HTLC-Timeout or HTLC-Success) [0], along with some old commitment tx. The watchtower would have to react within the relative timelock (CSV) and spend the output using the branch that requires revocationpubkey. Note that the watchtower cannot be given (the privkey for) revocationpubkey as then it would be able to spend the output to any address (such as their own).
+
+Without option_anchor_outputs, the Electrum watchtower is currently given a complete pre-signed transaction that spends the (revoked) second-stage output to a user wallet address whenever the commitment tx is updated off-chain.
+
+However, with option_anchor_outputs enabled, the txid of the second-stage HTLC tx can no longer be predicted (due to the use of SIGHASH_SINGLE|SIGHASH_ANYONECANPAY for the signature in the input).
+As all current sighash flags commit to the outpoint being spent (see item 4 &quot;outpoint&quot; in bip-143 [1]), this seems to imply a signature using the revocationpubkey cannot be constructed ahead of time by the client to be given to the watchtower.
+
+Even if we had sighash_noinput (or similar), some care would need to be taken, given the address-reuse between each second-stage HTLC output (and even the to_local output). Also, as noinput/anyprevout as per current proposal will only work with witness v1 outputs, the current tx template will need to be changed to use those.
+
+A watchtower that does not sweep HTLC outputs seems to be of limited utility to me: to mitigate risk, max_htlc_value_in_flight_msat would have to be set to a small fraction of the channel capacity.
+
+I was told on IRC that this regression is a &quot;clear&quot; tradeoff of using option_anchor_outputs - but as I have not seen this discussed anywhere previously and as it was not completely obvious to me at first, I just wanted to explicitly point it out for the benefit of others.
+
+ghost43
+
+
+[0]: <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/7e8c478aef0d23a445845b7d297b0e804583697c/03-transactions.md#htlc-timeout-and-htlc-success-transactions">https://github.com/lightningnetwork/lightning-rfc/blob/7e8c478aef0d23a445845b7d297b0e804583697c/03-transactions.md#htlc-timeout-and-htlc-success-transactions</A>
+[1]: <A HREF="https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification">https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002841.html">[Lightning-dev] Lightning-dev Digest, Vol 62, Issue 14
+</A></li>
+	<LI>Next message: <A HREF="002858.html">[Lightning-dev] CVE-2020-26895: LND Low-S Tx-Relay Standardness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2853">[ date ]</a>
+              <a href="thread.html#2853">[ thread ]</a>
+              <a href="subject.html#2853">[ subject ]</a>
+              <a href="author.html#2853">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

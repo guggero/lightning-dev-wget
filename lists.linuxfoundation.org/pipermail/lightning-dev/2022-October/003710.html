@@ -1,0 +1,701 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Forwardable Peerswaps: Improving Network Health Via	Pressure Release Valve
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Forwardable%20Peerswaps%3A%20Improving%20Network%20Health%20Via%0A%09Pressure%20Release%20Valve&In-Reply-To=%3C37V1o81JznM66DmRBgIp8Z1fQf5se2WoDScuKghkEmyfQ5-oKWpEdBkJMEEqPOHX3dx82eIXVl-6PaJ1vydrTGBDYWlnj4YyzbrMXNgVKe4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003708.html">
+   <LINK REL="Next"  HREF="003713.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Forwardable Peerswaps: Improving Network Health Via	Pressure Release Valve</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Forwardable%20Peerswaps%3A%20Improving%20Network%20Health%20Via%0A%09Pressure%20Release%20Valve&In-Reply-To=%3C37V1o81JznM66DmRBgIp8Z1fQf5se2WoDScuKghkEmyfQ5-oKWpEdBkJMEEqPOHX3dx82eIXVl-6PaJ1vydrTGBDYWlnj4YyzbrMXNgVKe4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Forwardable Peerswaps: Improving Network Health Via	Pressure Release Valve">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Oct  9 23:26:45 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003708.html">[Lightning-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+        <LI>Next message: <A HREF="003713.html">[Lightning-dev] Forwardable Peerswaps: Improving Network Health Via Pressure Release Valve
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3710">[ date ]</a>
+              <a href="thread.html#3710">[ thread ]</a>
+              <a href="subject.html#3710">[ subject ]</a>
+              <a href="author.html#3710">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Subject: Forwardable Peerswaps
+
+Introduction
+============
+
+[Peerswap](<A HREF="https://peerswap.dev">https://peerswap.dev</A>) is a protocol for swapping onchain funds
+and offchain in-Lightning funds.
+The intent of this protocol is to allow managing the inbound and outbound
+capacities of your node without having to perform rebalancing.
+
+Rebalancing is arguably a parasitic behavior, preying on low-fee channels
+to buy out their available capacity, then turning around to resell the
+purchased capacity at a higher fee.
+By using swap services instead, a node manager can adjust capacity and
+effectively add capacity to the network in the needed direction, without
+pushing their own lack of capacity to a victim.
+
+However, a limitation of peerswap is in its name: a peerswap is performed
+with *only* a direct peer with which you have a channel.
+
+This writeup then proposes an extension to the overall peerswap protocol
+to work around this limitation, which I call &quot;forwardable peerswap&quot;.
+
+I would like to make the claim that forwardable peerswaps solves the
+problems that the following previous proposed and deployed solutions
+attempt to fix:
+
+* Liquidity markets (liquidity ads, Lightning Pool, etc.)
+* Flow control valves (fee-based flow control / passive rebalancing,
+  `htlc_maximum_msat`, etc.)
+
+An important part of forwardable peerswaps is that it &quot;hides&quot; a
+network-health-improving operation in a &quot;channel top-up&quot; operation
+(i.e.  moving onchain funds to Lightning) that net senders will want to
+do anyway (or else they stop being net senders).
+
+Swaps vs. Splices
+=================
+
+A peerswap and a splice are very similar, in that they change the state
+of one of our local channels, adding or removing outbound capacity on
+that channel.
+
+However:
+
+* A swap will always take 2 onchain transactions:
+  * An offer transaction that has an HTLC output.
+  * A claim transaction that spends the above HTLC output.
+    This spend can take up more space, requiring a SCRIPT revelation,
+    a signature, and a preimage revelation.
+* If designed to limit onchain footprint, a splice can take just one
+  onchain transaction.
+  * This spend will take only a SCRIPT revelation and two signatures,
+    or with Taproot can be reduced to a single signature without any
+    SCRIPT/Tapscript revelation.
+
+Thus, a swap takes more onchain resources than a splice, and if we are
+considering the state of a *single* channel alone, then a splice is
+definitely more efficient.
+
+However, if a swap extends beyond one hop, then the number of channels
+affected by the swap is increased.
+And yet, no matter how many channels are affected, the swap will
+still take only two transactions.
+Thus, swapping will exceed the efficiency of splicing once three or
+more hops are considered.
+
+The problem here is that, as indicated by its name, a peerswap is
+limited to affecting only one channel, a channel between ourselves and
+one of our direct peers.
+
+Now, this limitation of peerswap is not without its justification:
+
+* A multi-hop payment is inherently less reliable, as it requires
+  multiple nodes to be continuously online at the same time.
+* Intermediate LN nodes might not want the change in channel state
+  (i.e. the multi-hop payment might worsen their channel balance).
+* Offchain-to-onchain swaps impose an economic risk on the acceptor
+  of the swap, which a peerswap can punish by closing the direct
+  channel but which a remote swap cannot punish.
+
+Peerswap User Story
+===================
+
+Suppose we have a small network of nodes A, B, and C, initially
+with channels perfectly balanced, as all things should be.
+
+Suppose however that after some time, A notices that its channel
+to B has little outbound capacity.
+
+A can then propose a peerswap between A and B: A offers some
+onchain funds in order to change the state in their channel,
+getting more outbound capacity from A.
+
+Suppose B accepts this and completes the peerswap protocol.
+
+Now B is in possession of some onchain funds.
+B then notices that its channel to C has little outbound capacity.
+
+B can then propose a peerswap between B and C: B offers some
+onchain funds in order to change the state in their channel,
+getting more outbound capacity from B.
+
+Suppose C accepts this and completes the peerswap protocol.
+
+Now what happens in sum total on the blockchain layer?
+We will see two swaps, each with 2 transactions, for a total of
+4 transactions onchain.
+
+Forwardable Peerswap
+====================
+
+To improve this, suppose we change the above user story, starting
+at this point:
+
+A can then propose a peerswap between A and B: A offers some
+onchain funds in order to change the state in their channel,
+getting more outbound capacity from A.
+
+Suppose B then looks up its channels.
+B then notices that its channel to C has little outbound capacity.
+
+B can then propose a peerswap between B and C: B offers some
+onchain funds in order to change the state in their channel,
+getting more outbound capacity from B.
+However, B is really going to act as little more than a message
+translator between A and C, forwarding peerswap messages from A
+to C and replies from C to A.
+
+Thus, A thinks it is talking to B, but really it is negotiating
+the peerswap with C, using B as a medium.
+And vice versa, C thinkgs it is talking to B, but really it is
+negotiating the peerswap with A, using B as a medium.
+
+Further, C itself could end up forwarding the peerswap to yet
+another node, which itself could forward the peerswap, etc.
+
+Yet no matter how many hops the peerswap ends up getting
+forwarded, there will only be two transactions onchain: one to
+instantiate the onchain HTLC, another to claim it.
+
+The overall changes are:
+
+* A should initially offer an onchain HTLC with a longer then
+  expected timeout, so that B (and C, D, etc.) has an
+  opportunity to consider forwarding the peerswap.
+* B should demand a longer in-Lightning HTLC timeout than what
+  A demands from it (and so on for C, D, etc.).
+
+What Peerswaps Are Forwardable?
+-------------------------------
+
+Let us be absolutely clear that there are actually two
+sub-protocols of peerswap:
+
+* Onchain-to-offchain: An initiator offers onchain funds to
+  get more outbound capacity.
+  * Net senders want to do this.
+* Offchain-to-onchain: An initiator offers offchain funds to
+  get onchain funds and more inbound capacity.
+  * Net receivers want to do this.
+
+Unfortunately, only the first sub-protocol (onchain-to-offchain)
+is actually forwardable.
+
+This is because, in the latter case, the initiator can force
+the acceptor to waste resources, by aborting the protocol after
+the acceptor has committed onchain funds to the HTLC.
+Lightning HTLCs are trivially cancellable, but onchain HTLCs
+can only be returned by waiting out the timeout and spending
+onchain fees to recover the funds.
+
+In a peerswap, the latter case is fixed by closing the channel
+with the initiator, thus punishing them for aborting the protocol.
+However, this punishment cannot be done in the forwarded case
+without massive channel closures, which turns this into an
+attack on the network.
+
+Thus, forwardable peerswaps can only be of the onchain-to-offchain
+type that are initiated by net senders.
+
+Now you might wonder, how about net receivers, how would they
+initiate forwardable peerswaps?
+As I will demonstrate in a much later section, any
+onchain-to-offchain forwardable peerswaps initiated by net
+senders will make their way to some net receiver, and thus
+net receivers need only wait and they will naturally get some
+kind of forwardable onchain-to-offchain peerswap that will
+also get them inbound capacity.
+
+Future innovations (beyond the scope of this writeup, that is
+what &quot;future&quot; means) may allow us to develop an offchain-to-onchain
+remote swap that can effectively punish the initiator if it
+does not complete the swap.
+This would allow offchain-to-onchain peerswaps to also be
+forwardable, which can only be beneficial to the network.
+This may be hopium, however.
+Nevertheless, even just forwardable onchain-to-offchain
+peerswaps are still beneficial, as we shall see in succeeding
+sections.
+
+Advantages Of Forwardable Peerswap
+==================================
+
+Compared to the current peerswap:
+
+* A forwardable peerswap can affect more than just one channel,
+  improving the blockchain space utilization.
+
+Compared to multi-hop swaps:
+
+* Each node has the opportunity to decide whether to forward
+  the peerswap or not, depending on the states of its other
+  channels.
+  If none of its other channels have a state that would be
+  improved by forwarding the peerswap, the node can end the
+  peerswap forwarding at itself and just accept the onchain
+  funds.
+* There is still the issue of multiple nodes having to
+  coordinate in order to finish the forwarding and complete
+  the protocol.
+  Hopefully, for nodes used often on the public network,
+  uptime should be high, and nodes can monitor peer uptime
+  and use this information to decide whether to forward a
+  peerswap to a particular peer or not.
+
+In particular, we can also compare forwardable peerswaps to
+standard forwardable payments on Lightning:
+
+* Forwardable payments are source routed for privacy of the
+  payer (and some minor privacy of the payee).
+  * Due to the source not having access to the private
+    information of intermediate nodes, it cannot know if the
+    intermediate nodes would like the change in capacity, or
+    if the intermediate nodes even *have* the correct capacity.
+* Forwardable peerswaps are effectively packet-routed, with
+  each node deciding where exactly to forward (or to not forward)
+  each peerswap.
+  * Each node has perfect information on which of its channels
+    would appreciate the change in capacity, and also perfect
+    information on which of its peers is online right now, who
+    has high uptime, etc.
+
+Fees And Incentives For Individual Nodes: Why Net Receivers Still Benefit
+=========================================================================
+
+A node forwarding a peerswap should not charge a fee for
+the forward.
+Any fee that the peerswap initiator may offer should be
+paid, in full, to the ultimate acceptor of the forwarded
+peerswap.
+
+Consider a node that forwards an incoming peerswap request,
+instead of accepting it itself.
+That node:
+
+* Gets *two* of their channels balanced better.
+* Does not have to perform any onchain activity.
+
+In short, it gets a free rebalance.
+
+That is enough incentive, as the intermediate node can
+expect more future income from having two channels
+with improved balance, and does not have to spend anything
+on onchain activity.
+
+The forwarding node will, if it is rational, forward it
+over a channel that lacks outgoing capacity.
+This translates to forwarding it to a next hop that has
+low incoming capacity.
+
+If there are net senders and net receivers in the network,
+then the senders will deplete their on-Lightning funds on
+all their channels.
+
+If a net sender depletes their on-Lightning funds:
+
+* If the net sender can no longer acquire funds, they
+  stop being a net sender and we can ignore them.
+* If the net sender can acquire funds and get them on
+  Lightning, they stop being a net sender and end up
+  being neutral to the network, since the funds they
+  can send out must be less than or equal to the funds
+  they receive.
+  They stop being a net sender and we can ignore them.
+* If the net sender can acquire funds and get them
+  onchain, they can use the onchain funds ot initiate
+  onchain-to-offchain peerswaps.
+
+If *all* net senders have depleted their funds and
+can no longer get funds from either Lightning or
+onchain (i.e. nobody starts a forwardable peerswap),
+then net receivers will not receive more funds anymore
+anyway (nobody is getting more funds to send) and the
+fact that they have insufficient inbound capacity is
+immaterial, so the fact that they cannot initiate a
+forwardable peerswap is not a problem.
+
+Now let us focus on a net receiver.
+A net receiver is one where the payment flows are, in
+sum, towards them.
+This implies that, without further channel creations,
+the inbound capacity they have will be depleted.
+This also implies that they have much too large
+outbound capacity, due to how channels work.
+A net receiver is therefore a node with too much outbound
+capacity.
+
+Suppose net sender uses a peerswap that can be
+forwarded.
+Then its direct peer has an incentive to look at its
+other channels to forward the peerswap to, so that it
+gets two channels rebalanced for free without having
+to be responsible for an onchain UTXO.
+
+Now, suppose the forwardable peerswap reaches a node
+who finds that it cannot forward the onchain-to-offchain
+peerswap anymore.
+This would occur if the node has too much outbound
+capacity, and cannot add more outbound capacity with
+its peers.
+
+Now recall that a node with too much outbound capacity
+is a node that has too little inbound capacity.
+And a node with too little inbound capacity is a net
+receiver.
+
+Thus, forwardable peerswaps will start at net senders
+and will be naturally pathed to terminate at net
+receivers.
+This is the advantage of forwardable peerswaps being
+packet-switched instead of source-routed.
+
+(Yes, problems and other things can occur along the
+way and the real world and so on, but considered
+in an ideal world, forwardable onchain-to-offchain
+peerswaps will naturally path from net senders to
+net receivers.)
+
+Comparison To &quot;Just Make A Channel&quot;
+===================================
+
+Suppose a net sender just looks at it history of
+payments and makes a direct channel to a node that it
+usually pays to anyway, using its cold-storaged onchain
+UTXO to fund the new channel.
+
+This heuristic would probably work, but note that
+just because a net sender is paying a node, does not
+mean that *that* node is itself a net receiver!
+
+Merchants have to pay:
+
+* Suppliers of raw materials.
+* Employees.
+* Shareholders and owners of the business.
+
+In a future where everyone gets paid over Lightning,
+it is likely that merchants you pay to may themselves
+not even be net receivers of money over Lightning.
+
+In that case, the &quot;just make a channel&quot; technique will
+cause capital to be locked inefficiently, since the
+merchant that the net sender is paying is not really a
+net receiver, and the added capacity towards them would
+be underutilized.
+
+A forwardable peerswap, because of the incentive of each
+individual hop, will eventually locate the *actual*
+net receivers and thus forward the needed capacity
+adjustments to those receivers, even if the net sender
+does not know who the *real* net receivers on the network
+are.
+
+Thus, forwardable peerswaps will allocate capital more
+efficiently, simply by following the incentives of each
+individual public routing node.
+
+Further, if the net sender regularly uses unpublished
+channels, then the capacity they add to the merchant
+they usually pay is not even utilizable by the rest
+of the network.
+However, if a forwardable peerswap is used, even if
+it starts at an unpublished channel, it can be routed
+out over the public network and thus have the capacity
+utilized by the rest of the public network.
+
+If the net receivers of the network are *also* using
+unpublished channels, then the forwardable peerswap
+can also still reach them, since their direct peer
+still knows about them and can decide to forward the
+peerswap to them.
+Thus, forwardable peerswaps can adapt to a world where
+unpublished channels have not been delere sufficiently.
+
+On Liquidity Markets
+--------------------
+
+There are various liquidity markets already deployed
+or being developed.
+
+These liquidity markets are intended to make the
+&quot;Just Make A Channel&quot; strategy be guided better, by
+having net receivers somehow directly contact net
+senders so they can make direct channels and get
+the needed capacity.
+
+However, this often means that additional information
+must be broadcast and/or additional resources kept
+in reserve.
+
+* With e.g. Lightning Pool, net receivers must provide
+  their contact information and inbound capacity needs
+  to a centralized server, which can be attacked or
+  taken over to filter out particular, identified net
+  receivers (i.e. censorship).
+* With e.g. liquidity ads, there is no central server,
+  but all forwarding nodes have to broadcast their
+  liquidity ads, and all forwarding nodes have to keep
+  some funds in onchain reserve, in case a new net
+  receiver wants to buy liquidity from them.
+
+Finally, liquidity markets are often targeted at getting
+net receivers in touch with forwarding nodes.
+But ideally, forwarding nodes have an almost net zero
+flow on the network, and what needs to really be matched
+up are net senders to net receivers.
+Presumably forwarding nodes that participate in liquidity
+markets are hoping that net senders will randomly build
+channels to them, but that is not assured and a net
+receiver that matches up with a forwarding node may find
+that the forwarding node has actually oversold its inbound
+capacity.
+What needs to *actually* be done is match up net receivers
+to net senders.
+
+In contrast:
+
+* In forwardable peerswaps, nobody knows who the
+  net receivers are.
+  A direct peer of a net receiver might forward a
+  peerswap to them, but if the net receiver has
+  other channels, that peer cannot be sure it
+  terminates to them or is further forwarded.
+  Thus, not even direct peers of a net receiver
+  can learn that they *are* a net receiver.
+* Even if a direct peer of the net receiver somehow
+  knows them for a net receiver, they have
+  disincentive to &quot;filter out&quot; the net receiver: they
+  would not earn fees from the channel with the net
+  receiver.
+  If they wanted to impede the net receiver from
+  being paid, they should have just closed the
+  channel with them instead of maintaining it.
+  But the net receiver can then go connect to
+  some other node that still supports forwardable
+  peerswaps, because decentralization, and thus
+  cannot be censored without a network split.
+* Purely forwarding nodes never need to maintain
+  any onchain funds --- they will just forward
+  peerswaps through them and gain the benefit of
+  having two channels better balanced without
+  having to touch onchain funds.
+  This is unlike liquidity ads, which requires
+  that liquidity ad-broadcasting forwarding
+  nodes keep a stock of onchain funds to service
+  dual-funding requests.
+  This lets forwarding nodes maximize their
+  on-Lightning funds for more earnings, without
+  having to speculatively reserve some funds
+  onchain, as in the liquidity ads case.
+* Forwardable peerswaps, due to being packet-switched,
+  will naturally gravitate from net senders to net
+  receivers, with almost-net-zero forwarding nodes
+  naturally pathing them from the former to the
+  latter.
+  This effectively forms a matchmaking between them.
+  While forwarding nodes want to be mildly net
+  receivers, the expected earnings are tiny and
+  it would be likely a long time before their inbound
+  capacity is depleted, and if so, they can then
+  terminate a received forwardable peerswap at
+  themselves, just like any other net receiver.
+
+Comparison to &quot;Rebalance Rebalance Rebalance&quot;
+=============================================
+
+Currently, forwarding nodes manage their balances via
+rebalancing, i.e. making a self-payment, from a channel
+with high outgoing capacity to a channel with low
+outgoing capacity.
+
+Because the fees they earn on Lightning are very small,
+such forwarding nodes will select rebalancing routes with
+low fees, and will have strict budgets on how much they
+are willing to spend on rebalancing.
+
+What then happens is that random altruists who set their
+fees to very low, or even zero, will find that forwarding
+nodes will keep rebalancing via their channels.
+As multiple forwarding nodes vie for the limited amount of
+capacity on such low-fee channels, by the time an actual
+economic-activity non-rebalancing payment reaches one of
+those altruist nodes, the available balance towards
+net receivers has been depleted, having been transferred
+to rebalancing forwarders, leading to payment failure and
+longer payment settlement times.
+
+Thus, rebalancing forwarders who want to turn a profit,
+end up (deliberately or not) exploiting altruists who
+are setting their fees too low.
+
+(Though since altruists will often say that they are doing
+this &quot;to help the network&quot;, we should note that the
+profiteering forwarding nodes *are* component parts of the
+network, so the altruists have in fact achieved their stated
+goal.
+It would be different if the actual goal was &quot;to help
+payers pay cheaply&quot;, which is not achieved.)
+
+Now consider a world where forwardable peerswaps is
+widely deployed on the network, and widely initiated by
+net senders to top up their channels.
+
+In that world, if a forwarding node receives a forwardable
+peerswap, they can rebalance two of their channels favorably
+without spending anything.
+
+A self-paying rebalance would still need to pay out fees.
+Even if a rebalancer is exploiting a zero-fee-routing
+node, it is likely that one or more of the nodes between
+it and the exploited altruist will charge a non-zero fee.
+Thus, there will still be a cost to a self-paying rebalance.
+In contrast, accepting and forwarding a forwardable peerswap
+would gain the same benefit as a successful rebalance (fix
+the balance of two channels), but at zero cost to the
+forwarder.
+
+A self-paying rebalance does have the advantage that it
+can be performed at any time, whereas forwarding a
+forwardable peerswap requires waiting for an opportunity
+to do so.
+But if forwardable peerswaps are widely deployed on the
+network and happen often enough, then it may be sufficient
+that forwarders find that active self-paying rebalancing
+is no longer sufficiently advantageous, and that behavior
+is therefore suppressed.
+
+This should then lead to a world where the exploitation
+of those altruists charging low fees for their capacity is
+greatly reduced, since active self-paying rebalancing is
+no longer particularly needed by profiteering forwarding
+nodes.
+
+Comparison To &quot;Flow Valves&quot;
+===========================
+
+Due to channel depletion causing payment delays, there
+are proposals for some kind of &quot;flow valve&quot; to modulate
+payment flows on the Lightning Network.
+
+* Fee-based valves broadcast feerates to signal how much
+  outbound capacity is in a particular direction, to
+  entice users to the channel via low fees, or drive
+  away users (and reduce flow) via high fees.
+* `htlc_maximum_msat` valves broadcast changes to
+  that advertised parameter to change how much payment
+  flow goes through a channel.
+  * This is unfortunately broken as users can split
+    their payments (or self-paying rebalances, for that
+    matter) to below the `htlc_maximum_msat`, and thus
+    get around the flow valve.
+    This can be fixed by using a sufficiently high
+    non-zero base fee, but that is arguably switching
+    over to a fee-based flow valve.
+
+In both cases, flow valves not only have to be
+widely broadcast across the network (increasing
+bandwidth consumption) but it also leaks information
+about the capacity of channels of the forwarding nodes,
+and thus indirectly leaks information about who net
+senders and net receivers are (by observing which flow
+valves are the more limiting).
+
+But more importantly, flow valves increase the friction
+of using Lightning Network.
+If the friction is high enough, users will switch to
+another payment network.
+
+Rather than install flow valves (which would slow down
+LN payment velocity) we just make forwardable peerswaps
+as a pressure release valve, releasing pent-up
+pressure-to-pay by diverting it on a swap over the base
+Bitcoin blockchain.
+
+This effectively admits that we *do* need to switch
+over to another payment network once Lightning starts
+getting overloaded.
+Basically, a forwardable peerswap is a payment, from
+some net sender to some net receiver, over the
+Bitcoin blockchain (i.e. the &quot;another payment network&quot;)
+rather than over Lightning.
+
+However:
+
+* A net sender may be matched up to an arbitary net
+  receiver that is physically nearby on the Lightning
+  Network, but which the net sender does not, in fact,
+  have direct economic ties with.
+  Thus, onchain surveillors cannot derive any information
+  from this onchain payment, other than &quot;looks like the
+  Lightning Network is busy today&quot;.
+* A succesful forwardable peerswap is a pressure release
+  valve, which resets the state of multiple channels on
+  the network, from net senders to net receivers, and
+  thus enabling further payment flows involving them
+  and their neighborhood.
+  There is thus no need for a flow valve.
+* There is no need to broadcast anything, and forwarding
+  nodes do not need to leak their channel balances over
+  the gossip network.
+* Users are already conditioned to accept that onchain
+  activity is costly, but have been convinced that
+  Lightning is cheaper and faster.
+  If flow valves are used, they may cause Lightning to
+  work slower and more expensively, thus breaking that
+  expectation.
+  But if forwardable peerswap is used instead, users
+  who use onchain funds to &quot;top up&quot; their channel end
+  up initiating a forwardable peerswap that keeps the
+  rest of the network cheap and fast, while accepting
+  that the onchain activity involved in this will be
+  costly and slow since that is what onchain activity
+  inherently is.
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003708.html">[Lightning-dev] Taro: A Taproot Asset Representation Overlay
+</A></li>
+	<LI>Next message: <A HREF="003713.html">[Lightning-dev] Forwardable Peerswaps: Improving Network Health Via Pressure Release Valve
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3710">[ date ]</a>
+              <a href="thread.html#3710">[ thread ]</a>
+              <a href="subject.html#3710">[ subject ]</a>
+              <a href="author.html#3710">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal for Stuckless Payment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20Stuckless%20Payment&In-Reply-To=%3CCACdvm3MSL0VoaHP1P5C8Dh14du6b19dGzeSaf4oV-ucjwFrcCw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002030.html">
+   <LINK REL="Next"  HREF="002039.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal for Stuckless Payment</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%20for%20Stuckless%20Payment&In-Reply-To=%3CCACdvm3MSL0VoaHP1P5C8Dh14du6b19dGzeSaf4oV-ucjwFrcCw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Proposal for Stuckless Payment">bastien at acinq.fr
+       </A><BR>
+    <I>Tue Jun 25 16:46:38 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002030.html">[Lightning-dev] Proposal for Stuckless Payment
+</A></li>
+        <LI>Next message: <A HREF="002039.html">[Lightning-dev] Proposal for Stuckless Payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2034">[ date ]</a>
+              <a href="thread.html#2034">[ thread ]</a>
+              <a href="subject.html#2034">[ subject ]</a>
+              <a href="author.html#2034">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>This is a very good proposal, thanks Hiroki for all those details it helped
+me learn a lot.
+
+If I'm not mistaken, <A HREF="https://eprint.iacr.org/2018/472.pdf">https://eprint.iacr.org/2018/472.pdf</A> has shown that we
+MUST add another round
+of communication if we want to avoid the wormhole attacks (and thus
+decorrelate payments). While
+I agree that this degrades latency, if it provides a way to &quot;cancel&quot; stuck
+payments and retry I think it's
+worth it. And I really like the option to make multiple tries in parallel
+as you suggest, which would help
+with latency (if you have enough outbound capacity).
+
+I agree with ZmnSCPxj that it would be good to keep payer anonymity, and I
+may have a solution to
+provide this. As ZmnSCPxj explains, the loss of payer anonymity is due to
+the ACK message traveling
+via the same route (D -&gt; C -&gt; B -&gt; A).
+
+However, there are two interesting things to note about the ACK message
+(unless I missed something):
+
+   1. It doesn't need any data from D
+   2. It isn't tied to channels and only A needs to receive it (not
+   intermediate nodes)
+   3. It could use a smaller onion packet than the *add_htlc* onion (fixed
+   size but smaller than 1300 bytes)
+
+Given 1., the ACK onion packet can be constructed by A. Given 2., it can
+use a different route than the
+*add_htlc* onion packet.
+
+A can select another route (e.g. D -&gt; E -&gt; F -&gt; A) and can create the ACK
+onion packet during the setup phase.
+A can then embed this ACK packet inside the last hop payload of the
+*add_htlc* onion packet.
+When D receives it, it simply sends that onion to the indicated recipient
+(E) which will unwrap and forward.
+This way D doesn't learn anything about A, and intermediate nodes aren't
+included in the ACK route so
+they don't learn anything either.
+
+Note that nodes in the ACK message route don't have an incentive to forward
+ACK messages (apart from
+participating honestly in the network). But even if a malicious node drops
+an ACK message, it just ends up
+being a stuck payment that you can safely retry since you haven't shared
+the keys yet.
+
+And if A doesn't care about anonymity at all, A can provide its information
+in the onion to let D directly send it
+the ACK. I don't know if we want to provide that option or not, but at
+least that's possible to do.
+
+Would that be a satisfactory solution to maintain the payer anonymity
+property?
+
+Cheers,
+Bastien
+
+Le mar. 25 juin 2019 &#224; 12:16, ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning Hiroki,
+</I>&gt;<i>
+</I>&gt;<i> Thank you for this.
+</I>&gt;<i> It seems a good solution.
+</I>&gt;<i> And, it seems, yet another reason to move to payment point / scalar from
+</I>&gt;<i> payment hash / preimage.
+</I>&gt;<i>
+</I>&gt;<i> As I understand it, the `y0+y1+...` sums are also the blinding tweaks used
+</I>&gt;<i> for payment decorrelation.
+</I>&gt;<i> My understanding, they will be sent in onion packet.
+</I>&gt;<i>
+</I>&gt;<i> &gt; Pre-Settlement: Add this new phase after the Update phase. Any route can
+</I>&gt;<i> be used.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;         A --&gt; * --&gt; * --&gt; D        # key (`y0+y1+y2`)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;         A &lt;-- * &lt;-- * &lt;-- D        # PoP (`z`)
+</I>&gt;<i>
+</I>&gt;<i> My poor suggestion, to use same route -&gt;B-&gt;C-&gt; and &lt;-B&lt;-C&lt;-.
+</I>&gt;<i> Currently, destination D does not know who is payer A.
+</I>&gt;<i> So my opinion, it is best to retain this property of &quot;D does not know
+</I>&gt;<i> payer A&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Of course, in practice in many case, D knows A already, for example for
+</I>&gt;<i> delivery address of product.
+</I>&gt;<i> But anonymity should be preserved still.
+</I>&gt;<i> For example, perhaps I wish to deliver product to some other entity other
+</I>&gt;<i> than me, and wish to remain anonymous to do so.
+</I>&gt;<i>
+</I>&gt;<i> However, I seem, the detail below, means we should use the same route:
+</I>&gt;<i>
+</I>&gt;<i> &gt; At the end of this phase, we require the payee return the ACK to the
+</I>&gt;<i> payer to notify the completion of this phase. It must be guaranteed that
+</I>&gt;<i> the payee himself returns it. This can be achieved by reversing the route
+</I>&gt;<i> and wrapping the ACK in the onion sequentially, as the `reason` field of
+</I>&gt;<i> the `update_fail_htlc` in BOLT 1.x.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; These modifications add the cost of three new messages (ACK, key, PoP),
+</I>&gt;<i> but it is only three (unaccompanied by other messages). These may also
+</I>&gt;<i> reduce other preventive messages.
+</I>&gt;<i>
+</I>&gt;<i> The added communication round may allow intermediate node to guess the
+</I>&gt;<i> payer.
+</I>&gt;<i>
+</I>&gt;<i> Already in current network, intermediate node can guess the distance to
+</I>&gt;<i> payee.
+</I>&gt;<i> Distance to payee can be guessed from timelocks.
+</I>&gt;<i> Also, distance to payee can be guessed by time from `update_add_htlc` to
+</I>&gt;<i> time of `update_fulfill_htlc`/`update_fail_htlc`.
+</I>&gt;<i>
+</I>&gt;<i> However, there is no information that intermediate node can use to guess
+</I>&gt;<i> distance to payer.
+</I>&gt;<i>
+</I>&gt;<i> With addition of new ACK-key turnaround, intermediate node can measure
+</I>&gt;<i> time from send of ACK to receive of key, and guess its distance to payer.
+</I>&gt;<i>
+</I>&gt;<i> I am uncertain how to weigh this.
+</I>&gt;<i> I believe, this idea is very good and stuckless is important feature.
+</I>&gt;<i> Getting some information about the payer may allow attempts at censorship,
+</I>&gt;<i> however.
+</I>&gt;<i> But maybe the information leaked is not significant enough in practice.
+</I>&gt;<i>
+</I>&gt;<i> Another issue is the added latency of payments.
+</I>&gt;<i> Already, because of cooperative signing by use of MuSig, we know that
+</I>&gt;<i> latency of payment point / scalar is worsened.
+</I>&gt;<i> But use of ACK-key turnaround increases latency further.
+</I>&gt;<i> Of course, we should consider, most of latency is because of retries.
+</I>&gt;<i> With &quot;stuckless&quot; payment, we can (if we have enough money) make multiple
+</I>&gt;<i> tries in parallel.
+</I>&gt;<i> So possibly, this may reduce latency &quot;in the large&quot; at the cost of
+</I>&gt;<i> increasing latency &quot;in the small&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Another thought, is that this may also solve the &quot;American Call Option&quot;
+</I>&gt;<i> problem.
+</I>&gt;<i> In this case, the key at the final step is the sum of the payer key and
+</I>&gt;<i> the exchange key (`y0 + y1 + y2 + z` where payer knows `y0 + y1 + y2` and
+</I>&gt;<i> exchange knows `z`).
+</I>&gt;<i> Then intermediate nodes are unaware that a cross-currency exchange is
+</I>&gt;<i> involved.
+</I>&gt;<i> This thought, I will need to consider further for correctness.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190625/28d783f9/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190625/28d783f9/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002030.html">[Lightning-dev] Proposal for Stuckless Payment
+</A></li>
+	<LI>Next message: <A HREF="002039.html">[Lightning-dev] Proposal for Stuckless Payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2034">[ date ]</a>
+              <a href="thread.html#2034">[ thread ]</a>
+              <a href="subject.html#2034">[ subject ]</a>
+              <a href="author.html#2034">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

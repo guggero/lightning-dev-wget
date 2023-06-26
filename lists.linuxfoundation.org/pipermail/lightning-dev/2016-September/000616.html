@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Testing%20a%20Flare-like%20routing%20implementation%20on%0A%202500%20AWS%20nodes&In-Reply-To=%3CCAO3Pvs-odduQRDrbRP6Bum-bfmqUaseFoAgQa-2LqY5xha5kbg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000615.html">
+   <LINK REL="Next"  HREF="000617.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Testing%20a%20Flare-like%20routing%20implementation%20on%0A%202500%20AWS%20nodes&In-Reply-To=%3CCAO3Pvs-odduQRDrbRP6Bum-bfmqUaseFoAgQa-2LqY5xha5kbg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes">laolu32 at gmail.com
+       </A><BR>
+    <I>Tue Sep 20 18:47:25 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000615.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+</A></li>
+        <LI>Next message: <A HREF="000617.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#616">[ date ]</a>
+              <a href="thread.html#616">[ thread ]</a>
+              <a href="subject.html#616">[ subject ]</a>
+              <a href="author.html#616">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, y'all
+
+Excellent work!!
+
+As you noted our, Flare paper as currently written only includes a series of
+simulations of various topologies/parameters which are then extrapolated to
+larger network sizes. The logical next step would be to deploy a
+proto-implementation within a live testbed with real latencies, preferential
+attachment, etc. I'm thrilled that y'all went ahead getting your hands dirty
+to gauge the real-word feasibility of our scheme.
+
+&gt;<i> In the paper, an assumption is made that &quot;there exists a way for any two
+</I>&gt;<i> nodes in LN to communicate with each other, perhaps with some prior setup
+</I>&gt;<i> (such as a distributed hashtable overlay maintained among LN nodes that
+</I>&gt;<i> would store mapping of node identifiers to their current IP addresses)&quot;.
+</I>
+In reality we envisioned that a DHT would acts as a substitute for a pure
+broadcast network, rather than to allow individual nodes to communicate with
+each other. At the time of the writing of the paper, we envisioned that
+information such as the current onion key for each node, identity keys,
+channel proofs, etc would potentially be stored within a DHT.
+
+For communications, we referenced that something akin to HORNET could be
+used to allow nodes to communicate with each other without necessarily
+knowing the IP address of each node or a node's selected beacons. As y'all
+noted, in this scenario, nodes would only be able to directly communicate
+with nodes that they have a direct path to.
+
+HORNET was especially attractive as as after its setup phase, there exists a
+bi-directional communication link between two nodes. This link could either
+be used in a request/response manner to notify a node that it's a selected
+beacon and/or to fetch routing tables, or in a more streaming manner between
+the sender/receiver to negotiate the details of further payments (additional
+R-Hashes, etc) once the link was established. As a substitute for the first
+use-case (request/response) the latest design of our Sphinx construction
+could be used, with the requesting node providing the backwards path within
+the e2e payload. It's worth noting that this substitute reveals the entire
+path to the responding node, while construction based on HORNET still
+obfuscates the backwards route from the target node. Additionally with
+HORNET, the backwards route can be distinct from the forwards route.
+
+&gt;<i> We only focused on static ranking (finding a route formed of open channels
+</I>&gt;<i> between two given nodes), so it is very possible (probable?) that a route
+</I>is
+&gt;<i> not actually usable because the channels are not balanced. Basically we
+</I>made
+&gt;<i> the assumption that the network graph is undirected, which is not true
+</I>and is a
+&gt;<i> pretty strong assumption.
+</I>
+Indeed, as channels themselves have fixed capacities, proper path finding
+stems beyond simply &quot;shortest path&quot;, and begins to wonder into the realm of
+network flow theory[1]. Assuming nodes are aware of the available channel
+capacity and current fee advertised by the each node, then optimal path
+(cheapest) path can be discovered by solving the for the min-cost flow[2]
+within the node's subset of the network graph. Additionally, the cost
+function for each edge within the graph can also factor in the absolute HTLC
+time delay between each node.
+
+On a related note, in the past Tadge has suggested that the available
+channel capacity that a nodes wants to advertise should be an input to a
+function which derives the advertised fee across the link. One potential
+strategy would be to have the advertised fee be inversely proportional to a
+metric which captures how balanced the channel is. So if a channel was
+mostly unbalanced to in one direction, then the advertised fee in that
+direction would be relatively &quot;high&quot;, while in the opposite (balancing flow)
+direction the advertised fee would be proportionally lower. Fully depleted
+channels (which should only exist right after channel creation, with no
+committed state transitions) would then advertise a fee of &quot;infinity&quot;
+allowing nodes to update their path finding accordingly (something Rusty
+pointed out the other day). Following down this line of thinking further
+beings to invoke the concept of &quot;negative fees&quot; which have been discussed a
+bit informally in the past.
+
+&gt;<i> 3) from a control server, we link nodes to each other following a given
+</I>&gt;<i> graph using json-rpc commands
+</I>
+Was the capacity of the channels created uniform? Or were the channel values
+uniformly distributed? Or perhaps drawn from a particular distribution?
+
+&gt;<i> 5) pick 1000 random routes (random sender, random receiver), and for each
+</I>&gt;<i> route using json-rpc we (a) asks the receiver for a &quot;payment request&quot; (H +
+</I>&gt;<i> routing_table) and then (b) asks the sender to find a route for this
+</I>payment
+&gt;<i> request (without actually making a payment).
+</I>
+Similar to the question above, how were the satoshis requested within the
+&quot;payment request&quot; distributed?
+
+-- Laolu
+
+[1]: <A HREF="https://en.wikipedia.org/wiki/Flow_network">https://en.wikipedia.org/wiki/Flow_network</A>
+[2]: <A HREF="https://en.wikipedia.org/wiki/Minimum-cost_flow_problem">https://en.wikipedia.org/wiki/Minimum-cost_flow_problem</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160920/de0e3f77/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160920/de0e3f77/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000615.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+</A></li>
+	<LI>Next message: <A HREF="000617.html">[Lightning-dev] Testing a Flare-like routing implementation on 2500 AWS nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#616">[ date ]</a>
+              <a href="thread.html#616">[ thread ]</a>
+              <a href="subject.html#616">[ subject ]</a>
+              <a href="author.html#616">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

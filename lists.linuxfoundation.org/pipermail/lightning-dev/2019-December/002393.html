@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Pay-to-Open and UX improvements
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pay-to-Open%20and%20UX%20improvements&In-Reply-To=%3CCALZpt%2BF%3D8hVSh_-qC1Fj0A0pQkoBN3Q0Lmp3%3DdPayEJA9KZSnA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002391.html">
+   <LINK REL="Next"  HREF="002394.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Pay-to-Open and UX improvements</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pay-to-Open%20and%20UX%20improvements&In-Reply-To=%3CCALZpt%2BF%3D8hVSh_-qC1Fj0A0pQkoBN3Q0Lmp3%3DdPayEJA9KZSnA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Pay-to-Open and UX improvements">antoine.riard at gmail.com
+       </A><BR>
+    <I>Wed Dec 18 04:49:35 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002391.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+        <LI>Next message: <A HREF="002394.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2393">[ date ]</a>
+              <a href="thread.html#2393">[ thread ]</a>
+              <a href="subject.html#2393">[ subject ]</a>
+              <a href="author.html#2393">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Bastien,
+
+The use case you're describing strikes me as similar to a slashing protocol
+for a LN node and a watchtower, i.e punishing
+a lazy watchtower for not broadcasting a penalty tx on remote revoked
+state. In both case you want &quot;if A don't do X
+unlock some funds for B&quot;.
+
+Here a rough slashing protocol I've sketched out to someone else off-list,
+it may work for you use case if you replace the penalty tx
+by the funding transaction as a way for the trusted channel funder to clear
+his liability. Though you will need onchain interactivity
+before the fact but you may be able to reuse slashing outpoint for multiple
+channel funding.
+
+Slashing Protocol
+----------------------
+
+Alice and Bob lock fund in channel outpoint X. They issue commitment tx N.
+Will the accountable watchtower locks fund
+in a 2-of-2 slashing outpoint Y with Bob the client.
+
+When Alice and Bob update channels to N', Bob and Will use some output from
+commitment N (like upcoming anchor output)
+to create an accountable tx M. M is paying to Bob after timelock+Bob sig or
+is paying to transaction success_penalty P
+with Will sig + Bob sig. Success_penalty P will have 2 inputs, one from M
+and from J the justice tx than Bob has given
+to Will. J is spending Alice's revoked commitment N.
+
+So this slashing protocol should avoid Bob making false claim, because you
+need a revoked broadcast to enable the claim
+and at same time we use a justice tx output as a proof than Will have done
+its monitoring+punishment job. Will shouldn't
+learn commitment balance if there is no channel breach and Alice and Bob
+wouldn't be able to collude against Will, if
+watchtower have a penalty tx on Alice non-revoked commitment tx, that's her
+concern.
+
+So topology would be:
+
+                                                       to_Bob
+                                                     /
+          X  &lt;---------- N   &lt;--------- J
+                                ^                   ^
+                                   \                   \
+            Y &lt;---------------  M  &lt;---------- P - to_Will
+                                       \
+                                        to_Bob
+
+
+Main idea of the protocol is to use transactions topology of a first
+contract as proofs for a subsidiary contract.
+
+I'm quite sure it's insecure, just quick ideas, any thoughts ?
+
+(but would be really cool to have one accountable protocol to both
+watchtower and pay-to-open use cases to save
+engineering costs)
+
+Cheers,
+
+Antoine
+
+
+Le mar. 17 d&#233;c. 2019 &#224; 16:08, Ethan Heilman &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">eth3rs at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> From where I'm sitting the fact that OP_CAT allows people to build
+</I>&gt;<i> more powerful constructions in Bitcoin without introducing additional
+</I>&gt;<i> complexity at the consensus layer is a positive not a negative. Using
+</I>&gt;<i> OP_CAT or OP_SUBSTRING to enforce ECDSA nonce reuse is a very powerful
+</I>&gt;<i> protocol tool for enforcing fairness in layer two protocols.
+</I>&gt;<i>
+</I>&gt;<i> On Tue, Dec 17, 2019 at 11:27 AM ZmnSCPxj via Lightning-dev
+</I>&gt;<i> &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Good morning t-bast,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Further, we can enforce that RBF is signalled for every spend of the
+</I>&gt;<i> output by:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;     &lt;0&gt; OP_CHECKSEQUENCEVERIFY OP_DROP &lt;R&gt; OP_SWAP OP_CAT &lt;ACINQ&gt;
+</I>&gt;<i> OP_CHECKSIG
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Requiring that RBF is signalled gives a little more assurance.
+</I>&gt;<i> &gt; Suppose ACINQ becomes evil and double-spends the output.
+</I>&gt;<i> &gt; The transaction that is posted in the mempool must be marked by RBF due
+</I>&gt;<i> to the `OP_CHECKSEQUENCEVERIFY` opcode, since `nSequence` also doubles as
+</I>&gt;<i> RBF opt-in.
+</I>&gt;<i> &gt; Then anyone who notices the double-spend can RBF the double-spending
+</I>&gt;<i> transaction to themselves rather than ACINQ.
+</I>&gt;<i> &gt; This also further publishes ACINQ private key, until the winning
+</I>&gt;<i> transaction has an `OP_RETURN` output that pays the entire value as fees
+</I>&gt;<i> and nobody can RBF it further.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; This is a minor increase in the assurability of the construction, by
+</I>&gt;<i> making any output that is double-spent directly revocable in favor of the
+</I>&gt;<i> miners.
+</I>&gt;<i> &gt; Again, it requires `OP_CAT`, which is a very dangerous opcode, allowing
+</I>&gt;<i> such powerful constructions.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Regards,
+</I>&gt;<i> &gt; ZmnSCPxj
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Thanks a lot David for the suggestion and pointers, that's a really
+</I>&gt;<i> interesting solution.
+</I>&gt;<i> &gt; &gt; I will dive into that in-depth, it could be very useful for many
+</I>&gt;<i> layer-2 constructions.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Thanks ZmnSCPxj as well for the quick feedback and the `OP_CAT`
+</I>&gt;<i> construction,
+</I>&gt;<i> &gt; &gt; a lot of cool tricks coming up once (if?) we have such tools in the
+</I>&gt;<i> future ;)
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Le mar. 17 d&#233;c. 2019 &#224; 16:14, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; a
+</I>&gt;<i> &#233;crit :
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Good morning David, t-bast, and all,
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; &gt; I'm not aware of any way to currently force single-show signatures
+</I>&gt;<i> in
+</I>&gt;<i> &gt; &gt; &gt; &gt; Bitcoin, so this is pretty theoretical. Also, single-show
+</I>&gt;<i> signatures
+</I>&gt;<i> &gt; &gt; &gt; &gt; add a lot of fragility to any setup and make useful features like
+</I>&gt;<i> RBF
+</I>&gt;<i> &gt; &gt; &gt; &gt; fee bumping unavailable.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; With `OP_CAT`, we can enforce that a particular `R` is used, which
+</I>&gt;<i> allows to implement single-show signatures.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;     # Assuming signatures are the concatenation of (R,s)
+</I>&gt;<i> &gt; &gt; &gt;     &lt;R&gt; OP_SWAP OP_CAT &lt;ACINQ&gt; OP_CHECKSIG
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; The above would then feed `s` only on the witness stack.
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191217/52ad7f11/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191217/52ad7f11/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002391.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+	<LI>Next message: <A HREF="002394.html">[Lightning-dev] Pay-to-Open and UX improvements
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2393">[ date ]</a>
+              <a href="thread.html#2393">[ thread ]</a>
+              <a href="subject.html#2393">[ subject ]</a>
+              <a href="author.html#2393">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

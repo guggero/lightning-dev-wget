@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Data piggybacking within the payment_preimage for offline payments in wallets
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Data%20piggybacking%20within%20the%20payment_preimage%20for%0A%20offline%20payments%20in%20wallets&In-Reply-To=%3C98D3094C-D31D-4CFD-B345-7279513115F9%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001742.html">
+   <LINK REL="Next"  HREF="001744.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Data piggybacking within the payment_preimage for offline payments in wallets</H1>
+    <B>JOSE FEMENIAS CA&#209;UELO</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Data%20piggybacking%20within%20the%20payment_preimage%20for%0A%20offline%20payments%20in%20wallets&In-Reply-To=%3C98D3094C-D31D-4CFD-B345-7279513115F9%40gmail.com%3E"
+       TITLE="[Lightning-dev] Data piggybacking within the payment_preimage for offline payments in wallets">jose.femenias at gmail.com
+       </A><BR>
+    <I>Sat Dec 15 11:53:12 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001742.html">[Lightning-dev] Minisketch and lightning gossip
+</A></li>
+        <LI>Next message: <A HREF="001744.html">[Lightning-dev] Proposal: Unspecified BOLT Protocol Extensions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1743">[ date ]</a>
+              <a href="thread.html#1743">[ thread ]</a>
+              <a href="subject.html#1743">[ subject ]</a>
+              <a href="author.html#1743">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi, I'd like to share an idea to piggyback information within the payment_preimage. (The intended use case is for offline payments, but I suppose there could be more). 
+AFIK the Bolt documentation doesn't have any provision for a scheme like this, but I am am still trying to digest all the Bolt documentation, so maybe I am missing something.
+
+Also, maybe there is some functional problem or major security concern that makes this scheme unfeasible, so please correct me if I'm wrong. 
+
+One paragraph description: 
+
+An offline device and a online LN Node share a common secret seed, so they can both independently calculate the same per_transaction_secret (PIN). Right before payment, the LN Node encrypts the PIN within the payment_preimage and sends the LN Wallet the encryption key.  Upon payment, having received the payment_preimage, the LN Wallet decrypts and shows the PIN. The user provides this PIN to the offline device so it can verify the payment. A standard is needed so that every compliant wallet knows how to decode and present the information to the user.
+
+The scheme could work like this:
+
+	1&#8226; An offline device (say a vending machine) shares a secret S1 with an online LN Node.
+	2&#8226; When a payment is due, the offline device uses that secret S1, the Device_Id, the Product_Id and a Transaction_Id to generate a second secret S2 (let's say a six digit PIN) which will act as proof of payment to the offline device. S2 is specific for each transaction and is calculated using an HTOP algorithm.
+	3&#8226; Both S1 and S2 stay within the offline device at all times.
+	4&#8226; When the user selects a product, the offline device provides the LN Wallet (possibly through a QR code) with three pieces of information (Transaction_Id, Product_Id and Device_Id) which the LN Wallet relays to the online LN Node. 
+
+Note: To support payments with static QR codes, the Transaction_Id  doesn't need to be sent. It can be replaced with an implicit time stamp (the way Google Authenticator works).
+	5&#8226; The LN Node, using the information from [4] and the shared secret S1, calculates independently the secret S2 and encodes it using L bits.
+	6&#8226; The LN Node generates a random number R, and slices it into two parts, the first L bits OTP = R[0..L-1] and the remaining 256-L bits R2 = R[L..255].
+	7&#8226; OTP is sent back to the LN Wallet BEFORE the payment is made.
+	8&#8226; The LN Node uses OTP as a one time pad to encrypt the secret S2 using a XOR operation: S3 = S2 XOR .OTP
+	9&#8226; The LN Node creates a payment_preimage by concatenating the encrypted secret with the last bits of the random number from [6]: payment_preimage = S3 &amp; R2 
+	10&#8226; The LN Wallet, upon payment of the invoice, receives the payment_preimage.
+	11&#8226; The LN Wallet, uses the payment_preimage from [10] and extracts the piggybacked information S3 = payment_preimage[0..L-1]. Then, it uses the one time pad received in [7] to decrypt S2 =  S3 XOR OTP.
+	12&#8226; The LN Wallet shows the user S2 (a six digit PIN in our example), so she can type it in the offline device to claim her product.
+
+
+The key thing for a scheme like this to be useful is to have a standard way for the LN Wallet to extract and handle the secret S2 from the payment_preimage. This way it can know that it has to show -let's say- a six digit numerical PIN instead of a four digit alphanumeric PIN or a QR code. I envision it as a MAGIC_NUMBER encoded within the secret, for which it should be somewhere in the standard documentation, so that every LN Wallet knows how to handle each use case.
+
+
+Below, I rephrase the same scheme with a more detailed implementation example for a vending machine.
+
+USER EXPERIENCE (for a vending machine):
+
+A customer of an offline vending machine  selects a product. The display of the vending machine shows a QR code that the user reads into her LN Wallet App. Upon payment of the required amount, the LN Wallet App shows her a six digit PIN that she types in the machine to get the chosen product.
+
+PROPOSED IMPLEMENTATION:
+
+A payment server and a vending machine share a common secret, a seed for an HTOP algorithm (HMac One Time Password). The vending machine can be offline at all times.
+
+When the customer selects a product, the vending machine generates a Transaction_Id (say 28481117450284) and encodes a payment url within a QR code for the user to read.
+
+The url could be something like this:
+
+<A HREF="https://example.com/cgi-bin/lnpay.py?pid=231&amp;tid=28481117450284&amp;vid=B4AF2F">https://example.com/cgi-bin/lnpay.py?pid=231&amp;tid=28481117450284&amp;vid=B4AF2F</A>
+
+Where:
+
+Pid = 231 is the id of the selected product.
+Tid = 28481117450284 is a random number to identify this transaction.
+Vid = B4AF2F is a unique identifier for this particular vending machine.
+
+The vending machine uses this information, along with the shared secret seed, to calculate a secret PIN, unique to this transaction, using the HTOP algorithm. Let's say the result is a 6 digit PIN like 998376 (hex 0x000F8B3E), which the vending machine MUST NOT show.
+
+With all this information plus the shared secret, the server at example.com calculates the same PIN number (0x000F8B3E) and it then commands a LN node to create an invoice with the proper payment for the product 231 that the customer has chosen.
+
+The LN node generates a random 32 byte number; let's say:
+
+ea8caa790486e66e70fa::2da6fff89d1ba1678b834fe162c58fcbbef25ea3177c
+
+It then slices the number into two fields, namely:
+
+	&#8226; OneTimePad: The first 10 bytes (ea8caa790486e66e70fa)
+	&#8226; Entropy: The last 22 bytes (2da6fff89d1ba1678b834fe162c58fcbbef25ea3177c)
+
+The piggybacked data will also be (in this example) 10 bytes, of which the first 6 constitute the magic number (0x000000001234 in the example) and the next 4 are the PIN (0x000F8B3E)
+
+So the third field will be:
+
+c) Piggybacked data (raw): 000000001234000F8B3E2
+
+Now, it encrypts the Piggybacked data by XORing a) and c) to obtain:
+
+d) Piggybacked data (encrypted): ea8caa7916b2e661fbc40 
+
+It then concatenates d) to b) to obtain the payment_preimage:
+
+ea8caa7916b2e661fbc40::da6fff89d1ba1678b834fe162c58fcbbef25ea3177c
+
+The payment gateway sends the wallet the OneTimePad a) and the invoice to pay.
+
+After paying the proper amount, the mobile wallet of the customer, receives this payment_preimage that contains the -encrypted- piggybacked information.
+
+It then uses the OneTimePad a), XORs it with the first 10 bytes of the preimage and recovers c) the Piggybacked data 000000001234000F8B3E2
+
+Upon recognizing the first six bytes as the magic number for this use case, the LN Wallet App decodes the next 4 bytes and presents the user with the six digit PIN (decimal 998376). The customer then enters this PIN in the vending machine and gets her product.
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001742.html">[Lightning-dev] Minisketch and lightning gossip
+</A></li>
+	<LI>Next message: <A HREF="001744.html">[Lightning-dev] Proposal: Unspecified BOLT Protocol Extensions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1743">[ date ]</a>
+              <a href="thread.html#1743">[ thread ]</a>
+              <a href="subject.html#1743">[ subject ]</a>
+              <a href="author.html#1743">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

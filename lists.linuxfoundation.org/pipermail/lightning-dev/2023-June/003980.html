@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal: Bundled payments
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Bundled%20payments&In-Reply-To=%3C86b99696-1a39-3a7c-b57a-11184c528df4%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003979.html">
+   <LINK REL="Next"  HREF="003981.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal: Bundled payments</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Bundled%20payments&In-Reply-To=%3C86b99696-1a39-3a7c-b57a-11184c528df4%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Proposal: Bundled payments">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Wed Jun 14 17:28:04 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003979.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+        <LI>Next message: <A HREF="003981.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3980">[ date ]</a>
+              <a href="thread.html#3980">[ thread ]</a>
+              <a href="subject.html#3980">[ subject ]</a>
+              <a href="author.html#3980">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I think the ship has probably sailed on getting any kind of new interoperable change in to BOLT-11.
+
+We already can't get amount-less BOLT-11 invoices broadly supported, rolling out yet another new 
+incompatible version of BOLT-11 and expecting the entire ecosystem to support it doesn't seem all 
+that likely.
+
+If we're working towards specifying some &quot;standard&quot; way of doing swaps, (a) I'd be curious to 
+understand why the need isn't obviated by splice-out, and (b) why it shouldn't be built on OMs so 
+you can do it more privately.
+
+Matt
+
+On 6/13/23 1:10&#8239;AM, Thomas Voegtlin wrote:
+&gt;<i> Good morning list,
+</I>&gt;<i> 
+</I>&gt;<i> I would like to propose an extension to BOLT-11, where an invoice can contain two bundled payments, 
+</I>&gt;<i> with distinct preimages and amounts.
+</I>&gt;<i> 
+</I>&gt;<i> The use case is for services that require the prepayment of a mining fee in order for a 
+</I>&gt;<i> non-custodian exchange to take place:
+</I>&gt;<i>  &#160;- Submarine swaps
+</I>&gt;<i>  &#160;- JIT channels
+</I>&gt;<i> 
+</I>&gt;<i> In both cases, the service provider receives a HTLC for which they do not have the preimage, have to 
+</I>&gt;<i> send funds on-chain (to the channel or submarine swap funding address), and wait for the client to 
+</I>&gt;<i> reveal the preimage when they claim the payment. Because there is no guarantee that the client will 
+</I>&gt;<i> actually claim the payment, the service providers need to ask prepayment of mining fees.
+</I>&gt;<i> 
+</I>&gt;<i> In the case of submarine swaps, services that use dedicated client software, such as Loop by 
+</I>&gt;<i> Lightning Labs, can ask for a prepayment, because their software can handle it (this is called &quot;no 
+</I>&gt;<i> show penalty&quot; on the Loop website). However, competitors who do require a dedicated wallet, not such 
+</I>&gt;<i> as the Boltz exchange, cannot do that. Their website shows an invoice to the user, whose wallet that 
+</I>&gt;<i> is agnostic about the swap, and it would be unpractical for them to show two invoices to be paid 
+</I>&gt;<i> simultaneously. This creates a situation where Boltz is vulnerable to DoS attacks, where the 
+</I>&gt;<i> attacker forces them to pay on-chain fees.
+</I>&gt;<i> 
+</I>&gt;<i> In the case of JIT channels, providers who want to protect themselves against this mining fee attack 
+</I>&gt;<i> need to ask the preimage of the main payment before they open the channel. I believe this is what 
+</I>&gt;<i> Phoenix does (although their pay-to-open service is not open-source, so I cannot really check). The 
+</I>&gt;<i> issue is that a service that asks for the preimage first becomes custodian. From a legal 
+</I>&gt;<i> perspective, it does not matter whether they open the channel immediately after receiving the 
+</I>&gt;<i> preimage, the ordering of events makes their service custodian. In Europe, such a service will fall 
+</I>&gt;<i> within the European MICA regulation. Competitors who refuse to offer custodian services, such as 
+</I>&gt;<i> Electrum, are excluded from that game.
+</I>&gt;<i> 
+</I>&gt;<i> In order to solve that, it would be beneficial to bundle the prepayment and the main payment in the 
+</I>&gt;<i> same BOLT-11 invoice.
+</I>&gt;<i> 
+</I>&gt;<i> The semantics of bundled payments is as follows:
+</I>&gt;<i>  &#160;- 1. the BOLT-11 invoice contains two preimages and two amounts: prepayment and main payment.
+</I>&gt;<i>  &#160;- 2. the receiver should wait until all the HTLCs of both payments have arrived, before they 
+</I>&gt;<i> fulfill the HTLCs of the pre-payment. If the main payment does not arrive, they should fail the 
+</I>&gt;<i> pre-payment with a MPP timeout.
+</I>&gt;<i>  &#160;- 3. once the HTLCs of both payments have arrived, the receiver fulfills the HTLCs of the 
+</I>&gt;<i> prepayment, and they broadcast their on-chain transaction. Note that the main payment can still fail 
+</I>&gt;<i> if the sender never reveal the preimage of the main payment.
+</I>&gt;<i> 
+</I>&gt;<i> Of course, nothing in my proposal prevents the service provider from stealing the pre-payment, but 
+</I>&gt;<i> that is already the case today.
+</I>&gt;<i> 
+</I>&gt;<i> I believe this proposal would level the field in terms of competition between lightning service 
+</I>&gt;<i> providers. Currently, you need to use a dedicated client in order to use Loop, and competitors who 
+</I>&gt;<i> do not have an established user base running a dedicated client are exposed to the mining fee 
+</I>&gt;<i> attack. I also believe that ACINQ would benefit from this, because it would make it possible for 
+</I>&gt;<i> them to make their pay-to-open service fully non-custodian. My understanding is that in its current 
+</I>&gt;<i> form, the 'pay-to-open' service used by Phoenix will fall into the scope of the European MICA 
+</I>&gt;<i> regulation, which they should consider as a serious issue.
+</I>&gt;<i> 
+</I>&gt;<i> Finally, I believe that such a change should be implemented in BOLT-11, and not using BOLT-12 or 
+</I>&gt;<i> onion messages. Indeed, my proposal does not require the exchange of new messages. Some of the 
+</I>&gt;<i> initial feedback I received was that this is a use case for BOLT-12 or OM, but I think that this is 
+</I>&gt;<i> making things unnecessarily complicated. We should not add new messages when things can be done in a 
+</I>&gt;<i> non-interactive way.
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> ThomasV
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003979.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+	<LI>Next message: <A HREF="003981.html">[Lightning-dev] Proposal: Bundled payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3980">[ date ]</a>
+              <a href="thread.html#3980">[ thread ]</a>
+              <a href="subject.html#3980">[ subject ]</a>
+              <a href="author.html#3980">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

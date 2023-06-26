@@ -1,0 +1,199 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] two-round MuSig less dangerous than it seems
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20two-round%20MuSig%20less%20dangerous%20than%20it%20seems&In-Reply-To=%3CCAH5Bsr2F3-T%3Dd748p_tQxoDAoqPNVahGnHu_NtyfRRNUEfmoEg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002822.html">
+   <LINK REL="Next"  HREF="002823.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] two-round MuSig less dangerous than it seems</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20two-round%20MuSig%20less%20dangerous%20than%20it%20seems&In-Reply-To=%3CCAH5Bsr2F3-T%3Dd748p_tQxoDAoqPNVahGnHu_NtyfRRNUEfmoEg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] two-round MuSig less dangerous than it seems">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Fri Oct  9 04:31:28 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002822.html">[Lightning-dev] Partial LND Vulnerability Disclosure,	Upgrade to 0.11.x
+</A></li>
+        <LI>Next message: <A HREF="002823.html">[Lightning-dev] two-round MuSig less dangerous than it seems
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2820">[ date ]</a>
+              <a href="thread.html#2820">[ thread ]</a>
+              <a href="subject.html#2820">[ subject ]</a>
+              <a href="author.html#2820">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list,
+
+tl;dr: I think can use two round MuSig safely in the context of lightning.
+
+As a recap, Zeeman did a good evaluation of &quot;purely scriptless&quot; lightning
+channels after taproot/schnorr.[1]
+Z concluded that even in the most optimized case the 3 round MuSig protocol
+leads to an extra round of communication before you can forward a payment.
+I think this is correct but perhaps you could just use 2 round MuSig
+(without MuSig-DN magic[4]).
+
+=== 2 round MuSig ===
+
+(from memory) The original MuSig paper suggested the following signing
+algorithm once two keys A and B have already been established for Alice and
+Bob
+
+Alice                                           Bob
+pick ra randomly
+Ra = ra * G
+                          ----- Ra ----&gt;
+                                                pick rb randomly
+                                                Rb = rb * G
+                                                let c = H(Ra + Rb || A + B
+||<i> m)
+</I>                                                sb = rb + cb
+                          &lt;--Rb, sb----
+s = sb + ra + ca
+R = Ra + Rb
+X = A + B
+verify(X, (R, s), m)?
+output: (R,s)
+
+This was insecure under *parallel composition* because the proof cannot
+work (from my memory because having open signing sessions makes the
+rewinding argument in the proof incoherent) and led to actual attacks which
+have recently improved in efficiency.[3]
+
+=== My insight ===
+
+2 round MuSig *is secure* under sequential composition and in a lightning
+channel we are essentially arranging sequential state updates so perhaps
+we're ok here?
+
+It should be easy to require that you can't open another signing session
+until we've finished the current session.
+Also if Alice has sent Ra there is no reason that Bob can't send multiple
+(Rb, sb) pairs for different messages for the same Ra while he wants for
+Alice to respond.
+Alice doesn't have to finish the signature yet she can just store the most
+recent one and finish if/when she needs to.
+This preserves the current update communication structure of lightning
+without breaking the security requirements of 2 round MuSig.
+
+=== How could PTLCs work ===
+
+Updating states is more than just signing the commitment transaction. Let's
+assume we do PTLCs with both a PTLC-success and PTLC-timeout pre-signed
+transaction (I don't see how else to do it) on *both* sides of the channel.
+This means you have to pre-share the following:
+
+- A fresh pair of nonces for every existing PTLC in the state plus one
+extra (must be done every update)
+- A key for every existing PTLC in the state plus one extra (can be fixed
+at the start of the channel or updated as you go along).
+
+After pre-sharing this data Bob starts the communication with:
+
+(the postfix *-alice and *-bob means that they are in the tree of
+transactions on alice or bob's side, not necessarily that alice or bob is
+the one broadcasting it).
+
+Bob sends:
+    - new PTLC details
+    - (Rb,sb)-success(s)-bob (uses pre-shared nonce)
+    - (Rb,sb)-success(s)-alice (uses pre-shared nonce)
+    - (Rb)-commit-bob
+    - (Rb)-timeout(s)-bob
+    - (Rb)-timeout(s)-alice
+
+Alice sends back:
+    -  (Ra,sa)-timeout(s)-bob
+    -  (Ra,sa)-timeout(s)-alice
+    -  (Ra,sa)-commit-bob
+    -  (Ra)-commit-alice
+Bob sends:
+    - (Rb,sb)-commit-alice
+    - revocation key for last commitment
+
+**Note that Alice still hasn't revoked her last state but at this point she
+can safely forward the PTLC since Bob has revoked his last state.**
+
+Other notes:
+- This is and looks convoluted but it is simpler if you use witness
+asymmetry[2] because it removes duplicating the party's transactions across
+both sides.
+- Although you are doing parallel signing on the PTLC output key (you are
+signing both a timeout and success) a different party is receiving the
+signature and the nonces are communicated in reverse so it actually
+sidesteps the flaw of two round MuSig (where the adversary is always
+declaring his nonce second and second).
+- For protocols such as DLCs you will have to do proper three round MuSig
+but you are not forwarding payments so it's not as time sensitive.
+- I am completely avoiding revocation mechanisms here but from my own ideas
+and what I've seen from others this is compatible.
+
+=== Claim Summary ===
+
+Given the above, I claim there is a protocol using two-round MuSig for
+fully scriptless lightning that incurs no extra rounds of communication to
+get to the irrevocably committed state.
+It does incur extra storage for each PTLC in the present commitment
+transaction.
+It includes an extra round to &quot;fully&quot; update the state between two parties
+(but this does not delay payment forwarding).
+
+I don't claim that this is the optimal path forward but just wanted to make
+this observation to see what others thought.
+
+LL
+
+[1]
+<A HREF="../2019-December/002375.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/002375.html</A>
+[2] <A HREF="https://github.com/LLFourn/witness-asymmetric-channel">https://github.com/LLFourn/witness-asymmetric-channel</A>
+[3] <A HREF="https://eprint.iacr.org/2020/945.pdf">https://eprint.iacr.org/2020/945.pdf</A> (thanks @n1cklr)
+[4] <A HREF="https://eprint.iacr.org/2020/1057.pdf">https://eprint.iacr.org/2020/1057.pdf</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201009/e40df51d/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201009/e40df51d/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002822.html">[Lightning-dev] Partial LND Vulnerability Disclosure,	Upgrade to 0.11.x
+</A></li>
+	<LI>Next message: <A HREF="002823.html">[Lightning-dev] two-round MuSig less dangerous than it seems
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2820">[ date ]</a>
+              <a href="thread.html#2820">[ thread ]</a>
+              <a href="subject.html#2820">[ subject ]</a>
+              <a href="author.html#2820">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

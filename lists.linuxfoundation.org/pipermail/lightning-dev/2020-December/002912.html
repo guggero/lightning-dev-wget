@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Covert channel recovery with Oblivious Signatures
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%20Signatures&In-Reply-To=%3CCAH5Bsr1dmtKrJNpC5ZzcZChsPiGiaDi7CkcOp8hN3PYtQRRhfw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002911.html">
+   <LINK REL="Next"  HREF="002913.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Covert channel recovery with Oblivious Signatures</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%20Signatures&In-Reply-To=%3CCAH5Bsr1dmtKrJNpC5ZzcZChsPiGiaDi7CkcOp8hN3PYtQRRhfw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Covert channel recovery with Oblivious Signatures">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Fri Dec 11 02:02:04 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002911.html">[Lightning-dev] Recovery of Lightning channels without backups
+</A></li>
+        <LI>Next message: <A HREF="002913.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2912">[ date ]</a>
+              <a href="thread.html#2912">[ thread ]</a>
+              <a href="subject.html#2912">[ subject ]</a>
+              <a href="author.html#2912">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list,
+
+Currently, if your lightning node has data loss there are two ways of
+recovering your funds once you have established which channels you had with
+which peers:
+
+1. Wait until your peer closes the channel. The downside is that you have
+no control over when this happens.
+2. Connect to your peer and ask them to close it. The downside is that to a
+malicious actor this request reads like &quot;now is a good time to steal my
+money or extort me&quot;.
+
+What if instead we could somehow covertly get a signed cooperative
+settlement transaction for the most recent state without your peer knowing
+that you've received it?
+Luckily this mystical and almost incoherent requirement is provided by one
+of the oldest and well developed cryptographic primitives: the so called
+&quot;Oblivious Transfer&quot; (OT).
+
+<A HREF="https://en.wikipedia.org/wiki/Oblivious_transfer">https://en.wikipedia.org/wiki/Oblivious_transfer</A>
+
+The idea might go something like this: every time you connect to your peer
+they present you with an unsigned cooperative settlement transaction for
+all channels you have with them. You and your peer then do an oblivious
+transfer where they send you their signatures on the transaction or nothing
+(whichever you choose). If you want to carry on with the channel you reveal
+to the sender that you chose nothing. If you are recovering funds you
+choose the signatures and broadcast the transaction.
+
+For this to be useful we have an extra requirement over typical OT which is
+that we can verify the contents of the message we didn't choose. i.e. even
+if we are not doing a recovery we have to be able to verify that the
+signatures we were offered were valid (wihout actually ever being able to
+use them!). Otherwise a malicious party could just be sending us invalid
+signatures in the OT the whole time. The name for this oblivious signatures.
+
+## Constructing
+
+Oblivious signatures can be created using any verifiable encrypted
+signature scheme where the encryption key is a group element (this includes
+adaptor signatures).
+In [1] they actually use adaptor signatures without calling them that to
+create a Schnorr oblivious signature scheme that is similar to what you
+would do with BIP340 Schnorr in practice.
+I used this in [2] to create scriptless lotteries in Bitcoin.
+
+To start assume that you have three functions (which can be instantiated
+with adaptor signatures):
+
+- `encrypted_sign(x, m, Y) -&gt; e`
+- `encrypted_signature_verify(X, m, Y) -&gt; true/false`
+- `decrypt_signature(e, y) -&gt; s`
+
+Where X is the public signing key Y is the encryption key and (x,y) are
+their corresponding secret keys.
+In our case x can be thought of as a secret key on a funding output.
+
+First, the party receiving the offer decides whether they want to receive
+the settlement tx signature by setting c = 0  or otherwise c = 1 and then
+creates a pedersen commitment Y to c by choosing a random y:
+
+Y = y *G + c * H
+
+and sends the commitment Y to its peer.
+
+The peer then sends `e = encrypted_sign(x, settlement_tx, Y)` back.
+
+If c = 0 (i.e. it is doing a covert recovery) it does `s =
+decrypt_signature(e, y)` and attaches to the settlement transaction and
+broadcasts it.  The channel is now successfully closed assuming the
+encrypted signature was valid.
+
+If c = 1 (i.e. the node is fine and it wants to continue the channel) then
+it checks `encrypted_signature_verify(X, settlement_tx, Y)`. If it passes
+it sends the commitment blinding y back to prove that it doesn't have the
+signature (i.e. prove c = 1). If verification fails then the node is
+malicious and it fails the channel. Note that it is not possible to decrypt
+the signature if c = 1 since the discrete logarithm of H with respect to G
+is unknown.
+
+## Misc Q&amp;A
+
+- Does this require crazy crypto magic? No with the exception of Pedersen
+commitments it only requires what is being planned to be included in
+lightning anyway i.e. adaptor signatures.
+
+-  Who is receiver and who is sender? In my imagination this works by the
+peer that is opening the connection being the receiver. This seems more
+useful since users who are likely to not have redundant storage and
+generally mess things up and need to recover are often behind NAT or on
+phone networks without a public ip. There are cases where a public node may
+want to recover by having people connect to them but I don't know what to
+do about that. It looks like you have to choose one or the other.
+
+- Can't they still steal money? Yes but this is still a strictly better
+than the current situation. The attacker has to guess precisely which
+connection you make is after data loss. This is tricky task especially
+because if they ever guess wrongly you close your channel with them and
+block them. Right now you are the one who tells them you've lost data!
+
+- Are these oblivious signatures secure? Yes. Sender security (receiver
+only gets the signature if c = 0) is based on discrete log assumption.
+Hint: if you instantiate the above algorithms with adaptor signatures we
+can extract the discrete log of H from a receiver who knows an opening of Y
+where c = 1 and also successfully decrypts the signature. Receiver security
+is unconditional (Pedersen commitments are unconditionally hiding).
+
+- Does this work for multiple signatures? Yes you can choose to receive N
+signatures to close N channels or nothing.  The signer just sends multiple
+e_1, e_2 produced the same way and the receiver can decrypt them all if c =
+0.
+
+- Does it work for key aggregated signatures i.e. MuSig2? -- Yes
+`encrypted_sign` just becomes a two round protocol to produce `e`.
+
+- What do you do if the channel state has HTLCs in flight? I don't know --
+I guess you can just put them onto the settlement tx? That way it's
+possible the payment could still go through. Alternatively you could just
+gift the money to the party offering the recovery settlement.
+
+[1]
+<A HREF="http://www.cs.nccu.edu.tw/~raylin/UndergraduateCourse/ComtenporaryCryptography/Spring2009/TSOINSPET2007.pdf">http://www.cs.nccu.edu.tw/~raylin/UndergraduateCourse/ComtenporaryCryptography/Spring2009/TSOINSPET2007.pdf</A>
+[2]
+<A HREF="https://telaviv2019.scalingbitcoin.org/files/scriptless-lotteries-on-bitcoin-from-oblivious-transfer.pdf">https://telaviv2019.scalingbitcoin.org/files/scriptless-lotteries-on-bitcoin-from-oblivious-transfer.pdf</A>
+
+Cheers,
+
+LL
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201211/0179a579/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201211/0179a579/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002911.html">[Lightning-dev] Recovery of Lightning channels without backups
+</A></li>
+	<LI>Next message: <A HREF="002913.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2912">[ date ]</a>
+              <a href="thread.html#2912">[ thread ]</a>
+              <a href="subject.html#2912">[ subject ]</a>
+              <a href="author.html#2912">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

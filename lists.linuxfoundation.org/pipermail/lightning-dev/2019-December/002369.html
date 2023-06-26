@@ -1,0 +1,259 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Time-Dilation Attacks on Offchain Protocols
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Time-Dilation%20Attacks%20on%20Offchain%20Protocols&In-Reply-To=%3CCALZpt%2BHYZ1ivzJ8prcZPBBzRCXH71c5c6nNw-OE4SeMxXiDk-g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002368.html">
+   <LINK REL="Next"  HREF="002370.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Time-Dilation Attacks on Offchain Protocols</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Time-Dilation%20Attacks%20on%20Offchain%20Protocols&In-Reply-To=%3CCALZpt%2BHYZ1ivzJ8prcZPBBzRCXH71c5c6nNw-OE4SeMxXiDk-g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Time-Dilation Attacks on Offchain Protocols">antoine.riard at gmail.com
+       </A><BR>
+    <I>Mon Dec  9 18:04:07 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002368.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+        <LI>Next message: <A HREF="002370.html">[Lightning-dev] Time-Dilation Attacks on Offchain Protocols
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2369">[ date ]</a>
+              <a href="thread.html#2369">[ thread ]</a>
+              <a href="subject.html#2369">[ subject ]</a>
+              <a href="author.html#2369">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Time-Dilation Attacks on Offchain Protocols
+===================================
+
+Lightning works on reversing the double-spend problem to a private
+state between parties instead of being a public issue verified by every
+network peer. The security model is based on revocation of previous
+states and in case of broadcast of any of them, being aware of it to
+generate justice transactions to claim misbehaving peer onchain outputs
+before contest period expiration. This period is driven by the blockchain
+which is here the system clock.
+
+Eclipse attacks's end-goal is to monopolize a victim's incoming and
+outgoing connections, by this way isolating a node from the rest of its
+peers in the network. A successful Eclipse attacks lets the attacker
+filter the victim's view of the blockchain, i.e he controls transactions
+and blocks announcements [0].
+
+Every LN node must be tied to a bitcoin full-node or light-client to
+verify independently channels opening/closing, HTLCs expiration and
+previous/latest state broadcast. To operate securely, the view of the
+blockchain must be up-to-date with the one shared with the rest of the
+network. By considering Eclipse attacks on the base layer, this assumption
+can be broken.
+
+First scenario : Targeting the CSV security delay
+--------------------------------------------------------------
+
+Alice and Mallory are LN peers with a channel opened at state N. They
+use a CSV of 144 blocks as a security parameter for contestation period.
+Mallory is able to identify Alice full-node and start to eclipse it.
+When done, it keeps announcing blocks to Alice node but delaying them by
+2min. Given a variance of 10min, after 6 blocks, Mallory will have a
+height ahead of Alice of 1, after 24 blocks, a lead of 4, after 144,
+a lead of 24, after 1008, a lead of 168.
+
+After maintaining the eclipse for a week, Mallory will have more than a
+day of height advance on Alice view of blockchain. The difference being
+superior at the CSV timelock, Mallory can broadcast a previous
+commitment transaction at state N - 10 with a balance far more favorable
+than the legit one at height H, the synchronized height with the rest
+of the network.
+
+At revoked commitment transaction broadcast, Alice is slow down at
+height H - 168. At H+144, Mallory can unlock its funds out of the
+commitment transaction outputs and by so closing the contestation period
+while Alice is still stuck at H-24. When Alice learn about revoked
+broadcast at H, it's already too late. Mallory may have stopped the
+Eclipse attack after H+144, or he may pursue the attack on Alice because
+of targeting multiple of her channels in parallel.
+
+Second scenario : Targeting the per-hop CLTV-delta
+-------------------------------------------------------------------
+
+Alice, Bob and Caroll are LN peers with channel Alice-Bob and Bob-Caroll.
+Bob enforce a cltv_delta of 12 blocks on incoming HTLCs. Alice and Caroll
+are both malicious and start to eclipse Alice full-node until they gain a
+lead of 15 blocks on Alice.
+
+At height N, Alice route a payment E to Caroll through Bob with a base
+delta of 24 blocks. On channel AB, HTLC will expire at height H+24, on
+channel BC, it will expire at height H+12 while Alice ticking herself
+at height H-15.
+
+When real-network blockchain height reaches H+24, Caroll provides
+preimage P to Bob and following protocol rules she gets a new
+commitment transaction with balance increased of HTLC E. At same time,
+Alice broadcast unilaterally commitment transaction for AB and claim
+back HTLC E with a HTLC-timeout transaction as its nLockTime is already
+final. Bob wrongly clocking at height H+9, HTLC on channel BC won't have
+been timeout by him and provided preimage is now useless as HTLC as
+already claimed back on mainnet blockchain.
+
+Attack difficulty
+-------------------
+
+Following Eclipse attack paper publication, multiple counter-measures
+have been implemented [1], [2]. Even if it's far harder, this kind of
+attacks may still be possible for an off-path attacker. Including recent
+changes, research should be done to ascertain it. Beyond, it still
+widely feasible for attackers controlling key infrastructure between
+the victim and the network [3]. A simple Tier 3 ISP doing deep packet
+inspection and delaying your blocks may be able to practice this class
+of attacks.
+
+The case of LN nodes using light clients, like BIP157 or Electrum, as a
+backend should be specially considered. Given the low number of servers
+providing these services today it should be trivial for an attacker to run
+swarm of them and from then control blockchain view of this class of LN
+nodes.
+
+Another difficulty of the attack, is to map the LN node to its full-node.
+This can range from being trivial if both run in clear with same ipv4
+address. It would be interesting to scan both networks and see how many
+nodes pair are in this case. Learning the mapping can still be doable if
+they are using an anonymous network like Tor with same exit node base on
+message timing.
+
+Further inter-layer mapping techniques could be developped like funding
+transaction broadcast and seeing its propagation on the base layer. Or
+knowledge of onchain utxo graph leaked by addressed reused to fund
+channels.
+
+On the LN-side, depending of the scenario, cost of the attack ranges
+between opening one or two channels and paying the related onchain fees.
+That being said, an attacker can also target victim-initiated channels
+and costs would be reduced only to operating LN nodes.
+
+Onchain counter-measures
+-----------------------------------
+
+Warnings could be triggered by full-node when the block issuance rate
+becomes weird but first it's hard to dissociate weirdness from edges of
+block variance and secondly the algo being public it should be easy for
+an attacker to stay under the radar by choosing the right announcement
+delay.
+
+Raising alarms based on nTime of block headers being to far in the past
+compare to local clock wouldn't make sense due to IBD.
+
+A practical solution would be to have multiple bitcoin full-nodes
+with multi-homing and doing reconciliation of blockchain views every
+N hour/minute. This kind of method, already deployed by some bitcoin
+infrastructures, would raise attack difficulty for off-path attackers
+but wouldn't counter in-path attackers. Nevertheless, it would already
+be a good step, the issue is the current absent of implementing this
+in open-source software for hobbyists.
+
+A defense in depth would require to have multiple data links, like
+receiving headers from space/radio or tunneling through
+some other protocols [4].
+
+Even learning discrepancies between your local view of the blockchain
+and the mainnet one, the right move to do isn't clear as an automatic
+system may be triggered by false positives to halt operation of your LN
+node, a human intervention to double-check may seem preferable. And
+it's really likely the attacker control you ability of transactions
+on the base layer. BIP324 may help there.
+
+Offchain counter-measures
+-----------------------------------
+
+Some LN errors messages may be triggered at abnormal rate like
+`expiry_too_soon`  due to victim using a HTLC base in the past and may
+be used to guess oddities.
+
+A measure orthogonal to running multiple bitcoin full-nodes should be
+to have multiples watchtowers running their own blocks provider (full-node
+or light clients). Assuming attacker don't control your connection to them,
+if at least one of them isn't eclipsed, it should be able to time-out HTLC/
+justice revoked transaction efficiently.
+
+Another option would be to use the control plane as a safety mechanism.
+When a LN node learns a channel_announcement to far in the future it
+would ask to this LN node, few next headers through this communication
+channel and connect these headers to its full-node. Based on this
+information, full-node may trigger alarms more accurately. This mechanism
+would work assuming one of your gossiping LN node is honest. It may ask
+for fine-tuning to avoid there too false-positives but it seems an
+interesting topic of research to use L2 information to correct L1 blockchain
+view and even further to use L2 communications channels as an emergency
+transaction broadcast.
+
+
+Further research could be lead to investigate attacks combining eclipsing
+victim
+view of both layer, that's said the LN one may seem harder to take on as
+nodes
+have persistent identities.
+
+Eclipse attacks were already known to be very bad, offchain protocols
+relying on time for their security model make them worst at it lower the bar
+to exploit them from being a miner to being party to an offchain contract.
+
+
+After talking with LN implementations teams, they don't think funds are at
+risks,
+given than light clients have low-value channels right now and it's not
+worthy the
+attack setup, but they acknowledge the issue on the long term for
+processing nodes.
+
+
+Thanks to Gleb Naumenko for fruitful discussions/review.
+
+Cheers
+
+[0] <A HREF="https://eprint.iacr.org/2015/263.pdf">https://eprint.iacr.org/2015/263.pdf</A>
+
+[1] <A HREF="https://github.com/bitcoin/bitcoin/pull/9037">https://github.com/bitcoin/bitcoin/pull/9037</A>
+
+[2] <A HREF="https://github.com/bitcoin/bitcoin/pull/8282">https://github.com/bitcoin/bitcoin/pull/8282</A>
+
+[3] <A HREF="https://erebus-attack.comp.nus.edu.sg/">https://erebus-attack.comp.nus.edu.sg/</A>
+
+[4] <A HREF="https://github.com/bitcoin/bitcoin/pull/16834">https://github.com/bitcoin/bitcoin/pull/16834</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191209/cd6947dc/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191209/cd6947dc/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002368.html">[Lightning-dev] [DRAFT] BOLT 13(?): WatchTower protocol
+</A></li>
+	<LI>Next message: <A HREF="002370.html">[Lightning-dev] Time-Dilation Attacks on Offchain Protocols
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2369">[ date ]</a>
+              <a href="thread.html#2369">[ thread ]</a>
+              <a href="subject.html#2369">[ subject ]</a>
+              <a href="author.html#2369">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

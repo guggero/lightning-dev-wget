@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improve Lightning payment reliability through	better error attribution
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improve%20Lightning%20payment%20reliability%20through%0A%09better%20error%20attribution&In-Reply-To=%3CCAJBJmV-TGo0sE2-3GVtDvewj8E%3DONd9bv-2bRqjkjV870qrCDQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002014.html">
+   <LINK REL="Next"  HREF="002016.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improve Lightning payment reliability through	better error attribution</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improve%20Lightning%20payment%20reliability%20through%0A%09better%20error%20attribution&In-Reply-To=%3CCAJBJmV-TGo0sE2-3GVtDvewj8E%3DONd9bv-2bRqjkjV870qrCDQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improve Lightning payment reliability through	better error attribution">joost.jager at gmail.com
+       </A><BR>
+    <I>Wed Jun 12 12:59:40 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002014.html">[Lightning-dev] ECDH for spontaneous payments and offline	vending machines
+</A></li>
+        <LI>Next message: <A HREF="002016.html">[Lightning-dev] Improve Lightning payment reliability through better error attribution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2015">[ date ]</a>
+              <a href="thread.html#2015">[ thread ]</a>
+              <a href="subject.html#2015">[ subject ]</a>
+              <a href="author.html#2015">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello list,
+
+In Lightning, the reliability of payments is dependent on the reliability
+of the chosen route. Information about previous payment attempts helps to
+select better routes and improve the payment experience. Therefore
+implementations usually track the past performance of nodes and channels.
+This can be as simple as a black list that contains previously failed
+channels.
+
+In order for this mechanism to be most effective, it is important to know
+which node is to blame for a non-ideal payment attempt.
+
+Non-ideal payment attempts are not only failed payment attempts (either
+instantly failed or after a delay), but also successful payments for which
+it took a long time to receive the `htlc_fulfill` message.
+
+For non-ideal payment attempts, we are currently not always able to
+determine the node that should be penalized. In particular:
+* If an attempt takes long to complete (settle or fail), we have no
+information that points us to the source of the delay.
+* Nodes can return a corrupt failure message. When this message arrives at
+the sender after a number of encryption rounds, the sender is no longer
+able to pinpoint the node that failed the payment.
+
+A potential solution is to change the failure message such that every hop
+along the backward path adds an hmac to the message (currently only the
+error source authenticates the message). This allows the source of a
+corruption to be narrowed down to a pair of nodes, which is enough to
+properly apply a penalty.
+
+In addition to that, all hops could add two timestamps to the failure
+message: the htlc add time and the htlc fail time. Using this information,
+the sender of the payment can identify the source of the delay down to,
+again, a pair of nodes. Those timestamps could be added to the settle
+message as well, to also allow diagnostics on slow settled payments.
+
+The challenge here is to design the failure message format in such a way
+that hops cannot learn their position in the path. Just appending
+timestamps and hmacs to a variable length message would reveal the distance
+between a node and the error source.
+
+A fixed length message in which hops shift some previous (unused) data out
+from the message to create space to add their own data does not seem to
+work. What happens is that the earlier nodes calculate their hmac over data
+that is shifted out and cannot be recovered anymore by the sender. The
+sender has no way to verify the hmac in that case. Regenerating the shifted
+out data (similar to deterministic padding on the forward path) isn't a
+solution either, because a node may modify that (unused) data before
+passing the message on. This would invalidate all hmacs, denying the sender
+from locating the responsible node.
+
+One space-inefficient solution is to have every hop add hmacs for every
+possible (real) message length, but this would require n^2 hmacs in total
+(20*20*32 bytes). Half of these could be discarded along the way, but it
+would still leave 10*20*32=6.4kb of hmacs.
+
+Another direction might be to use a variable length message, but have the
+error source add a seemingly random length padding. The actual length could
+be deterministically derived from the shared secret, so that the erring
+node cannot just not add padding. This obfuscates the distance to the error
+source somewhat, but still reveals a bit of information. If one knows that
+the padding length is somewhere between 0 and 20 blocks worth of bytes, a
+message length of say 25 blocks would reveal that the err source is at
+least 5 hops away. It could be a fair trade-off though.
+
+An alternative to all of this is to try to locate bad nodes by probing with
+different route lengths and coming from different angles. This will however
+require more attempts and more complex processing of the outcomes. There is
+also a level of indirectness because not all information is gathered in a
+single roundtrip. And in addition to that, a malicious node may somehow act
+differently if it manages to recognize the probes.
+
+I'd be interested to hear your opinions about the importance of being able
+to locate bad nodes irrefutably, as well as ideas around the failure
+message format.
+
+Joost
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190612/f110fbb1/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190612/f110fbb1/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002014.html">[Lightning-dev] ECDH for spontaneous payments and offline	vending machines
+</A></li>
+	<LI>Next message: <A HREF="002016.html">[Lightning-dev] Improve Lightning payment reliability through better error attribution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2015">[ date ]</a>
+              <a href="thread.html#2015">[ thread ]</a>
+              <a href="subject.html#2015">[ subject ]</a>
+              <a href="author.html#2015">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

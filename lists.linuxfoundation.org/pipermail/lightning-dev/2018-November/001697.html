@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CPFP%20Carve-Out%20for%20Fee-Prediction%20Issues%20in%0A%20Contracting%20Applications%20%28eg%20Lightning%29&In-Reply-To=%3Cc3f68b73-84c6-7428-4bf6-b47802141392%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001696.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20CPFP%20Carve-Out%20for%20Fee-Prediction%20Issues%20in%0A%20Contracting%20Applications%20%28eg%20Lightning%29&In-Reply-To=%3Cc3f68b73-84c6-7428-4bf6-b47802141392%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] CPFP Carve-Out for Fee-Prediction Issues in Contracting Applications (eg Lightning)">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Thu Nov 29 19:37:54 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001696.html">[Lightning-dev] Reason for having HMACs in Sphinx
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1697">[ date ]</a>
+              <a href="thread.html#1697">[ thread ]</a>
+              <a href="subject.html#1697">[ subject ]</a>
+              <a href="author.html#1697">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>(cross-posted to both lists to make lightning-dev folks aware, please 
+take lightning-dev off CC when responding).
+
+As I'm sure everyone is aware, Lightning (and other similar systems) 
+work by exchanging pre-signed transactions for future broadcast. Of 
+course in many cases this requires either (a) predicting what the 
+feerate required for timely confirmation will be at some (or, really, 
+any) point in the future, or (b) utilizing CPFP and dependent 
+transaction relay to allow parties to broadcast low-feerate transactions 
+with children created at broadcast-time to increase the effective 
+feerate. Ideally transactions could be constructed to allow for 
+after-the-fact addition of inputs to increase fee without CPFP but it is 
+not always possible to do so.
+
+Option (a) is rather obviously intractible, and implementation 
+complexity has led to channel failures in lightning in practice (as both 
+sides must agree on a reasonable-in-the-future feerate). Option (b) is a 
+much more natural choice (assuming some form of as-yet-unimplemented 
+package relay on the P2P network) but is made difficult due to 
+complexity around RBF/CPFP anti-DoS rules.
+
+For example, if we take a simplified lightning design with pre-signed 
+commitment transaction A with one 0-value anyone-can-spend output 
+available for use as a CPFP output, a counterparty can prevent 
+confirmation of/significantly increase the fee cost of confirming A by 
+chaining a large-but-only-moderate-feerate transaction off of this 
+anyone-can-spend output. This transaction, B, will have a large absolute 
+fee while making the package (A, B) have a low-ish feerate, placing it 
+solidly at the bottom of the mempool but without significant risk of it 
+getting evicted during memory limiting. This large absolute fee forces a 
+counterparty which wishes to have the commitment transaction confirm to 
+increase on this absolute fee in order to meet RBF rules.
+
+For this reason (and many other similar attacks utilizing the package 
+size limits), in discussing the security model around CPFP, we've 
+generally considered it too-difficulty-to-prevent third parties which 
+are able to spend an output of a transaction from delaying its 
+confirmation, at least until/unless the prevailing feerates decline and 
+some of the mempool backlog gets confirmed.
+
+You'll note, however, that this attack doesn't have to be permanent to 
+work - Lightning's (and other contracting/payment channel systems') 
+security model assumes the ability to get such commitment transactions 
+confirmed in a timely manner, as otherwise HTLCs may time out and 
+counterparties can claim the timeout-refund before we can claim the HTLC 
+using the hash-preimage.
+
+To partially-address the CPFP security model considerations, a next step 
+might involve tweaking Lightning's commitment transaction to have two 
+small-value outputs which are immediately spendable, one by each channel 
+participant, allowing them to chain children off without allowng 
+unrelated third-parties to chain children. Obviously this does not 
+address the specific attack so we need a small tweak to the anti-DoS 
+CPFP rules in Bitcoin Core/BIP 125:
+
+The last transaction which is added to a package of dependent 
+transactions in the mempool must:
+  * Have no more than one unconfirmed parent,
+  * Be of size no greater than 1K in virtual size.
+(for implementation sanity, this would effectively reduce all mempool 
+package size limits by 1 1K-virtual-size transaction, and the last would 
+be &quot;allowed to violate the limits&quot; as long as it meets the above criteria).
+
+For contracting applications like lightning, this means that as long as 
+the transaction we wish to confirm (in this case the commitment transaction)
+  * Has only two immediately-spendable (ie non-CSV) outputs,
+  * where each immediately-spendable output is only spendable by one 
+counterparty,
+  * and is no larger than MAX_PACKAGE_VIRTUAL_SIZE - 1001 Vsize,
+each counterparty will always be able to independantly CPFP the 
+transaction in question. ie because if the &quot;malicious&quot; (ie 
+transaction-delaying) party bradcasts A with a child, it can never meet 
+the &quot;last transaction&quot; carve-out as its transaction cannot both meet the 
+package limit and have only one unconfirmed ancestor. Thus, the 
+non-delaying counterparty can always independently add its own CPFP 
+transaction, increasing the (A, Tx2) package feerate and confirming A 
+without having to concern themselves with the (A, Tx1) package.
+
+As an alternative proposal, at various points there have been 
+discussions around solving the &quot;RBF-pinning&quot; problem by allowing 
+transactors to mark their transactions as &quot;likely-to-be-RBF'ed&quot;, which 
+could enable a relay policy where children of such transactions would be 
+rejected unless the resulting package would be &quot;near the top of the 
+mempool&quot;. This would theoretically imply such attacks are not possible 
+to pull off consistently, as any &quot;transaction-delaying&quot; channel 
+participant will have to place the package containing A at an effective 
+feerate which makes confirmation to occur soon with some likelihood. It 
+is, however, possible to pull off this attack with low probability in 
+case of feerate spikes right after broadcast.
+
+Note that this clearly relies on some form of package relay, which comes 
+with its own challenges, but I'll start a separate thread on that.
+
+See-also: lightning-dev thread about the changes to lightning spec 
+required to incorporate this: 
+<A HREF="001643.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/001643.html</A>
+
+Matt
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001696.html">[Lightning-dev] Reason for having HMACs in Sphinx
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1697">[ date ]</a>
+              <a href="thread.html#1697">[ thread ]</a>
+              <a href="subject.html#1697">[ subject ]</a>
+              <a href="author.html#1697">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

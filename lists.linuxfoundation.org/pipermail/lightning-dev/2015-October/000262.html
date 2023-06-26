@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Preventing MITM - Providing new nodes with real	pubkeys
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Preventing%20MITM%20-%20Providing%20new%20nodes%20with%20real%0A%09pubkeys&In-Reply-To=%3CCAE8CtV%3DuH9PG1Tb3e9Kh2CmnNXGVBBaEokocZuv0bjiD-TQm1w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000261.html">
+   <LINK REL="Next"  HREF="000264.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Preventing MITM - Providing new nodes with real	pubkeys</H1>
+    <B>Mats Jerratsch</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Preventing%20MITM%20-%20Providing%20new%20nodes%20with%20real%0A%09pubkeys&In-Reply-To=%3CCAE8CtV%3DuH9PG1Tb3e9Kh2CmnNXGVBBaEokocZuv0bjiD-TQm1w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Preventing MITM - Providing new nodes with real	pubkeys">matsjj at gmail.com
+       </A><BR>
+    <I>Fri Oct 16 13:22:25 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000261.html">[Lightning-dev] Minor protocol revisions.
+</A></li>
+        <LI>Next message: <A HREF="000264.html">[Lightning-dev] Preventing MITM - Providing new nodes with real	pubkeys
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#262">[ date ]</a>
+              <a href="thread.html#262">[ thread ]</a>
+              <a href="subject.html#262">[ subject ]</a>
+              <a href="author.html#262">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>So being done with encryption and authentication, the next layer for
+me now is to figure out how exactly nodes will broadcast their
+existence and open channels and everything.
+
+The one problem that we have currently with the way encryption and
+authentication works, is that the encryption layer is not protecting
+against MITM attacks, such that an attacker could have a connection
+with both and establish different encryption with both and just reads
+and relays all the data.
+
+This gets defeated with the agreed-on authentication layer, where both
+nodes sign a message with their real pubkey and the temp pubkey of the
+party they are talking to, where a MITM could not produce these
+signatures. However, this only holds true if the nodes actually know
+the pubkey of the node they want to talk to. Which raises the point of
+- how do we bring this information across securely? A new node joining
+the network and obtaining one/some IP of another network participant
+will want to get a list with nodes/pubkeys/IPs. Without a central
+authority that could provide trust into the data, an attacker could
+trick it into a fake network, even if just for vandalism. (Having peer
+discovery trust on some hardcoded nodes to obtain IP addresses is
+dangerous enough, we don't want to rely on that for pubkeys as well)
+
+
+There are some possibilities how to mitigate the risk / make an attack expensive
+
+(1)
+Have a snapshot of the data hashed and linked to the blockchain.
+Similar to the way 'Factom' works. It would provide the data with some
+integrity framework, but keeping track of the changes would require
+some overhead. Without a central service it would further be difficult
+to establish who should make these linking transactions to the
+blockchain...
+
+(2)
+As long as the malleability issue has not been fixed, the blockchain
+can only used with additional techniques to obtain a map of the
+channels from it. As the anchor transactions are P2SH, we need to
+expose the script, such that others are able to verify we at least
+have an anchor tx on the blockchain (associated with costs after all).
+For the current form it would be enough to have
+SecretAHash || KeyB' || KeyB || KeyA || TxID || SignatureB (L=231B)
+with KeyB being the node pubkey (lots of key reusage...)
+or
+SecretAHash || KeyB' || KeyB || KeyA || TxID || nodePubKey ||
+SignatureB (L=264B) with KeyB as a channel key that does not need to
+be equal with the nodePubKey.
+
+This is information everyone should store in case a new node joins a
+network, similar to the blockchain. New nodes can then check against
+the blockchain, whether this data is actually present there. An
+attacker can fake a complete network together with lots of
+transactions on the blockchain, but the incentive is low (vandalism)
+and the costs are high. For 100k nodes and 10 open channels per node,
+this adds up to 220MB. Not too bad, considering full nodes are highly
+incentivised to run full bitcoin nodes as well, it is actually rather
+negligible. This information is pretty static, however we want
+everyone to have a decently consistent view of the network, so we
+would probably do some rebroadcast of that every few days, just to
+ensure everyone knows about it.
+
+(3)
+Similar to (2), but instead of broadcasting our script we add a
+OP_RETURN output to each anchor transaction. It is cheap to implement
+it, as we don't have to broadcast anything specific to this issue. It
+is more expensive to attack, but also more expensive to open up a new
+channel. And it doesn't help scaling either, so I tend to dislike this
+idea.
+
+(4)
+Start with one node and just go through a lot of different IP
+addresses you get from that node and repeat over and over and compare
+what the different nodes are telling you about the system. We can
+always add this technique on top of the other 3, and add IP addresses
+as an additional cost vector for a successful attack. If most of the
+IP addresses the first node gave you are dead, you can assume he gave
+you wrong information about the network and start again with another
+node.
+
+
+As I'm implementing broadcast messages anyways for other purposes (see
+other ML post), I tent to like (2) the most, it is the most expensive
+to attack as well I think.
+
+Mats Jerratsch
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000261.html">[Lightning-dev] Minor protocol revisions.
+</A></li>
+	<LI>Next message: <A HREF="000264.html">[Lightning-dev] Preventing MITM - Providing new nodes with real	pubkeys
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#262">[ date ]</a>
+              <a href="thread.html#262">[ thread ]</a>
+              <a href="subject.html#262">[ subject ]</a>
+              <a href="author.html#262">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

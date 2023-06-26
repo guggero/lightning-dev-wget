@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving payment UX with low-latency route	probing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20payment%20UX%20with%20low-latency%20route%0A%09probing&In-Reply-To=%3CCAO3Pvs-3eqfgM3WGs6JHpoQGg-FPJXaoL-_vZ58oKB9kHrbf6w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001686.html">
+   <LINK REL="Next"  HREF="001527.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving payment UX with low-latency route	probing</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20payment%20UX%20with%20low-latency%20route%0A%09probing&In-Reply-To=%3CCAO3Pvs-3eqfgM3WGs6JHpoQGg-FPJXaoL-_vZ58oKB9kHrbf6w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improving payment UX with low-latency route	probing">laolu32 at gmail.com
+       </A><BR>
+    <I>Tue Nov  6 07:26:06 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001686.html">[Lightning-dev] Wireshark plug-in for Lightning Network(BOLT)	protocol
+</A></li>
+        <LI>Next message: <A HREF="001527.html">[Lightning-dev] Improving payment UX with low-latency route	probing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1524">[ date ]</a>
+              <a href="thread.html#1524">[ thread ]</a>
+              <a href="subject.html#1524">[ subject ]</a>
+              <a href="author.html#1524">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Fabrice,
+
+I think HORNET would address this rather nicely!
+
+During the set up phase (which uses Sphinx), the sender is able to get a
+sense
+of if the route is actually &quot;lively&quot; or not, as the circuit can't be
+finalized
+if all the nodes aren't available. Additionally, during the set up phase,
+the
+sender can drop a unique payload to each node. In this scenario, it may be
+the
+amount range the node is looking to send over this circuit. The intermediate
+nodes then package up a &quot;Forwarding Segment&quot; (FS) which includes a symmetric
+key to use for their portion of the hop, and can also be extended to include
+fee information. If this set up phase is payment value aware, then each node
+can use a private &quot;fee function&quot; that may take into account the level of
+congestion in their channels, or other factors. This would differ from the
+current approach in that this fee schedule need not be communicated to the
+wider network, only those wishing to route across that link.
+
+Another cool thing that it would allow is the ability to receive a
+protocol-level payment ACK. This may be useful when implementing AMP, as it
+would allow the sender to know exactly how many satoshis have arrived at the
+other site, adjusting their payment sharding accordingly. Nodes on either
+side
+of the circuit can then also use the data forwarding phase to exchange
+payment
+hashes, perform cool zkcp set up protcols, etc, etc.
+
+The created circuits can actually be re-used across several distinct
+payments.
+In the paper, they use a TTL for each circuit, in our case, we can use a
+block
+height, after which all nodes should reject attempted data forwarding
+attempts.
+A notable change is that each node no longer needs to maintain per-circuit
+state as we do now with Sphinx. Instead, the packets that come across
+contain
+all the information required for forwarding (our current per-hop payload).
+As a
+result, we can eliminate the asymmetric crytpo from the critical forwarding
+path!
+
+Finally, this would let nodes easily rotate their onion keys to achieve
+forward
+secrecy during the data phase (but not the set up phase), as in the FS, they
+essentially key-wrap a symmetric key (using the derived shared secret for
+that
+hop) that should be used for that data forwarding phase.
+
+There're a number of other cool things integration HORNET would allow,
+perhaps
+a distinct thread would be a more appropriate place to extol the many
+virtues
+of HORNET ;)
+
+-- Laolu
+
+On Thu, Nov 1, 2018 at 3:05 PM Fabrice Drouin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">fabrice.drouin at acinq.fr</A>&gt;
+wrote:
+
+&gt;<i> Context
+</I>&gt;<i> ======
+</I>&gt;<i>
+</I>&gt;<i> Sent payments that remain pending, i.e. payments which have not yet
+</I>&gt;<i> been failed or fulfilled, are currently a major UX challenge for LN
+</I>&gt;<i> and a common source of complaints from end-users.
+</I>&gt;<i> Why payments are not fulfilled quickly is not always easy to
+</I>&gt;<i> investigate, but we've seen problems caused by intermediate nodes
+</I>&gt;<i> which were stuck waiting for a revocation, and recipients who could
+</I>&gt;<i> take a very long time to reply with a payment preimage.
+</I>&gt;<i> It is already possible to partially mitigate this by disconnecting
+</I>&gt;<i> from a node that is taking too long to send a revocation (after 30
+</I>&gt;<i> seconds for example) and reconnecting immediately to the same node.
+</I>&gt;<i> This way pending downstream HTLCs can be forgotten and the
+</I>&gt;<i> corresponding upstream HTLCs failed.
+</I>&gt;<i>
+</I>&gt;<i> Proposed changes
+</I>&gt;<i> ===============
+</I>&gt;<i>
+</I>&gt;<i> It should be possible to provide a faster &quot;proceed/try another route&quot;
+</I>&gt;<i> answer to the sending node using probing with short timeout
+</I>&gt;<i> requirements: before sending the actual payment it would first send a
+</I>&gt;<i> &quot;blank&quot; probe request, along the same route. This request would be
+</I>&gt;<i> similar to a payment request, with the same onion packet formatting
+</I>&gt;<i> and processing, with the additional requirements that if the next node
+</I>&gt;<i> in the route has not replied within the timeout period (typically a
+</I>&gt;<i> few hundred milliseconds) then the current node will immediately send
+</I>&gt;<i> back an error message.
+</I>&gt;<i>
+</I>&gt;<i> There could be several options for the probe request:
+</I>&gt;<i> - include the same amounts and fee constraints than the actual payment
+</I>&gt;<i> request.
+</I>&gt;<i> - include no amount information, in which case we're just trying to
+</I>&gt;<i> &quot;ping&quot; every node on the route.
+</I>&gt;<i>
+</I>&gt;<i> Implementation
+</I>&gt;<i> ============
+</I>&gt;<i>
+</I>&gt;<i> I would like to discuss the possibility of implementing this with a &quot;0
+</I>&gt;<i> satoshi&quot; payment request that the receiving node would generate along
+</I>&gt;<i> with the real one. The sender would first try to &quot;pay&quot; the &quot;0 satoshi&quot;
+</I>&gt;<i> request using the route it computed with the actual payment
+</I>&gt;<i> parameters. I think that it would not require many changes to the
+</I>&gt;<i> existing protocol and implementations.
+</I>&gt;<i> Not using the actual amount and fees means that the actual payment
+</I>&gt;<i> could fail because of capacity issues but as long as this happens
+</I>&gt;<i> quickly, and it should since we checked first that all nodes on the
+</I>&gt;<i> route are alive and responsive, it still is much better than &#8220;stuck&#8221;
+</I>&gt;<i> payments.
+</I>&gt;<i> And it would not help if a node decides to misbehave, but would not
+</I>&gt;<i> make things worse than they are now (?)
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Fabrice
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181106/6aeb4330/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181106/6aeb4330/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001686.html">[Lightning-dev] Wireshark plug-in for Lightning Network(BOLT)	protocol
+</A></li>
+	<LI>Next message: <A HREF="001527.html">[Lightning-dev] Improving payment UX with low-latency route	probing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1524">[ date ]</a>
+              <a href="thread.html#1524">[ thread ]</a>
+              <a href="subject.html#1524">[ subject ]</a>
+              <a href="author.html#1524">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

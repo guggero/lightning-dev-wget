@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] LN without SegWit: less efficient or less	secure?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20LN%20without%20SegWit%3A%20less%20efficient%20or%20less%0A%09secure%3F&In-Reply-To=%3C20170116063138.GA1897%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000661.html">
+   <LINK REL="Next"  HREF="000657.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] LN without SegWit: less efficient or less	secure?</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20LN%20without%20SegWit%3A%20less%20efficient%20or%20less%0A%09secure%3F&In-Reply-To=%3C20170116063138.GA1897%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] LN without SegWit: less efficient or less	secure?">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Jan 16 06:31:38 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000661.html">[Lightning-dev] LN without SegWit: less efficient or less	secure?
+</A></li>
+        <LI>Next message: <A HREF="000657.html">[Lightning-dev] LN without SegWit: less efficient or less	secure?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#658">[ date ]</a>
+              <a href="thread.html#658">[ thread ]</a>
+              <a href="subject.html#658">[ subject ]</a>
+              <a href="author.html#658">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Jan 16, 2017 at 01:00:48PM +1030, Rusty Russell wrote:
+&gt;<i> &gt; Which one is more accurate? Is the security problems only related to having
+</I>&gt;<i> &gt; to watch the blockchain? If yes, why cannot one outsource this job to a
+</I>&gt;<i> &gt; server (e.g. the hypothetical server of your light-wallet) in level2?
+</I>&gt;<i> Yes, the problem is outsourcing.
+</I>
+I thought the big problem was setup; you can't setup a new channel with a
+stranger on the internet if they can coordinate with a miner to prevent
+you from being able to reclaim your funds. (I didn't think outsourcing
+was anywhere near ready, let alone already being blocked by miners :)
+
+I have an idea on that though, I think... The idea when we were looking at
+BIP 62 as a solution (which would have still left signature malleability
+as a problem) was to have only one side pay into the funding transaction,
+so that the other side couldn't malleate it and prevent the inital
+refund. ie:
+
+ - Alice pays $X into an output redeemable by 2-of-2 multisig, Alice and Bob,
+   signs it, works out the txid, but doesn't publish yet.
+ - Alice asks Bob to sign a refund tx that spends that transaction giving $X
+   back to Alice, with the usual HTLC behaviour so that it becomes unusable
+   once the channel starts being used.
+ - Once Bob does this and Alice is satisfied, Alice publishes the original
+   $X tx and once it is in the blockchain the channel is open.
+
+The problem is that if any third party malleability is possible, and
+happens to Alice's original tx, then Bob's signature on the refund tx is
+no longer useful, and unless Bob is kind enough to sign a new refund tx,
+Alice has lost her money.
+
+Given there's no cost to Bob doing this, and potentially some profit if
+Bob can convince Alice to pay a 10% fee to get her money back (or even
+just the joy of vandalism if you're a troll or hate the idea of lightning
+or whatever), there could be lots of people filling the role of &quot;Bob&quot;
+and it could be hard to find someone safe to open a channel with, and,
+in effect, lightning isn't usable at all except with people you already
+know and trust, which isn't very decentralised.
+
+Anyway my idea on avoiding this scenario: rather than have the funding
+transaction just have a single output and a fee, have two outputs and
+zero fee, the first being the funding output, and the second just being
+a P2PKH to yourself.  In a second transaction, pay the entire second
+output as a fee, which will allow the unmalleated funding transaction to
+be propagated and mined via CPFP.  Any malleated version of the first
+transaction will then be highly unlikely to get mined (or propogated),
+because it won't include any fees, and the second transaction won't be
+valid anymore, and nobody else will be able to generate a transaction
+that spends either output to help it get propogated.
+
+For this to fail, your channel partner would need to conspire with
+a miner, and the miner would have to be lucky enough to beat all the
+honest miners, assuming you included a competitive fee.  That seems
+pretty unlikely to me -- the miner would be giving up fee income now
+for the hope of a blackmail payment later. You could mitigate that
+further by giving channels an expiry time (ie, pay to (Alice and Bob) OR
+(CLTV 2 months, Alice)) so that you'd be guaranteed to get your funds
+back eventually. That makes blackmail and vandalism both hard and not
+profitable, which I think should be enough to make it vanishingly rare.
+
+So I /think/ that's actually sufficient to get lightning working reliably
+on *today's* bitcoin blockchain, even prior to segwit activating?
+
+(If you wanted to partner with a couple of miners and submit transactions
+directly, paying for them out of band, you could avoid the CPFP step too,
+but that wouldn't be at all decentralised)
+
+(If both Alice and Bob separately setup funding transactions, once they're
+in the blockchain, they can be combined to fund a single channel as far
+as I can see)
+
+(I might be mistaken, but I don't see &quot;ancestor feerate&quot; mentioned in the
+Bitcoin Unlimited git history and CPFP was a 0.13.0 feature, so I think
+that means that Bitcoin Unlimited miners won't mine CPFP transactions,
+and thus, with the approach outlined above, wouldn't mine transactions
+for people setting up lightning channels. So I think this gives everyone
+what they want? :)
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000661.html">[Lightning-dev] LN without SegWit: less efficient or less	secure?
+</A></li>
+	<LI>Next message: <A HREF="000657.html">[Lightning-dev] LN without SegWit: less efficient or less	secure?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#658">[ date ]</a>
+              <a href="thread.html#658">[ thread ]</a>
+              <a href="subject.html#658">[ subject ]</a>
+              <a href="author.html#658">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

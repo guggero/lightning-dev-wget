@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Just%20in%20Time%20Routing%20%28JIT-Routing%29%20and%20a%0A%09channel%20rebalancing%20heuristic%20as%20an%20add%20on%20for%20improved%0A%09routing%20success%20in%20BOLT%201.0&In-Reply-To=%3C2ywzZHQWbGbU8TLduajOwkm8WsB4jrHVOfLKT-grIytZy7J__CNwn5nMfYlywx8TOfh4HIqdCQ0d02Xxm-ugbqStxblVhnAOORNNymjKWWo%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001916.html">
+   <LINK REL="Next"  HREF="001936.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Just%20in%20Time%20Routing%20%28JIT-Routing%29%20and%20a%0A%09channel%20rebalancing%20heuristic%20as%20an%20add%20on%20for%20improved%0A%09routing%20success%20in%20BOLT%201.0&In-Reply-To=%3C2ywzZHQWbGbU8TLduajOwkm8WsB4jrHVOfLKT-grIytZy7J__CNwn5nMfYlywx8TOfh4HIqdCQ0d02Xxm-ugbqStxblVhnAOORNNymjKWWo%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Mar 21 06:56:14 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001916.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+        <LI>Next message: <A HREF="001936.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1927">[ date ]</a>
+              <a href="thread.html#1927">[ thread ]</a>
+              <a href="subject.html#1927">[ subject ]</a>
+              <a href="author.html#1927">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning all,
+
+I have been thinking further about JIT-Routing.
+
+Particularly, the extension of Rene of the idea from Ariel, to use the same payment hash (payment point in the future).
+
+I observe that this effectively creates a sort of &quot;local bass amplifier&quot; multipath payment.
+
+&gt;<i>From this idea, also:
+</I>
+&gt;<i> &gt; If a node N offers an htlc to a partner with an amount x from whom the node already received an htlc y (where y is smaller than x) the nodes must create a new channel state discarding the old htlc but having a new offer from N with the amount x-y.
+</I>
+I think we should consider also the possibility of multiple HTLCs &quot;y&quot; above.
+For instance, the node may not have enough liquidity in any single channel to fulfill the forward, or even augment its channel(s) to that node from a single other channel.
+However the node may have multiple channels, which in aggregate may have enough liquidity to fulfill the forward on the channel(s) to the next node in the onion hop.
+
+Implementation-wise, it means:
+
+1.  An outgoing HTLC may need to be associated with multiple incoming HTLCs.
+2.  An incoming payment may need to be associated with multiple incoming HTLCs (this is a prerequisite of all forms of multipath payment, whether bass amplifier or AMP).
+3.  An outgoing HTLC may need to be deleted, and all its associated incoming HTLCs re-associated to either a new outgoing HTLC or an incoming payment.
+3.1.  Multiple such outgoing HTLCs may be deleted in a single step, and all their incoming HTLCs will be re-assocaited.
+
+In future, when moving to points/scalars, we need to reveal for each HTLC we want to reverse, the total decorrelation secret that makes them each claimable by knowledge of the point, of the new HTLC we want to reverse.
+
+---
+
+But first, let us consider, is there a need for JIT-Routing?
+
+I have always held that failure of a single routing attempt is not very important, as multiple routing attempts can be performed in sequence, and as long as any *single* attempt completes, then the payment succeeds.
+
+However, in a world where some kind of multipart payment (whether bass amplifier or AMP) is in frequent use, this changes.
+A failure of a single routing attempt may delay the completion of a multipart payment, as it means that the source has to retry that branch of the multipart payment.
+In short, *all* attempts must succeed for a multipart payment to succeed.
+
+It would be nice if we can perform re-routing in order to help multipart payments succeed without so much coordination at the source.
+This is why Rendezvous Routing is of interest to me, since (naively) it seems to me that re-routing is possible with Rendezvous.
+
+However, it seems that JIT-Routing, as modified by Rene based on idea of Ariel, does much of what Rendezvous Routing would do for re-routing.
+(Rendezvous Routing is still independently of value for privacy of receivers as well as moving fee payment from senders to receivers in the &quot;withdrawal from custodial wallet&quot; case.)
+
+So I think this JIT-Routing would synergize quite well with bass amplifier and AMP.
+It effectively allows forwarding nodes to independently split a forwarding attempt across multiple paths, without participation of source.
+
+--
+
+Now, we can also consider how to better support JIT-Routing.
+
+I observe that in C-Lightning, the high-level `pay` command provides a `maxfeepercent` argument.
+C-Lightning considers &quot;fee&quot; here as &quot;anything we send out beyond the face value of the invoice&quot;.
+Currently, in addition to capping fees, it is also used to do small overpayments at the receiver.
+
+Now of course an intermediate node will only do JIT-Routing if the cost of rebalancing is less than the fee it receives for that forward.
+So one thing the source node can do, to help JIT-routing, is to overpay fees at each intermediate node a little.
+Obviously this overpayment should be capped by the overall `maxfeepercent`.
+This improves the probability that it is practical for an intermediate node to do JIT-routing.
+
+--
+
+I now put forward the most radical idea of all.
+
+*Multipart payment support is **not necessary** if we have widespread JIT-Routing support.*
+
+The motivating problem for proposing AMP, and its improvement bass amplifier, is to simplify user experience by not having the user consider the balance of each channel.
+Instead, ideally the user only cares about the total spendable balance they have, without a care about how it is distributed in its channels.
+I observe that this is an extremely local condition.
+
+I also observe that a core insight in JIT-Routing is that an intermediate node knows more about its local conditions than the source node.
+
+So from the start, the source node can start its thinking as if it is an intermediate node.
+
+Thus, if the source node wants to make a payment of 1mBTC, but has 1.5mBTC scattered in various channels, it can act as if it is forwarding 1mBTC.
+Then it can perform the conditional rebalances in the modified JIT-Routing to consolidate the needed liquidity in a single channel.
+Then it can initiate the payment, using the modified JIT-Routing &quot;reverse the HTLC polarity&quot; feature.
+
+Thus, this fixes the motivating problem for AMP.
+But in addition, it provides benefits since it implies that intermediate nodes themselves can effectively split payments without coordination with either the source or destination.
+Thus it provides a mechanism for &quot;local payment splitting&quot;, that very well removes the need for a higher-level payment-splitting mechanism.
+
+Thank you very much Rene for this idea and Ariel for pushing this idea in this direction!
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001916.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+	<LI>Next message: <A HREF="001936.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1927">[ date ]</a>
+              <a href="thread.html#1927">[ thread ]</a>
+              <a href="subject.html#1927">[ subject ]</a>
+              <a href="author.html#1927">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

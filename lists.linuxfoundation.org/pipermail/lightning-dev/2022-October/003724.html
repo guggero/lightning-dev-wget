@@ -1,0 +1,307 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fat Errors
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fat%20Errors&In-Reply-To=%3CCACdvm3MZ6LCNbQFKivnK5Tg91jkbv9h7hNzFNErfu4FWFNHKBw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003723.html">
+   <LINK REL="Next"  HREF="003725.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fat Errors</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fat%20Errors&In-Reply-To=%3CCACdvm3MZ6LCNbQFKivnK5Tg91jkbv9h7hNzFNErfu4FWFNHKBw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Fat Errors">bastien at acinq.fr
+       </A><BR>
+    <I>Thu Oct 20 15:36:03 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003723.html">[Lightning-dev] Fat Errors
+</A></li>
+        <LI>Next message: <A HREF="003725.html">[Lightning-dev] Fat Errors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3724">[ date ]</a>
+              <a href="thread.html#3724">[ thread ]</a>
+              <a href="subject.html#3724">[ subject ]</a>
+              <a href="author.html#3724">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Joost,
+
+I need more time to review your proposed change, but I wanted to quickly
+correct a misunderstanding you had in quoting eclair's code:
+
+&gt;<i> Unfortunately it is possible for nodes on the route to hide themselves.
+</I>&gt;<i> If they return random data as the failure message, the sender won't know
+</I>&gt;<i> where the failure happened. Some senders then penalize all nodes that
+</I>&gt;<i> were part of the route [4][5]. This may exclude perfectly reliable nodes
+</I>&gt;<i> from being used for future payments.
+</I>
+Eclair's code does not penalize nodes for future payment attempts in this
+case. It only ignores them for the retries of that particular payment.
+
+Cheers,
+Bastien
+
+Le mer. 19 oct. 2022 &#224; 13:13, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Hi list,
+</I>&gt;<i>
+</I>&gt;<i> I wanted to get back to a long-standing issue in Lightning: gaps in error
+</I>&gt;<i> attribution. I've posted about this before back in 2019 [1].
+</I>&gt;<i>
+</I>&gt;<i> Error attribution is important to properly penalize nodes after a payment
+</I>&gt;<i> failure occurs. The goal of the penalty is to give the next attempt a
+</I>&gt;<i> better chance at succeeding. In the happy failure flow, the sender is able
+</I>&gt;<i> to determine the origin of the failure and penalizes a single node or pair
+</I>&gt;<i> of nodes.
+</I>&gt;<i>
+</I>&gt;<i> Unfortunately it is possible for nodes on the route to hide themselves. If
+</I>&gt;<i> they return random data as the failure message, the sender won't know where
+</I>&gt;<i> the failure happened. Some senders then penalize all nodes that were part
+</I>&gt;<i> of the route [4][5]. This may exclude perfectly reliable nodes from being
+</I>&gt;<i> used for future payments. Other senders penalize no nodes at all [6][7],
+</I>&gt;<i> which allows the offending node to keep the disruption going.
+</I>&gt;<i>
+</I>&gt;<i> A special case of this is a final node sending back random data. Senders
+</I>&gt;<i> that penalize all nodes will keep looking for alternative routes. But
+</I>&gt;<i> because each alternative route still ends with that same final node, the
+</I>&gt;<i> sender will ultimately penalize all of its peers and possibly a lot of the
+</I>&gt;<i> rest of the network too.
+</I>&gt;<i>
+</I>&gt;<i> I can think of various reasons for exploiting this weakness. One is just
+</I>&gt;<i> plain grievance for whatever reason. Another one is to attract more traffic
+</I>&gt;<i> by getting competing routing nodes penalized. Or the goal could be to
+</I>&gt;<i> sufficiently mess up reputation tracking of a specific sender node to make
+</I>&gt;<i> it hard for that node to make further payments.
+</I>&gt;<i>
+</I>&gt;<i> Related to this are delays in the path. A node can delay propagating back
+</I>&gt;<i> a failure message and the sender won't be able to determine which node did
+</I>&gt;<i> it.
+</I>&gt;<i>
+</I>&gt;<i> The link at the top of this post [1] describes a way to address both
+</I>&gt;<i> unreadable failure messages as well as delays by letting each node on the
+</I>&gt;<i> route append a timestamp and hmac to the failure message. The great
+</I>&gt;<i> challenge is to do this in such a way that nodes don&#8217;t learn their position
+</I>&gt;<i> in the path.
+</I>&gt;<i>
+</I>&gt;<i> I'm revisiting this idea, and have prototyped various ways to implement
+</I>&gt;<i> it. In the remainder of this post, I will describe the variant that I
+</I>&gt;<i> thought works best (so far).
+</I>&gt;<i>
+</I>&gt;<i> # Failure message format
+</I>&gt;<i>
+</I>&gt;<i> The basic idea of the new format is to let each node (not just the error
+</I>&gt;<i> source) commit to the failure message when it passes it back by adding an
+</I>&gt;<i> hmac. The sender verifies all hmacs upon receipt of the failure message.
+</I>&gt;<i> This makes it impossible for any of the nodes to modify the failure message
+</I>&gt;<i> without revealing that they might have played a part in the modification.
+</I>&gt;<i> It won&#8217;t be possible for the sender to pinpoint an exact node, because
+</I>&gt;<i> either end of a communication channel may have modified the message.
+</I>&gt;<i> Pinpointing a pair of nodes however is good enough, and is commonly done
+</I>&gt;<i> for regular onion failures too.
+</I>&gt;<i>
+</I>&gt;<i> On the highest level, the new failure message consists of three parts:
+</I>&gt;<i>
+</I>&gt;<i> `message` (var len) | `payloads` (fixed len) | `hmacs` (fixed len)
+</I>&gt;<i>
+</I>&gt;<i> * `message` is the standard onion failure message as described in [2], but
+</I>&gt;<i> without the hmac. The hmac is now part of `hmacs` and doesn't need to be
+</I>&gt;<i> repeated.
+</I>&gt;<i>
+</I>&gt;<i> * `payloads` is a fixed length array that contains space for each node
+</I>&gt;<i> (`hop_payload`) on the route to add data to return to the sender. Ideally
+</I>&gt;<i> the contents and size of `hop_payload` is signaled so that future
+</I>&gt;<i> extensions don&#8217;t require all nodes to upgrade. For now, we&#8217;ll assume the
+</I>&gt;<i> following 9-byte format:
+</I>&gt;<i>
+</I>&gt;<i>   `is_final` (1 byte) | `duration` (8 bytes)
+</I>&gt;<i>
+</I>&gt;<i>   `is_final` indicates whether this node is the failure source. The sender
+</I>&gt;<i> uses `is_final` to determine when to stop the decryption/verification
+</I>&gt;<i> process.
+</I>&gt;<i>
+</I>&gt;<i>   `duration` is the time in milliseconds that the node held the htlc. By
+</I>&gt;<i> observing the series of reported durations, the sender is able to pinpoint
+</I>&gt;<i> a delay down to a pair of nodes.
+</I>&gt;<i>
+</I>&gt;<i>   The `hop_payload` is repeated 27 times (the maximum route length).
+</I>&gt;<i>
+</I>&gt;<i>   Every hop shifts `payloads` 9 bytes to the right and puts its own
+</I>&gt;<i> `hop_payload` in the 9 left-most bytes.
+</I>&gt;<i>
+</I>&gt;<i> * `hmacs` is a fixed length array where nodes add their hmacs as the
+</I>&gt;<i> failure message travels back to the sender.
+</I>&gt;<i>
+</I>&gt;<i>   To keep things simple, I'll describe the format as if the maximum route
+</I>&gt;<i> length was only three hops (instead of 27):
+</I>&gt;<i>
+</I>&gt;<i>   `hmac_0_2` | `hmac_0_1`| `hmac_0_0`| `hmac_1_1`| `hmac_1_0`| `hmac_2_0`
+</I>&gt;<i>
+</I>&gt;<i>   Because nodes don't know their position in the path, it's unclear to
+</I>&gt;<i> them what part of the failure message they are supposed to include in the
+</I>&gt;<i> hmac. They can't just include everything, because if part of that data is
+</I>&gt;<i> deleted later (to keep the message size fixed) it opens up the possibility
+</I>&gt;<i> for nodes to blame others.
+</I>&gt;<i>
+</I>&gt;<i>   The solution here is to provide hmacs for all possible positions. The
+</I>&gt;<i> last node that updated `hmacs` added `hmac_0_2`, `hmac_0_1` and `hmac_0_0`
+</I>&gt;<i> to the block. Each hmac corresponds to a presumed position in the path,
+</I>&gt;<i> where `hmac_0_2` is for the longest path (2 downstream hops) and `hmac_0_0`
+</I>&gt;<i> for the shortest (node is the error source).
+</I>&gt;<i>
+</I>&gt;<i>   `hmac_x_y` is the hmac added by node x (counted from the node that is
+</I>&gt;<i> currently handling the failure message) assuming that this node is y hops
+</I>&gt;<i> away from the final node.
+</I>&gt;<i>
+</I>&gt;<i> Before an hop adds its hmacs, it first deletes some of the previous hmacs.
+</I>&gt;<i> This keeps the failure message at a fixed length. The removed hmacs are the
+</I>&gt;<i> ones that cannot be useful anymore. If node 0 adds itself, the former node
+</I>&gt;<i> 0 (now node 1) cannot be at the first position anymore. The former node 1
+</I>&gt;<i> (now node 2) cannot be at the second position anymore. The former node 2
+</I>&gt;<i> cannot be the source of the error anymore and isn&#8217;t represented in the
+</I>&gt;<i> failure message any longer. The corresponding hmacs (the now non-existent
+</I>&gt;<i> `hmac_0_2`, `hmac_1_1` and `hmac_2_0`) are deleted by node 0.
+</I>&gt;<i>
+</I>&gt;<i> Deleting the useless data reduces the number of hmacs (and roughly the
+</I>&gt;<i> total failure message size) to half.
+</I>&gt;<i>
+</I>&gt;<i> The delete operation transform the fields above to:
+</I>&gt;<i>
+</I>&gt;<i> &lt;empty&gt; | &lt;empty&gt; | &lt;empty&gt; | `hmac_0_1`| `hmac_0_0`| `hmac_1_0`
+</I>&gt;<i>
+</I>&gt;<i> The exact data that is included in each hmac is:
+</I>&gt;<i>   * `message`
+</I>&gt;<i>   * the node&#8217;s own `hop_payload` and a set of downstream `hop_payload`s,
+</I>&gt;<i> depending on assumed position
+</I>&gt;<i>   * a set of downstream node hmacs, depending on assumed position
+</I>&gt;<i>
+</I>&gt;<i> For example `hmac_0_1` is based on:
+</I>&gt;<i>
+</I>&gt;<i> `message` | `hop_payload[0]` | `hop_payload[1]` | `hmac_1_0`
+</I>&gt;<i>
+</I>&gt;<i> If the node that is currently handling the failure message is one hop away
+</I>&gt;<i> from the final node, it needs to cover its own `hop_payload[0]`, the final
+</I>&gt;<i> node `hop_payload[1]` and the final node hmac `hmac_1_0`.
+</I>&gt;<i>
+</I>&gt;<i> A longer path is committed to in `hmac_0_2`:
+</I>&gt;<i>
+</I>&gt;<i> `message` | `hop_payload[0]` | `hop_payload[1]` | `hop_payload[2]` |
+</I>&gt;<i> `hmac_1_1` | `hmac_2_0`
+</I>&gt;<i>
+</I>&gt;<i> The current node is two hops away from the final node. It needs to cover
+</I>&gt;<i> its own `hop_payload[0]` as well as `hop_payload[1]` and `hop_payload[2]`
+</I>&gt;<i> for the next and final hops. Additionally it covers the next hop `hmac_1_1`
+</I>&gt;<i> and final hop `hmac_2_0`, which correspond to the positions of those nodes
+</I>&gt;<i> in the path that is assumed for `hmac_0_2`.
+</I>&gt;<i>
+</I>&gt;<i> With this information, the sender is able to verify the longest chain of
+</I>&gt;<i> hmacs until it encounters a `hop_payload` with `is_final` set.
+</I>&gt;<i>
+</I>&gt;<i> If any of the nodes messes with any byte in the failure message, the
+</I>&gt;<i> sender is always able to determine a pair of nodes that the offending node
+</I>&gt;<i> is part of. This statement can be verified through reasoning, but to be
+</I>&gt;<i> sure I also tested it with code. I&#8217;ve simulated a malicious node that
+</I>&gt;<i> modifies a byte of the failure message at index x and observed the error
+</I>&gt;<i> source as determined by the sender. For every x, the sender reports the
+</I>&gt;<i> same correct pair.
+</I>&gt;<i>
+</I>&gt;<i> # Size
+</I>&gt;<i>
+</I>&gt;<i> The obvious downside of the scheme above is the size. Given a maximum of
+</I>&gt;<i> 27 hops, the `hmacs` block contains 27+26+25+...+1=378 hmacs of 32 bytes
+</I>&gt;<i> each. This makes for a total size of 12 KB.
+</I>&gt;<i>
+</I>&gt;<i> It could be the case though that it is not possible to devise a more
+</I>&gt;<i> compact scheme that also preserves the existing privacy guarantees. I know
+</I>&gt;<i> that smart people have spent time on this problem, but nonetheless no
+</I>&gt;<i> better solution has come up in the past years. A proof of its non-existence
+</I>&gt;<i> would be interesting for sure.
+</I>&gt;<i>
+</I>&gt;<i> I personally think the size increase is justified to fix this
+</I>&gt;<i> vulnerability in Lightning. Also if failures are expected to become more
+</I>&gt;<i> rare going forward, size becomes less relevant to the overall operation of
+</I>&gt;<i> the network.
+</I>&gt;<i>
+</I>&gt;<i> Another option is to reduce the maximum number of hops. It is questionable
+</I>&gt;<i> whether 27 hops are really needed in practice, and such long routes also
+</I>&gt;<i> contribute to latency and capital lock up. If for example the new failure
+</I>&gt;<i> message could only be used with routes up to 10 hops, the total number of
+</I>&gt;<i> hmacs would drop from 378 to 55. This makes for a total message size of
+</I>&gt;<i> about 2 KB.
+</I>&gt;<i>
+</I>&gt;<i> # Signaling
+</I>&gt;<i>
+</I>&gt;<i> For backwards compatibility nodes need to know what algorithm they should
+</I>&gt;<i> run to generate or transform the failure message. This can be signaled by
+</I>&gt;<i> the sender via a tlv onion field. A failure message format signaling
+</I>&gt;<i> mechanism is also discussed in the context of long failure messages [3].
+</I>&gt;<i> The failure message described in this post could be just another version.
+</I>&gt;<i>
+</I>&gt;<i> Additionally, intermediate nodes need to advertise their capability to
+</I>&gt;<i> transform the new format through a feature bit.
+</I>&gt;<i>
+</I>&gt;<i> # Delayed successes
+</I>&gt;<i>
+</I>&gt;<i> It&#8217;s not just failures that can be delayed. Successes can too. In that
+</I>&gt;<i> case, there is no failure message to improve. It could be an option to add
+</I>&gt;<i> the same `payloads` and `hmacs` blocks to the `update_fulfill_htlc` message.
+</I>&gt;<i>
+</I>&gt;<i> [1]
+</I>&gt;<i> <A HREF="../2019-June/002015.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/002015.html</A>
+</I>&gt;<i> [2]
+</I>&gt;<i> <A HREF="https://github.com/lightning/bolts/blob/master/04-onion-routing.md#returning-errors">https://github.com/lightning/bolts/blob/master/04-onion-routing.md#returning-errors</A>
+</I>&gt;<i> [3] <A HREF="https://github.com/lightning/bolts/pull/1021">https://github.com/lightning/bolts/pull/1021</A>
+</I>&gt;<i> [4]
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lnd/blob/4fbd608b734f348d7e79fbfc7feaecc5c6c33a90/routing/result_interpretation.go#L419">https://github.com/lightningnetwork/lnd/blob/4fbd608b734f348d7e79fbfc7feaecc5c6c33a90/routing/result_interpretation.go#L419</A>
+</I>&gt;<i> [5]
+</I>&gt;<i>
+</I>&gt;<i> <A HREF="https://github.com/ACINQ/eclair/blob/a0433aa0c027c9be618c5afe18e7f91642a7f372/eclair-core/src/main/scala/fr/acinq/eclair/payment/PaymentEvents.scala#L221">https://github.com/ACINQ/eclair/blob/a0433aa0c027c9be618c5afe18e7f91642a7f372/eclair-core/src/main/scala/fr/acinq/eclair/payment/PaymentEvents.scala#L221</A>
+</I>&gt;<i> [6]
+</I>&gt;<i> <A HREF="https://github.com/ElementsProject/lightning/blob/62bfed9a8df8731be44ba4e86afb08a5d28a4442/plugins/libplugin-pay.c#L1461">https://github.com/ElementsProject/lightning/blob/62bfed9a8df8731be44ba4e86afb08a5d28a4442/plugins/libplugin-pay.c#L1461</A>
+</I>&gt;<i> [7]
+</I>&gt;<i> <A HREF="https://github.com/lightningdevkit/rust-lightning/blob/e61f3a238a70cbac87209e223b7c396108a49b97/lightning-invoice/src/payment.rs#L682">https://github.com/lightningdevkit/rust-lightning/blob/e61f3a238a70cbac87209e223b7c396108a49b97/lightning-invoice/src/payment.rs#L682</A>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221020/fd913402/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221020/fd913402/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003723.html">[Lightning-dev] Fat Errors
+</A></li>
+	<LI>Next message: <A HREF="003725.html">[Lightning-dev] Fat Errors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3724">[ date ]</a>
+              <a href="thread.html#3724">[ thread ]</a>
+              <a href="subject.html#3724">[ subject ]</a>
+              <a href="author.html#3724">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

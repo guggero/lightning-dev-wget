@@ -1,0 +1,345 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] HORNET via Circular Self-payment Routing in a	Decorrelation Payment Points+Scalar Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HORNET%20via%20Circular%20Self-payment%20Routing%20in%20a%0A%09Decorrelation%20Payment%20Points%2BScalar%20Lightning%20Network&In-Reply-To=%3Cr6lEvchVhkbkqkwl6iHiEuhC0Gbu3w__nlOhqtw7gQtvPNBSc-fnSUi7Pi775l8T_FP2rUeoNVdO75CAYJEHu8rJvmR-5qUanu7JecpL3hk%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002288.html">
+   <LINK REL="Next"  HREF="002313.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] HORNET via Circular Self-payment Routing in a	Decorrelation Payment Points+Scalar Lightning Network</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HORNET%20via%20Circular%20Self-payment%20Routing%20in%20a%0A%09Decorrelation%20Payment%20Points%2BScalar%20Lightning%20Network&In-Reply-To=%3Cr6lEvchVhkbkqkwl6iHiEuhC0Gbu3w__nlOhqtw7gQtvPNBSc-fnSUi7Pi775l8T_FP2rUeoNVdO75CAYJEHu8rJvmR-5qUanu7JecpL3hk%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] HORNET via Circular Self-payment Routing in a	Decorrelation Payment Points+Scalar Lightning Network">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Nov  7 10:57:25 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002288.html">[Lightning-dev] Potential Minor Sphinx Privacy Leak and Patch
+</A></li>
+        <LI>Next message: <A HREF="002313.html">[Lightning-dev] Data Lightning Atomic Swap (DLAS-down, DLAS-up)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2294">[ date ]</a>
+              <a href="thread.html#2294">[ thread ]</a>
+              <a href="subject.html#2294">[ subject ]</a>
+              <a href="author.html#2294">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+[HORNET](<A HREF="https://www.scion-architecture.net/pdf/2015-HORNET.pdf">https://www.scion-architecture.net/pdf/2015-HORNET.pdf</A>) is a mix network that uses a very secure (and computationally expensive) onion routing to establish sessions.
+Then, once the session is established, it uses a simpler onion routing system, whose security is then dependent on the session-establishment security, but which is computationally simpler on all forwarding nodes.
+
+There are vague plans to implement some form of HORNET on Lightning, in order to allow e.g. an on-Lightning return path for Stuckless ACK, or communications method for Lightning Offers.
+
+The Sphinx construction is an onion-routing construction used by HORNET in its session-establishment phase.
+Incidentally, Lightning itself uses the Sphinx construction as the basis for its [payment forwarding specifications](<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md">https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md</A>).
+
+[Payment Decorrelation](<A HREF="https://eprint.iacr.org/2018/472.pdf">https://eprint.iacr.org/2018/472.pdf</A>) prevents two cooperating, but distant, intermediate nodes from correlating that forwards going through them are actually the same single payment.
+This prevents both the &quot;wormhole&quot; attack (where they &quot;shortcut&quot; the intervening nodes and steal the fees from them) as well as preventing easy monitoring of payments.
+Payment decorrelation requires payment points and scalars to be implemented on the network.
+
+HORNET Session Establishment and Operation
+==========================================
+
+* WARNING: I do not understand the HORNET paper.
+  Thus, mistakes may appear below.
+  The below is not the complete HORNET paper as well, thus a simplification.
+
+In HORNET, communications between participants must first be packaged into abstractions called &quot;sessions&quot;.
+Thus there are two major phases:
+
+* Setup Phase (Session establishment)
+* Data Transmission Phase
+
+HORNET allows the &quot;sender&quot; (the one who initiates the session) maximum privacy.
+The &quot;receiver&quot; (the one contacted in establishing the session) is generally known by the sender as a particular node on the network.
+With some additional construction, the receiver itself could be hidden from the sender behind another node.
+For now, I will focus on the HORNET variant with sender anonymity, and leave the sender-receiver anonymity variant as an exercise to the reader.
+
+Setup Phase
+-----------
+
+During setup, the sender creates two paths, the &quot;forward&quot; path and the &quot;return&quot; path.
+The forward path is from the sender to the receiver, and the receiver path is from the receiver to the sender.
+Ideally, the two paths will have little or no shared nodes between them.
+
+The sender onion-encrpyts the return path, then puts it into a packet for the receiver.
+Then the packet is onion-encrypted via the forward path.
+
+On establishment, the sender sends to the first hop of the forward path, which unwraps the onion until it reaches the receiver.
+Each hop also provides a &quot;forwarding segment&quot;, which is encrypted and forwarded as the onion route is unwrapped.
+(Basically, onion routing means that we &quot;shift&quot; the data by one hop; instead of loading zeros into the shifted data, the forwarding node shifts in its forwarding segment)
+The forwarding segment is a secret that is then used to derive a shared secret with the sender later.
+
+When it reaches the receiver, the receiver remembers the existence of the session, then starts unwrapping the return-path onion.
+Again, it just &quot;shifts in&quot; all the forward-path forwarding segments, shifts in its own forwarding segment, and then the nodes along the return path also shift in their own forwarding segments.
+
+When the return-path onion arrives at the sender, the sender can decrypt the onion-routed forwarding segments.
+Then, it generates shared secrets with each forwarding node along the path.
+
+The forward path allows the sender to send messages to the receiver, while the return path allows the receiver to reply to the sender.
+
+Data Phase
+----------
+
+The data phase uses a similar onion-like construction, where each node in the forwarding / return path performs some operation on the packet, then forwards it to the next node until it reaches the receiver / sender.
+
+Using the shared keys, there are two operations:
+
+* Add layer
+* Remove layer
+
+Both operations take a key (shared between the sender and the intermediate node), an initialization vector (a nonce), and a packet of data.
+The operation returns a modified initialization vector
+
+When the sender wants to send a message to the receiver:
+
+* The sender starts with the receiver shared secret, and performs &quot;add layer&quot; operations in reverse along the forward path from destination to source.
+* It sends out the encrypted packet and the initialization vector to the first intermediate node.
+* Each intermediate node performs &quot;remove layer&quot; and forwards the packet and the initialization vector to the next intermediate node.
+* On reaching the receiver, it performs a final &quot;remove layer&quot; and extracts the plaintext.
+
+When the receiver wants to reply to the sender:
+
+* The receiver performs an &quot;add layer&quot; to its plaintext message with a fresh initalization vector.
+* It sends out the encrypted packet and initialization vector to the first intermediate node on the return path.
+* Each intermediate node performs &quot;add layer&quot; and forwards the packet and the initialization vector to the next intermediate node.
+* On reaching the sender, it performs &quot;remove layer&quot; starting from the last intermediate node and until it reaches the destination node, and extracts the plaintext.
+
+Payment Decorrelation
+=====================
+
+In payment decorrelation, when an incoming PTLC is received by a forwarding node, the onion packet for that hop also includes a scalar.
+The forwarding node then multiplies the scalar by the generator, adds it to the incoming point, then creates an outgoing PTLC with the summed point, also forwarding the rest of the onion.
+
+The onion packet for the payee then includes the sum of all the scalars for all the forwarding nodes, plus another scalar from the payer (to obfuscate whether there are 0 or more forwarding nodes).
+Note that the payee only sees the sum of the scalars.
+
+In order for the payee to claim the incoming PTLC, it knows its own payment scalar (the proof-of-payment that is revealed to the payer) and adds the given sum.
+This results in a scalar that can be used to claim the incoming PTLC.
+Then, each forwarding node, on seeing its outgoing PTLC being claimed by revelation of a scalar, subtracts its hop scalar from the outgoing PTLC-revealed scalar, which is the scalar it can use to claim the funds for its own incoming PTLC.
+This reaches the payer, who subtracts its own scalar in order to acquire the original proof-of-payment scalar, which it can keep as proof of payment, or use in higher-level protocols.
+
+Forwarding nodes thus need to somehow have a mapping, from its outgoing PTLC, to a tuple of the hop scalar and the incoming PTLC.
+
+HORNET by Circular Self-Payment
+===============================
+
+* WARNING: This diverges from HORNET as presented in the paper, thus novel cryptography, thus unsafe.
+
+One might observe, the below crucial parts of HORNET session setup phase:
+
+* The sender must somehow have a shared secret with each intermediate hop.
+* There must be a path from the sender to the receiver, and a path from the receiver to the sender.
+
+We can make the below observations:
+
+* The hop scalar in path decorrelation is a secret known by each hop, as well as the payer.
+* If we concatenate the HORNET forward path with the return path, we get a circular path that starts where it ends.
+
+Thus:
+
+* The single circular path is the entire HORNET session.
+* If we make payer/payee the sender, then the hop scalars provided at each intermediate node is a shared secret between the sender (== payer == payee) and the individual forwarding node, which is what we wanted in the first place during HORNET session setup anyway.
+
+Part of HORNET is to reduce the load on intermediate nodes by resupplying the forwarding segment at each message, so that it is the sender and receiver which needs to remember the existence of the session.
+However, the mechanism we need to build for payment decorrelation requires that each forwarding node have a mapping from outgoing PTLC to tuple of hop scalar and incoming PTLC anyway.
+We simply **ab**use this existing mapping to reduce the data that needs to be sent during the data transmission phase for each packet.
+
+Circular Routing Session Setup
+------------------------------
+
+To set up our HORNET session, our sender does the following.
+
+* Generates a path from the receiver to itself.
+  * This is actually the *forward* path.
+* Generates a path from itself to the receiver.
+  * This is actually the *return* path.
+* Generates an ordinary payment onion of the concatenation of both paths.
+  * For the onion hop of the receiver, it adds a special TLV that means &quot;I want to establish a HORNET session with you&quot;.
+    Other intermediate nodes do not get this TLV.
+  * Each hop also must be given a fresh random scalar, which also serves as the shared secret (symmetrical key) between that node and the sender.
+* Sends out the payment onion.
+
+Note that the direction of payment is the *opposite* of the direction of HORNET message flow.
+For example, if we created a payment path ZmnSCPxj -&gt; Rusty -&gt; YAijbOJA -&gt; ZmnSCPxj, with YAijbOJA as the receiver, then the messages flow in the opposite direction, ZmnSCPxj &lt;- Rusty &lt;- YAijbOJA &lt;- ZmnSCPxj.
+This is because nodes are keeping a mapping from all outgoing PTLCs to incoming PTLCs and the hop scalar, thus easy access to the hop scalar (and next hop) is available from the *outgoing* direction.
+
+Data Transmission
+-----------------
+
+Now that the sender has established a HORNET session, we can transmit messages inside this session.
+
+As mentioned above, typically, there are separate &quot;add layer&quot; and &quot;remove layer&quot; encryption operations.
+We can use a stream cipher, XORed with the plaintext.
+This gives the following properties:
+
+* &quot;Add layer&quot; and &quot;remove layer&quot; are the same operation due to XOR.
+* Encryption is commutative.
+* WARNING: This diverges from HORNET as presented in the paper, thus novel cryptography, thus unsafe.
+
+We can use the existing [ChaCha20](<A HREF="https://tools.ietf.org/html/rfc7539">https://tools.ietf.org/html/rfc7539</A>) stream cipher, which is already used in Lightning for the existing payment onion.
+This provides a 96-bit (12 byte) initialization vector.
+
+The sender then takes its plaintext message and encrypts it as so:
+
+* Generates an HMAC for the message.
+* Generates a fresh random initialization vector.
+* For each node starting from the last intermediate node to the receiver:
+  * Generates the stream cipher for the initialization vector and the shared key (hop scalar) for that node.
+  * XORs it with the message.
+  * Transmutes the initialization vector (e.g. SHA256 it then truncate to the size of the initialization vector).
+    * Transmuting this is necessary to preserve the decorrelation property.
+    * Transmuting may require also mixing in the hop scalar.
+* Remembers the final state of the initialization vector (as it is needed in order to decrypt the response).
+* Sends the message to the last intermediate node:
+  * HMAC (32 bytes)
+  * Initialization vector (12 bytes) - the original one, not the one that has been transmuted multiple times.
+  * Reference to the PTLC, currently we use (in `update_*_htlc`:
+    * Channel ID (32 bytes)
+    * PTLC index (8 bytes)
+  * The message.
+
+The above header is &quot;only&quot; 84 bytes, and is not repeated for each node.
+
+Intermediate nodes, on receiving the HORNET message, then do:
+
+* Look up the outgoing PTLC to find the hop scalar and the incoming PTLC.
+  * The incoming PTLC includes a reference to the channel, which (should) include a reference to the node with which it formed that channel, thus automatically implies the next hop.
+* Generates the stream cipher for the initialization vector and the hop scalar.
+* XORs it with the message.
+* Transmutes the initialization vector.
+* Forwards to the next node.
+  * The same HMAC.
+  * The transmuted initialization vector.
+  * A reference to the mapped *incoming* PTLC.
+  * The message that has been unwrapped/wrapped once by this node.
+
+The destination, on receiving the HORNET message, performs the same action as the above but does *not* forward the message.
+Instead, it verifies the HMAC, then reads the plaintext.
+
+On responding, the destination:
+
+* Generates an HMAC for the message.
+* Generates the stream cipher for the initialization vector and the hope scalar.
+* XORs it wit hthe message.
+* Transmutes the initialization vector.
+* Forwards to the next node.
+
+Once the response reaches the sender, it:
+
+* Recovers the initialization vector at the destination, which it computed before and stored.
+* For each node starting from the receiver to the first intermediate node:
+  * Generates the stream cipher for the initialization vector and the shared key (hop scalar) for that node.
+  * XORs it with the message.
+  * Transmutes the initialization vector.
+* Verifies the HMAC.
+* Reads the plaintext.
+
+Note that forwarding nodes behave the same regardless if they are on the forward path or the return path.
+
+Why Lock My Funds???
+====================
+
+We might wonder if locking up funds on the network in order to establish a HORNET session would be desirable.
+
+This can be made costly on the sender, discouraging overuse of the HORNET system and preventing people from streaming anime over Lightning.
+
+A forwarding node might decide to throttle HORNET messages according to the following measure
+
+    incoming_ptlc_value - outgoing_ptlc_value
+
+This is the &quot;fee&quot; --- except it will end up not getting paid, because the sender is using a circular self-payment and can simply fail the payment, preventing all fees from being paid.
+
+However, for **HORNET**, nodes might advertise an alternative (and much higher) &quot;fee&quot; rate.
+This limits the number of bytes that can be consumed in HORNET messages.
+
+For example, suppose all nodes on the network require N BTC for its (non-)&quot;fee&quot; to send a single HORNET message, after which the node will refuse all forwarding attempts.
+In order to send a single request-response on a circular route with M nodes, the sender has to lock M * N BTC in its first outgoing channel (assuming a negligible self-payment value).
+
+This fund could have been used by the sender in order to get more money on the network by providing liquidity, but the sender now has to lock it.
+Thus, it is suffering an opportunity cost, proportional to M * N, in keeping its money locked.
+Intermediate nodes can enforce this by subsequently not immediately failing the incoming PTLC depending on whether HORNET messages were sent or not.
+This enforces that the sender has to lock its funds for a long time period in order to utilize the HORNET mechanism, reducing its liquidity.
+
+The longer the circular route, the larger M is, and the larger M * N.
+Since the longer M is, the more global bandwidth is spent on sending a single HORNET message (every additional node adds more total Internet bandwidth being used on HORNET messages), this is in fact a quite fair cost to impose on the sender.
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002288.html">[Lightning-dev] Potential Minor Sphinx Privacy Leak and Patch
+</A></li>
+	<LI>Next message: <A HREF="002313.html">[Lightning-dev] Data Lightning Atomic Swap (DLAS-down, DLAS-up)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2294">[ date ]</a>
+              <a href="thread.html#2294">[ thread ]</a>
+              <a href="subject.html#2294">[ subject ]</a>
+              <a href="author.html#2294">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,684 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] AMP: Atomic Multi-Path Payments over Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20AMP%3A%20Atomic%20Multi-Path%20Payments%20over%20Lightning&In-Reply-To=%3C1518171320.5145.0.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001009.html">
+   <LINK REL="Next"  HREF="001017.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] AMP: Atomic Multi-Path Payments over Lightning</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20AMP%3A%20Atomic%20Multi-Path%20Payments%20over%20Lightning&In-Reply-To=%3C1518171320.5145.0.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] AMP: Atomic Multi-Path Payments over Lightning">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Fri Feb  9 10:15:20 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001009.html">[Lightning-dev] AMP: Atomic Multi-Path Payments over Lightning
+</A></li>
+        <LI>Next message: <A HREF="001017.html">[Lightning-dev] AMP: Atomic Multi-Path Payments over Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1015">[ date ]</a>
+              <a href="thread.html#1015">[ thread ]</a>
+              <a href="subject.html#1015">[ subject ]</a>
+              <a href="author.html#1015">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Can you give a use case for this?
+
+Usually, especially in the common case that a payment is done in
+exchange for some non-cryptographic asset (e.g. physical goods), there
+already is some kind of trust between payer and payee. So, if a payment
+is split non-atomically into smaller transactions, and only a part
+succeeds, presumably they can cooperatively figure out some way to
+settle the situation.
+
+I spoke to people of the &quot;interledger&quot; project, and what they are
+planning to do is to non-atomically split *every* transaction into lots
+of micro-payments. In fact, they consider it unnecessary to enforce
+HTLCs with scripts, because their amounts are so small(*). If one
+micro-payment fails, that just makes them learn that a certain channel
+is unreliable, and they'll send further payments (and even the remaining
+part of the same payment) through a different route.
+
+CJP
+
+(*) not worth the extra on-blockchain fee due to the increased tx size.
+
+Olaoluwa Osuntokun schreef op di 06-02-2018 om 05:26 [+0000]:
+&gt;<i> Hi Y'all, 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> A common question I've seen concerning Lightning is: &quot;I have five $2
+</I>&gt;<i> channels, is it possible for me to *atomically* send $6 to fulfill a
+</I>&gt;<i> payment?&quot;. The answer to this question is &quot;yes&quot;, provided that the
+</I>&gt;<i> receiver
+</I>&gt;<i> waits to pull all HTLC's until the sum matches their invoice.
+</I>&gt;<i> Typically, one
+</I>&gt;<i> assumes that the receiver will supply a payment hash, and the sender
+</I>&gt;<i> will
+</I>&gt;<i> re-use the payment hash for all streams. This has the downside of
+</I>&gt;<i> payment
+</I>&gt;<i> hash re-use across *multiple* payments (which can already easily be
+</I>&gt;<i> correlated), and also has a failure mode where if the sender fails to
+</I>&gt;<i> actually satisfy all the payment flows, then the receiver can still
+</I>&gt;<i> just
+</I>&gt;<i> pull the monies (and possibly not disperse a service, or w/e).
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Conner Fromknecht and I have come up with a way to achieve this over
+</I>&gt;<i> Lightning while (1) not re-using any payment hashes across all payment
+</I>&gt;<i> flows, and (2) adding a *strong* guarantee that the receiver won't be
+</I>&gt;<i> paid
+</I>&gt;<i> until *all* partial payment flows are extended. We call this scheme
+</I>&gt;<i> AMP
+</I>&gt;<i> (Atomic Multi-path Payments). It can be experimented with on Lightning
+</I>&gt;<i> *today* with the addition of a new feature bit to gate this new
+</I>&gt;<i> feature. The beauty of the scheme is that it requires no fundamental
+</I>&gt;<i> changes
+</I>&gt;<i> to the protocol as is now, as the negotiation is strictly *end-to-end*
+</I>&gt;<i> between sender and receiver.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> TL;DR: we repurpose some unused space in the onion per-hop payload of
+</I>&gt;<i> the
+</I>&gt;<i> onion blob to signal our protocol (and deliver some protocol-specific
+</I>&gt;<i> data),
+</I>&gt;<i> then use additive secret sharing to ensure that the receiver can't
+</I>&gt;<i> pull the
+</I>&gt;<i> payment until they have enough shares to reconstruct the original
+</I>&gt;<i> pre-image.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Protocol Goals
+</I>&gt;<i> ==============
+</I>&gt;<i> 1. Atomicity: The logical transaction should either succeed or fail in
+</I>&gt;<i> entirety. Naturally, this implies that the receiver should not be
+</I>&gt;<i> unable to
+</I>&gt;<i> settle *any* of the partial payments, until all of them have arrived.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 2. Avoid Payment Hash Reuse: The payment preimages validated by the
+</I>&gt;<i> consensus layer should be distinct for each partial payment.
+</I>&gt;<i> Primarily,
+</I>&gt;<i> this helps avoid correlation of the partial payments, and ensures that
+</I>&gt;<i> malicious intermediaries straddling partial payments cannot steal
+</I>&gt;<i> funds.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 3. Order Invariance: The protocol should be forgiving to the order in
+</I>&gt;<i> which
+</I>&gt;<i> partial payments arrive at the destination, adding robustness in the
+</I>&gt;<i> face of
+</I>&gt;<i> delays or routing failures.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 4. Non-interactive Setup: It should be possible for the sender to
+</I>&gt;<i> perform an
+</I>&gt;<i> AMP without directly coordinating with the receiving node.
+</I>&gt;<i> Predominantly,
+</I>&gt;<i> this means that the *sender* is able to determine the number of
+</I>&gt;<i> partial
+</I>&gt;<i> payments to use for a particular AMP, which makes sense since they
+</I>&gt;<i> will be
+</I>&gt;<i> the one fronting the fees for the cost of this parameter. Plus, we can
+</I>&gt;<i> always turn a non-interactive protocol into an interactive one for the
+</I>&gt;<i> purposes of invoicing.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Protocol Benefits
+</I>
+&gt;<i> =================
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Sending pay payments predominantly over an AMP-like protocol has
+</I>&gt;<i> several
+</I>&gt;<i> clear benefits:
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - Eliminates the constraint that a single path from sender to
+</I>&gt;<i> receiver
+</I>&gt;<i>     with sufficient directional capacity. This reduces the pressure to
+</I>&gt;<i> have
+</I>&gt;<i>     larger channels in order to support larger payment flows. As a
+</I>&gt;<i> result,
+</I>&gt;<i>     the payment graph be very diffused, without sacrificing payment
+</I>&gt;<i>     utility
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - Reduces strain from larger payments on individual paths, and
+</I>&gt;<i> allows the
+</I>&gt;<i>     liquidity imbalances to be more diffuse. We expect this to have a
+</I>&gt;<i>     non-negligible impact on channel longevity. This is due to the
+</I>&gt;<i> fact that
+</I>&gt;<i>     with usage of AMP, payment flows are typically *smaller* meaning
+</I>&gt;<i> that
+</I>&gt;<i>     each payment will unbalance a channel to a lesser degree that
+</I>&gt;<i>     with one giant flow.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - Potential fee savings for larger payments, contingent on there
+</I>&gt;<i> being a
+</I>&gt;<i>     super-linear component to routed fees. It's possible that with
+</I>&gt;<i>     modifications to the fee schedule, it's actually *cheaper* to send
+</I>&gt;<i>     payments over multiple flows rather than one giant flow.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - Allows for logical payments larger than the current maximum value
+</I>&gt;<i> of an
+</I>&gt;<i>     individual payment. Atm we have a (temporarily) limit on the max
+</I>&gt;<i> payment
+</I>&gt;<i>     size. With AMP, this can be side stepped as each flow can be up
+</I>&gt;<i> the max
+</I>&gt;<i>     size, with the sum of all flows exceeding the max.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - Given sufficient path diversity, AMPs may improve the privacy of
+</I>&gt;<i> LN
+</I>&gt;<i>     Intermediaries are now unaware to how much of the total payment
+</I>&gt;<i> they are
+</I>&gt;<i>     forwarding, or even if they are forwarding a partial payment at
+</I>&gt;<i> all.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - Using smaller payments increases the set of possible paths a
+</I>&gt;<i> partial
+</I>&gt;<i>     payment could have taken, which reduces the effectiveness of
+</I>&gt;<i> static
+</I>&gt;<i>     analysis techniques involving channel capacities and the plaintext
+</I>&gt;<i>     values being forwarded.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Protocol Overview
+</I>&gt;<i> ==================
+</I>&gt;<i> This design can be seen as a generalization of the single,
+</I>&gt;<i> non-interactive
+</I>&gt;<i> payment scheme, that uses decoding of extra onion blobs (EOBs?) to
+</I>&gt;<i> encode
+</I>&gt;<i> extra data for the receiver. In that design, the extra data includes a
+</I>&gt;<i> payment preimage that the receiver can use to settle back the payment.
+</I>&gt;<i> EOBs
+</I>&gt;<i> and some method of parsing them are really the only requirement for
+</I>&gt;<i> this
+</I>&gt;<i> protocol to work. Thus, only the sender and receiver need to implement
+</I>&gt;<i> this
+</I>&gt;<i> feature in order for it to function, which can be announced using a
+</I>&gt;<i> feature
+</I>&gt;<i> bit. 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> First, let's review the current format of the per-hop payload for each
+</I>&gt;<i> node
+</I>&gt;<i> described in BOLT-0004.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9516;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+</I>&gt;<i> &#9474;Realm (1 byte) &#9474;Next Addr (8 bytes)&#9474;Amount (8 bytes)&#9474;Outgoing CLTV (4
+</I>&gt;<i> bytes)&#9474;Unused (12 bytes)&#9474; HMAC (32 bytes) &#9474;
+</I>&gt;<i> &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9524;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</I>&gt;<i> &#9632;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9632;
+</I>&gt;<i>                                               &#9484;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9488;
+</I>&gt;<i>                                               &#9474;65 Bytes Per Hop &#9474;
+</I>&gt;<i>                                               &#9492;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9496;
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Currently, *each* node gets a 65-byte payload. We use this payload to
+</I>&gt;<i> give
+</I>&gt;<i> each node instructions on *how* to forward a payment. We tell each
+</I>&gt;<i> node: the
+</I>&gt;<i> realm (or chain to forward on), then next node to forward to, the
+</I>&gt;<i> amount to
+</I>&gt;<i> forward (this is where fees are extracted by forwarding out less than
+</I>&gt;<i> in),
+</I>&gt;<i> the outgoing CLTV (allows verification that the prior node didn't
+</I>&gt;<i> modify any
+</I>&gt;<i> values), and finally an HMAC over the entire thing. 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Two important points:
+</I>&gt;<i>   1. We have 12 bytes for each hop that are currently unpurposed and
+</I>&gt;<i> can be
+</I>&gt;<i>   used by application protocols to signal new interpretation of bytes
+</I>&gt;<i> and
+</I>&gt;<i>   also deliver additional encrypted+authenticated data to *each* hop.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   2. The protocol currently has a hard limit of 20-hops. With this
+</I>&gt;<i> feature
+</I>&gt;<i>   we ensure that the packet stays fixed sized during processing in
+</I>&gt;<i> order to
+</I>&gt;<i>   avoid leaking positional information. Typically most payments won't
+</I>&gt;<i> use
+</I>&gt;<i>   all 20 hops, as a result, we can use the remaining hops to stuff in
+</I>&gt;<i> *even
+</I>&gt;<i>   more* data.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Protocol Description
+</I>&gt;<i> ====================
+</I>&gt;<i> The solution we propose is Atomic Multi-path Payments (AMPs). At a
+</I>&gt;<i> high
+</I>&gt;<i> level, this leverages EOBs to deliver additive shares of a base
+</I>&gt;<i> preimage,
+</I>&gt;<i> from which the payment preimages of partial payments can be derived.
+</I>&gt;<i> The
+</I>&gt;<i> receiver can only construct this value after having received all of
+</I>&gt;<i> the
+</I>&gt;<i> partial payments, satisfying the atomicity constraint.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> The basic protocol:
+</I>
+
+&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Primitives
+</I>&gt;<i> ==========
+</I>&gt;<i> Let H be a CRH function.
+</I>&gt;<i> Let || denote concatenation. 
+</I>&gt;<i> Let ^ denote xor.
+</I>
+
+&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Sender Requirements
+</I>&gt;<i> ===================
+</I>&gt;<i> The parameters to the sending procedure are a random identifier ID,
+</I>&gt;<i> the
+</I>&gt;<i> number of partial payments n, and the total payment value V. Assume
+</I>&gt;<i> the
+</I>&gt;<i> sender has some way of dividing V such that V = v_1 + &#8230; + v_n.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> To begin, the sender builds the base preimage BP, from which n partial
+</I>&gt;<i> preimages will be derived. Next, the sender samples n additive shares
+</I>&gt;<i> s_1,
+</I>&gt;<i> &#8230;, s_n, and takes the sum to compute BP = s_1 ^ &#8230; ^ s_n.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> With the base preimage created, the sender now moves on to
+</I>&gt;<i> constructing the
+</I>&gt;<i> n partial payments. For each i in [1,n], the sender deterministically
+</I>&gt;<i> computes the partial preimage r_i = H(BP ||  i), by concatenating the
+</I>&gt;<i> sequence number i to the base preimage and hashing the result.
+</I>&gt;<i> Afterwards,
+</I>&gt;<i> it applies H to determine the payment hash to use in the i&#8217;th partial
+</I>&gt;<i> payment as h_i = H(r_i). Note that that with this preimage derivation
+</I>&gt;<i> scheme, once the payments are pulled each pre-image is distinct and
+</I>&gt;<i> indistinguishable from any other.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> With all of the pieces in place, the sender initiates the i&#8217;th payment
+</I>&gt;<i> by
+</I>&gt;<i> constructing a route to the destination with value v_i and payment
+</I>&gt;<i> hash h_i.
+</I>&gt;<i> The tuple (ID, n, s_i) is included in the EOB to be opened by the
+</I>&gt;<i> receiver.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> In order to include the three tuple within the per-hop payload for the
+</I>&gt;<i> final
+</I>&gt;<i> destination, we repurpose the _first_ byte of the un-used padding
+</I>&gt;<i> bytes in
+</I>&gt;<i> the payload to signal version 0x01 of the AMP protocol (note this is a
+</I>&gt;<i> PoC
+</I>&gt;<i> outline, we would need to standardize signalling of these 12 bytes to
+</I>&gt;<i> support other protocols). Typically this byte isn't set, so the
+</I>&gt;<i> existence of
+</I>&gt;<i> this means that we're (1) using AMP, and (2) the receiver should
+</I>&gt;<i> consume the
+</I>&gt;<i> _next_ hop as well. So if the payment length is actually 5, the sender
+</I>&gt;<i> tacks
+</I>&gt;<i> on an additional dummy 6th hop, encrypted with the _same_ shared
+</I>&gt;<i> secret for
+</I>&gt;<i> that hop to deliver the e2e encrypted data.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Note, the sender can retry partial payments just as they would normal
+</I>&gt;<i> payments, since they are order invariant, and would be
+</I>&gt;<i> indistinguishable
+</I>&gt;<i> from regular payments to intermediaries in the network.  
+</I>
+&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Receiver
+</I>Requirements
+&gt;<i> =====================
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Upon the arrival of each partial payment, the receiver will
+</I>&gt;<i> iteratively
+</I>&gt;<i> reconstruct BP, and do some bookkeeping to figure out when to settle
+</I>&gt;<i> the
+</I>&gt;<i> partial payments. During this reconstruction process, the receiver
+</I>&gt;<i> does not
+</I>&gt;<i> need to be aware of the order in which the payments were sent, and in
+</I>&gt;<i> fact
+</I>&gt;<i> nothing about the incoming partial payments reveals this information
+</I>&gt;<i> to the
+</I>&gt;<i> receiver, though this can be learned after reconstructing BP.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Each EOB is decoded to retrieve (ID, n, s_i), where i is the unique
+</I>&gt;<i> but
+</I>&gt;<i> unknown index of the incoming partial payment. The receiver has access
+</I>&gt;<i> to
+</I>&gt;<i> persistent key-value store DB that maps ID to (n, c*, BP*), where c*
+</I>&gt;<i> represents the number of partial payments received, BP* is the sum of
+</I>&gt;<i> the
+</I>&gt;<i> received additive shares, and the superscript * denotes that the value
+</I>&gt;<i> is
+</I>&gt;<i> being updated iteratively. c* and BP* both have initial values of 0.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> In the basic protocol, the receiver cache&#8217;s the first n it sees, and
+</I>&gt;<i> verifies that all incoming partial payments have the same n. The
+</I>&gt;<i> receiver
+</I>&gt;<i> should reject all partial payments if any EOB deviates.  Next, the we
+</I>&gt;<i> update
+</I>&gt;<i> our persistent store with DB[ID] = (n, c* + 1, BP* ^ s_i), advancing
+</I>&gt;<i> the
+</I>&gt;<i> reconstruction by one step.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> If c* + 1 &lt; n, there are still more packets in flight, so we sit
+</I>&gt;<i> tight.
+</I>&gt;<i> Otherwise, the receiver assumes all partial payments have arrived, and
+</I>&gt;<i> can
+</I>&gt;<i> being settling them back. Using the base preimage BP = BP* ^ s_i from
+</I>&gt;<i> our
+</I>&gt;<i> final iteration, the receiver can re-derive all n partial preimages
+</I>&gt;<i> and
+</I>&gt;<i> payment hashes, using r_i = H(BP || i) and h_i = H(r_i) simply through
+</I>&gt;<i> knowledge of n and BP. 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Finally, the receiver settles back any outstanding payments that
+</I>&gt;<i> include
+</I>&gt;<i> payment hash h_i using the partial preimage r_i. Each r_i will appear
+</I>&gt;<i> random
+</I>&gt;<i> due to the nature of H, as will it&#8217;s corresponding h_i. Thus, each
+</I>&gt;<i> partial
+</I>&gt;<i> payment should appear uncorrelated, and does not reveal that it is
+</I>&gt;<i> part of
+</I>&gt;<i> an AMP nor the number of partial payments used. 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Non-interactive to Interactive AMPs
+</I>&gt;<i> ===================================
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Sender simply receives an ID and amount from the receiver in an
+</I>&gt;<i> invoice
+</I>&gt;<i> before initiating the protocol. The receiver should only consider the
+</I>&gt;<i> invoice settled if the total amount received in partial payments
+</I>&gt;<i> containing
+</I>&gt;<i> ID matches or exceeds the amount specified in the invoice. With this
+</I>&gt;<i> variant, the receiver is able to map all partial payments to a
+</I>&gt;<i> pre-generated
+</I>&gt;<i> invoice statement.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Additive Shares vs Threshold-Shares
+</I>&gt;<i> ===================================
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> The biggest reason to use additive shares seems to be atomicity.
+</I>&gt;<i> Threshold
+</I>&gt;<i> shares open the door to some partial payments being settled, even if
+</I>&gt;<i> others
+</I>&gt;<i> are left in flight. Haven&#8217;t yet come up with a good reason for using
+</I>&gt;<i> threshold schemes, but there seem to be plenty against it. 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Reconstruction of additive shares can be done iteratively, and is win
+</I>&gt;<i> for
+</I>&gt;<i> the storage and computation requirements on the receiving end. If the
+</I>&gt;<i> sender
+</I>&gt;<i> decides to use fewer than n partial payments, the remaining shares
+</I>&gt;<i> could be
+</I>&gt;<i> included in the EOB of the final partial payment to allow the sender
+</I>&gt;<i> to
+</I>&gt;<i> reconstruct sooner. Sender could also optimistically do partial
+</I>&gt;<i> reconstruction on this last aggregate value.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Adaptive AMPs
+</I>&gt;<i> =============
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> The sender may not always be aware of how many partial payments they
+</I>&gt;<i> wish to
+</I>&gt;<i> send at the time of the first partial payment, at which point the
+</I>&gt;<i> simplified
+</I>&gt;<i> protocol would require n to be chosen. To accommodate, the above
+</I>&gt;<i> scheme can
+</I>&gt;<i> be adapted to handle a dynamically chosen n by iteratively
+</I>&gt;<i> constructing the
+</I>&gt;<i> shared secrets as follows.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Starting with a base preimage BP, the key trick is that the sender
+</I>&gt;<i> remember
+</I>&gt;<i> the difference between the base preimage and the sum of all partial
+</I>&gt;<i> preimages used so far. The relation is described using the following
+</I>&gt;<i> equations:
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>     X_0 = 0
+</I>
+&gt;<i>     X_i = X_{i-1} ^ s_i
+</I>
+&gt;<i>     X_n = BP ^ X_{n-1} 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> where if n=1, X_1 = BP, implying that this is in fact a generalization
+</I>&gt;<i> of
+</I>&gt;<i> the single, non-interactive payment scheme mentioned above. For
+</I>&gt;<i> i=1, ...,
+</I>&gt;<i> n-1, the sender sends s_i in the EOB, and  X_n for the n-th share. 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Iteratively reconstructing s_1 ^ &#8230;. ^ s_{n-1} ^ X_n = BP, allows the
+</I>&gt;<i> receiver to compute all relevant r_i = H(BP || i) and h_i = H(r_i).
+</I>&gt;<i> Lastly,
+</I>&gt;<i> the final number of partial payments n could be signaled in the final
+</I>&gt;<i> EOB,
+</I>&gt;<i> which would also serve as a sentinel value for signaling completion.
+</I>&gt;<i> In
+</I>&gt;<i> response to DOS vectors stemming from unknown values of n,
+</I>&gt;<i> implementations
+</I>&gt;<i> could consider advertising a maximum value for n, or adopting some
+</I>&gt;<i> sort of
+</I>&gt;<i> framing pattern for conveying that more partial payments are on the
+</I>&gt;<i> way.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> We can further modify our usage of the per-hop payloads to send
+</I>&gt;<i> (H(BP), s_i) to
+</I>&gt;<i> consume most of the EOB sent from sender to receiver. In this
+</I>&gt;<i> scenario, we'd
+</I>&gt;<i> repurpose the 11-bytes *after* our signalling byte in the unused byte
+</I>&gt;<i> section
+</I>&gt;<i> to store the payment ID (which should be unique for each payment). In
+</I>&gt;<i> the case
+</I>&gt;<i> of a non-interactive payment, this will be unused. While for
+</I>&gt;<i> interactive
+</I>&gt;<i> payments, this will be the ID within the invoice. To deliver this
+</I>&gt;<i> slimmer
+</I>&gt;<i> 2-tuple, we'll use 32-bytes for the hash of the BP, and 32-bytes for
+</I>&gt;<i> the
+</I>&gt;<i> partial pre-image share, leaving an un-used byte in the payload.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Cross-Chain AMPs
+</I>&gt;<i> ================
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> AMPs can be used to pay a receiver in multiple currencies
+</I>&gt;<i> atomically...which
+</I>&gt;<i> is pretty cool :D
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Open Research Questions
+</I>&gt;<i> =======================
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> The above is a protocol sketch to achieve atomic multi-path payments
+</I>&gt;<i> over
+</I>&gt;<i> Lightning. The details concerning onion blob usage serves as a
+</I>&gt;<i> template that
+</I>&gt;<i> future protocols can draw upon in order to deliver additional data to
+</I>&gt;<i> *any*
+</I>&gt;<i> hop in the route. However, there are still a few open questions before
+</I>&gt;<i> something like this can be feasibly deployed.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 1. How does the sender decide how many chunked payments to send, and
+</I>&gt;<i> the
+</I>&gt;<i> size of each payment?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - Upon a closer examination, this seems to overlap with the task of
+</I>&gt;<i>     congestion control within TCP. The sender may be able to utilize
+</I>&gt;<i>     inspired heuristics to gauge: (1) how large the initial payment
+</I>&gt;<i> should be
+</I>&gt;<i>     and (2) how many subsequent payments may be required. Note that if
+</I>&gt;<i> the
+</I>&gt;<i>     first payment succeeds, then the exchange is over in a signal
+</I>&gt;<i> round.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 2. How can AMP and HORNET be composed?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>   - If we eventually integrate HORNET, then a distinct communications
+</I>&gt;<i>     sessions can be established to allow the sender+receiver to
+</I>&gt;<i> exchange
+</I>&gt;<i>     up-to-date partial payment information. This may allow the sender
+</I>&gt;<i> to more
+</I>&gt;<i>     accurately size each partial payment.
+</I>&gt;<i>    
+</I>&gt;<i> 3. Can the sender's initial strategy be governed by an instance of the
+</I>&gt;<i> Push-relabel max flow algo?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 4. How does this mesh with the current max HTLC limit on a commitment?
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>    - ATM, we have a max limit on the number of active HTLC's on a
+</I>&gt;<i> particular
+</I>&gt;<i>      commitment transaction. We do this, as otherwise it's possible
+</I>&gt;<i> that the
+</I>&gt;<i>      transaction is too large, and exceeds standardness w.r.t
+</I>&gt;<i> transaction
+</I>&gt;<i>      size. In a world where most payments use an AMP-like protocol,
+</I>&gt;<i> then
+</I>&gt;<i>      overall ant any given instance there will be several pending
+</I>&gt;<i> HTLC's on
+</I>&gt;<i>      commitments network wise. 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i>      This may incentivize nodes to open more channels in order to
+</I>&gt;<i> support
+</I>&gt;<i>      the increased commitment space utilization.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> Conclusion
+</I>&gt;<i> ==========
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> We've presented a design outline of how to integrate atomic multi-path
+</I>&gt;<i> payments (AMP) into Lightning. The existence of such a construct
+</I>&gt;<i> allows a
+</I>&gt;<i> sender to atomically split a payment flow amongst several individual
+</I>&gt;<i> payment
+</I>&gt;<i> flows. As a result, larger channels aren't as important as it's
+</I>&gt;<i> possible to
+</I>&gt;<i> utilize one total outbound payment bandwidth to send several channels.
+</I>&gt;<i> Additionally, in order to support the increased load, internal routing
+</I>&gt;<i> nodes
+</I>&gt;<i> are incensed have more active channels. The existence of AMP-like
+</I>&gt;<i> payments
+</I>&gt;<i> may also increase the longevity of channels as there'll be smaller,
+</I>&gt;<i> more
+</I>&gt;<i> numerous payment flows, making it unlikely that a single payment comes
+</I>&gt;<i> across unbalances a channel entirely. We've also showed how one can
+</I>&gt;<i> utilize
+</I>&gt;<i> the current onion packet format to deliver additional data from a
+</I>&gt;<i> sender to
+</I>&gt;<i> receiver, that's still e2e authenticated.
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> -- Conner &amp;&amp; Laolu
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001009.html">[Lightning-dev] AMP: Atomic Multi-Path Payments over Lightning
+</A></li>
+	<LI>Next message: <A HREF="001017.html">[Lightning-dev] AMP: Atomic Multi-Path Payments over Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1015">[ date ]</a>
+              <a href="thread.html#1015">[ thread ]</a>
+              <a href="subject.html#1015">[ subject ]</a>
+              <a href="author.html#1015">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

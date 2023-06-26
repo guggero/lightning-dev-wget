@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] #zerobasefee
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3Cgccl-VaQYI8Qa200QZe5oiJNCYKQvJ2Lm5wlE1t34jKm2ySqpXG1cFESojIhjVYlWxxLJPcVlmY3vl0Q87xhsmjdZLAl6a-8tSQz_Jsb-rg%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003174.html">
+   <LINK REL="Next"  HREF="003176.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] #zerobasefee</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3Cgccl-VaQYI8Qa200QZe5oiJNCYKQvJ2Lm5wlE1t34jKm2ySqpXG1cFESojIhjVYlWxxLJPcVlmY3vl0Q87xhsmjdZLAl6a-8tSQz_Jsb-rg%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] #zerobasefee">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Aug 15 10:58:35 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003174.html">[Lightning-dev] #zerobasefee
+</A></li>
+        <LI>Next message: <A HREF="003176.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3175">[ date ]</a>
+              <a href="thread.html#3175">[ thread ]</a>
+              <a href="subject.html#3175">[ subject ]</a>
+              <a href="author.html#3175">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning aj, et al.
+
+&gt;<i> Hey *,
+</I>&gt;<i>
+</I>&gt;<i> There's been discussions on twitter and elsewhere advocating for
+</I>&gt;<i> setting the BOLT#7 fee_base_msat value [0] to zero. I'm just writing
+</I>&gt;<i> this to summarise my understanding in a place that's able to easily be
+</I>&gt;<i> referenced later.
+</I>&gt;<i>
+</I>&gt;<i> Setting the base fee to zero has a couple of benefits:
+</I>&gt;<i>
+</I>&gt;<i> -   it means you only have one value to optimise when trying to collect
+</I>&gt;<i>     the most fees, and one-dimensional optimisation problems are
+</I>&gt;<i>     obviously easier to write code for than two-dimensional optimisation
+</I>&gt;<i>     problems
+</I>
+Indeed, this is a good point regarding this.
+
+
+&gt;<i> -   when finding a route, if all the fees on all the channels are
+</I>&gt;<i>     proportional only, you'll never have to worry about paying more fees
+</I>&gt;<i>     just as a result of splitting a payment; that makes routing easier
+</I>&gt;<i>     (see [1])
+</I>
+If we neglect roundoff errors.
+
+On the other hand, roundoff errors involved are &lt;1msat per split, so it probably will not matter to most people.
+
+&gt;<i>     So what's the cost? The cost is that there's no longer a fixed minimum
+</I>&gt;<i>     fee -- so if you try sending a 1sat payment you'll pay 0.1% of the fee
+</I>&gt;<i>     to send a 1000sat payment, and there may be fixed costs that you have
+</I>&gt;<i>     in routing payments that you'd like to be compensated for (eg, the
+</I>&gt;<i>     computational work to update channel state, the bandwith to forward the
+</I>&gt;<i>     tx, or the opportunity cost for not being able to accept another htlc if
+</I>&gt;<i>     you've hit your max htlcs per channel limit).
+</I>&gt;<i>
+</I>&gt;<i>     But there's no need to explicitly separate those costs the way we do
+</I>&gt;<i>     now; instead of charging 1sat base fee and 0.02% proportional fee,
+</I>&gt;<i>     you can instead just set the 0.02% proportional fee and have a minimum
+</I>&gt;<i>     payment size of 5000 sats (htlc_minimum_msat=5e6, ~$2), since 0.02%
+</I>&gt;<i>     of that is 1sat. Nobody will be asking you to route without offering a
+</I>&gt;<i>     fee of at least 1sat, but all the optimisation steps are easier.
+</I>
+Should this minimum a node will be willing to forward be part of gossip, and how does this affect routing algorithms?
+
+&gt;<i>     You could go a step further, and have the node side accept smaller
+</I>&gt;<i>     payments despite the htlc minimum setting: eg, accept a 3000 sat payment
+</I>&gt;<i>     provided it pays the same fee that a 5000 sat payment would have. That is,
+</I>&gt;<i>     treat the setting as minimum_fee=1sat, rather than minimum_amount=5000sat;
+</I>&gt;<i>     so the advertised value is just calculated from the real settings,
+</I>&gt;<i>     and that nodes that want to send very small values despite having to
+</I>&gt;<i>     pay high rates can just invert the calculation.
+</I>
+I like this idea, as I think it matches more what the incentives are.
+But it requires a change in gossip and in routing algorithms, and more importantly it requires routing algorithms to support two different fee schemes (base + proportional vs min + proportional).
+
+On the other hand, this still is a two-dimensional optimization algorithm, with `minimum_fee` and `proportional_fee_millionths` as the two dimensions.
+So maybe just have a single proportional-fee mechanism...
+
+&gt;<i>
+</I>&gt;<i>     I think something like this approach also makes sense when your channel
+</I>&gt;<i>     becomes overloaded; eg if you have x HTLC slots available, and y channel
+</I>&gt;<i>     capacity available, setting a minimum payment size of something like
+</I>&gt;<i>     y/2/x**2 allows you to accept small payments (good for the network)
+</I>&gt;<i>     when you're channel is not busy, but reserves the last slots for larger
+</I>&gt;<i>     payments so that you don't end up missing out on profits because you
+</I>&gt;<i>     ran out of capacity due to low value spam.
+</I>&gt;<i>
+</I>&gt;<i>     Two other aspects related to this:
+</I>&gt;<i>
+</I>&gt;<i>     At present, I think all the fixed costs are also incurred even when
+</I>&gt;<i>     a htlc fails, so until we have some way of charging failing txs for
+</I>&gt;<i>     incurring those costs, it seems a bit backwards to penalise successful
+</I>&gt;<i>     txs who at least pay a proportional fee for the same thing. Until we've
+</I>&gt;<i>     got a way of handling that, having zero base fee seems at least fair.
+</I>
+Yes, the dreaded mechanism against payment lockup, which as far as I understand has a lot of thought already sunk into it without any widely-accepted solution, sigh.
+
+
+Regards,
+ZmnSCPxj
+
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003174.html">[Lightning-dev] #zerobasefee
+</A></li>
+	<LI>Next message: <A HREF="003176.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3175">[ date ]</a>
+              <a href="thread.html#3175">[ thread ]</a>
+              <a href="subject.html#3175">[ subject ]</a>
+              <a href="author.html#3175">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

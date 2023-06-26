@@ -1,0 +1,181 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Stateless invoices with proof-of-payment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Stateless%20invoices%20with%20proof-of-payment&In-Reply-To=%3CCAEjd%3Drqgp3KewOwOHHfhF75tP3KD0bXXijKVGsyY4--mbM0vgQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003239.html">
+   <LINK REL="Next"  HREF="003242.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Stateless invoices with proof-of-payment</H1>
+    <B>fiatjaf</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Stateless%20invoices%20with%20proof-of-payment&In-Reply-To=%3CCAEjd%3Drqgp3KewOwOHHfhF75tP3KD0bXXijKVGsyY4--mbM0vgQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Stateless invoices with proof-of-payment">fiatjaf at gmail.com
+       </A><BR>
+    <I>Tue Sep 21 12:03:44 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003239.html">[Lightning-dev] Stateless invoices with proof-of-payment
+</A></li>
+        <LI>Next message: <A HREF="003242.html">[Lightning-dev] Stateless invoices with proof-of-payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3241">[ date ]</a>
+              <a href="thread.html#3241">[ thread ]</a>
+              <a href="subject.html#3241">[ subject ]</a>
+              <a href="author.html#3241">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>What if instead of the payer generating the preimage the payee could
+generate stateless invoices? Basically just use some secret to compute the
+preimage upon receiving the HTLC, for example:
+
+1. Payer requests an invoice.
+2. Payee computes hash = sha256(hmac(local_secret, arbitrary_invoice_id)),
+then encodes arbitrary_invoice_id into the invoice somehow.
+3. Payer sends payment with arbitrary_invoice_id as tlv_record_a.
+4. Upon receiving the HTLC, payee computes preimage = hmac(local_secret,
+tlv_record_a) and resolves it.
+
+I've implemented such a scheme on @lntxbot, but it required low level code
+in a c-lightning plugin and a hack with route hints: since TLV payloads
+were not an option (as payers wouldn't know how to send them) I've used a
+&quot;shadow&quot; route hint to a private channel that didn't exist, so preimage was
+generated on the payee using preimage = hmac(local_secret,
+next_channel_scid).
+
+If however node implementations could provide such a thing it would reduce
+database requirements and improve the lives of application developers very
+much.
+
+On Tue, Sep 21, 2021 at 7:09 AM Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; wrote:
+
+&gt;<i> Problem
+</I>&gt;<i>
+</I>&gt;<i> One of the qualities of lightning is that it can provide light-weight,
+</I>&gt;<i> no-login payments with minimal friction. Games, paywalls, podcasts, etc can
+</I>&gt;<i> immediately present a QR code that is ready for scan and pay.
+</I>&gt;<i>
+</I>&gt;<i> Optimistically presenting payment requests does lead to many of those
+</I>&gt;<i> payment requests going unused. A user visits a news site and decides not to
+</I>&gt;<i> buy the article. The conventional approach is to create a lightning invoice
+</I>&gt;<i> on a node and store the invoice together with order details in a database.
+</I>&gt;<i> If the order then goes unfulfilled, cleaning processes remove the data from
+</I>&gt;<i> the node and database again.
+</I>&gt;<i>
+</I>&gt;<i> The problem with this setup is that it needs protection against unbounded
+</I>&gt;<i> generation of payment requests. There are solutions for that such as rate
+</I>&gt;<i> limiting, but wouldn't it be nice if invoices can be generated without the
+</I>&gt;<i> need to keep any state at all?
+</I>&gt;<i>
+</I>&gt;<i> Stateless invoices
+</I>&gt;<i>
+</I>&gt;<i> What would happen if a lightning invoice is only generated and stored
+</I>&gt;<i> nowhere on the recipient side? To the user, it won't make a difference.
+</I>&gt;<i> They would still scan and pay the invoice. When the payment arrives at the
+</I>&gt;<i> recipient though, two problems arise:
+</I>&gt;<i>
+</I>&gt;<i> 1. Recipient doesn't know whom or what the payment is for.
+</I>&gt;<i>
+</I>&gt;<i> This can be solved by attaching additional custom tlv records to the htlc.
+</I>&gt;<i> On the wire, this is all arranged for. The only missing piece is the
+</I>&gt;<i> ability to specify additional data for that custom tlv record in a bolt11
+</I>&gt;<i> invoice. One way would be to define a new tagged field for this in which
+</I>&gt;<i> the recipient can encode the order details.
+</I>&gt;<i>
+</I>&gt;<i> An alternative is to use the existing invoice description field and simply
+</I>&gt;<i> always pass that along with the htlc as a custom tlv record.
+</I>&gt;<i>
+</I>&gt;<i> A second alternative that already works today is to use part (for example
+</I>&gt;<i> 16 out of 32 bytes) of the payment_secret (aka payment address) to encode
+</I>&gt;<i> the order details in. This assumes that the secret is still secret enough
+</I>&gt;<i> with reduced entropy. Also there may not be enough space for every
+</I>&gt;<i> application.
+</I>&gt;<i>
+</I>&gt;<i> 2. Recipient doesn't know the preimage that is needed to settle the
+</I>&gt;<i> htlc(s).
+</I>&gt;<i>
+</I>&gt;<i> One option is to use a keysend payment or AMP payment. In that case, the
+</I>&gt;<i> sender includes the preimage with the htlc. Unfortunately this doesn't
+</I>&gt;<i> provide the sender with a proof of payment that they'd get with a regular
+</I>&gt;<i> lightning payment.
+</I>&gt;<i>
+</I>&gt;<i> An alternative solution is to use a deterministic preimage based on a
+</I>&gt;<i> (recipient node key-derived) secret, the payment secret and other relevant
+</I>&gt;<i> properties. This allows the recipient to derive the same preimage twice:
+</I>&gt;<i> Once when the lightning invoice is generated and again when a payment
+</I>&gt;<i> arrives.
+</I>&gt;<i>
+</I>&gt;<i> It could be something like this:
+</I>&gt;<i>
+</I>&gt;<i> payment_secret = random
+</I>&gt;<i> preimage = H(node_secret | payment_secret | payment_amount |
+</I>&gt;<i> encoded_order_details)
+</I>&gt;<i> invoice_hash = H(preimage)
+</I>&gt;<i>
+</I>&gt;<i> The sender sends an htlc locked to invoice_hash for payment_amount and
+</I>&gt;<i> passes along payment_secret and encoded_order_details in a custom tlv
+</I>&gt;<i> record.
+</I>&gt;<i>
+</I>&gt;<i> When the recipient receives the htlc, they reconstruct the preimage
+</I>&gt;<i> according to the formula above. At this point, all data is available to do
+</I>&gt;<i> so. When H(preimage) indeed matches the htlc hash, they can settle the
+</I>&gt;<i> payment knowing that this is an order that they committed to earlier.
+</I>&gt;<i> Settling could be implemented as a just-in-time inserted invoice to keep
+</I>&gt;<i> the diff small.
+</I>&gt;<i>
+</I>&gt;<i> The preimage is returned to the sender and serves as a proof of payment.
+</I>&gt;<i>
+</I>&gt;<i> Resilience
+</I>&gt;<i>
+</I>&gt;<i> To me it seems that stateless invoices can be a relatively simple way to
+</I>&gt;<i> improve the resiliency of systems that deal with lightning invoices.
+</I>&gt;<i> Unlimited amounts of invoices can be generated without worrying about
+</I>&gt;<i> storage or memory, no matter if the requests are due to popularity of a
+</I>&gt;<i> service or a deliberate dos attack.
+</I>&gt;<i>
+</I>&gt;<i> Interested to hear your thoughts.
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210921/997189bc/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210921/997189bc/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003239.html">[Lightning-dev] Stateless invoices with proof-of-payment
+</A></li>
+	<LI>Next message: <A HREF="003242.html">[Lightning-dev] Stateless invoices with proof-of-payment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3241">[ date ]</a>
+              <a href="thread.html#3241">[ thread ]</a>
+              <a href="subject.html#3241">[ subject ]</a>
+              <a href="author.html#3241">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

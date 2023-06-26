@@ -1,0 +1,193 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A state machine.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3CCAHvZO3km9kuTUvaZ%2BpeuhK4GvN0mfBLBCexOd%2BnqR7BGxHPE7A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000180.html">
+   <LINK REL="Next"  HREF="000183.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A state machine.</H1>
+    <B>Jasper Hugunin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3CCAHvZO3km9kuTUvaZ%2BpeuhK4GvN0mfBLBCexOd%2BnqR7BGxHPE7A%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A state machine.">jasper at hashplex.com
+       </A><BR>
+    <I>Wed Sep  2 19:36:44 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000180.html">[Lightning-dev] A state machine.
+</A></li>
+        <LI>Next message: <A HREF="000183.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#181">[ date ]</a>
+              <a href="thread.html#181">[ thread ]</a>
+              <a href="subject.html#181">[ subject ]</a>
+              <a href="author.html#181">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I had an idea regarding an alternative to the high/low priority. My
+understanding is that the problem is this case:
+Alice sends PKT_UPDATE and transitions to WAIT_FOR_UPDATE_ACCEPT.
+Bob sends PKT_UPDATE, and also transitions to WAIT_FOR_UPDATE_ACCEPT.
+Then Bob receives Alice's PKT_UPDATE. Since he is waiting for his own
+update, he doesn't know which *single* update is the official one. Same for
+Alice.
+
+What if Bob and Alice agree on a new update that combines both updates. The
+protocol can only handle one update at a time, but the update doesn't have
+to happen one-way.
+This would be similar to TCP Simultaneous Open/Close.
+So Alice and Bob would exchange PKT_SIMULTANEOUS_ACCEPT containing
+signatures, and then exchange PKT_SIMULTANEOUS_COMPLETE containing revoking
+pre-images.
+Continuing my example above, Bob would receive PKT_UPDATE, send
+PKT_SIMULTANEOUS_ACCEPT and transition to WAIT_FOR_SIMULTANEOUS_ACCEPT.
+Alice would receive Bob's PKT_UPDATE, send PKT_SIMULTANEOUS_ACCEPT and
+transition to WAIT_FOR_SIMULTANEOUS_ACCEPT.
+Bob would recieve Alice's PKT_SIMULTANEOUS_ACCEPT, send
+PKT_SIMULTANEOUS_COMPLETE, and transition to NORMAL.
+Same for Alice.
+
+I think that avoids either deadlock or livelock, and does not require
+duplicating states for priority.
+
+- Jasper
+
+On Tue, Sep 1, 2015 at 10:55 PM, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+wrote:
+
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On 1 September 2015 at 17:32, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;&gt; Looking at that git tree (I've done some work since then)...
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &#8203;Oh, github hasn't been updated since Aug 20? That's forever ago!&#8203;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;&gt; Ah, you
+</I>&gt;<i> &gt;&gt; can't send a command while processing an existing command.  Seems a
+</I>&gt;<i> &gt;&gt; logical simplification.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I'm thinking of CMD_CLOSE like &quot;Ctrl-C&quot;; why wouldn't you want it to work
+</I>&gt;<i> &gt; anytime?&#8203;
+</I>&gt;<i>
+</I>&gt;<i> Yes, I think you do.  And the other side can CMD_CLOSE during an HTLC
+</I>&gt;<i> negotiation (for example), so this should be allowed.
+</I>&gt;<i>
+</I>&gt;<i> I will update it to allow CMD_CLOSE at any time (except when already
+</I>&gt;<i> closing).
+</I>&gt;<i>
+</I>&gt;<i> &gt;&gt; &gt;&gt; This makes the constraints clearer, eg. you can't DECLINE_HTLC
+</I>&gt;<i> anything
+</I>&gt;<i> &gt;&gt; &gt;&gt; but an ADD_HTLC.
+</I>&gt;<i> &gt;&gt; &gt; &#8203;Your states currently allow declining those though:
+</I>&gt;<i> &gt;&gt; Not at all (or if it does, it's a bug).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &#8203;Right, it's a bug as of &#8203;52cda01 then :)
+</I>&gt;<i>
+</I>&gt;<i> Weird, my tester should have found that (every tested-for input must be
+</I>&gt;<i> given).
+</I>&gt;<i>
+</I>&gt;<i> Ah, yes, it did, once I enhanced the tester to actually track htlcs.
+</I>&gt;<i> And I've fixed it :)
+</I>&gt;<i>
+</I>&gt;<i> (Those should be going to STATE_WAIT_FOR_UPDATE_ACCEPT).
+</I>&gt;<i>
+</I>&gt;<i> &gt;&gt; The simplest (and safest) system is always to error and close when they
+</I>&gt;<i> &gt;&gt; break protocol.  There's some game theory involved in whether you should
+</I>&gt;<i> &gt;&gt; wait or not, but in the end, they're broken and there's not much you can
+</I>&gt;<i> &gt;&gt; do.
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &#8203;Well, you can ignore some errors -- time sync problems might resolve
+</I>&gt;<i> &gt; themselves, eg. And the &quot;error&quot; might be because of an error on your side
+</I>&gt;<i> &gt; (your admin ran the wrong date command, there's a bug in your code), that
+</I>&gt;<i> &gt; might well be fixable. I guess what I'm thinking is that closing a
+</I>&gt;<i> channel
+</I>&gt;<i> &gt; is a real cost; if they're not actively cheating -- by not completing an
+</I>&gt;<i> &gt; HTLC update once they agree to it eg -- I'd probably rather it stay open
+</I>&gt;<i> &gt; (in degraded mode perhaps) than automatically close.
+</I>&gt;<i>
+</I>&gt;<i> We could add such things later, but it's really hard to know in advance
+</I>&gt;<i> what bugs will lose money and which can be ignored.
+</I>&gt;<i>
+</I>&gt;<i> &gt;&gt; I also wonder if
+</I>&gt;<i> &gt;&gt; &gt;   A: TIMEDOUT_HTLC -&gt; B: DECLINE (err_time_sync_lost)
+</I>&gt;<i> &gt;&gt; &gt; might be useful.
+</I>&gt;<i> &gt;&gt; I don't think it's useful, though if you disagree on time you might get
+</I>&gt;<i> &gt;&gt; an error packet.  (What else can you do?)
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &#8203;How is &quot;an error packet&quot; different to a decline packet or a channel
+</I>&gt;<i> close?&#8203;
+</I>&gt;<i>
+</I>&gt;<i> It carries an ascii message giving you a clue :)
+</I>&gt;<i>
+</I>&gt;<i> &gt; Perhaps we should add a current time field to UPDATE_ADD_HTLC so you can
+</I>&gt;<i> &gt;&gt; defuse clock sync problems earlier?
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Or maybe time sync is part of the p2p protocol?&#8203; I guess channel
+</I>&gt;<i> &gt; counterparties are always peers?
+</I>&gt;<i>
+</I>&gt;<i> Yes, that makes sense.
+</I>&gt;<i>
+</I>&gt;<i> &gt;&gt; &#8203;Sorry, I was assuming that one or both implementations were buggy. I
+</I>&gt;<i> &gt;&gt; meant
+</I>&gt;<i> &gt;&gt; &gt; to make that explicit.&#8203; You're talking with strangers on the network,
+</I>&gt;<i> so
+</I>&gt;<i> &gt;&gt; &gt; you can't assume their software is bug free, right?
+</I>&gt;<i> &gt;&gt; That applies to any scheme you come up with, though.  Propose something
+</I>&gt;<i> &gt;&gt; simpler, and I'll gladly rewrite.
+</I>&gt;<i> &gt; &#8203;
+</I>&gt;<i> &gt; &#8203;I'll have another look when I can see current code :)&#8203;
+</I>&gt;<i>
+</I>&gt;<i> NW, just running the now-glacial state tester.  I'm sure there's only 1
+</I>&gt;<i> bug left!
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Rusty.
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150902/e41ada10/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150902/e41ada10/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000180.html">[Lightning-dev] A state machine.
+</A></li>
+	<LI>Next message: <A HREF="000183.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#181">[ date ]</a>
+              <a href="thread.html#181">[ thread ]</a>
+              <a href="subject.html#181">[ subject ]</a>
+              <a href="author.html#181">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

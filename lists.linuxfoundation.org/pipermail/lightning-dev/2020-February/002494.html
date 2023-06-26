@@ -1,0 +1,114 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Decoy node_ids and short_channel_ids
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3C87o8ufatgw.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002493.html">
+   <LINK REL="Next"  HREF="002495.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Decoy node_ids and short_channel_ids</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Decoy%20node_ids%20and%20short_channel_ids&In-Reply-To=%3C87o8ufatgw.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Decoy node_ids and short_channel_ids">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Feb  4 04:04:31 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002493.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+        <LI>Next message: <A HREF="002495.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2494">[ date ]</a>
+              <a href="thread.html#2494">[ thread ]</a>
+              <a href="subject.html#2494">[ subject ]</a>
+              <a href="author.html#2494">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; writes:
+&gt;<i> That's of course a solution as well. Even with that though, if Alice opens
+</I>&gt;<i> multiple channels to each of her Bobs,
+</I>&gt;<i> she should use Tor and a different node_id each time for better privacy.
+</I>
+There are two uses for this feature (both of which I started implementing):
+
+1. Simply always use a temporary id when you have a private channel, to
+   obscure your onchain footprint.  This is a nobrainer.
+
+2. For an extra layer of transience, apply a new temporary id and new
+   nodeid on every invoice *which applies only for that invoice*.
+
+But implementing the latter securely is fraught!
+
+Firstly, need to brute-force the onion against your N keys.  Secondly,
+if you use a temporary key, then you *don't* end up using the HTLC to
+pay an invoice matching that key, you *MUST* pretend you couldn't
+decrypt the onion!  This applies to all code paths between the two,
+including parsing the TLV, etc: they must ALL return
+WIRE_INVALID_ONION_HMAC.
+
+Otherwise, Mallory can get an invoice, then send malformed payments to
+Alice using the transient key in the invoice and see if she decrypts it.
+
+And then I realized that Alice can't do this properly without Bob
+telling her what the scid he used to route was.
+
+Otherwise Mallory gets two invoices, and wants to know if they're
+actually the same node.  Inv1 has nodeid N1, routehint Bob-&gt;C1, Inv2 has
+nodeid N2, routehint Bob-&gt;C2.
+
+Now Mallory uses Bob-&gt;C2 to pay to N1 for Inv1.  If it works, he knows
+it's the same node issuing both invoices.
+
+So, update_add_htlc needs a new scid field.
+
+At this point, I think we should just add a new channel_flag, which if
+you set it (and feature flag is offered) you get assigned random SCID
+from the peer in funding_locked.  This overrides your
+funding-transaction-based SCID.
+
+That gets the first case for new channels, without adding much
+complexity at all.[1]
+
+Thoughts?
+Rusty.
+
+[1] If we want to cover existing channels, we need a new &quot;give me a
+    replacement scid&quot; msg and reply.  But it can be idempotent (you
+    only ever get one replacement).
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002493.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+	<LI>Next message: <A HREF="002495.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2494">[ date ]</a>
+              <a href="thread.html#2494">[ thread ]</a>
+              <a href="subject.html#2494">[ subject ]</a>
+              <a href="author.html#2494">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

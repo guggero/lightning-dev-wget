@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Recovering protocol with watchtowers
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Recovering%20protocol%20with%20watchtowers&In-Reply-To=%3CAM0P192MB05136D2AF0DB9E32449EDD3B8FC10%40AM0P192MB0513.EURP192.PROD.OUTLOOK.COM%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001608.html">
+   <LINK REL="Next"  HREF="001570.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Recovering protocol with watchtowers</H1>
+    <B>Margherita Favaretto</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Recovering%20protocol%20with%20watchtowers&In-Reply-To=%3CAM0P192MB05136D2AF0DB9E32449EDD3B8FC10%40AM0P192MB0513.EURP192.PROD.OUTLOOK.COM%3E"
+       TITLE="[Lightning-dev] Recovering protocol with watchtowers">s170065 at student.dtu.dk
+       </A><BR>
+    <I>Mon Nov 12 18:59:31 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001608.html">[Lightning-dev] Trustless Watchtowers
+</A></li>
+        <LI>Next message: <A HREF="001570.html">[Lightning-dev] Recovering protocol with watchtowers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1568">[ date ]</a>
+              <a href="thread.html#1568">[ thread ]</a>
+              <a href="subject.html#1568">[ subject ]</a>
+              <a href="author.html#1568">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello, dev-lightning community,
+I&#8217;m writing to you to share an update of my Thesis project (previous object e-mail: Recovering protocol for Lightning network 11/01/2018).
+I warn you that this message is quite long, but I hope that could be interesting for you, and then it would be great receiving your opinions. :-)
+
+The problem that I'm focusing on is the recovering mechanism of false positive in the Lightning network, that it is possible to re-define as how it is possible to have a solution of backup in the network in case of false positive nodes, with a particular attention to privacy and security.
+First of all, compared to the solution proposed in the previous e-mail, I've decided not to use the other connected nodes as the back-up of recent status, but using Watchtowers. In fact, the problem of using a normal node is that it might be offline, and so it could not guarantee the service of backup.
+In my design, I consider a watchtower simply as a full node that is online 24h, but I have not considered the mechanism of monitoring status channel (maybe we can overlap the two functions later).
+
+An example is that in the near future, the main e-commerce organizations may offer a new service of &quot;Watchtower- Recovery&quot;, that the nodes can purchase to back up their commitments data. This means that the user can leverage a payment channel with the watchtower offering the service.
+
+This feature strongly suggests using more than one watchtower, to mitigate the risk that a single watchtower is attacked and all data inside are deleted.
+
+In my solution, I define two new concepts:
+- nonce-time Tn, as the current value of nonce-time (sequential integer number that defines the order   of the backups)
+- payload P, that consists of
+  1.a zip of all status channels of a node A at a specific time T1
+  2. the nonce time corresponds to the time T1 of the status contained in the zip
+  3. channel_id of the channel with A
+This payload is encrypted by the public key of the node A, so the watchtowers cannot know the status channel of A. -&gt; {zip(T1), T1, channel_id} pk(A)
+
+The idea is not sent all data to all watchtowers, but just send the actual nonce-time and the actual payload to one of the watchtower, and just send the new nonce-time to the others. Therefore, we can split the data into different watchtowers, without sending the payload after each transaction to all of them.
+
+To explain the design, let's consider Alice, which has a channel (with Eltoo protocol) with Bob, Charlie, Diana, and three watchtowers W0, W1 and W2. Everytime that Alice is online, she is connected to the three watchtowers.
+
+How to send data to the watchtowers
+
+Alice and Bob change their status channel. So, Alice sends the new status to the watchtowers W0 and shares the current nonce-time with W1 and W2. When Alice sends her information to the three watchtowers, these memorize the node, current nonce-time, payload:
+
+W0: A T0 P0
+W1: A T0   -
+W2: A T0   -
+
+Alice and Charlie change the status of their channel. So, Alice sends the new status to W1 and sends the new nonce-time to the others, which substitute the previous current nonce-time in the information of A:
+
+W0: A T1 P0
+W1: A T1 P1
+W2: A T1  -
+
+Alice and Diana change the status of their channel. So, Alice sends the new status to W2 and sends the new nonce-time to the others:
+
+W0: A T2 P0
+W1: A T2 P1
+W2: A T2 P2
+
+Alice and Charlie change again the status of the channel. So, Alice sends the new status to W1 and upgrade the nonce in the others:
+W0: A T3 P3
+W1: A T3 P1
+W2: A T3 P2
+
+How to request back up to the watchtowers
+
+When Alice needs to have the backup of all her data, she has to ask all her watchtowers the information connected to her node. For example, taking the last example above:
+
+W0 sends {A, T3, P3} to A
+W1 sends {A, T3, P1} to A
+W2 sends {A, T3, P2} to A
+
+Alice analyzes the information sent by W2, she notices that the payload contains the nonce T2, whereas the new nonce-time is T3. Then, she notices that the payload sent by W1 corresponds to T1, but the nonce is T3. When Alice analyzes the information sent by W0, she can analyze that the Payload corresponds to T3, that is also the last nonce-time. So Alice knows her last status.
+
+Security
+
+Since all the watchtowers store the current time-nonce and the payload is encrypted with the public key of A, we can mitigate the following risks:
+- a watchtower sends an older payload instead of the last one. The payload has to contain the current time-nonce to be considered the last one, each payload with a nonce time older are not considered.
+- if the watchtower W0 with the last payload P3, sends P0 and you know that the current nonce time is T3, it is possible to discover the malicious activity. If W1 has the payload P1, the W2 has the payload P2 and the current nonce-time is T3, I could conclude that W0 contains P3 and is cheating.
+-If one of the watchtowers, W3 decides to change the nonce-time, for example from T3 to T5 and send to A T5 with the payload. Alice can think that the actual time-nonce is T5, but no one of the watchtowers contains a payload corresponding to the state T5. This sort of misbehaviour is solved from the majority, e.g. if 2/3 nodes confirm that the actual nonce-time is T3, Alice considers this last nonce-time as the last one and not T5. The attack can happen just If the 51% of the watchtower agree to cheat and send to Alice another nonce-time.
+
+
+Fee
+
+Every time that the node A requests data to the watchtower for the backup, she sends it a small fee through the Lightning channel. This money encourages the watchtowers to guarantee the service every time.
+
+
+This one is a simple draft of my design, If you have any feedback/suggestions, please do not hesitate to contact me, even a short feedback would be very helpful! :-)
+In more details, I'd like to know does it make sense to overlap the concept of watchtower with the mechanism of backup?
+
+
+Thank you very much in advance,
+
+Cheers
+Margherita
+
+
+
+
+
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181112/5b5e5313/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181112/5b5e5313/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001608.html">[Lightning-dev] Trustless Watchtowers
+</A></li>
+	<LI>Next message: <A HREF="001570.html">[Lightning-dev] Recovering protocol with watchtowers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1568">[ date ]</a>
+              <a href="thread.html#1568">[ thread ]</a>
+              <a href="subject.html#1568">[ subject ]</a>
+              <a href="author.html#1568">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

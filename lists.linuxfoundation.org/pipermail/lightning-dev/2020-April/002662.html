@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%09and%20Competing%20Interest&In-Reply-To=%3CPtYNeePySy_thDHm8FwIIGEk32EjJpSmiwPctyEg0hOrLZEHjO1IBghm4MWY88g51K-XF2pf_JDnW0UdTL6QSbACEj21h9U1s5ITc_N3I6Q%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002658.html">
+   <LINK REL="Next"  HREF="002663.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%09and%20Competing%20Interest&In-Reply-To=%3CPtYNeePySy_thDHm8FwIIGEk32EjJpSmiwPctyEg0hOrLZEHjO1IBghm4MWY88g51K-XF2pf_JDnW0UdTL6QSbACEj21h9U1s5ITc_N3I6Q%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Apr 23 04:50:09 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002658.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+        <LI>Next message: <A HREF="002663.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2662">[ date ]</a>
+              <a href="thread.html#2662">[ thread ]</a>
+              <a href="subject.html#2662">[ subject ]</a>
+              <a href="author.html#2662">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning lists et al,
+
+Let me try to summarize things a little:
+
+* Suppose we have a forwarding payment A-&gt;B-&gt;C.
+* Suppose B does not want to maintain a mempool and is running in `blocksonly` mode to reduce operational costs.
+* C triggers B somehow dropping the B&lt;-&gt;C channel, such as by sending an `error` message, which will usually cause the other side to drop the channel onchain using its commitment transaction.
+* The dropped B&lt;-&gt;C channel has an HTLC (that was set up during the A-&gt;B-&gt;C forwarding).
+* The HTLC, being used in a Poon-Dryja channel, actually has the following contract text:
+  * The fund may be claimed by either of these clauses:
+    * C can claim, if C shows the preimage of some hash H (hashlock branch).
+    * B and C must agree, and claim after time L (timelock branch).
+* B holds a signature from C that can claim the timelock branch of the HTLC, for a transaction that spends to an output with an `OP_CHECKSEQUENCEVERIFY`.
+  * The signature is `SIGHASH_ALL`, so the transaction has a fixed feerate.
+* C can &quot;pin&quot; the HTLC output by spending using the hashlock branch, and creating a large fee, low fee-rate (tree of) transactions.
+  * As it is a low fee-rate, miners have no incentive to put this in a block, especially if unrelated higher-fee-rate transactions exist that would earn them more money.
+  * Even in a full RBF universe, because of the anti-DoS mempool rules, B cannot evict this pinned transaction by just bidding up the feerate.
+    * A replacing transaction cannot evict alternatives unless its absolute fee is greater than the absolute fee of the alternative.
+    * The pinning transaction has a high fee, but is blockspace-wasteful, so it is:
+      * Undesirable to mine (low feerate).
+      * Difficult to evict (high fee).
+* Thus, B is unable to get its timelock-branch transaction in the mempools of miners.
+* C waits until the A-&gt;B HTLC times out, then:
+  * C directly contacts miners with an out-of-band proposal to replace its transaction with an alternative that is much smaller and has a low fee, but much better feerate.
+  * Miners, being economically rational, accept this proposal and include this in a block.
+
+The proposal by Matt is then:
+
+* The hashlock branch should instead be:
+  * B and C must agree, and show the preimage of some hash H (hashlock branch).
+* Then B and C agree that B provides a signature spending the hashlock branch, to a transaction with the outputs:
+  * Normal payment to C.
+  * Hook output to B, which B can use to CPFP this transaction.
+  * Hook output to C, which C can use to CPFP this transaction.
+* B can still (somehow) not maintain a mempool, by:
+  * B broadcasts its timelock transaction.
+  * B tries to CPFP the above hashlock transaction.
+    * If CPFP succeeds, it means the above hashlock transaction exists and B queries the peer for this transaction, extracting the preimage and claiming the A-&gt;B HTLC.
+
+Is that a fair summary?
+
+--
+
+Naively, and remembering I am completely ignorant of the exact details of the mempool rules, it seems to me quite strange that we are allowing an undesirable transaction (tree) into the mempool:
+
+* Undesirable to mine (low fee-rate).
+* Difficult to evict (high fee).
+
+Miners are not interested in low fee-rate transactions, as long as higher fee-rate transactions exist.
+And being difficult to evict means miners cannot get alternatives that are more lucrative for them.
+
+The reason (as I understand it) eviction is purposely made difficult here is to prevent certain DoS attacks on Bitcoin nodes, specifically:
+
+1. Attacker sends a low fee-rate tx as a &quot;root&quot; transaction.
+2  Attacker sends thousands of low fee-rate tx that build off the above root.
+3. Attacker sends a slightly higher fee-rate alternative to the root, evicting the above tree of txes.
+4. Attacker sends thousands of low fee-rate tx that build off the latest root.
+5. GOTO 3.
+
+However, it seems to me, naively, that &quot;an ounce of prevention is worth a pound of cure&quot;.
+
+As I understand it, the mempool is organized already into &quot;packages&quot; of transactions, and adding a transaction into the mempool involves extending and merging packages.
+Perhaps the size of a package with low fee-rate (relative to the other packages in the mempool) can be limited, so that mempools drop incoming txes that extend a low-fee-rate tree of transactions.
+This means an attacker cannot send thousands of low fee-rate tx that build off some low fee-rate root tx in the first place, so it can still be evicted easily later without much impact.
+
+Naively, it seems to me to prevent the DoS attack as well, as at step 2 it would be prevented from sending thousands of low fee-rate tx building off the root.
+
+As well, as I understand it, this merely tightens the mempool acceptance rules, preventing low fee-rate packages from growing (analogous to a consensus-layer softfork).
+The &quot;cannot evict high absolute fee&quot; rule can be retained, as the low-fee-rate package is prevented from reaching a large size.
+
+Would that be workable as a general solution to solve (what I think is) the root cause of this problem?
+
+(This assumes full RBF, I suppose.)
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002658.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+	<LI>Next message: <A HREF="002663.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2662">[ date ]</a>
+              <a href="thread.html#2662">[ thread ]</a>
+              <a href="subject.html#2662">[ subject ]</a>
+              <a href="author.html#2662">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

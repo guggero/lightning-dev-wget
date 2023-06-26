@@ -1,0 +1,199 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20RBF%20Pinning%20with%20Counterparties%20and%20Competing%0A%09Interest&In-Reply-To=%3Ca09f5291-e7c0-0aca-6971-03ace0c38dff%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002638.html">
+   <LINK REL="Next"  HREF="002640.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20RBF%20Pinning%20with%20Counterparties%20and%20Competing%0A%09Interest&In-Reply-To=%3Ca09f5291-e7c0-0aca-6971-03ace0c38dff%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Tue Apr 21 02:43:14 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002638.html">[Lightning-dev] Anchor Outputs Spec &amp; Implementation Progress
+</A></li>
+        <LI>Next message: <A HREF="002640.html">[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2639">[ date ]</a>
+              <a href="thread.html#2639">[ thread ]</a>
+              <a href="subject.html#2639">[ subject ]</a>
+              <a href="author.html#2639">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>[Hi bitcoin-dev, in lightning-land we recently discovered some quite frustrating issues which I thought may merit
+broader discussion]
+
+While reviewing the new anchor outputs spec [1] last week, I discovered it introduced a rather nasty ability for a user
+to use RBF Pinning to steal in-flight HTLCs which are being enforced on-chain. Sadly, Antoine pointed out that this is
+an issue in today's light as well, though see [2] for qualifications. After some back-and-forth with a few other
+lightning folks, it seems clear that there is no easy+sane fix (and the practicality of exploitation today seems
+incredibly low), so soliciting ideas publicly may be the best step forward.
+
+I've included lots of background for those who aren't super comfortable with lightning's current design, but if you
+already know it well, you can skip at least background 1 &amp; 2.
+
+Background - Lightning's Transactions (you can skip this)
+=====================================
+
+As many of you likely know, lightning today does all its update mechanics through:
+ a) a 2-of-2 multisig output, locking in the channel,
+ b) a &quot;commitment transaction&quot;, which spends that output: i) back to its owners, ii) to &quot;HTLC outputs&quot;,
+ c) HTLC transactions which spend the relevant commitment transaction HTLC outputs.
+
+This somewhat awkward third layer of transactions is required to allow HTLC timeouts to be significantly lower than the
+time window during which a counterparty may be punished for broadcasting a revoked state. That is to say, you want to
+&quot;lock-in&quot; the resolution of an HTLC output (ie by providing the hash lock preimage on-chain) by a fixed block height
+(likely a few hours from the HTLC creation), but the punishment mechanism needs to occur based on a sequence height
+(possibly a day or more after transaction broadcast).
+
+As Bitcoin has no covanents, this must occur using pre-signed transactions - namely &quot;HTLC-Success&quot; and &quot;HTLC-Timeout&quot;
+transactions, which finalize the resolution of an HTLC, but have a sequence-lock for some time during which the funds
+may be taken if they had previously been revoked. To avoid needless delays, if the counterparty which did *not*
+broadcast the commitment transaction wishes to claim the HTLC value, they may do so immediately (as there is no reason
+to punish the non-broadcaster for having *not* broadcasted a revoked state). Thus, we have four possible HTLC
+resolutions depending on the combination of which side broadcast the HTLC and which side sent the HTLC (ie who can claim
+it vs who can claim it after time-out):
+
+ 1) pre-signed HTLC-Success transaction, providing the preimage in the witness and sent to an output which is sequence-
+    locked for some time to provide the non-broadcasting side the opportunity to take the funds,
+ 2) pre-signed HTLC-Timeout transaction, time-locked to N, providing no preimage, but with a similar sequence lock and
+    output as above,
+ 3) non-pre-signed HTLC claim, providing the preimage in the witness and unencumbered by the broadcaster's signature,
+ 4) non-pre-signed HTLC timeout, OP_CLTV to N, and similarly unencumbered.
+
+Background 2 - RBF Pinning (you can skip this)
+==========================
+
+Bitcoin Core's general policy on RBF transactions is that if a counterparty (either to the transaction, eg in lightning,
+or not, eg a P2P node which sees the transaction early) can modify a transaction, especially if they can add an input or
+output, they can prevent it from confirming in a world where there exists a mempool (ie in a world where Bitcoin works).
+While this is somewhat unintuitive, there are any number of good anti-DoS reasons for this, eg:
+ * (ok, this is a bad reason, but) a child transaction could be marked 'non-RBF', which would mean allowing the parent
+   be RBF'd would violate the assumptions those who look at the RBF opt-in marking make,
+ * a parent may be very large, but low feerate - this requires the RBF attempt to &quot;pay for its own relay&quot; and include a
+   large absolute fee just to get into the mempool,
+ * one of the various package size limits is at its maximum, and depending on the structure of the package the
+   computational complexity of calculation evictions may be more than we want to do for a given transaction.
+
+Background 3 - &quot;The RBF Carve-Out&quot; (you can skip this)
+==================================
+
+In today's lightning, we have a negotiation of what we expect the future feerate to be when one party goes to close the
+channel. All the pre-signed transactions above are constructed with this fee-rate in mind, and, given they are all
+pre-signed, adding additional fee to them is not generally an option. This is obviously a very maddening prediction
+game, especially when the security consequences for negotiating a value which is wrong may allow your counterparty to
+broadcast and time out HTLCs which you otherwise have the preimage for. To remove this quirk, we came up with an idea a
+year or two back now called &quot;anchor outputs&quot; (aka the RBF carve-out for those in Bitcoin-land) - a neat trick to allow
+both counterparties to add fees to a transaction which is being broadcast without getting into the quagmire that is RBF
+pinning. Specifically, we added a rule to Bitcoin Core which allows for transactions which have a narrow structure to be
+CPFP'd trivially by either counterparty, irrespective of what the other counterparty does! In order to meet this
+structure, the commitment transaction (b) must have two (potentially-)additional outputs, each which only one side can
+spend, and every other output must have a CSV lock associated with it. This is great and there is (finally) movement to
+deploy this.
+
+RBF Pinning HTLC Transactions (aka &quot;Oh, wait, I can steal funds, how, now?&quot;)
+=============================
+
+You'll note that in the discussion of RBF pinning we were pretty broad, and that that discussion seems to in fact cover
+our HTLC outputs, at least when spent via (3) or (4). It does, and in fact this is a pretty severe issue in today's
+lightning protocol [2]. A lightning counterparty (C, who received the HTLC from B, who received it from A) today could,
+if B broadcasts the commitment transaction, spend an HTLC using the preimage with a low-fee, RBF-disabled transaction.
+After a few blocks, A could claim the HTLC from B via the timeout mechanism, and then after a few days, C could get the
+HTLC-claiming transaction mined via some out-of-band agreement with a small miner. This leaves B short the HTLC value.
+
+You'll note that B would be just fine if they had a way to safely monitor the global mempool, and while this seems like
+a prudent mitigation for lightning implementations to deploy today, it is itself a quagmire of complexity, especially
+when you consider differences in relay policy during an upgrade cycle and how those may effect propagation through the
+P2P network. Further, this is a really obnoxious assumption to hoist onto lightning nodes - having an active full node
+with an in-sync mempool is a lot more CPU, bandwidth, and complexity than most lightning users were expecting to face.
+
+It seems highly likely we could come up with some kind of variant of of the RBF Carve-Out to solve this problem, though
+probably much more specific to this particular transaction structure - imagine a rule which allowed B to RBF C's low-fee
+HTLC claim transaction, without ever seeing it. This could be accomplished by locking down the transaction types in (3)
+and (4) by pre-signing them (just, like (1) and (2)) and then using some kind of policy rule to allow only the addition
+of additional confirmed inputs and one (small) output. This would mean that B knows that either C's transaction has high
+fee, or B's reasonably-higher-fee transaction will meet the RBF rules and replace C's maliciousness.
+
+While the original RBF Carve-Out was a little awkward, its structure was sufficiently generic that other off-chain
+protocols could reasonably (need to) take advantage of it, however a rule to address this issue seems like it would need
+to be highly tailored to lightning, which doesn't seem acceptable (there appears to be a way to shoehorn the existing
+carve-out, but it results in a ton of extra on-chain volume).
+
+Strategies involving full-RBF for transactions not at the top of the mempool, (slow-)full-mempool-sync allowing
+mempool-total-fee decreases and relaxations of the RBF rules would be welcome, but without a ton of legwork to include
+things like package relay I'm not convinced they would suffice. This of course doesn't even account for the possibility
+of similar issues given rely policy differences.
+
+PS For Lightning-Dev Folks (aka &quot;An Alternative Anchor Proposal&quot;)
+==========================
+
+Given the anchor outputs proposal seeks to expand lightning's security in a world where Bitcoin is running at
+steady-state and the mempool reliably has transactions in it, not fixing this issue seems to render the whole exercise
+somewhat useless (not to mention that the current design makes this attack more obvious and provides several alternative
+paths to exploitation).
+
+An alternative, albeit not ideal anchor outputs proposal is as follows:
+
+ * Instead of making the HTLC output spending more free-form with SIGHASH_ANYONECAN_PAY|SIGHASH_SINGLE, we clearly need
+   to go the other direction - all HTLC output spends need to be pre-signed.
+ * Sadly, and this really hurts from an on-chain-tx-size perspective, we have to include anchor outputs in the HTLC
+   transactions (intuitively I think all of them, but at least HTLC-fulfilling transactions definitely).
+ * Our poor B, being exploited, above, will attempt to spend their anchor output with a CPFP even if they aren't sure C
+   has broadcast the HTLC-Success transaction! This is fine as B already knows the txid, and just wants to learn whats
+   in the witness (assuming there is one).
+
+For those from bitcoin-dev still reading who are thinking &quot;blah, you clearly don't need anything else, you have a
+solution!&quot; we're talking about extra outputs out the wazoo for hopefully-unnecessary edge cases involving transactions
+entering the mempool which a user wants to avoid confirming! This severely cuts into the lowest-value HTLCs which can be
+sent &quot;safely&quot; and adds a significant social cost of extra low-value, possibly-uneconomical outputs in the chain.
+
+Still, lacking a better idea, and with a strong desire to make lightning's security more practical in a world where
+Bitcoin miners are paid to operate, we should probably start considering moving forward with this.
+
+Thanks for reading,
+Matt
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/688">https://github.com/lightningnetwork/lightning-rfc/pull/688</A>
+
+[2] I'll note that while it is a &quot;severe issue&quot;, given the general issues with fee-prediction described in background 3,
+its pretty hard to argue its really in the scope of the security model of lightning today. If there were an easy fix to
+it, we'd have deployed it by now in response to private discussion, but, sadly, there is not.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002638.html">[Lightning-dev] Anchor Outputs Spec &amp; Implementation Progress
+</A></li>
+	<LI>Next message: <A HREF="002640.html">[Lightning-dev] RBF Pinning with Counterparties and Competing	Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2639">[ date ]</a>
+              <a href="thread.html#2639">[ thread ]</a>
+              <a href="subject.html#2639">[ subject ]</a>
+              <a href="author.html#2639">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,283 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Escrow Over Lightning?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Escrow%20Over%20Lightning%3F&In-Reply-To=%3CCALGTLwNXY__Y5-HC5sKTGVaCuuePEVci4tc%3DPHghQqCFnWbwjA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002028.html">
+   <LINK REL="Next"  HREF="002052.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Escrow Over Lightning?</H1>
+    <B>Nadav Kohen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Escrow%20Over%20Lightning%3F&In-Reply-To=%3CCALGTLwNXY__Y5-HC5sKTGVaCuuePEVci4tc%3DPHghQqCFnWbwjA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Escrow Over Lightning?">nadav at suredbits.com
+       </A><BR>
+    <I>Thu Jun 27 17:40:13 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002028.html">[Lightning-dev] Escrow Over Lightning?
+</A></li>
+        <LI>Next message: <A HREF="002052.html">[Lightning-dev] Escrow Over Lightning?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2051">[ date ]</a>
+              <a href="thread.html#2051">[ thread ]</a>
+              <a href="subject.html#2051">[ subject ]</a>
+              <a href="author.html#2051">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+I find this idea super exciting!
+
+I think that the main wrinkle in what you've presented is how the Seller
+can verify that `B'` is indeed `ecdh(b, tweak(c, E))*G` since absent this
+authentication, the Escrow will be unable to provide the Seller with the
+necessary information to claim funds during a dispute.
+
+Perhaps there is some fancy ZKP that allows the Seller and Buyer to
+establish this alone but I don't know what that would look like. If it
+exists than that scheme would be better than the following but here are my
+thoughts:
+
+If we do need the Escrow to attest to the validity of `B'`, we want to make
+sure that the Escrow gains as little knowledge as possible. If we add a
+salt to the `tweak` function's hash (i.e `tweak(c, P, salt) = P + h(P | c |
+salt)*G`) and this salt is agreed upon by the Buyer and Seller (say for
+example, `salt = ecdh(s, B)`), then the Seller can tell the Escrow to
+compute `B'` given only `h(E | c | salt)` and `B` using `B' = ecdh(e + h(E
+|<i> c | salt), B) * G`. In this way, the Escrow can validate for the Seller
+</I>that `B'` is what it should be, while learning only a random hash (who's
+`salt` ensures no information about `c` is revealed), and a temporary
+public key, neither of which appear in any traceable way during a routed
+payment; certainly this is worse than no knowledge since the Escrow can
+compute `b'` and choose to cheat by giving this to the Seller, but I claim
+that this does not require more trust in the Escrow than is already being
+put in them. The only information gained by the Escrow is that a payment is
+happening, and assuming that the Seller contacts them over an onion-routed
+network (such as TOR), the Escrow doesn't even learn any information about
+the Buyer or Seller's identities. Although it would certainly be better to
+have the Escrow not even learn that they are being used, this seems like a
+pretty acceptable amount of information for them to learn, and has the
+potential benefit of ensuring that being a trustworthy Escrow platform
+remains a sustainable (and competitive) endeavor, even in the absence of
+disputes.
+
+On a somewhat unrelated note, I just want to throw out there that it may be
+simpler to have a scheme for routing Discreet Log Contracts over the
+lightning network for the kinds of simple oracle contracts like &quot;seller S
+will deliver 100 pieces of USA federal reserve commemorative decoration
+paper in exchange for 1 satoshi from buyer&quot;. Using a DLC would have the
+benefit of requiring no interaction with the oracle (excluding broadcast
+which is fine) during dispute settlement. Just a thought :)
+
+Best,
+Nadav
+
+On Thu, Jun 20, 2019 at 12:54 AM ZmnSCPxj via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Good morning list,
+</I>&gt;<i>
+</I>&gt;<i> One thing I am attempting to think through is some implementation of
+</I>&gt;<i> escrow over Lightning.
+</I>&gt;<i>
+</I>&gt;<i> A non-custodial onchain escrow protocol simply uses a 2-of-3 multisig
+</I>&gt;<i> amongst the two participants and the escrow.
+</I>&gt;<i> Such a contract (like any onchain-enforceable contract) can be transported
+</I>&gt;<i> over a *single* Lightning channel, but cannot be safely hopped across
+</I>&gt;<i> channels: the escrow may take &quot;one&quot; side in one channel while taking the
+</I>&gt;<i> &quot;other&quot; side on the other channel, thus putting every hop node at risk.
+</I>&gt;<i>
+</I>&gt;<i> Escrow services are useful when Bitcoin needs to interact with other
+</I>&gt;<i> systems, such as the mythical &quot;real world&quot;, when tr*st in a brandless
+</I>&gt;<i> entity is difficult to procure, while some escrow service can aggregate and
+</I>&gt;<i> reuse tr*st in its brand to enable trades between brandless entities.
+</I>&gt;<i> Thus if at all possible, we should consider how best to support escrow
+</I>&gt;<i> services over Lightning.
+</I>&gt;<i>
+</I>&gt;<i> I formulate the contract below:
+</I>&gt;<i>
+</I>&gt;<i> * A brandless buyer B wants to pay a brandless seller S for a service or
+</I>&gt;<i> product.
+</I>&gt;<i> * Both B and S have non-trust in one another, but can agree to tr*st a
+</I>&gt;<i> common branded escrow E.
+</I>&gt;<i> * B shall pay S if both B and S can agree that the service was rendered
+</I>&gt;<i> satisfactorily or product was delivered.
+</I>&gt;<i> * In case of dispute, E decides whether S is paid or B is refunded.
+</I>&gt;<i> * B and S want to provide as little information to E as possible if both B
+</I>&gt;<i> and S can come to an agreement (i.e. only reveal information if a dispute
+</I>&gt;<i> occurs).
+</I>&gt;<i>
+</I>&gt;<i> Tr*st is still needed in E.
+</I>&gt;<i> In particular, B and S both trust that E will not be susceptible to
+</I>&gt;<i> bribery from their counterparty.
+</I>&gt;<i>
+</I>&gt;<i> The above can trivially be implemented onchain using a 2-of-3 multisig.
+</I>&gt;<i>
+</I>&gt;<i> 1,  The branded escrow E provides a public key as part of its brand.
+</I>&gt;<i> 2.  B and S generate a short contract description of the service or
+</I>&gt;<i> product to be rendered, in a language that E understands.
+</I>&gt;<i> 3.  B and S tweak the escrow public key (if `E` is the escrow pubkey and
+</I>&gt;<i> `c` is the description of the service/product, use `E + h(E | c) * G`).
+</I>&gt;<i> 4.  B and S generate a 2-of-3 address using their own keys, plus the
+</I>&gt;<i> tweaked escrow public key.
+</I>&gt;<i> 5.  If B and S can come to an agreement, then they sign using their own
+</I>&gt;<i> keys, and the third key (the tweaked escrow key) remains tweaked and E
+</I>&gt;<i> cannot determine that it could have been used as the escrow, or the details
+</I>&gt;<i> of the transaction, even if it monitors the blockchain (since its key is
+</I>&gt;<i> not used directly, instead a tweaked version is used, and the tweak is not
+</I>&gt;<i> revealed E if B and S are in agreement).
+</I>&gt;<i>     But if B and S come to a dispute, either can provide E with the
+</I>&gt;<i> agreed-upon description `c` that is committed to onchain, and lets E judge
+</I>&gt;<i> where the payment should go.
+</I>&gt;<i>
+</I>&gt;<i> Under bip-taproot this can be optimized somewhat in favor of the &quot;no
+</I>&gt;<i> dispute&quot; case by setting the taproot internal key to `MuSig(B, S)`, and
+</I>&gt;<i> having separate MAST branches for `MuSig(E + h(E | c) * G, B)` and `MuSig(E
+</I>&gt;<i> + h(E | c) * G, S)`.
+</I>&gt;<i>
+</I>&gt;<i> This use-case is important: consider the case where the seller is selling
+</I>&gt;<i> pieces of decorated paper mass-printed by some centralized financial
+</I>&gt;<i> institution.
+</I>&gt;<i> For face-to-face transactions, it is enough for all of the participants to
+</I>&gt;<i> appear and for the Lightning payment to be attempted and so forth.
+</I>&gt;<i> But for non-face-to-face transactions (such as when one participant is
+</I>&gt;<i> secretly an AI that is attempting to take over the world, and is currently
+</I>&gt;<i> unable to puppet some meatspace representative), such escrow would be best
+</I>&gt;<i> done online with no requirement of physical presence.
+</I>&gt;<i>
+</I>&gt;<i> ---
+</I>&gt;<i>
+</I>&gt;<i> Naively, it seems that switching to payment points / scalars from payment
+</I>&gt;<i> hashes / preimages (a necessity for payment decorrelation) may work.
+</I>&gt;<i> It may be possible to use some kind of verifiable secret sharing.
+</I>&gt;<i>
+</I>&gt;<i> However, I would like to make the following points possible:
+</I>&gt;<i>
+</I>&gt;<i> * The escrow does not learn about an escrowed trade unless a dispute
+</I>&gt;<i> between buyer and seller occurs.
+</I>&gt;<i> * The escrow is capable of returning the buyer funds immediately as soon
+</I>&gt;<i> as it can resolve the dispute without timing out the payment.
+</I>&gt;<i> * Intermediate hop nodes that are not the buyer, seller, or escrow, remain
+</I>&gt;<i> unaware of the escrowed trade (ideally, if they support the &quot;normal&quot;
+</I>&gt;<i> payment points / scalars system, they should not need any special support
+</I>&gt;<i> for escrowed trade).
+</I>&gt;<i>
+</I>&gt;<i> Let me sketch below something, which might not work since I have not
+</I>&gt;<i> actually learned verifiable secret sharing at all.
+</I>&gt;<i> In particular, if verifiable secret sharing requires that the participants
+</I>&gt;<i> including the escrow to set up the payment point interactively, this fails
+</I>&gt;<i> the first desired item, that the escrow only learns of the escrowed trade
+</I>&gt;<i> in a dispute case.
+</I>&gt;<i> (i.e. a real mathist should actually check this.)
+</I>&gt;<i>
+</I>&gt;<i> ---
+</I>&gt;<i>
+</I>&gt;<i> I will ignore here temporarily the issues of payment decorrelation, and
+</I>&gt;<i> pretend that the same point is used in the entire path.
+</I>&gt;<i>
+</I>&gt;<i> Before all this, E publishes its escrow key `E`.
+</I>&gt;<i>
+</I>&gt;<i> First, B and S generate temporary payment points and scalars, `B = b * G`
+</I>&gt;<i> and `S = s * G`.
+</I>&gt;<i> Then they agree on the contract `c` describing their agreement, in a
+</I>&gt;<i> language that E understands, e.g. &quot;seller S will deliver 100 pieces of USA
+</I>&gt;<i> federal reserve commemorative decoration paper in exchange for 1 satoshi
+</I>&gt;<i> from buyer&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Then B generates an ECDH shared secrets between escrow and buyer:
+</I>&gt;<i>
+</I>&gt;<i>     tweak(c, P) = P + h(P | c) * G
+</I>&gt;<i>     ecdh(a, B) = h(a * B)
+</I>&gt;<i>     b' = ecdh(b, tweak(c, E))
+</I>&gt;<i>     B' = b' * G
+</I>&gt;<i>     S' = S + B'
+</I>&gt;<i>
+</I>&gt;<i> The payment point used in the payment route is `S'`.
+</I>&gt;<i>
+</I>&gt;<i> B provides `B` and `B'` to S (this can be done using TLV in the onion
+</I>&gt;<i> packet).
+</I>&gt;<i> Of course, we also need to provide a proof that `B' == ecdh(b, tweak(c,
+</I>&gt;<i> E)) * G` where `B == b * G`.
+</I>&gt;<i> I have no idea how easy (or impossible) it is to make such a proof
+</I>&gt;<i> (without E having to attest to it).
+</I>&gt;<i>
+</I>&gt;<i> If S believes it has fulfilled the contract and delivered the product or
+</I>&gt;<i> service, it contacts B.
+</I>&gt;<i> If B is satisfied with the product or service, it provides `b'`, allowing
+</I>&gt;<i> S to compute `s + b'` needed to claim the payment point `S + B'`.
+</I>&gt;<i> In the non-dispute case, E never learns that it could have been the escrow.
+</I>&gt;<i> B receives the scalar `s + b'` from the payment, but it knows `b'` and can
+</I>&gt;<i> compute the scalar `s` which now serves as proof-of-payment.
+</I>&gt;<i>
+</I>&gt;<i> If B is unsatisfied, we have a dispute condition and S contacts the escrow
+</I>&gt;<i> E.
+</I>&gt;<i> S provides `B` and the contract `c` to the escrow.
+</I>&gt;<i> ECDH allows E to determine `b' = ecdh(e + h((e * G) | c), B)`.
+</I>&gt;<i> If E decides in favor of the seller, then it reveals `b'` to S, which can
+</I>&gt;<i> then compute `s + b'` and claim the payment point `S + B'`.
+</I>&gt;<i>
+</I>&gt;<i> However, note that if E decides in favor of the buyer, it cannot do
+</I>&gt;<i> anything other than let the payment timeout lapse, which automatically
+</I>&gt;<i> forces the seller S to fail the HTLC.
+</I>&gt;<i> I cannot derive a way for E to force S to fail the HTLC, without revealing
+</I>&gt;<i> to intermediate hop nodes that this is an escrow payment.
+</I>&gt;<i>
+</I>&gt;<i> Even if E is the only intermediate hop node between B and S (an
+</I>&gt;<i> undesirable situation since it allows E to censor and surveil the payments
+</I>&gt;<i> between B and S), it is not safe for E to fail its incoming PTLC until S
+</I>&gt;<i> has failed its incoming PTLC, as otherwise B and S could be coordinating to
+</I>&gt;<i> steal from escrow E.
+</I>&gt;<i>
+</I>&gt;<i> There are likely to be better schemes.
+</I>&gt;<i> Again, the ideal scheme would provide:
+</I>&gt;<i>
+</I>&gt;<i> * Escrow only learns of dispute cases, never learns non-dispute case.
+</I>&gt;<i> * Buyer can recover funds immediately as soon as escrow decides in favor
+</I>&gt;<i> of buyer. &lt;- this seems difficult/impossible under LN.
+</I>&gt;<i> * Intermediate hop nodes are unaware of anything special with the payment.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190627/b4b71e07/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190627/b4b71e07/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002028.html">[Lightning-dev] Escrow Over Lightning?
+</A></li>
+	<LI>Next message: <A HREF="002052.html">[Lightning-dev] Escrow Over Lightning?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2051">[ date ]</a>
+              <a href="thread.html#2051">[ thread ]</a>
+              <a href="subject.html#2051">[ subject ]</a>
+              <a href="author.html#2051">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

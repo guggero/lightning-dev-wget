@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] More thoughts on NOINPUT safety
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3C20190318063856.w653ypgibypmss2v%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001907.html">
+   <LINK REL="Next"  HREF="001921.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] More thoughts on NOINPUT safety</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3C20190318063856.w653ypgibypmss2v%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] More thoughts on NOINPUT safety">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Mar 18 06:38:56 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001907.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+        <LI>Next message: <A HREF="001921.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1917">[ date ]</a>
+              <a href="thread.html#1917">[ thread ]</a>
+              <a href="subject.html#1917">[ subject ]</a>
+              <a href="author.html#1917">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Mar 14, 2019 at 01:00:56PM +0100, Christian Decker wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; I'm thinking of tagged outputs as &quot;taproot plus&quot; (ie, plus noinput),
+</I>&gt;<i> &gt; so if you used a tagged output, you could do everything normal taproot
+</I>&gt;<i> &gt; address could, but also do noinput sigs for them.
+</I>&gt;<i> &gt; So you might have:
+</I>&gt;<i> &gt;    funding tx -&gt; cooperative claim
+</I>&gt;<i> &gt;    funding tx -&gt; update 3 [TAGGED] -&gt; settlement 3 -&gt; claim
+</I>&gt;<i> &gt;    funding tx -&gt; update 3 [TAGGED] -&gt; 
+</I>&gt;<i> &gt;                  update 4 [TAGGED,NOINPUT] -&gt; 
+</I>&gt;<i> &gt; 		 settlement 4 [TAGGED,NOINPUT] -&gt; 
+</I>&gt;<i> &gt; 		 claim [NOINPUT]
+</I>&gt;<i> &gt; In the cooperative case, no output tagging needed.
+</I>&gt;<i> I might be missing something here, but how do you bind update 3 to the
+</I>&gt;<i> funding tx output, when that output is not tagged? Do we keep each
+</I>&gt;<i> update in multiple separate states, one bound to the funding tx output
+</I>&gt;<i> and another signed with noinput?
+</I>
+I don't know that &quot;separate states&quot; is a great description -- until it
+hits the blockchain &quot;update N&quot; is a template that can be filled out in a
+variety of ways -- in the above the ways are:
+ - with a NOINPUT sig and a previous &quot;update&quot; tx as its input
+ - or with a SINGLE|ANYONECANPAY sig and the funding tx as input
+
+The important thing is that approach means two sigs for each update tx.
+The above also has two sigs for each settlement tx (and likewise two sigs
+for each HTLC claim if using scriptless scripts) -- one using NOINPUT
+in case multiple update tx's make it to the blockchain, and one assuming
+everything works as expected that can just use direct key path spending.
+
+I think you can do SINGLE,ANYCANPAY and combine multiple channel closures
+if you're directly spending the funding tx, but can't do that if you're
+using a NOINPUT sig, because the NOINPUT sig would commit to the tx's
+locktime and different channel's states will generally have different
+locktimes. You still probably want SINGLE,ANYCANPAY in that case so you
+can bump fees though.
+
+&gt;<i> If that's the case we just doubled our
+</I>&gt;<i> storage and communication requirements for very little gain.
+</I>
+There's three potential gains:
+ * it lets us make a safer version of NOINPUT
+ * it makes the common paths give fewer hints that you're using eltoo
+ * it puts less data/computation load on the blockchain
+
+With tagged outputs your update tx already indicates you're maybe going
+to use NOINPUT, so that probably already gives away that you're using
+eltoo, so, at least with output tagging, the second benefit probably
+doesn't exist. Using a key path spend (without a script) is probably
+going to be cheaper on the blockchain though.
+
+But while I think output tagging is probably better than nothing,
+requiring a non-NOINPUT signature seems a better approach to me. With
+that one, having a dedicated sig for the normal &quot;publish the latest
+state spending the funding tx&quot; case, reduces a unilateral close to only
+being special due to the settlement tx having a relative timelock, and
+the various tx's using SINGLE|ANYCANPAY, which seems like a win. In that
+scenario, just using a single sig is much cheaper than revealing a taproot
+point, a pubkey or two, and using two sigs and a CLTV check of course.
+
+It does goes from 1+n signatures per update today to 4+n signatures,
+if you're using scriptless scripts. If you don't mind revealing the
+HTLCs are HTLCs, and could do them with actual scripts, that reduces to
+4 signatures. You could reduce it to 2 signatures by also always posting
+&quot;funding tx -&gt; update 0 -&gt; update N -&gt; settlement N&quot;, or you could reduce
+it to 2+2/k signatures by only doing the non-NOINPUT sigs for every k'th
+state (or no more often than every t seconds or similar).
+
+&gt;<i> An
+</I>&gt;<i> alternative is to add a trigger transaction that needs to be published
+</I>&gt;<i> in a unilateral case, but that'd increase our on-chain footprint.
+</I>
+(The above essentially uses update tx's as optional trigger tx's)
+
+Also, I'd expect the extra latency introduced by the interactive signing
+protocol for muSig would be more of a hit (share the nonce hash, share
+the nonce, calculate the sig). Particularly if you're doing multiparty
+channels with many participants, rather than just two.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001907.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+	<LI>Next message: <A HREF="001921.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1917">[ date ]</a>
+              <a href="thread.html#1917">[ thread ]</a>
+              <a href="subject.html#1917">[ subject ]</a>
+              <a href="author.html#1917">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

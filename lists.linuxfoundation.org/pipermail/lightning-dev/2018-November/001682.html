@@ -1,0 +1,608 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Dual Funding Proposal
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dual%20Funding%20Proposal&In-Reply-To=%3CCAM1a7P1CSFzNVjv2mREOAPE6SUvsdcC_t7n0YWX5fxQ%3DGGQp5g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001692.html">
+   <LINK REL="Next"  HREF="001687.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Dual Funding Proposal</H1>
+    <B>lisa neigut</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Dual%20Funding%20Proposal&In-Reply-To=%3CCAM1a7P1CSFzNVjv2mREOAPE6SUvsdcC_t7n0YWX5fxQ%3DGGQp5g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Dual Funding Proposal">niftynei at gmail.com
+       </A><BR>
+    <I>Wed Nov 28 01:12:09 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001692.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+        <LI>Next message: <A HREF="001687.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1682">[ date ]</a>
+              <a href="thread.html#1682">[ thread ]</a>
+              <a href="subject.html#1682">[ subject ]</a>
+              <a href="author.html#1682">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello fellow Lightning devs!
+
+
+What follows is a draft for the new dual funding flow. Note that the
+`option_will_fund_for_food` specification has been omitted for this draft.
+
+
+
+===== Proposal
+
+Create a new channel open protocol set (v2), with three new message types:
+`funding_puts2`, `commitment_signed2`, and `funding_signed2`, plus two for
+negotiating RBF, `init_rbf` and `accept_rbf`.
+
+
+Quick overview of the message exchange for v2:
+
+   +-------+                              +-------+
+
+   |    |--(1)---  open_channel2  ----&gt;| |
+
+   |    |&lt;-(2)--  accept_channel2  ----| |
+
+   |    |                       | |
+
+   |    |--(3)--  funding_puts2  -----&gt;| |
+
+   |    |&lt;-(4)--  funding_puts2  ----- | |
+
+   |    |                       | |
+
+---&gt;|       |--(5)-- commitment_signed2 --&gt;|       |
+
+|<i>   |    |&lt;-(6)-- commitment_signed2 ---|       |
+</I>
+|<i>   | A   |                       | B |
+</I>
+|<i>   |    |--(7)--- funding_signed2 ----&gt;|       |
+</I>
+|<i>   |    |&lt;-(8)--- funding_signed2 -----|       |
+</I>
+|<i>   |    |                       | |
+</I>
+|<i>   |    |--(a)--- init_rbf -----------&gt;|       |
+</I>
+----|       |&lt;-(b)--- accept_rbf ----------|       |
+
+   |    |                       | |
+
+   |    |--(9)--- funding_locked2 ----&gt;|       |
+
+   |    |&lt;-(10)---funding_locked2 -----|       |
+
+   +-------+                              +-------+
+
+  where node A is the &#8216;initiator&#8217; and node B is the &#8216;dual-funder&#8217;
+
+
+== Negotiating the use of dual_funding (open_channel2) flow
+Willingness to use v2 is flagged in init via `option_dual_fund`.
+
+`init`
+
+local channel feature flag, `option_dual_fund`
+
+== Channel establishment with dual_funding
+
+____`open_channel2`:
+
+[32:chain_hash]
+
+&#8230; // unchanged
+
+[1:channel_flags]
+
+[?: options_tlv]
+
+options_tlv:
+
+   1.
+
+   Type: 1 `option_upfront_shutdown_script`
+   1.
+
+      [2:len]
+      2.
+
+      Value: `shutdown_scriptpubkey`
+
+
+If nodes have negotiated `option_dual_fund`
+
+The sending node:
+
+   -
+
+   MAY begin channel establishment using `open_channel2`
+
+
+Otherwise the receiving node:
+
+   -
+
+   MUST return an error.
+
+
+____ `accept_channel2`:
+
+[32:temporary_channel_id]
+
+&#8230;  // unchanged
+
+[33:first_per_commitment_point]
+
+[?: options_tlv]
+
+options_tlv:
+
+   1.
+
+   Type: 1 `option_upfront_shutdown_script`
+
+           [2:len]
+
+          Value: `shutdown_scriptpubkey`
+
+____`funding_puts2`
+
+This message exchanges the input and output information necessary to
+compose the funding transaction.
+
+[32:temporary_channel_id]
+
+[`2`:`num_inputs`]
+
+[`num_inputs*input_info`]
+
+[`2`:`num_outputs`]
+
+[`num_outputs`*ouput_info`]
+
+1. subtype: `input_info`
+
+2. data:
+
+ * [`8`:`satoshis`]
+
+ * [`32`:`prevtxid`]
+
+ * [`4`:`prevtxoutnum`]
+
+ * [`2`:`scriptlen`]
+
+ * [`scriptlen`:`script`]
+
+ * [`2`:`max_extra_witness_len`]
+
+ * [`2`:`wscriptlen`]
+
+ * [`wscriptlen`:`wscript`]
+
+1. subtype: `output_info`
+
+2. data:
+
+ * [`8`:`satoshis`]
+
+ * [`2`:`scriptlen`]
+
+ * [`scriptlen`:`script`]
+
+Requirements:
+
+The sending node:
+
+   -
+
+   MUST ensure each `input_info` refers to an existing UTXO
+   -
+
+   MUST ensure the `output_info`.`script` is a standard script
+   -
+
+   MUST NOT spend any UTXOs specified in funding_puts2 until/unless the
+   channel establishment has failed
+
+If is the initiator (A):
+- MUST NOT send an empty message  (`num_inputs` + `num_outputs` = 0)
+
+     If is the dual-funder (B):
+
+   -
+
+   consider the `put_limit` the total number of `num_inputs` plus
+   `num_outputs` from `funding_puts2`, with minimum 2.
+   -
+
+   MUST NOT send a number of `input_data` and/or `output_data` which
+   exceeds the `put_limit`
+   -
+
+   MAY send an empty message
+
+
+The receiving node:
+
+  If is the initiator (A):
+
+   -
+
+   MUST fail the channel if the `num_inputs` plus `num_outputs` is greater
+   than the `put_limit`
+
+
+If has not yet sent a `fund_puts2` for this channel establishment
+
+     - SHOULD send their `fund_puts2` message
+
+Otherwise
+
+   -
+
+   SHOULD send `commitment_signed2`
+
+
+Rationale:
+
+Each node must have a complete set of the transaction inputs/outputs, to
+derive the funding transaction hash.
+
+There is a dual_funding protocol that only requires one side to send their
+witness data and inputs. This is more efficient, however it results in
+asymmetry between the nodes, where one is revealing their UTXOs before the
+funding transaction is committed.. We mitigate this asymmetry by asking the
+initiator (A) to send their set of inputs before the dual-funder (B) does.
+
+NB: This is reusing the input/output structures from the Splicing proposal,
+but with a more generalized name.
+
+
+____`commitment_signed2`
+
+This message exchanges the counterparty&#8217;s signature for the first
+commitment transaction, so it can broadcast the funding transaction knowing
+that funds can be redeemed.
+
+[32: `channel_id`]
+
+[`64`: commitment_signature`]
+
+Requirements:
+
+The sending node:
+
+   -
+
+   MUST derive the `channel_id` from the funding transaction&#8217;s id
+   -
+
+   MUST set signature to the valid signature, using its funding_pubkey for
+   the initial commitment transaction, as defined in BOLT #3
+
+  If it has not received a `funding_puts2`
+
+   -
+
+   MUST NOT send their `commitment_signature`
+
+
+The receiving node:
+
+   -
+
+   MUST verify the commitment signature is valid for the funding
+   transaction -&gt; commitment transaction that it has derived independently
+
+     If this signature is invalid it
+
+   -
+
+   MUST fail the channel
+
+
+  If it has not sent a `commitment_signed2` message
+
+   -
+
+   MUST send their `commitment_signed2` message
+
+   If this is in a flow initiated from `init_rbf`,:
+
+   -
+
+   MUST save the temporary_channel_id until the channel funding transaction
+   has been locked (this is the channel id of the currently broadcast
+   transaction)
+
+
+Rationale:
+
+In the previous channel establishment protocol, we were able to compress
+the commitment signature exchange into `funding_created`/`funding_signed`.
+With dual funding, we need interaction to build the funding transaction --
+commitment sig exchange is now a separate step.
+
+___`funding_signed2`
+
+This message exchanges the witness data for the inputs that were originally
+sent in the `funding_puts2` message.
+
+[`32`:`channel_id`]
+
+[`2`:`num_witnesses`]
+
+[`num_witnesses*witness_stack`]
+
+Requirements:
+
+The sending node:
+
+    - MUST remember the details of this funding transaction
+
+   - MUST NOT send a `witness_stack` whose length exceeds the corresponding
+`max_extra_witness_len`
+
+    If they have NOT received a valid `commitment_signed2` message
+
+   -
+
+   MUST not send their `funding_signed2` message
+
+
+The receiving node:
+
+   -
+
+   SHOULD check that the number of witnesses sent matches the number of
+   inputs
+
+If a `witness_stack` length exceeds the corresponding
+`max_extra_witness_len`:
+
+   -
+
+     MAY error.
+
+   If is the `initiator` (A):
+
+   -
+
+   SHOULD apply `witness` to the funding transaction and broadcast the
+   result.
+
+
+Rationale:
+
+Exchanging witness data allows either side to broadcast the funding
+transaction. It also maintains the information symmetry between the nodes.
+
+___`funding_locked2`
+
+// same as v1
+
+Requirements:
+
+A dual-funding node (B):
+
+   -
+
+   SHOULD broadcast their funding transaction if it does not see the
+   transaction broadcast after a reasonable timeout.
+
+
+== RBF for Channel Establishment v2
+
+_____`init_rbf`
+
+This message is sent by the initiator, after the funding transaction has
+been broadcast but before the `funding_locked2` has been exchanged.
+
+[32: `channel_id`]
+
+[8: funding_satoshis]
+
+[8:dust_limit_satoshis]
+
+[8:channel_reserve_satoshis]
+
+[4: feerate_per_kw]
+
+[`2`:`num_inputs`]
+
+[`num_inputs*input_info`]
+
+[`2`:`num_outputs`]
+
+[`num_outputs`*ouput_info`]
+
+Requirements
+
+The sending node:
+
+   -
+
+   MUST be the initiator (A)
+   -
+
+   MAY update the amount, fee rate, dust limit, or channel reserve for the
+   channel
+
+
+The receiving node:
+
+   -
+
+   MAY reject (error) the RBF request if:
+   -
+
+      the fee rate, dust, or channel reserve is unreasonable
+      -
+
+   MUST reject (error) the RBF request if:
+   -
+
+      the `fee_rate` is less than the rate that was originally proposed
+      -
+
+      the `funding_satoshis` amount is less than the previous negotiated
+      `push_mast`
+      -
+
+      It considers the `feerate_per_kw` too small for timely processing or
+      unreasonable
+      -
+
+      the `dust_limit_satoshis` is greater than the
+      `channel_reserve_satoshis`
+      -
+
+      the initiator&#8217;s amount for the initial commitment transaction is not
+      sufficient for full fee payment
+      -
+
+      the `inputs`.`satoshis` does not sum to the `funding_satoshis`
+      -
+
+      the `funding_satoshis` is insufficient to create the transaction at
+      the new `fee_rate`
+      -
+
+      there is no overlap in the proposed inputs and the original input set
+      included in the currently published funding transaction
+      -
+
+      they have already received or sent a `funding_locked2` message
+      -
+
+   If there are no errors or unreasonable demands:
+   -
+
+      SHOULD send an `accept_rbf`
+
+
+Rationale:
+
+Once an `init_rbf` has been accepted by the dual-funding node, the message
+flow returns to `commitment_signed2` and proceeds as above, with the
+exception that the `temporary_channel_id` remains as the `channel_id` for
+the currently published but unmined transaction.
+
+The channel id that becomes fixed for this node will be determined by the
+`funding_locked2` message.
+
+___`accept_rbf`
+
+This message accepts an RBF request, and renegotiates a dual-funder&#8217;s
+funds, dust limit, and channel reserve, and sends the dual-funder&#8217;s updated
+puts.
+
+[32: `channel_id`]
+
+[8: funding_satoshis]
+
+[8:ndust_limit_satoshis]
+
+[8:channel_reserve_satoshis]
+
+[`2`:`num_inputs`]
+
+[`num_inputs*input_info`]
+
+[`2`:`num_outputs`]
+
+[`num_outputs`*ouput_info`]
+
+Requirements:
+
+The sending node:
+
+   -
+
+   MAY update the amount, dust limit, or channel reserve for the channel
+
+
+The receiving node:
+
+   -
+
+   MAY reject (error) the RBF request if:
+   -
+
+      the dust or channel reserve is unreasonable
+      -
+
+   MUST reject (error) the RBF request if:
+   -
+
+      the `funding_satoshis` amount is less than the previous negotiated
+      `push_mast`
+      -
+
+      the `dust_limit_satoshis` is greater than the
+      `channel_reserve_satoshis`
+      -
+
+      the total fees incurred by the `input_info`s and `output_info`s at
+      the new `fee_rate` is more than their `funding_satoshis`
+
+      otherwise:
+
+   -
+
+   SHOULD send a `commitment_signed2` message
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181127/b864846e/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181127/b864846e/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001692.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+	<LI>Next message: <A HREF="001687.html">[Lightning-dev] Dual Funding Proposal
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1682">[ date ]</a>
+              <a href="thread.html#1682">[ thread ]</a>
+              <a href="subject.html#1682">[ subject ]</a>
+              <a href="author.html#1682">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

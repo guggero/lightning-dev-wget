@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A security review of Validating Lightning Signer	architecture and code
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20security%20review%20of%20Validating%20Lightning%20Signer%0A%09architecture%20and%20code&In-Reply-To=%3CCALZpt%2BF63BLMhx6knH%2BsXdPQYASt0LGZasRBCm6xkw1sKh0duw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003828.html">
+   <LINK REL="Next"  HREF="003832.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A security review of Validating Lightning Signer	architecture and code</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20security%20review%20of%20Validating%20Lightning%20Signer%0A%09architecture%20and%20code&In-Reply-To=%3CCALZpt%2BF63BLMhx6knH%2BsXdPQYASt0LGZasRBCm6xkw1sKh0duw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A security review of Validating Lightning Signer	architecture and code">antoine.riard at gmail.com
+       </A><BR>
+    <I>Mon Jan 23 14:15:07 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003828.html">[Lightning-dev] Jamming mitigation call for 2023
+</A></li>
+        <LI>Next message: <A HREF="003832.html">[Lightning-dev] A Universal Coin Swap system based on bitcoin and a Bitcoin NFT system
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3829">[ date ]</a>
+              <a href="thread.html#3829">[ thread ]</a>
+              <a href="subject.html#3829">[ subject ]</a>
+              <a href="author.html#3829">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+
+Since starting to hack on LDK, I&#8217;ve been interested in running some
+components of a Lightning node in a dedicated hardware environment, in the
+image of what is done by the smart card industry. We have been doing a
+bunch of refactoring in that sense early on to isolate our signing
+operations [0].
+
+Building on top of this generic signing interface, the Validating Lightning
+Signer has been growing into a mature Lightning signer during the past
+years, performing a comprehensive set of policy checks to ensure the keys
+are not misused [1]. The module development is advanced enough to be
+functional with both deployment of LDK and CLN nodes (waiting internal
+refactoring by other implementations for eventual support).
+
+During the past months, in cooperation with the VLS project team, I&#8217;ve done
+a third-party security audit of VLS core mechanisms, evaluating its state
+of readiness for production by the community of Lightning node operators.
+
+The critical vulnerabilities and attacks vectors found are the following:
+
+
+- The legacy `option_anchor_outputs` is accepted by the Signer, there is no
+protection against channel opening downgrades to unsafe channel type. This
+opens the way to the known fee siphoning attack capturing almost all
+channel value in function of capacity [2].
+
+- The Signer does not enforce an upper bound on the sum of trimmed HTLC as
+miner fees. This opens the way to the known dust inflate attack capturing a
+minority of channel value if the adversary has low-hashrate capabilities
+[3].
+
+- There is a lack of a `policy-cltv-delta-reasonable` rule for routing
+hops. There is no enforcement of a reasonable `cltv_expiry_delta` between
+inbound HTLC and outbound HTLC, where reasonable is defined according to
+the BOLT2&#8217;s `cltv_expiry_delta` selection recommendations [4]. This opens
+the way to HTLC-double-spend attack where up to
+`max_htlc_value_in_flight_msat` of channel value can be captured.
+
+
+- There is a lack of verification of `nLocktime` field soundness of the
+HTLC-timeout at counterparty signature reception. This opens the way to
+HTLC value freezing or double-spend in function of the deployment
+
+- There is a lack of rejection of non-Segwit input for the funding
+transaction. This opens the way to known freezing of full channel value by
+the counterparty [5].
+
+- The Signer is suffering from high-exposure to a fee-siphoning attack by
+an adversary with minimal hashrate capabilities (i.e 1 block without time
+boundary). Both funding/commitment transactions weights and feerate can be
+inflated to increase the absolute fee signed.
+
+Beyond that, there are still missing not-implemented critical policy rules
+and the invoices and payments flows are still hardened with a consistent
+security model. Those issues were known by the project.
+
+The issues have been communicated to the VLS team ahead of the report
+publication and they&#8217;re committed to address them.
+
+
+The full audit report can be found here:
+
+<A HREF="https://github.com/ariard/validating-lightning-signer/blob/main/VLS-audit-v0.2.pdf">https://github.com/ariard/validating-lightning-signer/blob/main/VLS-audit-v0.2.pdf</A>
+
+In the future, as the LN ecosystem matures, extended policies are expected
+to be introduced covering the variety of LN use-cases: merchant, mobile,
+routing nodes, LSP, where the policy set of rules could bind to the
+application logic. E.g as BOLT12 offers to introduce a richer semantic on
+payment protocol, the request structure could be enforced by the VLS [6].
+Moreover, other data flows could be submitted to VLS to detect anomalies,
+such as the historical mempools data in a compressed way.
+
+Beyond Lightning node security, the VLS architecture could be generalized
+to other Bitcoin contracting protocols (e.g vaults), where spending
+policies are also leveraged to introduce fine-grained control of custodied
+Bitcoin funds between cold and warm wallets.
+
+
+Cheers,
+
+Antoine
+
+
+[0] <A HREF="https://github.com/lightningdevkit/rust-lightning/pull/214">https://github.com/lightningdevkit/rust-lightning/pull/214</A>
+[1] <A HREF="https://vls.tech">https://vls.tech</A>
+
+[2]
+<A HREF="../2020-September/002796.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-September/002796.html</A>
+[3]
+<A HREF="../2020-May/002714.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-May/002714.html</A>
+&lt;<A HREF="../2020-May/002714.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-May/002714.html</A>&gt;
+
+[4]
+<A HREF="https://github.com/lightning/bolts/blob/master/02-peer-protocol.md#cltv_expiry_delta-selection">https://github.com/lightning/bolts/blob/master/02-peer-protocol.md#cltv_expiry_delta-selection</A>
+
+[5]
+<A HREF="https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki#user-content-Trustfree_unconfirmed_transaction_dependency_chain">https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki#user-content-Trustfree_unconfirmed_transaction_dependency_chain</A>
+[6] <A HREF="http://bolt12.org">http://bolt12.org</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230123/33179656/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230123/33179656/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003828.html">[Lightning-dev] Jamming mitigation call for 2023
+</A></li>
+	<LI>Next message: <A HREF="003832.html">[Lightning-dev] A Universal Coin Swap system based on bitcoin and a Bitcoin NFT system
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3829">[ date ]</a>
+              <a href="thread.html#3829">[ thread ]</a>
+              <a href="subject.html#3829">[ subject ]</a>
+              <a href="author.html#3829">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

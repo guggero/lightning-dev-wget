@@ -1,0 +1,124 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] An Argument For Single-Asset Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CZNCmCIkCcMWUOGFxP3zfeamDuLNNmZqSlnJtGF1f1WUdBX1qpawRiudCHw_xBjEY9PcPkPPpJI7GKVqj5-7GCfUfGqrj63xHkdbtl8sWpqw%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001793.html">
+   <LINK REL="Next"  HREF="001794.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] An Argument For Single-Asset Lightning Network</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CZNCmCIkCcMWUOGFxP3zfeamDuLNNmZqSlnJtGF1f1WUdBX1qpawRiudCHw_xBjEY9PcPkPPpJI7GKVqj5-7GCfUfGqrj63xHkdbtl8sWpqw%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] An Argument For Single-Asset Lightning Network">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sat Jan  5 18:55:17 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001793.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="001794.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1795">[ date ]</a>
+              <a href="thread.html#1795">[ thread ]</a>
+              <a href="subject.html#1795">[ subject ]</a>
+              <a href="author.html#1795">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Lloyd,
+&gt;<i> &gt; I agree.
+</I>&gt;<i> &gt; When I was developing American Call Options on top of onchain HTLCs, I came up with a similar construction for ensuring that the premium is paid before the HTLCs setting up the option appear onchain.
+</I>&gt;<i>
+</I>&gt;<i> I would be interested to see how your construction worked.&#160;You can actually modify the construction I gave before (in the gist) to create a fair option too. You just change it so the asset `C` is paid on both branches of the HTLC. This changes `C` from collateral to a premium. This sounds a bit different to what you describe as the premium isn't paid before the HTLCs go onto the chain.
+</I>&gt;<i>
+</I>&gt;<i> The only other proposal for options I've seen is:&#160;&#160;<A HREF="https://www.ics.uci.edu/~jamesal1/Swaptions.pdf.">https://www.ics.uci.edu/~jamesal1/Swaptions.pdf.</A> I could be missing something, but this seems to give Alice a free option on an option in this one. The premium payment has the option problem: Bob cannot cancel his offer of an option but Alice can take her time to accept it.
+</I>
+I have not read the swaptions yet, but in any case, for the onchain American Call Option, I came up with the below, which I call roughly &quot;pay for contract&quot;.
+
+In this, construction, we promise to publish a contract, but only if we are paid to do such a publication.
+
+This construction does not work well as a solution to the problem on Lightning (as it essentially resolves to &quot;failed routes cost the payer money&quot;, a bad UX for payments in a network with partial information of channel status), but may be of interest otherwise.
+
+Suppose the below situation:
+
+I am selling you a contract that crosses multiple cryptocurrency systems (blockchains or state update channels or etc).
+You will be willing to pay me for such a contract, contingent on the contract being able to appear completely on all cryptocurrency systems involved.
+
+So we need to make the below UTXOs appear on the BTC and WJT blockchains:
+
+1.  BTC: `P` BTC, HTLC: hashlock me and preimage of hash, timelock you at time `E`+1.
+2.  WJT: 1 WJT, HTLC: hashlock you and preimage of hash, timelock me at time `E`.
+
+The above is an American Call Option as before, with you having the option to claim 1 WJT for `P` BTC at any time on or before `E`.
+
+The setup is that we first have a little ritual.
+
+1.  I generate a *different* preimage and hash.  Let us differentiate it from the option preimage by calling this the contract-setup preimage and hash.
+2.  I prepare on the WJT blockchain the UTXO: 1 WJT, HTLC: hashlock (you+me) and preimage of contract-setup hash, timelock me at time `S`+1.  The time `S` is the contract setup time, which should be nearer (much nearer) than time `E`.
+3.  On top of that, I create a transaction spending that UTXO on WJT, and outputting: 1 WJT, HTLC: hashlock you and preimage of option hash, timelock me at time `E`.
+    This is one part of the American Call Option.
+    I sign this transaction and give it to you.
+    Notice, that this transaction cannot be confirmed: it is lacking your signature and the contract-setup preimage.
+4.  You prepare on the BTC blockchain the UTXO: `P`+`C` BTC, HTLC: hashlock (you+me) and preimage of contract-setup hash, timelock you at time `S`.
+    `C` is the premium on the American Call Option.
+5.  On top of that, you create a transaction spending that UTXO on BTC, with two outputs:
+    1.  `C` BTC, pubkey: me.
+        This is my premium.
+    2.  `P` BTC, HTLC: hashlock me and preimage of option hash, timelock you at time `E`+1.
+    You sign this transaction and give it to me; again the transaction is incomplete as it lacks my signature and the contract-setup preimage.
+6.  I take your transaction and sign it, then add the contract-setup preimage that I know, and publish it on the BTC blockchain.
+    The BTC side of the American Call Option has now been set up.
+    I can now use my premium immediately, and can take the BTC if you ever publish the option preimage.
+7.  You take my transaction and sign it.
+    Since I published the contract-setup preimage in the above step, you can get that preimage and attach it to the WJT transaction and publish it on the WJT blockchain.
+    This now causes the WJT side of the American Call Option to become set up.
+
+If either of us stalls before step 6, or if I stall at step 6, then our assets revert back to us at time `S` or `S`+1.
+I assume we can safely set `S` to something within a few hours or less.
+If you stall at step 7 then you have already paid the premium to me at this point and have no incentive to just not continue the protocol, and at step 7 I can no longer stall the protocol since you will have everything to continue the setup of the American Call Option.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001793.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="001794.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1795">[ date ]</a>
+              <a href="thread.html#1795">[ thread ]</a>
+              <a href="subject.html#1795">[ subject ]</a>
+              <a href="author.html#1795">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

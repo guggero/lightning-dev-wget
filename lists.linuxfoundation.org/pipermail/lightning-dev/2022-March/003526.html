@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Taproot-aware Channel Announcements + Proof	Verification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Taproot-aware%20Channel%20Announcements%20%2B%20Proof%0A%09Verification&In-Reply-To=%3CCAO3Pvs9T7Pyi4cZcrJa8bBg6LR7Eyp0dDFUGfhtS810OMDse7g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003525.html">
+   <LINK REL="Next"  HREF="003528.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Taproot-aware Channel Announcements + Proof	Verification</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Taproot-aware%20Channel%20Announcements%20%2B%20Proof%0A%09Verification&In-Reply-To=%3CCAO3Pvs9T7Pyi4cZcrJa8bBg6LR7Eyp0dDFUGfhtS810OMDse7g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Taproot-aware Channel Announcements + Proof	Verification">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Mar 23 01:10:00 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003525.html">[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to Onion Messages
+</A></li>
+        <LI>Next message: <A HREF="003528.html">[Lightning-dev] Taproot-aware Channel Announcements + Proof Verification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3526">[ date ]</a>
+              <a href="thread.html#3526">[ thread ]</a>
+              <a href="subject.html#3526">[ subject ]</a>
+              <a href="author.html#3526">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi y'all,
+
+On the lnd side we've nearly finished fully integrating taproot into the
+codebase [1] (which includes the btcsuite set of libraries and also full
+btcwallet support), scheduled to ship in 0.15 (~April), which will enable
+existing users of lnd's on-chain wallet and APIs to start getting taprooty
+wit it. As any flavor of taproot will mean a different on-chain funding
+output, the _existing_ gossip layer needs some sort of modification, as the
+BOLTs today don't define how to validate that a given output is actually a
+taproot channel. Discussions during the prior spec meetings seem to have
+centered in on two possible paths:
+
+  1. Use this as an opportunity to entirely redesign the channel validation
+  portion of the gossip layer (ring sigs? zkps? less validation? better
+  privacy?).
+
+  2. Defer the above, and instead go with a more minimal mostly the same
+  channel_announcement-like message for taproot channels.
+
+In this mail, I want to explore the second option in detail, as Rusty has
+already started a thread on what option #1 may look like [2].
+
+## A new taproot-aware `channel_announcement2` message
+
+A simple `channel_announcement2` message that was taproot aware could look
+something like:
+
+1. type: xxx (`channel_announcement2`) 2. data:
+    * [`signature`:`announcement_sig`]
+    * [`u16`:`len`]
+    * [`len*byte`:`features`]
+    * [`chain_hash`:`chain_hash`]
+    * [`short_channel_id`:`short_channel_id`]
+    * [`point`:`node_id_1`]
+    * [`point`:`node_id_2`]
+    * [`point`:`bitcoin_key_1`]
+    * [`point`:`bitcoin_key_2`]
+
+(can assume it'll be just native TLV prob also)
+
+This is pretty much the same as the _existing_ `channel_announcement`
+message but instead of us carrying around 4 signatures, we'd use musig2 to
+generate a _single_ signature under the aggregate public key
+(`node_id_1`+`node_id_2`+`bitcoin_key_1`+`bitcoin_key_2`).
+
+While were here, similar to what's been proposed in [2], it likely makes
+sense to add an optional (?) merkle proof here to make channel validation
+more feasible for constrained/mobile clients (they don't need to fetch all
+those blocks any longer). The tradeoff here is that the merkle proof would
+potentially be the largest part of the message, which means more on-chain
+data needed to store the full channel graph. Alternatively, we could make
+this into another gossip query option, with nodes only fetching the proofs
+if they actually need it (full nodes with a txindex and just fetch the
+transaction).
+
+### Should the proof+verification strongly bind to the LN context?
+
+As far as on-chain output validation, the main difference would be how nodes
+actually validate the Bitcoin output (referenced by the `short_channel_id`)
+on chain. Today, nodes use the two bitcoin keys and construct a p2wsh
+multi-sig script and then verify that the script matches what has been
+confirmed on chain. With taproot, the output is actually just a single key.
+So if we want to maintain the same level of binding (which makes it harder
+to advertise fake channels using just a change output have or something),
+then we'd specify that nodes reconstruct the aggregated bitcoin public key
+(Q = a_1*B_1 + a_2*_B_2, where a_i is a blinding factor derived using the
+target key and every other key in the signing set) and assert that this
+matches the pkScript on chain.
+
+By verifying that this output key is just an aggregated key, then we can
+also ensure that there's no actual committed script root (a la BIP 86 [3])
+which binds the output to our context further. However maybe we want to also
+include a `tapscript_root` field as well (so use the musig2 key as the
+internal key and then apply the tweaking operations and verify things match
+up), which would enable more elaborate unlocking/multi-sig functionality for
+the normal funding output.
+
+Alternatively, if we decided that this strong binding isn't as desirable
+(starting to get into option 1 territory), then we'd specify just a single
+Bitcoin key and look for that directly in the on chain script. IMO, if we're
+going the route of something that very closely resembles what we have today,
+then we shouldn't drop the strong binding, and fully verify that the key is
+indeed a musig2 aggregated public key.
+
+## `announcement_signatures2` and musig2 awareness
+
+The `announcement_signatures` message would also need to change as we'd only
+be sending a single signature across the wire: the musig2 _partial_
+signature.
+
+1. type: xxx (`announcement_signatures2`) 2. data:
+    * [`channel_id`:`channel_id`]
+    * [`short_channel_id`:`short_channel_id`]
+    * [`signature`:`partial_chan_proof_sig`]
+
+Once both sides exchange this, as normal either party can generate the
+`channel_announcement` message to broadcast to the network.
+
+The addition of musig2 carries with it an additional dependency: before
+these signatures can be generated, both sides need to exchange their public
+nonce (in practice it's two nonces points R_1 and R_2), which is then used
+to generate the aggregated nonce using for signing. Thankfully, I don't
+think we actually need an additional message here, and instead we can piggy
+back the public nonces on top of the _existing_ funding message flow. So in
+this case, we'd just add a `66*byte`:`public_nonce` (the public nonces use
+the full compressed encoding for the points, which is why it isn't jut 64
+bytes) field to the open+accept channel messages, which MUST be present if
+the channel was to be advertised.
+
+## Conclusion
+
+In this mail, I've sketched out a mostly mechanical mapping of taproot
+awareness to our existing gossip message flow. This contrasts the approach
+to re-design the channel advertisement as it doesn't deviate too much from
+the current flow (same verification with a slight twist), which may make it
+easier to deploy (but ofc the devil is in the details as always).
+
+Thoughts?
+
+-- Laolu
+
+[1]: <A HREF="https://github.com/lightningnetwork/lnd/pull/6263">https://github.com/lightningnetwork/lnd/pull/6263</A>
+[2]:
+<A HREF="../2022-February/003470.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-February/003470.html</A>
+[3]:
+<A HREF="https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki#address-derivation">https://github.com/bitcoin/bips/blob/master/bip-0086.mediawiki#address-derivation</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220322/e6936024/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220322/e6936024/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003525.html">[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to Onion Messages
+</A></li>
+	<LI>Next message: <A HREF="003528.html">[Lightning-dev] Taproot-aware Channel Announcements + Proof Verification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3526">[ date ]</a>
+              <a href="thread.html#3526">[ thread ]</a>
+              <a href="subject.html#3526">[ subject ]</a>
+              <a href="author.html#3526">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

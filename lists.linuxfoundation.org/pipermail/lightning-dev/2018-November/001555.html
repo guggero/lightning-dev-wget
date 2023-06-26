@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Towards a Market for Liquidity Providers --	Enforcing Minimum Channel Lifetime
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Towards%20a%20Market%20for%20Liquidity%20Providers%20--%0A%09Enforcing%20Minimum%20Channel%20Lifetime&In-Reply-To=%3C-dAuhZrJt_eORhmTFurLSV8FOuJnZBp2wrh_R8K9Q3BTEsNr0A851vS5lZP4voNCGtmzZwdwuWOH6RbTVg9pimsLdvtOS_zqjxp1RiHz6sc%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001559.html">
+   <LINK REL="Next"  HREF="001557.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Towards a Market for Liquidity Providers --	Enforcing Minimum Channel Lifetime</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Towards%20a%20Market%20for%20Liquidity%20Providers%20--%0A%09Enforcing%20Minimum%20Channel%20Lifetime&In-Reply-To=%3C-dAuhZrJt_eORhmTFurLSV8FOuJnZBp2wrh_R8K9Q3BTEsNr0A851vS5lZP4voNCGtmzZwdwuWOH6RbTVg9pimsLdvtOS_zqjxp1RiHz6sc%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Towards a Market for Liquidity Providers --	Enforcing Minimum Channel Lifetime">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sat Nov 10 13:46:24 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001559.html">[Lightning-dev] Probe cancellation
+</A></li>
+        <LI>Next message: <A HREF="001557.html">[Lightning-dev] Towards a Market for Liquidity Providers -- Enforcing Minimum Channel Lifetime
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1555">[ date ]</a>
+              <a href="thread.html#1555">[ thread ]</a>
+              <a href="subject.html#1555">[ subject ]</a>
+              <a href="author.html#1555">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+Introduction
+============
+
+This thread, effectively continues the discussion, regarding dual-funding and a liquidity market for requesting to provide incoming capacity.
+
+I and Rene Pickhardt, were discussing this a little while ago, and resulted to the solution below.
+
+The Service Being Bought
+------------------------
+
+First, let us focus on what is being bought and paid for in this liquidity market.
+
+We have been talking as if all that is being bought and paid for is simply &quot;incoming capacity&quot;.
+
+However, I believe this is incomplete.
+In the &quot;real world&quot; that you humans appear to be excessively obsessed with, a contract for a service involves specifying, not only what is being purchased, but also for how long this service is to be rendered.
+Indeed, this is the basis for my suggestion, to add an `nLockTime` to the commitment transactions.
+
+Thus, the contract for purchasing liquidity, should specify not only the amount to be allocated for capacity, but also some duration for how long that capacity is to be allocated.
+Else, there is no reasonable condition for determining if the closure of a channel is improper or not.
+
+Thus, I propose a simple modification for channels that are opened via a dual-fund that responded to an advertisement for liquidity.
+
+A liquidity provider, providers the service as follows: for a fee, I shall provide incoming capacity to your node, and maintain this channel for a certain minimum duration.
+
+Let us introduce our cast of characters:
+
+* Mercy the Merchant, who wishes to receive payments by Lightning,
+* Licky the Liquidity Provider, who wishes to earn fees by on-boarding others on Lightning.
+* Randy the Random Node, who is simply on Lightning for no particular purpose.
+
+Mercy pays Licky some fee, in order for Licky to provide incoming capacity to Mercy, for at least some number of blocks.
+
+Minimum-lifetime Channels
+=========================
+
+Let us now consider, how to impose a minimum lifetime to a channel.
+Naively, commitment transactions may have an `nLockTime` to impose this.
+However, this complicates HTLCs that appear as outputs of commitment transactions.
+An HTLC timelock that expires before the `nLockTime` of the commitment transaction cannot be enforced.
+
+This makes the channel particularly useless for incoming payments, as payments that terminate at Mercy, are most likely to have low timelocks and thus most likely to be unenforceable onchain.
+Licky will prefer not to forward such nonenforceable HTLCs, so Mercy will not receive payments by this channel, when the express purpose, is to receive payments.
+
+Separating Lifetime from HTLCs
+------------------------------
+
+However, we could instead consider, to enforce the locktime on the main output for Licky instead.
+This would allow the HTLC outputs to be unencumbered, allowing proper enforcement onchain.
+
+Thus, after Symmetric CSV, we could also add an additional CLTV constraint that determines the minimum channel lifetime.
+
+For instance, without minimum channel enforcement, Licky-side commitment transaction would have outputs below:
+
+1.  Mercy-side output: Mercy &amp;&amp; CSV
+2.  Licky-side output: revocation || (Licky &amp;&amp; CSV)
+
+But if we now use a CLTV to enforce channel lifetime, Licky-side commitment transaction would have outputs below:
+
+1.  Mercy-side output: Mercy &amp;&amp; CSV
+2.  Licky-side output: revocation || (Licky &amp;&amp; CSV &amp;&amp; CLTV)
+
+The CLTV constraint is the block height at which the channel is created, plus the lifetime of the channel in blocks.
+
+Of note, is that only Licky has the CLTV encumberance.
+Unlike CSV, it is not symmetrical.
+Asymmetry must exist here, since Licky has an obligation (it must provide this service) that Mercy does not.
+
+The Mercy-side commitment transaction would have the outputs:
+
+1.  Licky-side output: Licky &amp;&amp; CSV &amp;&amp; CLTV
+2.  Mercy-side output: revocation || (Mercy &amp;&amp; CSV)
+
+Now we might have the intuition, that perhaps if Mercy closes the channel by its commitment transaction, this implies releasing Licky from its obligation.
+But a sufficiently evil Licky could play this by misbehaving, in an attempt to make Mercy close the channel by its commitment transaction, to release it from its obligation.
+(This is the same argument we used, for symmetrical CSV).
+
+Of note, is that if the commitment transactions contain any HTLCs, then they appear simply on the commitment transaction outputs, with no particular change to support this feature.
+
+Also of note, is that CLTV and CSV can indeed combine.
+A transaction that satisfies both the CSV-imposed `nSequence` and CLTV, would have a `nLockTime` that is the higher of the two imposed constraints.
+If the channel lifetime (enforced by CLTV) has passed, then the CSV is the only constraint, which reduces to the same as the existing behavior where a unilateral close prevents the money from being claimed by the CSV value.
+If the channel lifetime has not passed then access to the coin, is constrained by this channel lifetime.
+CLTV interacts badly with CSV only if CSV precedes it on an earlier output in a chain of transactions.
+
+Games Licky Can Play
+--------------------
+
+It must be raised to attention, that the commitment transaction can be broadcast at any time, as it has no `nLockTime`.
+This may be necessary to enforce a HTLC timeout.
+
+Indeed, one thing Licky could try to do, would be to transmit the first commitment transaction as soon as it is signed.
+However, due to the CLTV constraint, Licky cannot reclaim its money immediately.
+Although the channel still closes before its purported minimum lifetime and leaves Mercy bereft of the service, Licky cannot gain an advantage in doing so.
+
+On the other hand, if Licky continues to keep the channel open, it has the possibility of earning routing fees.
+Thus, defection in this game has no benefit, while cooperation has benefit.
+The rational choice, is to cooperate and retain the channel open.
+
+The same game plays, if Licky pretends to sleep and does not respond.
+It gains no additional money or utility.
+If instead it did not pretend to sleep, it could potentially earn routing fees.
+The same game is playable today even without liquidity providers.
+
+At the same time, in case of emergency (an HTLC is about to time out and Mercy is unresponsive), Licky has the ability to enforce onchain.
+
+Games Mercy Can Play
+--------------------
+
+Suppose Mercy broadcasts the commitment transaction as soon as it is signed.
+It thereby ties up Licky funds and Licky cannot thus earn routing fees.
+
+However, the same would be true, if Mercy simply pretended to sleep and did not respond to anything.
+The funds would still be locked to the channel, and Licky cannot escape this lock.
+
+It should be pointed out that Mercy has already paid for the locking of funds of Licky, from the liquidity provider advertisement.
+Thus, conceptually Mercy &quot;owns&quot; the lock-rights of the funds of Licky.
+Presumably, the intent is that Mercy wishes to be paid, and thus Mercy gains economic power from this.
+
+But suppose Mercy never receives payment via this channel.
+Then the effect is simply: Mercy borrows some money from Licky, and promises to pay it back with some interest (the liquidity provider fee).
+The difference is that this promise is enforceable onchain, and Mercy cannot escape this by any method: the extra interest will be paid to Licky inevitably, unlike normal bank-based financial instruments.
+(Thus, this is still not a debt-based instrument: the backing credit is held in escrow by the blockchain, and will always return to Licky after the borrowing period ends; there is no possibility of default)
+Thus, a rational Mercy would want to be able to utilize this encumbered borrowed funds, by actually providing some service or product and being paid via the channel.
+Otherwise, it ends up having simply donated money to Licky with no economic benefit to itself.
+
+Reduction of Licky Obligation
+-----------------------------
+
+Of note, is that the cost of the obligation of Licky would decrease once Mercy actually receives payments.
+Thus, as Mercy receives more payment, the cost on Licky in defecting reduces.
+
+We should also note, that the entire point of Mercy performing this exercise is to receive money.
+We can consider, that Mercy receiving money should make Mercy satisfied with this service.
+Thus even if Licky obligation drops low enough that Licky could economically let some tiny amount be
+
+More Complex Games Licky Can Play
+---------------------------------
+
+Suppose Mercy has some outgoing channel to a random node, Randy.
+Then Licky can move its encumbered funds through some circular route (if one exists) from Licky to Mercy to Randy back to Licky.
+
+This is normally not an issue, since the transfer means that the formerly-outgoing channel between Mercy and Randy is now an incoming channel to Mercy,
+Thus Mercy still has incoming capacity, as it wants.
+However, if this channel has no minimum channel lifetime, then Randy could close this channel.
+Licky would then have disposed of its obligation without having most of its money tied to the channel.
+
+Mercy can mitigate this attack, by only opening channels with similar minimum channel lifetimes (actually, similar dates of earliest termination).
+This means, Randy is not in fact random, but yet another liquidity provider.
+Then when Licky disposes of its obligation, the obligation is actually transferred to Randy.
+This ensures that Mercy can still have its service of incoming capacity.
+
+Acts of God
+===========
+
+Rene pointed out, that if an actual physical bolt of Lightning (whatever this &quot;physical realm&quot; that humans apparently inhabit means), were to strike Licky, then Mercy gets no incoming capacity and the contract (liquidity fee for incoming liquidity for a specific time period) is effectively voided.
+This is simply the same as if a contract is voided by an &quot;act of God&quot; (a physical bolt of Lightning appears to be one).
+Of note, is that most service contracts in the &quot;real world&quot; have clauses where &quot;act of God&quot; may prevent proper execution of the service, and the service provider then becomes free of liability.
+
+In this case, this is exactly modeled, if Licky truly has been destroyed.
+On the other hand, if Licky only pretends to be destroyed, it is the same game as above in &quot;Games Licky Can Play&quot;.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181110/3c084e11/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181110/3c084e11/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001559.html">[Lightning-dev] Probe cancellation
+</A></li>
+	<LI>Next message: <A HREF="001557.html">[Lightning-dev] Towards a Market for Liquidity Providers -- Enforcing Minimum Channel Lifetime
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1555">[ date ]</a>
+              <a href="thread.html#1555">[ thread ]</a>
+              <a href="subject.html#1555">[ subject ]</a>
+              <a href="author.html#1555">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

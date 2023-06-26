@@ -1,0 +1,127 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Minisketch and lightning gossip
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Minisketch%20and%20lightning%20gossip&In-Reply-To=%3C87pnu7xzvy.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001737.html">
+   <LINK REL="Next"  HREF="001742.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Minisketch and lightning gossip</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Minisketch%20and%20lightning%20gossip&In-Reply-To=%3C87pnu7xzvy.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Minisketch and lightning gossip">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Dec 12 02:06:09 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001737.html">[Lightning-dev] Spec Meeting: Tuesday, January 8,	2019 at 19:00:00 UTC (~1hr)
+</A></li>
+        <LI>Next message: <A HREF="001742.html">[Lightning-dev] Minisketch and lightning gossip
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1741">[ date ]</a>
+              <a href="thread.html#1741">[ thread ]</a>
+              <a href="subject.html#1741">[ subject ]</a>
+              <a href="author.html#1741">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+        In case you're bored with the limited range of improvements
+going into the 1.1 spec, you might like to ruminate on:
+
+  <A HREF="https://github.com/sipa/minisketch/blob/master/README.md">https://github.com/sipa/minisketch/blob/master/README.md</A>
+
+It's a library for efficient summaries of data, such as bitcoin
+transaction gossip.  It has an implementation sweet-spot at 64-bits,
+which almost works well for our gossip messages.  I've a straw-man
+protocol below.
+
+===
+1. type: 260 (`gossip_sync`) (`option_gossip_sync`)
+2. data:
+    * [`32`:`chain_hash`]
+    * [`32`:`latest_block_hash`]
+    * [`minisketch_len`:`minisketch`]
+
+The `latest_block_hash` is because the whole sync is less reliable if
+this differs between nodes, so a node may choose to wait, or adapt
+accordingly if the other node is behind.
+
+Because there is some overhead in maintaining the minisketch, it'd be
+nice if we can have global agreement on the format so each peer need
+only maintain one (i.e. no seed, no changing encodings depending on
+block height, etc).
+
+Fitting everything we need into 64 bits is possible, with various
+degrees of ugliness; I've proposed one here:
+
+We currently use a short_channel_id which has 3-byte block height,
+3-byte txindex, 2-byte output index.  The biggest win is to combine
+block height &amp; txindex into a &quot;txnumber since block 500,000&quot;, which only
+needs about 27 bits per year; 40 bits for this number is sufficient for
+the forseeable future.  2 bits for type, 1 for channel direction,
+leaving 21 bits for output number and timestamp.
+
+We can encode output number as N ones followed by a zero followed by
+N*2+1 bits (commonly, this means 2 bits, but future mixers may make this
+much larger).  The remaining bits are used as the lower bits of the
+timestamp[1].
+
+A node announcement is encoded by using the scid of the oldest channel
+associated with the node, and the direction bit.
+
+Using this direct encoding (rather than a hash of values) allows us to
+immediately use an INV-style query, or maybe send automatically the
+stuff the peer doesn't have.
+
+The required size of the minisketch we send depends on the number of
+differences with our peer.  We can use some minimum value (maybe based
+on past gossip rates?), and add the number of changes we've received
+since last time, increasing if we failed to reconstruct a previous one.
+
+There doesn't need to be consensus between peers on the minisketch size
+though, since truncated minisketches regrow into whole ones when tossed
+back into the ocean[3].
+
+Cheers,
+Rusty.
+[1]  You're supposed to refresh gossip every week, 17 bits should
+    be sufficient.   And since the originator controls timestamps
+    they can mitigate collisions themselves.[2]
+[2] I wish I'd insisted we use block numbers for timestamps though
+[3] I may have misunderstood this part, but it's basically magic.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001737.html">[Lightning-dev] Spec Meeting: Tuesday, January 8,	2019 at 19:00:00 UTC (~1hr)
+</A></li>
+	<LI>Next message: <A HREF="001742.html">[Lightning-dev] Minisketch and lightning gossip
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1741">[ date ]</a>
+              <a href="thread.html#1741">[ thread ]</a>
+              <a href="subject.html#1741">[ subject ]</a>
+              <a href="author.html#1741">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

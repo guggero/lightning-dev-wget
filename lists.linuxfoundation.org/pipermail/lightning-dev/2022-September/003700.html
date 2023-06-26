@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splice Pinning Prevention w/o Anchors
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Pinning%20Prevention%20w/o%20Anchors&In-Reply-To=%3CCAB3F3DtkqYDGMQzss8p4-Baj_maHUZGa9uSmjnT9Mv4Rjc4KAQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003699.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splice Pinning Prevention w/o Anchors</H1>
+    <B>Greg Sanders</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Pinning%20Prevention%20w/o%20Anchors&In-Reply-To=%3CCAB3F3DtkqYDGMQzss8p4-Baj_maHUZGa9uSmjnT9Mv4Rjc4KAQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Splice Pinning Prevention w/o Anchors">gsanders87 at gmail.com
+       </A><BR>
+    <I>Mon Sep 26 20:46:37 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003699.html">[Lightning-dev] Splice Pinning Prevention w/o Anchors
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3700">[ date ]</a>
+              <a href="thread.html#3700">[ thread ]</a>
+              <a href="subject.html#3700">[ subject ]</a>
+              <a href="author.html#3700">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> I think this mitigation requires reliable access to the UTXO set
+</I>
+In this case, how about just setting nsequence to the value 1? UTXO may not
+exist, but maybe that's ok since it means it cannot pin the commitment tx.
+
+&gt;<i> If this concern is correct, I'm not sure we have a current good solution,
+</I>the WIP package RBF proposal would be limited to only 2 descendants [1],
+and here we might have 3 generations: the splice, a commitment, a CPFP.
+
+I maybe misunderstood the point, but if we're assuming some future V3
+transaction update, you could certainly add anchors to the splice and CPFP
+it from there. I think the effort was to attempt to avoid waiting for such
+an update.
+
+Best,
+Greg
+
+On Mon, Sep 26, 2022 at 3:51 PM Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt;
+wrote:
+
+&gt;<i> Hi Dustin,
+</I>&gt;<i>
+</I>&gt;<i> From my understanding, splice pinning is problematic for channel funds
+</I>&gt;<i> safety. In the sense once you have a splice floating in network mempools
+</I>&gt;<i> and your latest valid commitment transaction pre-signed fees isn't enough
+</I>&gt;<i> to replace the splice, lack of confirmation might damage the claim of HTLCs.
+</I>&gt;<i>
+</I>&gt;<i> I don't know if the current splice proposal discourages pending HTLCs
+</I>&gt;<i> during the splice lifetime, this would at least downgrade the pinning
+</I>&gt;<i> severity in the splicing case to a simple liquidity timevalue loss.
+</I>&gt;<i>
+</I>&gt;<i> W.r.t, about the mitigation proposed.
+</I>&gt;<i>
+</I>&gt;<i> &gt; For &#8220;ancestor bulking&#8221;, every `tx_add_input` proposed by a peer must be
+</I>&gt;<i> &gt; included in the UTXO set. A node MUST verify the presence of a proposed
+</I>&gt;<i> &gt; input before adding it to the splicing transaction.
+</I>&gt;<i>
+</I>&gt;<i> I think this mitigation requires reliable access to the UTXO set, a
+</I>&gt;<i> significant constraint for LN mobile clients relying on lightweight
+</I>&gt;<i> validation backends. While this requirement already exists in matters of
+</I>&gt;<i> routing to authenticate channel announcements, on the LDK-side we have
+</I>&gt;<i> alternative infrastructure to offer source-based routing to such a class of
+</I>&gt;<i> clients, without them having to care about the UTXO set [0]. I don't
+</I>&gt;<i> exclude there would be infrastructure in the future to access a subset of
+</I>&gt;<i> the UTXO set (e.g if utreexo is deployed on the p2p network) for
+</I>&gt;<i> resource-constraint clients, however as of today this is still pure
+</I>&gt;<i> speculation and vaporware.
+</I>&gt;<i>
+</I>&gt;<i> In the meantime, mobile clients might not be able to partake in splicing
+</I>&gt;<i> operations with their LSPs, or without a decrease in trust-minimization
+</I>&gt;<i> (e.g assuming your LSP doesn't initiate malicious pinnings against you).
+</I>&gt;<i>
+</I>&gt;<i> &gt; 1) You cannot CPFP a splice transaction. All splices must be RBF&#8217;d to be
+</I>&gt;<i> &gt; fee-bumped. The interactive tx protocol already provides a protocol for
+</I>&gt;<i> &gt; initiating an RBF, which we re-use for splicing.
+</I>&gt;<i>
+</I>&gt;<i> The issue with RBF, it assumes interactivity with your counterparties. As
+</I>&gt;<i> splicing is built on top of the interactive transaction construction
+</I>&gt;<i> protocol, from my understanding you could have a high order of participants
+</I>&gt;<i> to coordinate with, without knowledge of their signing policies (e.g if
+</I>&gt;<i> they're time-constraints) therefore any re-signing operations might have
+</I>&gt;<i> odds to fail. Moreover, one of these participants could be malicious and
+</I>&gt;<i> refuses straightly to sign, therefore the  already splicing transactions
+</I>&gt;<i> stay as a pin in the network mempools.
+</I>&gt;<i>
+</I>&gt;<i> If this concern is correct, I'm not sure we have a current good solution,
+</I>&gt;<i> the WIP package RBF proposal would be limited to only 2 descendants [1],
+</I>&gt;<i> and here we might have 3 generations: the splice, a commitment, a CPFP.
+</I>&gt;<i>
+</I>&gt;<i> [0] <A HREF="https://github.com/lightningdevkit/rapid-gossip-sync-server">https://github.com/lightningdevkit/rapid-gossip-sync-server</A>
+</I>&gt;<i> [1]
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-September/020937.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-September/020937.html</A>
+</I>&gt;<i>
+</I>&gt;<i> Le mar. 9 ao&#251;t 2022 &#224; 16:15, Dustin Dettmer &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">dustin at koinkeep.com</A>&gt; a
+</I>&gt;<i> &#233;crit :
+</I>&gt;<i>
+</I>&gt;&gt;<i> As raised by @crypto-iq and @roasbeef, splices which permit arbitrary
+</I>&gt;&gt;<i> script and input inclusion are at risk of being mempool pinned. Here we
+</I>&gt;&gt;<i> present a solution to this splice pinning problem.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ## Background
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Pinning can be done by building a very large &#8220;junk&#8221; transaction that
+</I>&gt;&gt;<i> spends from an important pending one. There are two known pinning vectors:
+</I>&gt;&gt;<i> ancestor bulking thru addition of new inputs and junk pinning via the
+</I>&gt;&gt;<i> spending of outputs.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Pinning pushes transactions to the bottom of the priority list without a
+</I>&gt;&gt;<i> practical way of bumping it up. It is in effect a griefing attack, but in
+</I>&gt;&gt;<i> the case of lightning can risk funds loss for HTLCs that have timed out for
+</I>&gt;&gt;<i> a pinned commitment transaction.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Anchor outputs were introduced to lightning to mitigate the junk pinning
+</I>&gt;&gt;<i> vector; they work by adding a minimum of  `1 CSV` lock to all outputs on
+</I>&gt;&gt;<i> the commitment transaction except for two &#8220;anchor&#8221; outputs, one for each
+</I>&gt;&gt;<i> channel peer. (These take advantage of a 1-tx carve-out exception to enable
+</I>&gt;&gt;<i> propagation of anchors despite any junk attached to the peer&#8217;s anchor).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ## Mitigation
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Splice transactions are susceptible to both junk and bulk pinning
+</I>&gt;&gt;<i> attacks. Here&#8217;s how we propose mitigating these for splice.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [<A HREF="https://i.imgur.com/ayiO1Qt.png">https://i.imgur.com/ayiO1Qt.png</A>]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> For &#8220;ancestor bulking&#8221;, every `tx_add_input` proposed by a peer must be
+</I>&gt;&gt;<i> included in the UTXO set. A node MUST verify the presence of a proposed
+</I>&gt;&gt;<i> input before adding it to the splicing transaction.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> For &#8220;output junk&#8221;, every output included directly in a splice transaction
+</I>&gt;&gt;<i> MUST be a v0 P2SH witness script which begins with a minimum of `1 CSV`
+</I>&gt;&gt;<i> relative timelock. No output on the splice transaction will be spendable
+</I>&gt;&gt;<i> until it is included in a block. This prevents junk pinning by removing the
+</I>&gt;&gt;<i> ability to propose spends of splice outputs before the transaction is
+</I>&gt;&gt;<i> included in a block.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> There are two side effects here.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1) You cannot CPFP a splice transaction. All splices must be RBF&#8217;d to be
+</I>&gt;&gt;<i> fee-bumped. The interactive tx protocol already provides a protocol for
+</I>&gt;&gt;<i> initiating an RBF, which we re-use for splicing.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 2) Arbitrary 3rd party scriptPubKeys are not permissible directly into
+</I>&gt;&gt;<i> the splice tx.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In order for this to work we need to validate that every output has a 1
+</I>&gt;&gt;<i> block CSV. There are two output types to consider:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>    1. New channel outpoints
+</I>&gt;&gt;<i>    2. Arbitrary splice out funds
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> For arbitrary splice out, funds can be included in a &#8220;fan-out&#8221;
+</I>&gt;&gt;<i> transaction. Here standard pay to address etc outputs can live. The output
+</I>&gt;&gt;<i> leading to the fan-out transaction will be a P2WSH that also begins with
+</I>&gt;&gt;<i> [OP_1, OP_CHECKSEQUENCEVERIFY] (referred to from here on as &#8216;1 CSV&#8217;). Each
+</I>&gt;&gt;<i> splice party SHOULD build a fan-out transaction for all arbitrary spliced
+</I>&gt;&gt;<i> outputs.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> [<A HREF="https://i.imgur.com/40Dy3oq.png">https://i.imgur.com/40Dy3oq.png</A>]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Splice-in transactions will not require any fan-out children as long as
+</I>&gt;&gt;<i> all change goes into the channel outpoint.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> For new channel outpoints, the v0 witness script should be modified to
+</I>&gt;&gt;<i> start with [OP_1, OP_CHECKSEQUENCEVERIFY]. It needs to be the first item in
+</I>&gt;&gt;<i> the script to allow easy validation that it is used and not hidden in a
+</I>&gt;&gt;<i> false conditional. This would need to be applied to post-splice channel
+</I>&gt;&gt;<i> outpoints and probably dual funding channels should add it as well so they
+</I>&gt;&gt;<i> can be successfully included in splices.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ### interactive tx protocol changes
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> For splices, `tx_add_output` MUST include the `witness_script` in the
+</I>&gt;&gt;<i> tlv. Upon receiving outputs, nodes must validate the script matches the
+</I>&gt;&gt;<i> script hash in the output and that it begins with a minimum of 1 CSV.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> ## HTLC Timeouts and Splices
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Typically when this technique is used, one or two anchor outputs are
+</I>&gt;&gt;<i> added to purposely allow for CPFP fee bumping. But, turns out, we already
+</I>&gt;&gt;<i> have a usable anchor in the original commitment transaction! Very exciting.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> The interactive tx protocol mandates that splice txs are RBF-enabled.
+</I>&gt;&gt;<i> Broadcast splice proposals can be replaced out for the original commitment
+</I>&gt;&gt;<i> transaction at any time. Since the original commitment transaction has
+</I>&gt;&gt;<i> existing anchors, these may be used to increase fees on a force close. This
+</I>&gt;&gt;<i> combined with every other output in the tree being locked behind a 1 CSV
+</I>&gt;&gt;<i> means the force close will always have top mempool priority, mitigating the
+</I>&gt;&gt;<i> &#8220;output junk&#8221; style pin.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> - Nifty &amp; Dusty
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220926/1df8e3d0/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220926/1df8e3d0/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003699.html">[Lightning-dev] Splice Pinning Prevention w/o Anchors
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3700">[ date ]</a>
+              <a href="thread.html#3700">[ thread ]</a>
+              <a href="subject.html#3700">[ subject ]</a>
+              <a href="author.html#3700">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

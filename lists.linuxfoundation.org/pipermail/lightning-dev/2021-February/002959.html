@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fee rates as DoS protection (channel	spamming and jamming)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fee%20rates%20as%20DoS%20protection%20%28channel%0A%09spamming%20and%20jamming%29&In-Reply-To=%3CySHTJw4uTy41s1cPy5B-PwlOiKzeAaKM8p1Erh0ixfrJ61Ak33oP8YtE5Zg8pffaXqwgs0BdkDAIMoeCblmYMMZoci6ZY0ZYkhZGWiQ_4iQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002958.html">
+   <LINK REL="Next"  HREF="002961.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fee rates as DoS protection (channel	spamming and jamming)</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fee%20rates%20as%20DoS%20protection%20%28channel%0A%09spamming%20and%20jamming%29&In-Reply-To=%3CySHTJw4uTy41s1cPy5B-PwlOiKzeAaKM8p1Erh0ixfrJ61Ak33oP8YtE5Zg8pffaXqwgs0BdkDAIMoeCblmYMMZoci6ZY0ZYkhZGWiQ_4iQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Hold fee rates as DoS protection (channel	spamming and jamming)">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Feb 11 14:53:06 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002958.html">[Lightning-dev] Hold fee rates as DoS protection (channel spamming	and jamming)
+</A></li>
+        <LI>Next message: <A HREF="002961.html">[Lightning-dev] Hold fee rates as DoS protection (channel spamming and jamming)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2959">[ date ]</a>
+              <a href="thread.html#2959">[ thread ]</a>
+              <a href="subject.html#2959">[ subject ]</a>
+              <a href="author.html#2959">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Joost,
+
+Not quite up-to-speed back into this, but, I believe an issue with using feerates rather than fixed fees is &quot;what happens if a channel is forced onchain&quot;?
+
+Suppose after C offers the HTLC to D, the C-D channel, for any reason, is forced onchain, and the blockchain is bloated and the transaction remains floating in mempools until very close to the timeout of C-D.
+C is now liable for a large time the payment is held, and because the C-D channel was dropped onchain, presumably any parameters of the HTLC (including penalties D owes to C) have gotten fixed at the time the channel was dropped onchain.
+
+The simplicity of the fixed fee is that it bounds the amount of risk that C has in case its outgoing channel is dropped onchain.
+
+Regards,
+ZmnSCPxj
+
+
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i> Things have been quiet around channel jamming lately, but the vulnerability it still there as much as it was before. I've participated in an (isolated) mainnet channel jamming experiment (<A HREF="https://bitcoinmagazine.com/articles/good-griefing-a-lingering-vulnerability-on-lightning-network-that-still-needs-fixing">https://bitcoinmagazine.com/articles/good-griefing-a-lingering-vulnerability-on-lightning-network-that-still-needs-fixing</A>) which only confirmed the seriousness of the issue.
+</I>&gt;<i>
+</I>&gt;<i> BIDIRECTIONAL UPFRONT PAYMENT
+</I>&gt;<i>
+</I>&gt;<i> Of all the proposals that have been presented, t-bast's remix of forward and backward upfront payments (<A HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/002862.html,&#160;https://github.com/t-bast/lightning-docs/blob/master/spam-prevention.md#bidirectional-upfront-payment">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/002862.html,&#160;https://github.com/t-bast/lightning-docs/blob/master/spam-prevention.md#bidirectional-upfront-payment</A>) indicates in my opinion the most promising direction.
+</I>&gt;<i>
+</I>&gt;<i> One characteristic of the proposal is that the `hold_fees` are time-independent. If an htlc doesn't resolve within the `grace_period`, the receiver of the htlc will be forced to pay the full hold fee. The hold fee should cover the expenses for locking up an htlc for the maximum duration (could be 2000 blocks), so this can be a significant penalty. Applications such as atomic onchain/offchain swaps (Lightning Loop and others) rely on locking funds for some time and could get expensive with a fixed hold fee.
+</I>&gt;<i>
+</I>&gt;<i> HOLD FEE RATE
+</I>&gt;<i>
+</I>&gt;<i> In this post I'd like to present a variation of bidirectional upfront payments that uses a time-proportional hold fee rate to address the limitation above. I also tried to come up with a system that aims to relate the fees paid more directly to the actual costs incurred and thereby reduce the number of parameters.
+</I>&gt;<i>
+</I>&gt;<i> In a Lightning channel, the sender of an htlc always incurs the cost. The htlc value is deduced from their balance and the money can't be used for other purposes when the htlc is in flight. Therefore ideally a routing node is compensated for the time that their outgoing htlc is in flight.
+</I>&gt;<i>
+</I>&gt;<i> To communicate this cost to the outside world, routing nodes advertise a `hold_fee_rate` as part of their channel forwarding policy. An example would be &quot;0.3 msat per sat per minute&quot;. So if someone wants to forward 10k sat through that channel and the htlc remains in flight for 5 minutes, the routing node would like to see a compensation of 0.3msat * 10k sat * 5 mins = 15 sat. (it is possible to extend the model with a base fee rate to also cover the cost of an occupied slot on the commitment tx)
+</I>&gt;<i>
+</I>&gt;<i> The question here again is who is going to pay the hold fee. The answer is that it is primarily the receiver of the htlc who is going to pay. They are the ones that can fail or settle the htlc and are therefore in control of the hold time (&quot;Reverse upfront payment&quot;)
+</I>&gt;<i>
+</I>&gt;<i> But this would also mean that anyone can send out an htlc and collect hold fees unconditionally. Therefore routing nodes advertise on the network their `hold_grace_period`. When routing nodes accept an htlc to forward, they're willing to pay hold fees for it. But only if they added a delay greater than `hold_grace_period` for relaying the payment and its response. If they relayed in a timely fashion, they expect the sender of the htlc to cover those costs themselves. If the sender is also a routing node, the sender should expect the node before them to cover it. Of course, routing nodes can't be trusted. So in practice we can just as well assume that they'll always try to claim from the prior node the maximum amount in compensation.&#160;
+</I>&gt;<i>
+</I>&gt;<i> This is the basic idea. Routing nodes have real costs for the lock up of their money and will be compensated for it.
+</I>&gt;<i>
+</I>&gt;<i> To coordinate the payment of the fees, the `update_add_htlc` message is extended with:
+</I>&gt;<i> * `hold_fee_rate`: the fee rate that the sender charges for having the htlc in-flight (msat per sat per min)
+</I>&gt;<i> * `hold_fee_discount`: the absolute fee discount (sat) that the receiver gets as a compensation for hold fees that couldn't be claimed downstream because of the grace periods (the worst case amount).
+</I>&gt;<i> (the previous `hold_grace_period` in `update_add_htlc` is no longer needed)
+</I>&gt;<i>
+</I>&gt;<i> When an htlc is resolved, the receiver of the htlc will pay the sender the `hold_fee_rate` minus `hold_fee_discount` (exact details of how to integrate this into the channel state machine and deal with clock shift tbd).
+</I>&gt;<i>
+</I>&gt;<i> It is up to the sender of a payment to construct the onion payloads such that all nodes along the route will have their costs covered.
+</I>&gt;<i>
+</I>&gt;<i> EXAMPLE
+</I>&gt;<i>
+</I>&gt;<i> A ----&gt; B ----&gt; C ----&gt; D
+</I>&gt;<i> Every node charges 0.6 msat/sat/minute with a hold grace period of 1 minute. In this example, the routing fees are zero.
+</I>&gt;<i> A wants to send 1000 sat to D.
+</I>&gt;<i>
+</I>&gt;<i> A will charge B a hold fee rate of 0.6 sat/min (1000 sat at 0.6 msat/sat/min). B will charge C a hold fee rate of 1.2 sat/min to cover both its own cost and what must be paid back to A. C will charge D a hold fee rate of 1.8 sat/min to cover the costs of A, B and C.
+</I>&gt;<i>
+</I>&gt;<i> D has a grace period of 1 minute. At the 1.8 sat/min fee rate that C charges, D would need to pay a maximum of 1.8 sat if it meets its grace deadline just in time. C pays the 1.8 sats to D as a discount on its hold fee (assuming D will settle right before the deadline anyway).
+</I>&gt;<i>
+</I>&gt;<i> C also has a grace period of 1 minute. But because D has a grace period too, it could be that C needs to hold on to the htlc for a total of 2 minutes. At the 1.2 sat/min fee rate B charges, C would need to pay a maximum of 2.4 sats, plus the hold fee that it needs to pay to D (1.8 sats). Therefore B gives C a hold fee discount of 2.4+1.8 = 4.2 sats.
+</I>&gt;<i>
+</I>&gt;<i> The same logic applies to A and B. A offers a hold fee discount of 0.6 * 3 min + 4.2 = 6 sats to cover the worst case cost of B, C and D.
+</I>&gt;<i>
+</I>&gt;<i> If A is just spamming/probing, it will cost hem 6 sats per htlc. If D is trying to channel-jam by hodling htlcs, it will cost them 1.8 sat/min. If an intermediate hop is delaying the payment, they will pay at least 0.6 sat/min (depending on the position in the route).
+</I>&gt;<i>
+</I>&gt;<i> In the happy flow, A is still paying 6 sat per payment attempt which is used to compensate B, C and D for the short unavailability of their funds. To me, this seems only fair.&#160;
+</I>&gt;<i>
+</I>&gt;<i> CONCLUSION
+</I>&gt;<i>
+</I>&gt;<i> Even though the proposal above is not fundamentally different from what was known already, I do think that it adds the flexibility that we need to not take a step back in terms of functionality (fair pricing for hodl invoices and its applications). Plus that it simplifies the parameter set.
+</I>&gt;<i>
+</I>&gt;<i> Thoughts?&#160;
+</I>&gt;<i>
+</I>&gt;<i> Joost
+</I>
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002958.html">[Lightning-dev] Hold fee rates as DoS protection (channel spamming	and jamming)
+</A></li>
+	<LI>Next message: <A HREF="002961.html">[Lightning-dev] Hold fee rates as DoS protection (channel spamming and jamming)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2959">[ date ]</a>
+              <a href="thread.html#2959">[ thread ]</a>
+              <a href="subject.html#2959">[ subject ]</a>
+              <a href="author.html#2959">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,255 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DRAFT: interactive tx construction protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P0AO2auZ8-9qdSF8bPHsKTytyPkLc2LPemrx_nVAo3_%2Bw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002553.html">
+   <LINK REL="Next"  HREF="002517.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DRAFT: interactive tx construction protocol</H1>
+    <B>lisa neigut</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P0AO2auZ8-9qdSF8bPHsKTytyPkLc2LPemrx_nVAo3_%2Bw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] DRAFT: interactive tx construction protocol">niftynei at gmail.com
+       </A><BR>
+    <I>Mon Feb 10 23:11:54 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002553.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+        <LI>Next message: <A HREF="002517.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2516">[ date ]</a>
+              <a href="thread.html#2516">[ thread ]</a>
+              <a href="subject.html#2516">[ subject ]</a>
+              <a href="author.html#2516">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Here's some thoughts I had on PoDLE's and lightning. An enormous
+tip-of-the-hat is due to ZmnSCPxj for surfacing the work that JoinMarket
+has done here already.
+
+- The initiating message (in the case of open channel, this would be
+`open_channel2`) is extended to include an 'H2' field in its TLV, a 32-byte
+hash commitment to the P2 key.
+- Only one H2 commitment is required.
+- The `tx_add_input` message, as specified previously, is extended to an
+include a TLV type. This must be present on the input addition that
+corresponds with the UTXO used for the originally transmitted commitment
+- The non-initiator SHOULD wait to send any `tx_add_input` messages of
+their own until after receiving a `tx_add_input` message with a valid PoDLE
+TLV extension.
+
+1. tlvs: `add_input_tlvs`
+2. types:
+    1. type: 1 (`proof_of_dle`)
+    2. data:
+        *[`64*byte`:`s||e`]
+        *[`33*byte`:pubkey`]
+        *[`33*byte`:pubkey2`]
+
+- If the proof is incorrect, the non-initiator MAY fail the transaction
+collaboration or respond with `tx_complete`. There is no need for them to
+publish the PoDLE.
+- If the proof is correct, the non-initiator verifies that the commitment
+(hash of pubkey2) has not been communicated to them via gossip.
+- If the proof is not in their gossip store, the transaction collaboration
+continues. It is considered 'safe' for the non-initiator to send
+`tx_add_input` to their peer.
+- If the proof IS in their gossip store, the transaction collaboration
+SHOULD reply with `tx_complete`. It is considered 'unsafe' for the
+non-initiator to send `tx_add_input`. (This allows errored/erroring
+initiators to use blacklisted utxos, however it prevents them from privy to
+any other nodes' UTXO set.)
+- The initiator MUST NOT remove the committed to UTXO from the
+collaboration set.
+
+- If the transaction collaboration fails/is errored by the initiator,
+    - the non-initiator SHOULD broadcast the original PoDLE commitment to
+the gossip network.
+    - the non-initiator MAY delay broadcast to allow the initiating node to
+re-attempt the open.
+
+The gossip message for a PoDLE blacklist entry is as follows:
+
+1. type: 259 (`podle_blacklist`)
+2. data:
+    *[`signature`:`signature`]
+    *[`32*byte`:`H2`]
+    *[`point`:`node_id`]
+    *[`u32`:`timestamp`]
+
+Note that the `node_id` is the id of the node that signs (and broadcasts)
+the blacklisted PoDLE. h/t to ZmnSCPxj for the gossip construction.
+The timestamp is added as a convenience for peers to trim/discard blacklist
+participants as they wish depending on time/staleness.
+
+## Some Notes:
+- The JoinMarket protocol allows nodes to use any of a range of secondary
+points for J. Since the lightning version of this allows blacklisted UTXOs
+to still open channels, albeit without participation from the peer, it
+seems unnecessary to allow for more than one valid J point. I'd propose
+fixing the J the same zero-index point used by JoinMarket. This reduces the
+number of valid H2's that are available for any given utxo set, while also
+keeping blacklisted H2's compatible with the blacklist set generated by
+JoinMarket implementations.
+- The blacklist originates from the 'non-initiating' peer, and does not
+reveal the offending node's id.
+- Assuming that every node honestly participates in the blacklist, only
+verified H2's will be submitted to the blacklist
+- A malicious non-initiator can only prevent an honest initiator from using
+the committed UTXO for collaborative transactions; they won't prevent them
+from successfully initiating a one-sided transaction with honest peers.
+- Only nodes that have at least one public channel will be able to
+contribute to the public PoDLE blacklist. This means it's possible for a
+malicious initiator to grief non-public nodes without much consequence,
+however this requires the ability to send inbound messages to private
+nodes, i.e. more likely for a close or splice interaction.
+- As ZmnSCPxj has pointed out elsewhere, a malicious peer could broadcast
+junk H2's; it is acceptable to rate-limit the number of PoDLE blacklists
+generated by a peer.peer
+- It is possible for a malicious peer to fail to relay their `H2` entries
+in the blacklisted gossip set.
+- Duplicate H2 gossip should replace older timestamped versions.
+- Elsewhere we've had a discussion/concern over floods of PoDLE blacklist
+messages. It's possible for gossip message floods to originate from a
+malicious peer; they also might signal an ongoing probe attempt. Given a
+timestamp and a rough measure of the number of utxos' currently outstanding
+in the mempool, however, it should be possible to distinguish the two.
+
+## Open Questions:
+- Should PoDLE be required for every collaborative transaction (opens,
+splices + closes), or only for opens? It seems reasonable to limit them
+just to opens, as for all others you'll already have a shared UTXO with the
+peer.
+- Is fixing the generator point too restrictive? JoinMarket allows for a
+range of acceptable NUMS (J) points (up to 256). The smaller the pool of
+eligible J's, the smaller the pool of potential blacklisted PoDLE's (up to
+no. NUMs * current utxo count). One upside to allowing a larger pool of J's
+means that the same UTXO can be retried on failure. One downside to
+allowing a pool of J's means that a single UTXO can be validly retried in a
+probe attack against a variety of peers.
+
+On Thu, Jan 30, 2020 at 5:32 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning darosior, ariard, niftynei, and list,
+</I>&gt;<i>
+</I>&gt;<i> &gt; We could also consider PoDLE as used in JoinMarket, which solves a
+</I>&gt;<i> similar problem.
+</I>&gt;<i> &gt;
+</I>&gt;<i> <A HREF="https://gist.github.com/AdamISZ/9cbba5e9408d23813ca8#defence-2-committing-to-a-utxo-in-publicplaintext-at-the-start-of-the-handshake">https://gist.github.com/AdamISZ/9cbba5e9408d23813ca8#defence-2-committing-to-a-utxo-in-publicplaintext-at-the-start-of-the-handshake</A>
+</I>&gt;<i> &gt; Basically, a PoDLE commits to a UTXO, without being trivially grindable
+</I>&gt;<i> from the UTXO set and also including a proof that the creator of the PoDLE
+</I>&gt;<i> knows the secret key behind it.
+</I>&gt;<i> &gt; It can later be opened to reveal which UTXO the opener allocated.
+</I>&gt;<i> &gt; If the opener aborts (i.e. does not provide its signatures to the
+</I>&gt;<i> funding transaction) then the acceptor can gossip the UTXO and the revealed
+</I>&gt;<i> PoDLE as well to the rest of Lightning, so that the opener at least cannot
+</I>&gt;<i> reuse the same UTXO to probe other potential acceptors.
+</I>&gt;<i> &gt; (though, my understanding, there is no clear way to determine when we
+</I>&gt;<i> can safely delete old PoDLEs: maybe each node can keep it around for a
+</I>&gt;<i> month, which might be good enough to limit the practical ability of a snoop
+</I>&gt;<i> to probe other nodes)
+</I>&gt;<i> &gt; I believe JoinMarket also has solved the issue of allowing a UTXO to be
+</I>&gt;<i> used at most N times (for example due to &quot;honest&quot; failures, such as
+</I>&gt;<i> connectivity interruptions which might cause an abort of the protocol); I
+</I>&gt;<i> think it involves appending a single byte to something that is hashed, and
+</I>&gt;<i> ensuring its value is less than N, so that it can only be used from 0 to N
+</I>&gt;<i> - 1 (and thus allow a UTXO to be used at most N times).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Getting into contact with waxwing / Adam Gibson for this might be useful
+</I>&gt;<i> to fill out how PoDLE works and so on; basically, I believe this issue is a
+</I>&gt;<i> practically solved problem already for JoinMarket, though waxwing may be
+</I>&gt;<i> able to provide a more nuanced opinion.
+</I>&gt;<i>
+</I>&gt;<i> I communicated with waxwing, and he said:
+</I>&gt;<i>
+</I>&gt;<i> * See also: <A HREF="https://joinmarket.me/blog/blog/poodle">https://joinmarket.me/blog/blog/poodle</A> \[sic\].
+</I>&gt;<i> * The counter I mentioned is implemented using the second generator point.
+</I>&gt;<i>   * The PoDLE construction requires the standard base point `G`, and
+</I>&gt;<i> another generator point `J`.
+</I>&gt;<i>   * To create the generator point `J`, JoinMarket appends the counter byte
+</I>&gt;<i> (the one used to limit N number of uses of the same UTXO) to `G`, hashes
+</I>&gt;<i> it, then uses a coerce-to-point.
+</I>&gt;<i> * PoDLE is sometimes called DLEQ elsewhere.
+</I>&gt;<i> * There is no concrete answer on &quot;when to delete old PoDLE&quot;; JoinMarket
+</I>&gt;<i> never deletes (though they might if throughput increases).
+</I>&gt;<i> * Watermarks like `nLockTime`, `nSequence`, `nVersion` are currently fixed
+</I>&gt;<i> values; JoinMarket sees no reason to change this since equal-valued
+</I>&gt;<i> CoinJoins are otherwise obvious to chain analysis anyway.
+</I>&gt;<i>   * But note: JoinMarket implements PayJoin, which is not otherwise
+</I>&gt;<i> obvious onchain, and does indeed do anti-fee-sniping emulation for PayJoin.
+</I>&gt;<i>   * JoinMarket also strives to make similar feerates across users.
+</I>&gt;<i>
+</I>&gt;<i> In any case, for myself, my thoughts are:
+</I>&gt;<i>
+</I>&gt;<i> * I observe that our use-case is quite similar to a PayJoin:
+</I>&gt;<i>   * The opener proposes to make a payment (to a channel between the opener
+</I>&gt;<i> and the acceptor, rather than outright giving control to the acceptor as in
+</I>&gt;<i> PayJoin).
+</I>&gt;<i>   * The acceptor adds some UTXOs which will contribute to the payment
+</I>&gt;<i> output (i.e. the channel).
+</I>&gt;<i>   * This probably does mean we want to later consider `nLockTime`
+</I>&gt;<i> anti-fee-sniping as well in multi-funded channel opens.
+</I>&gt;<i> * Speaking of multi-funded channel opens, it seems to me this interactive
+</I>&gt;<i> tx construction mechanism as well can be later used for channel factories.
+</I>&gt;<i>   * Similarly, PoDLE techniques would be useful as well to multi-funded
+</I>&gt;<i> channel factories.
+</I>&gt;<i> * It would probably be a good idea to share PoDLE format with JoinMarket
+</I>&gt;<i> so we can share PoDLE with them (there could be bridges that share PoDLE
+</I>&gt;<i> between a JoinMarket maker and a Lightning node, and each network already
+</I>&gt;<i> has its own gossip protocols, so LN just needs a gossip protocol for
+</I>&gt;<i> sharing PoDLEs as well).
+</I>&gt;<i> * Probably we can mandate in some BOLT spec to retain PoDLE for at least a
+</I>&gt;<i> year or a month or two weeks or so, which should be enough to slow down
+</I>&gt;<i> probe attempts.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200210/047f7af7/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200210/047f7af7/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002553.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+	<LI>Next message: <A HREF="002517.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2516">[ date ]</a>
+              <a href="thread.html#2516">[ thread ]</a>
+              <a href="subject.html#2516">[ subject ]</a>
+              <a href="author.html#2516">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

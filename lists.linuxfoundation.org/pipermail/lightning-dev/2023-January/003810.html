@@ -1,0 +1,565 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Swap-in-Potentiam: Moving Onchain Funds &quot;Instantly&quot;	To Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Swap-in-Potentiam%3A%20Moving%20Onchain%20Funds%20%22Instantly%22%0A%09To%20Lightning&In-Reply-To=%3CiyCC4-UpZ-kdyNvXKFbMMg88PANa_jJywjtLg48S9It8t11uz_Qi1vwA0tyaFhwZjaMRdKD1QMDyRqnQ9F53dCJoPjAmHE1MRKmpNCkaGZg%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003809.html">
+   <LINK REL="Next"  HREF="003811.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Swap-in-Potentiam: Moving Onchain Funds &quot;Instantly&quot;	To Lightning</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Swap-in-Potentiam%3A%20Moving%20Onchain%20Funds%20%22Instantly%22%0A%09To%20Lightning&In-Reply-To=%3CiyCC4-UpZ-kdyNvXKFbMMg88PANa_jJywjtLg48S9It8t11uz_Qi1vwA0tyaFhwZjaMRdKD1QMDyRqnQ9F53dCJoPjAmHE1MRKmpNCkaGZg%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Swap-in-Potentiam: Moving Onchain Funds &quot;Instantly&quot;	To Lightning">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Jan  3 13:57:58 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003809.html">[Lightning-dev] Possible Attack IF we add BOTH upfront AND negative routing fees to the Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="003811.html">[Lightning-dev] Swap-in-Potentiam: Moving Onchain Funds &quot;Instantly&quot; To Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3810">[ date ]</a>
+              <a href="thread.html#3810">[ thread ]</a>
+              <a href="subject.html#3810">[ subject ]</a>
+              <a href="author.html#3810">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Subject: Swap-in-Potentiam: Moving Onchain Funds &quot;Instantly&quot; To Lightning
+
+by Jesse Posner, ZmnSCPxj
+
+Introduction
+============
+
+Moving funds from an onchain-only address to Lightning Network is slow,
+especially if you desire trust-minimization (which removes solutions
+relying on 0-conf).
+
+Basically, to reduce trust requirements in all onchain transactions,
+onchain receivers *MUST* ensure confirmation of the onchain transaction
+that creates their UTXO.
+In practice, the minimum should be at least 3 blocks, since reorgs of
+up to 2 blocks are common occurences, but even 1 confirmation can
+take an inordinately long time in the real world due to the random
+nature of mining.
+
+This is particularly acute for mobile phone use-cases.
+As mobile phones run on a battery, mobile phone OSs often greatly
+restrict CPU and other resource consumption when an app is not
+currently open by the user.
+
+Now consider this user story, for a wallet app that supports both
+Bitcoin blockchain and Lightning Network operations:
+
+* The user wants to be paid over the Bitcoin blockchain.
+* The user gets an address from their wallet and provides it to
+  some other party to receive their payment.
+* The user closes their wallet app, which causes the mobile phone
+  OS to kill all its threads.
+* The other party sends their payment over blockchain while the
+  user is asleep.
+* The blockchain transaction confirms and time passes.
+* The user wakes up and checks their favorite blockchain explorer,
+  and sees they received funds on their wallet address.
+* The user opens their wallet app and decides they need a coffee,
+  so they buy coffee over Lightning.
+
+For current solutions to move funds from the blockchain layer to
+Lightning, however, the above user story would need to complete
+over a long time, possibly measurable in dozens of minutes or
+even hours in the worst case, due to the need for confirmation:
+
+* Channel open: Requires confirmation, many nodes require 6 or
+  more confirmations.
+* Submarine swap/peerswap: Requires confirmation before the swap
+  service will send out the HTLC on Lightning.
+* Splice-in: Channel remains operational, but until the splice
+  transaction confirms, the channel operates in &quot;dual mode&quot;
+  where both pre-splice and post-splice state is valid, and
+  that means only the lower amount of the pre-splice and
+  post-splice can be used in the mean time.
+  For splice-in, the pre-splice amount will be lower, thus
+  the amount being spliced in will not be credited until
+  the splice transaction is confirmed.
+
+In this writeup, we present a novel protocol, swap-in-potentiam,
+that can be used for immediate transfer from the blockchain
+layer to the Lightning layer, in the above user story.
+
+Advantages And Limitations
+--------------------------
+
+To whet your appetite, here are the advantages:
+
+* Immediate transfer of already-confirmed-received onchain
+  funds to Lightning.
+* Onchain funds can also be transferred to another onchain
+  address (subject to normal onchain confirmation rules).
+  * This can be &quot;immediate&quot; if sending to a receiver that
+    accepts the risk of 0-conf onchain transactions.
+* Minimized trust requirement.
+
+The disadvantages, to help convince you that yes, this is
+technology and not magic beans (and to not oversell this
+tech, Bitcoin media reporting often tend to oversell
+new technologies because the disadvantages are often
+hidden away behind technical minutae):
+
+* Requires a cooperating LSP.
+  If LSP is down or refuses to cooperate, onchain funds
+  are locked for some time.
+  This has a timeout (so if the LSP never comes online
+  again, you just wait out the timeout) and the timeout
+  starts from when the receiving UTXO is confirmed in a
+  blocks, so it will not cause loss of funds, only loss
+  of opportunity (i.e. &quot;involuntary HODLing&quot;).
+* If you have multiple LSPs, when you generate an address
+  you *have to* select one of them at that point, you
+  *cannot* commit to multiple LSPs and select one of them
+  later when your phone wakes up again.
+  This exacerbates the above disadvantage, since you have
+  to select one of your LSPs and hope that when your
+  phone wakes up the LSP you selected is also up and
+  cooperative.
+* The onchain-received funds have to be confirmed first,
+  otherwise we still need to wait for confirmation of the
+  onchain-received funds.
+  This is generally true for many blockchain-only wallets
+  anyway and is thus not a worsening, but is also not an
+  improvement.
+* If the timeout is too near, actions must be performed
+  onchain that require confirmation.
+
+Swap-in-Potentiam
+=================
+
+All onchain fund movements, as noted, require confirmation.
+These include onchain fund movements to the Lightning network.
+
+If the onchain address that the wallet provides was controlled
+solely by that wallet, then any action that requires cooperation
+with a Lightning Network participant --- channel open, swap, or
+splice --- would require an onchain transaction that commits to
+that specific Lightning Network participant.
+Only when the new onchain transaction is confirmed, can that
+Lightning participant rely on the transaction output without
+having to trust the initiator.
+
+&gt;<i>From there, we can consider: what if the wallet provides an
+</I>address that *already* commits to that specific Lightning Network
+participant?
+
+If so, then the &quot;timer for confirmation&quot; starts as soon as
+the wallet receives on the blockchain, not as soon as the wallet
+decides to move funds from blockchain to Lightning.
+
+This is a significant difference for a mobile wallet: the mobile
+environment does not support the mobile wallet being online for
+long.
+Thus, the mobile wallet may not have any CPU to make the decision
+to move funds from blockchain to Lightning, until the actual user
+explicitly opens the mobile wallet app.
+
+It has already been generally accepted that due to the limitations
+of the mobile phone environment, a mobile phone wallet with
+Lightning support would need some LSP anyway.
+Thus, a mobile wallet that can receive on the blockchain layer
+and then send on the Lightning layer can commit to a specific,
+different, Lightning participant: the LSP it has channels with.
+
+Thus, the mobile wallet can provide an address that commits to
+one particular Lightning Network participant: its LSP.
+
+The mobile wallet can then initiate a single-hop swap with the
+LSP when the mobile wallet app is in the foreground and has CPU
+to think with.
+If it received funds into the address that have already been
+confirmed, then it can do this single-hop swap immediately with
+its LSP.
+The LSP can immediately resolve this swap, crediting funds to
+channel, while atomically ensuring it has sole claim to the
+onchain UTXO.
+
+The Contract
+------------
+
+The contract has two participants: Alice the funds owner, and
+Bob its potential swap partner.
+
+Once *any* funds have been confirmed received into an address
+committing to this contract, Alice owns the funds and can
+dispose of them as it likes (with cooperation from Bob).
+The source of the funds need not be Alice, it could be a third
+party that has an obligation to pay Alice onchain.
+
+The contract has only 2 branches:
+
+* Onchain/channel branch: Alice and Bob.
+* Timelock branch: Alice plus a relative timelock (`OP_CSV`)
+  measurable in weeks.
+
+Astute readers will realize that the above is really a variant
+of [CLTV-style unidirectional time-limited channels][1],
+themselves a variant of Spilman-style channels:
+
+* Uses an explicit opcode to simplify channel setup (no need
+  to pre-sign a timeout transaction between Alice and Bob,
+  can just send funds directly to the address).
+* Uses a relative locktime instead of an absolute one to
+  allow funding of the channel address (= receive onchain
+  funds ready to spend over Lightning) at any time.
+
+The use-cases this enables are:
+
+* If Alice wants to pay to another onchain address, and Bob
+  is also online and cooperative, Alice can ask Bob to help
+  sign the Onchain/channel branch to move the funds in any
+  arbitrary onchain manner.
+* If Alice wants to pay to a Lightning invoice / keysend, and
+  has insufficient Lightning outgoing capacity (but has
+  sufficient *total* capacity), it can swap with Bob, by
+  offerring a transaction that spends via the Onchain/channel
+  branch and instantiates a fresh onchain HTLC that Bob can
+  then forward over Lightning.
+  As soon as Alice offers its signature of that transaction,
+  Bob can immediately offer an in-Lightning HTLC to Alice on
+  their channel, and then Alice can immediately resolve it
+  (thus immediately getting its funds into Lightning).
+* If Bob is offline or uncooperative, Alice can unilterally
+  recover its funds after the timeout in the Timelock
+  branch.
+
+Trust is required only to the extent that Alice trusts Bob to
+be cooperative so that Alice can dispose of its funds immediately.
+In case Bob turns out to be non-trustworthy, Alice can recover
+its funds via the timelock branch after the timeout period.
+There is no scope for Bob to steal funds (indeed, it is easier
+for Bob to steal Lightning funds than to steal swap-in-potentiam
+funds).
+
+The intent here is that the mobile wallet is Alice, while the
+LSP is Bob.
+
+### Bob Security
+
+Bob *MUST* ensure that, for each UTXO, it is either asked to
+sign an arbitrary onchain transaction (i.e the first use-case
+above) *OR* it gets offered an onchain HTLC from that UTXO.
+Once Alice has asked Bob to cooperate in either case for a
+particular UTXO, Bob *MUST* ensure that it does not sign the other
+case (and Bob *MUST* refuse to cooperate in the other case once
+one case has been requested).
+
+In addition, Bob *MUST* ensure that, if it is used in the
+&quot;channel&quot; case (i.e. the second use-case above), the timeout of
+the Timelock branch is far enough in the future that it is likely
+that spends using the Onchain/channel branch have confirmed by
+then.
+
+With both invariants enforced by Bob, Bob can ensure that, if
+Alice requests a swap using the Onchain/channel branch, only Bob
+can spend the UTXO (at least before the timeout), and thus can
+safely offer a Lightning HTLC to Alice immediately without any
+additional waiting for onchain confirmations.
+
+As Bob needs to know the UTXO in the first use-case above, this
+requirement prevents the use of blind signing techniques when
+implementing the first use-case.
+Basically, when being asked to sign, Bob must generate the entire
+`SIGHASH` from data that Alice provides, so that Bob is able to
+keep track of UTXOs it is signing for.
+
+### Remote Swap
+
+While Bob is generally considered &quot;the&quot; LSP of the mobile wallet
+Alice, nothing in the Lightning protocol actually requires that
+Bob be a direct peer of Alice.
+The only real requirement is that Bob is able to send funds to
+Alice over Lightning in exchange for possession of the equivalent
+onchain funds.
+
+Against this, we should note that the mobile wallet is already
+dependent on one or more LSPs anyway, so it may as well just use
+its direct peer LSPs instead of a remote node.
+
+### Address Derivation
+
+Swap-in-potentiam addresses can be derived from a root public or
+private key.
+
+We only need one keypair each from Alice and Bob.
+Alice can use standard derivation paths for its keypair.
+
+As Bob is intended to be an LSP, we can just use its Lightning
+node ID as the public key.
+Bob needs to be in possession of the corresponding private key
+anyway in order to set up BOLT 8 encrypted transports.
+
+As LSPs are part of the public network, Alice can simply try to
+scan for all published nodes that advertise support for
+swap-in-potentiam.
+Alternately if the wallet has a short list of fixed LSPs it
+will use, it can simply refer to that list.
+
+Thus:
+
+* Alice uses a derived keypair.
+* Bob uses a fixed keypair (its Lightning node ID).
+
+The above is sufficient to derive swap-in-potentiam addresses
+from an `xprv` or `xpub` root key.
+
+Swap-in-potentiam For LSPs
+==========================
+
+While the original design of swap-in-potentiam has the mobile
+wallet in the &quot;Alice&quot; role and its LSP in the &quot;Bob&quot; role, it
+turns out that LSPs can provide special service to improve
+receiving mobile wallets.
+
+Suppose that the LSP keeps track of statistics, and thus has
+an idea of which of its mobile wallet clients are likely to
+be net receivers.
+
+Net receivers will often have low inbound capacity (since the
+inbound capacity has been used up during previous LN receives).
+
+During times of low onchain fees, an LSP can check which of its
+offline mobile wallet clients have low inbound capacity, and are
+likely to come online in the future to receive.
+In those cases, the LSP can commit funds to a swap-in-potentiam
+with the mobile client, with the LSP as &quot;Alice&quot; and the mobile
+client as &quot;Bob&quot;.
+This at least lets the LSP set up half of a swap during a time of
+low fees.
+
+If the transfer to swap-in-potentiam addresses is confirmed by
+the time the mobile wallet client comes online, the LSP can
+immediately initiate a swap, giving inbound capacity towards the
+mobile client.
+This swap can be immediately resolved, and allows the mobile
+wallet client to immediately receive funds over Lightning.
+
+In particular, if &quot;offline receive&quot; as designed by TheBlueMatt
+is implemented, then the LSP already has indication of a pending
+payment towards an offline mobile wallet client.
+The LSP can check if the offline mobile wallet client has
+insufficient incoming capacity to receive the funds, and if so,
+arrange to fund a swap-in-potentiam with that client.
+Then, when the mobile wallet client comes online, the LSP can
+initiate the swap with them, and once the swap completes (and
+thus the mobile wallet client has sufficient incoming capacity)
+the LSP can contact the sender LSP to complete the payment.
+
+In particular, this use-case allows for *immediate* receives as
+soon as the mobile wallet client gets foregrounded and has CPU
+time, **without** requiring 0-conf trusted transactions and
+thus without requiring any kind of semi-custodial trust, even
+if the mobile wallet client had insufficient incoming capacity.
+A channel still has to be set up beforehand (without 0-conf, if
+trusting funds to the LSP is undesirable).
+
+Implementation Sketch
+=====================
+
+The intent is to use Taproot with Schnorr signatures, but
+**without** using the keyspend path (at least initially).
+
+The plan currently is to use a `MuSig(A, B)` as the internal
+pubkey, but with the branches still explicitly laid out as
+tapleaves.
+That is, there are two tapleaf SCRIPTs corresponding to the
+two branches described above:
+
+* `&lt;A&gt; OP_CHECKSIGVERIFY &lt;B&gt; OP_CHECKSIG`
+* `&lt;timelock&gt; OP_CHECKSEQUENCEVERIFY OP_DROP &lt;A&gt; OP_CHECKSIG`
+
+Using an explicit 2-of-2 branch rather than a MuSig allows
+for a simple protocol at least for initial deployment:
+we can have Alice send the signature using `A` in a single
+half-round without having to engage in a 2-round MuSig2 signing
+ritual.
+
+We intend to use Taproot since the mobile wallet client
+may need to use a 2-of-3 or 2-of-2 signing scheme, similar
+to Blockstream Green.
+This allows either Alice or Bob in the contract to secretly
+be a FROST 2-of-3 or MuSig 2-of-2 (or any FROST k-of-n or
+MuSig n-of-n).
+This is also another reason for avoiding a 2-of-2 MuSig
+keyspend path between Alice and Bob, as there is (to our
+knowledge) no publicly-reviewed security proof that
+FROST-in-MuSig and MuSig-in-MuSig are safe (or the
+corresponding variants using MuSig2 for the signing
+ritual).
+
+Later, when we are more confident of the use of MuSig2 and
+FROST inside a MuSig2, and with using MuSig2 with possibly
+untrusted outsiders (who might exploit any mis-implementation
+of the MuSig2 signing protocol if we are not careful with
+designing it), we can seamlessly upgrade the protocol
+to use the keyspend path later, to save witness bytes.
+
+For the Onchain use-case (i.e. Alice wants to spend the UTXO
+to an onchain address), the protocol betweeen Alice and Bob
+would be:
+
+* `request_arbitrary_signature` Alice-&gt;Bob: Requests Bob
+  to sign a PSBT spending a swap-in-potentiam address
+  using the Onchain branch.
+* `response_arbitrary_signature` Bob-&gt;Alice: Response to
+  the above, returning the requested signature.
+* `reject_arbitrary_signature` Bob-&gt;Alice: Sent in
+  response to `request_arbitary_signature` if Bob refuses
+  to cooperate (e.g. the UTXO being spent has already
+  been accepted by Bob in a Channel use-case below).
+
+For the Channel use-case (i.e. Alice wants to spend the UTXO
+to a Lightning receiver), we operate the swap-in-potentiam
+UTXO(s) as a Spilman-like channel over two states:
+
+* HTLC-offering: Offering an amount `N` HTLC from Alice to
+  Bob, with any remaining amount to a change address to
+  Alice.
+* Resolved: Giving the amount `N` outright to Bob, with any
+  remaining amount to a change address to Alice.
+
+The intention is that the channel is initially put into
+the HTLC-offerring state.
+Then Bob offers a corresponding in-Lightning HTLC to Alice
+over their channel.
+When Alice resolves the in-Lightning HTLC, it can then
+send a new signature for the Resolved state.
+Once the channel is in a Resolved state, Bob *SHOULD* sign
+the last state and broadcast it on the blockchain, thereby
+closing the Spilman-like channel.
+
+The protocol messages for the Channel use-case are:
+
+* `request_swap_in` Alice-&gt;Bob: Tell Bob the UTXOs with
+  the same swap-in-potentiam address to spend, how
+  much to put into the Alice-&gt;Bob channel direction,
+  what channel to move into, and (optionally) a change
+  address for Alice.
+* `reject_swap_in` Bob-&gt;Alice: Sent in response to
+  `request_swap_in` if Bob refuses to cooperate (e.g.
+  one of the UTXOs on offer was already signed with
+  `response_arbitrary_signature`, or Bob cannot legally
+  accept control of funds from one or more of the UTXOs
+  offerred).
+* `accept_swap_in` Bob-&gt;Alice: Sent in response to
+  `request_swap_in`, containing the Bob-side address to
+  send funds to later once the state is Resolved.
+* `swap_in_signed` Alice-&gt;Bob: Response to
+  `accept_swap_in`, containing the Alice-side signature
+  for the HTLC-offering state transaction.
+  Once Bob receives this, Bob can safely construct a
+  new on-Lightning HTLC using BOLT1
+  `update_offer_htlc`.
+* `swap_in_resolved` Alice-&gt;Bob: Sent after Alice has
+  acquired the funds via `update_fulfill_htlc` of the
+  corresponding on-Lightning HTLC, containing the
+  Alice-side signature for the Resolved state
+  transaction.
+  The Resolved state transaction spends to the Bob-side
+  address given in `accept_swap_in`, and any change to
+  the Alice-side change address in `request_swap_in`.
+
+The plan is to reserve only one odd BOLT1 message ID,
+and to embed the actual swap-in-potentiam message ID
+as the first 2 bytes of the BOLT1 message, to reduce
+pollution of the limited BOLT1 message ID space and to
+allow more flexibility for swap-in-potentiam to expand
+to new messages inside its own message ID space.
+
+For a richer future protocol, we will want to consider
+how a swap-in can be combined with a splice-in.
+This is useful if the current total capacity of the
+channel is lower than the available onchain funds.
+The swap-in can be credited immediately (and is limited
+to the current total capacity) while additional funds
+can be added to the channel via splice-in (which is
+credited only once the splice-in is confirmed).
+
+As-is, a similar result can be obtained using openv1,
+wherein a swap-in is combined with a channel open,
+with the swap-in immediately credited while the channel
+open is awaiting confirmation:
+
+* Alice and Bob currently have one or more existing
+  channels, and Alice has a UTXO in a swap-in-potentiam
+  address whose value exceeds the incoming capacity of
+  the existing channel(s).
+* Alice-&gt;Bob `open_channel`.
+* Bob-&gt;Alice `accept_channel`.
+* Alice-&gt;Bob `request_swap_in` with the &quot;change address&quot;
+  being the funding address of the channel.
+* Bob-&gt;Alice `accept_swap_in` provides the TXID of the
+  funding transaction (Alice now knows the &quot;change
+  address&quot; and the Bob final Resolved address, letting it
+  know the final Resolved state transaction TXID).
+* Alice-&gt;Bob `funding_created` with the TXID.
+* Bob-&gt;Alice `funding_signed`.
+* Alice-&gt;Bob `swap_in_signed` to provide the signature
+  spending the swap-in-potentiam address to Bob.
+* Bob then constructs an HTLC over the existing channel,
+  which Alice claims, revealing the preimage.
+* Alice-&gt;Bob `swap_in_resolved`.
+* Bob then broadcasts the Resolved state transaction,
+  which is also the funding transaction of the new channel.
+* Both Alice and Bob await confirmation of the transaction
+  in order to use the new channel.
+  Alice can still use the existing channel, which has been
+  topped-up with fresh outgoing capacity by the swap-in.
+
+(The above is not safe, as Bob can complete the protocol
+by using the HTLC-offerring state transaction; this can
+be fixed by having Alice open *2* channels with the same
+amount, one with the HTLC-offering state transaction as
+the funding tx, the other with the Resolved state
+transaction as the funding tx, and later `error`ing the
+channel corresponding to the transaction that is not
+confirmed; this is left as an exercise to the reader,
+though note that it requires two different change addresses
+for Alice for both HTLC-offerring and Resolved states,
+which can be arranged for the protocol)
+
+--
+
+[1]: <A HREF="https://en.bitcoin.it/wiki/Payment_channels#CLTV-style_payment_channels">https://en.bitcoin.it/wiki/Payment_channels#CLTV-style_payment_channels</A>
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003809.html">[Lightning-dev] Possible Attack IF we add BOTH upfront AND negative routing fees to the Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="003811.html">[Lightning-dev] Swap-in-Potentiam: Moving Onchain Funds &quot;Instantly&quot; To Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3810">[ date ]</a>
+              <a href="thread.html#3810">[ thread ]</a>
+              <a href="subject.html#3810">[ subject ]</a>
+              <a href="author.html#3810">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

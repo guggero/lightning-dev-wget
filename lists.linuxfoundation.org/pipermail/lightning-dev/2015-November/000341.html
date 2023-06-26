@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Return to the Layered Commit Transactions?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Return%20to%20the%20Layered%20Commit%20Transactions%3F&In-Reply-To=%3C87fuzvx7wx.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000339.html">
+   <LINK REL="Next"  HREF="000343.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Return to the Layered Commit Transactions?</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Return%20to%20the%20Layered%20Commit%20Transactions%3F&In-Reply-To=%3C87fuzvx7wx.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Return to the Layered Commit Transactions?">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Nov 25 00:02:54 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000339.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+        <LI>Next message: <A HREF="000343.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#341">[ date ]</a>
+              <a href="thread.html#341">[ thread ]</a>
+              <a href="subject.html#341">[ subject ]</a>
+              <a href="author.html#341">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Mats Jerratsch &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">matsjj at gmail.com</A>&gt; writes:
+&gt;<i> While working on the payment layer and messing around with timeouts /
+</I>&gt;<i> timeframes for CSV and CLTV, I noticed a few things...
+</I>&gt;<i>
+</I>&gt;<i> (1)
+</I>&gt;<i> It is indeed not possible for HTLCs to have a long revocation time and
+</I>&gt;<i> a short refund time. And it makes sense the way we designed the
+</I>&gt;<i> scripts and the commit transaction. As it's a single output, we either
+</I>&gt;<i> can prevent the other side from doing ANYTHING for the revocation
+</I>&gt;<i> timeout T1, or the other party is able to claim the complete output
+</I>&gt;<i> without any encumbering... In long chains of multiple hops, I might
+</I>&gt;<i> need R to settle the payment normally, while you still wait out the
+</I>&gt;<i> revocation timeout before you can reveal R...
+</I>
+Right.
+
+This isn't immediately obvious, so let's unpack this a bit:
+
+Because any to-self output needs to have an additional relative
+revocation delay, A's HTLC output would look like:
+
+        For A if HTLC times out + revocation relative timeout, OR
+        For B with HTLC R value, OR
+        For B with revocation hash.
+
+A needs to handle the case where B spends after the HTLC timeout, but
+before the revocation relative timeout, so its inter-hop HTLC timeout
+delta has to be &gt; revocation timeout.
+
+(Aside: can we reduce the HTLC timeout there so that it takes into account
+the relative timeout?  I'd have to think harder about all the other
+scripts, too, but it seems reasonable on the surface?).
+
+&gt;<i> (2)
+</I>&gt;<i> As revocation-time and refund time are equal, we have some problematic
+</I>&gt;<i> race conditions, where both parties can technically claim the payment,
+</I>&gt;<i> depending on propagation time of the transaction. Further, if you
+</I>&gt;<i> claim the payment that I was actually entitled to per refund, I may be
+</I>&gt;<i> out of luck getting my money back on the next hop...
+</I>
+Yeah, don't do this.
+
+&gt;<i> (3)
+</I>&gt;<i> As the absolute CLTV timeout has to increase with each hop, it can
+</I>&gt;<i> give us insight about our position within the route, even with onion
+</I>&gt;<i> routing. It is possible to have the sender add some delay, but this
+</I>&gt;<i> just increases the (already long) total refund time.
+</I>
+This was my plan.
+
+&gt;<i> I played with the numbers back and forth, but I don't really see any
+</I>&gt;<i> way out of this problem. Anything below one day might be dangerous
+</I>&gt;<i> already for DDoS attacks, with 20 hops we might end up with 30-40 days
+</I>&gt;<i> for a refund though...
+</I>
+It's not about DoS, really.  The revocation time has to be long enough
+so you're certain to spot someone cheating.  And we've established that
+the HTLC inter-hop-delta should be &gt;&gt; revocation time.
+
+If your node is online and robust, 3 hours should be sufficient for
+revocation time (remember, you can jack up fees if you need to).  12
+hours will give you plenty of time to take your claim transactions and
+inject them into the bitcoin network via carrier pidgeon or whatever you
+need to get around any DDoS.
+
+Still, let's assume everyone uses 1 day for revocation time, and 2 days
+for HTLC timeout delta, and we have 20 hops.
+
+The original HTLC (NODE 0 -&gt; NODE 1) times out in 40 days.  The last
+HTLC (NODE 19 -&gt; NODE 20) times out in 2 days, and that one falls to the
+blockchain.  NODE 19 takes 3 days to get a refund.  Then it can
+immediately close the incoming HTLC from NODE18 (why wait for a timeout?
+It no longer has outstanding liabilities or any reason to believe it
+will get the R value), etc.
+
+So, worst case is 3 days unless there are multiple hop failures?
+
+&gt;<i> If we go back to the original design, we are able to separate
+</I>&gt;<i> 'claiming-a-payment-using-R' and 'revoke-an-output' into two layers
+</I>&gt;<i> and such, we can enforce revealing R within a separate timeframe than
+</I>&gt;<i> the revocation timeframe. To do this, we need either SIGHASH_NOINPUT
+</I>&gt;<i> or SW, as we can't construct the transaction on top of the 'reveal-R'
+</I>&gt;<i> transaction without knowing R currently. Short refund timeouts would
+</I>&gt;<i> also mitigate the problems of (3)
+</I>&gt;<i>
+</I>&gt;<i> I would really love to stick with the current design, as not having to
+</I>&gt;<i> keep another set of signatures makes everything easier ...
+</I>
+Agreed.  
+
+What do you think about reducing the OP_CHECKLOCKTIMEVERIFY argument if
+it's followed by the revocation delay?
+
+Thanks!
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000339.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+	<LI>Next message: <A HREF="000343.html">[Lightning-dev] Return to the Layered Commit Transactions?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#341">[ date ]</a>
+              <a href="thread.html#341">[ thread ]</a>
+              <a href="subject.html#341">[ subject ]</a>
+              <a href="author.html#341">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

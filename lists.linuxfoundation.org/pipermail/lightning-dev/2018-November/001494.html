@@ -1,0 +1,236 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] BOLT11 In the World of Scriptless Scripts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181103044332.el2ro3sso3rcmwpg%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001500.html">
+   <LINK REL="Next"  HREF="001495.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] BOLT11 In the World of Scriptless Scripts</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181103044332.el2ro3sso3rcmwpg%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] BOLT11 In the World of Scriptless Scripts">aj at erisian.com.au
+       </A><BR>
+    <I>Sat Nov  3 04:43:32 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001500.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+        <LI>Next message: <A HREF="001495.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1494">[ date ]</a>
+              <a href="thread.html#1494">[ thread ]</a>
+              <a href="subject.html#1494">[ subject ]</a>
+              <a href="author.html#1494">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Nov 02, 2018 at 03:45:58PM +1030, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On Fri, Nov 02, 2018 at 10:20:46AM +1030, Rusty Russell wrote:
+</I>&gt;<i> &gt;&gt;         There's been some discussion of what the lightning payment flow
+</I>&gt;<i> &gt;&gt; might look like in the future, and I thought I'd try to look forwards so
+</I>&gt;<i> &gt;&gt; we can avoid painting ourselves into a corner now.  I haven't spent time
+</I>&gt;<i> &gt;&gt; on concrete design and implementation to be sure this is correct,
+</I>&gt;<i> &gt;&gt; however.
+</I>&gt;<i> &gt; I think I'd like to see v1.1 of the lightning spec include
+</I>&gt;<i> &gt; experimental/optional support for using secp256k1 public/private keys
+</I>&gt;<i> &gt; for payment hashes/preimages. That assumes using either 2-party ECDSA
+</I>&gt;<i> &gt; magic or script magic until it's viable to do it via Schnorr scriptless
+</I>&gt;<i> &gt; scripts, but that seems like it's not totally infeasible?
+</I>&gt;<i> Not totally infeasible, but since every intermediary needs to support
+</I>&gt;<i> it, I think we'd need considerable buy-in before we commit to it in 1.1.
+</I>
+&quot;every intermediary&quot; just means &quot;you have to find a path where every
+channel supports it&quot;; nodes/channels that aren't in the route you choose
+aren't a problem, and can still pass on the gossiped announcements,
+I think?
+
+&gt;<i> &gt; I think the
+</I>&gt;<i> &gt; components would need to be:
+</I>&gt;<i> &gt;  - invoices: will the preimage for the hash be a secp256k1 private key
+</I>&gt;<i> &gt;    or a sha256 preimage? (or payer's choice?)
+</I>&gt;<i> From BOLT11:
+</I>&gt;<i>    The `p` field supports the current 256-bit payment hash, but future
+</I>&gt;<i>    specs could add a new variant of different length, in which case
+</I>&gt;<i>    writers could support both old and new, and old readers would ignore
+</I>&gt;<i>    the one not the correct length.
+</I>&gt;<i> So the plan would be you provide two `p` fields in transition.
+</I>
+Yeah, that sounds workable.
+
+&gt;<i> &gt;  - channel announcements: do you support secp256k1 for hashes or just
+</I>&gt;<i> &gt;    sha256?
+</I>&gt;<i> Worse, it becomes &quot;I support secp256k1 with ECDSA&quot; then a new &quot;I support
+</I>&gt;<i> secp256k1 with Schnorr&quot;.  You need a continuous path of channels with
+</I>&gt;<i> the same feature.
+</I>
+I don't think that's correct: whether it's 2p-ecdsa, Schnorr or script
+magic only matters for the two nodes directly involved in the channel
+(who need to be able to understand the commitment transactions they're
+signing, and extract the private key from the on-chain tx if the channel
+gets unilaterally closed). For everyone else, they just need to know that
+they can put in a public key based HTLC, and get back the corresponding
+private key when the HTLC goes through.
+
+It's also (theoretically) upgradable afaics: if two nodes have a channel
+that supports 2p-ecdsa, and eventually both upgrade to support segwit
+v1 scriptless schnorr sigs or whatever, they just need to change the
+addresses they use in new commitment txs, even for existing HTLCs.
+
+&gt;<i> &gt; Even if you calculate r differently, I don't think you can do this
+</I>&gt;<i> &gt; without Bob and Alice interacting to get the nonce R prior to sending
+</I>&gt;<i> &gt; the transaction, which seems effectively the same as having dynamic
+</I>&gt;<i> &gt; invoice hashes, though.
+</I>&gt;<i> I know Andrew Poelstra thought it was possible, so I'm going to leave a
+</I>&gt;<i> response to him :)
+</I>
+AFAICT, in general, if you're going to have n signatures with a public
+key P, you need to generate the n R=r*G values from n*32B worth of random data,
+that's previously unknown to the signature recipients. If you've got
+less than that, then you will have calculated each R by doing something
+like based on &lt;n*32B of data you've been given:
+
+    R = a*R1 + b*R2 + ..
+
+and the n signatures you eventually receive will give you n simultaneous
+linear equations along the lines of:
+
+    s = (a*r1 + b*r2 + c*r3 + ..) + H(..)*p
+
+with &lt;= n unknowns (p and less than n r1,r2,.. values). (If you don't
+known the values a,b,c you won't be able to calculate the R values for
+your signatures in the first place)
+
+Willing to be surprised by a different approach, but I'm pretty
+skeptical...
+
+
+I think it makes sense to think of proof-of-payment in terms of a
+verification algorithm (that a third party court could use), that takes:
+
+  m - the invoice details, eg
+      &quot;aj paid $11 for stickers to be delivered to Australia&quot;
+  P - the pubkey of the vendor
+  sig - some signature
+
+With the current SHA256 preimages, you can make sig=(R,s,pre)
+where the sig is valid if:
+
+  s*G = R + H(P,R,m+SHA256(pre))*P
+
+If you share R,s,SHA256(pre) beforehand, the payer can tell they'll have
+a valid signature if they pay to SHA256(pre). That's a 96B signature,
+and it requires &quot;pre&quot; be different for each sale, and needs pre-payment
+interactivity to agree on m and communicate R,s back to the payer.
+
+With seckp256k1 preimages, it's easy to reduce that to sig=(R,s),
+and needing to communicate an R to the payer initially, who can then
+calculate S and send &quot;m&quot; along with the payment.
+
+
+Maybe it makes sense to disambiguate the term &quot;invoice&quot; -- when you don't
+know who you might be giving the goods/service to, call it an &quot;offer&quot;,
+which can be a write-once/accept-by-anyone deal that you just leave on
+a webpage or your email signature; but an &quot;invoice&quot; should be specific
+to each individual payment, with a &quot;receipt&quot; provided once an invoice
+is paid.
+
+
+AMP:
+
+&gt;<i> I think a general scheme is: payer creates a random group-marker, sends
+</I>&gt;<i> &lt;group-marker&gt;&lt;32-byte-randomness&gt;[encrypted data...] in each payment.
+</I>&gt;<i> Receipient collects payments by &lt;group-marker&gt;, xoring the
+</I>&gt;<i> &lt;32-byte-randomness&gt;; if that xor successfully decrypts the data, you've
+</I>&gt;<i> got all the pieces.
+</I>&gt;<i> 
+</I>&gt;<i> (For low-AMP, you use payment_hash as &lt;group-marker&gt;, and just use
+</I>&gt;<i> SHA256(&lt;xor-of-all-randomness&gt;&lt;32-byte-randomness&gt;) as the per-payment
+</I>&gt;<i> preimage so no [encrypted data] needed).
+</I>
+Hmm, right, I've got decorrelation and AMP combined in my head. I'm also
+a bit confused about what exactly you mean by &quot;low-AMP&quot;...
+
+Rereading through the AMP threads, Christian's post makes a lot of sense
+to me:
+
+<A HREF="../2018-February/001023.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/001023.html</A>
+
+I'm not really seeing the benefits in complicated AMP schemes without
+decorrelation...
+
+It seems to me like there are three levels that could be implemented:
+
+ - laolu/conner: (&quot;low AMP&quot; ?)
+    works with sha256
+    some privacy improvement
+    loses proof-of-payment
+    can't claim unless all payments arrive
+
+ - just send multiple payments with the same hash:
+    works with sha256
+    privacy not improved much (some intermediary nodes no longer know
+      full invoice value)
+    can claim partial payments as soon as they arrive
+    accepting any partial payment provides proof-of-payment
+
+ - secp256k1: (&quot;high AMP&quot; ?)
+    needs secp256k1 preimages
+    works fine with decorrelation improving privacy at every step
+    can set it up so can only claim once all partial payments arrive
+    accepting partial payment provides proof-of-payment
+
+In theory, both &quot;just send multiple payments&quot; and &quot;secp256k1&quot; could have
+splitting and joining at any hop, if we could encode the instructions
+on how to do that in the onion message; joining is probably easy, but
+splitting seems like it might be hard?
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001500.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+	<LI>Next message: <A HREF="001495.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1494">[ date ]</a>
+              <a href="thread.html#1494">[ thread ]</a>
+              <a href="subject.html#1494">[ subject ]</a>
+              <a href="author.html#1494">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

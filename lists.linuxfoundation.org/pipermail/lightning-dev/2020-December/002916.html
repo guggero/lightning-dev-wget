@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Covert channel recovery with Oblivious	Signatures
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%0A%09Signatures&In-Reply-To=%3C20201214131248.d47cgwrqo2zvikfs%40ganymede%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002914.html">
+   <LINK REL="Next"  HREF="002917.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Covert channel recovery with Oblivious	Signatures</H1>
+    <B>David A. Harding</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%0A%09Signatures&In-Reply-To=%3C20201214131248.d47cgwrqo2zvikfs%40ganymede%3E"
+       TITLE="[Lightning-dev] Covert channel recovery with Oblivious	Signatures">dave at dtrt.org
+       </A><BR>
+    <I>Mon Dec 14 13:12:48 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002914.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+        <LI>Next message: <A HREF="002917.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2916">[ date ]</a>
+              <a href="thread.html#2916">[ thread ]</a>
+              <a href="subject.html#2916">[ subject ]</a>
+              <a href="author.html#2916">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Mon, Dec 14, 2020 at 04:31:23PM +1100, Lloyd Fournier wrote:
+&gt;<i> To be clear: The goal is to offer a cooperative settlement transaction up
+</I>&gt;<i> front to the (possibly) recovering party -- *not a commitment transaction*.
+</I>
+Ah, what BOLT0 calls a &quot;mutual close&quot;.  That makes a lot more sense and
+makes the protocol even cooler than I thought.  Thanks for clarifying!
+
+&gt;<i> The idea I'm working with in revocable signature based channels [1] is
+</I>&gt;<i> to make the node lose its static secret key if it posts a revoked
+</I>&gt;<i> commitment tx. This means they could lose ALL funds from ALL their
+</I>&gt;<i> channels with ALL their peers if they ever broadcast a single revoked
+</I>&gt;<i> commitment transaction. This would be a very bad thing to happen while
+</I>&gt;<i> you're trying to recover funds.
+</I>
+Yikes!  A very bad thing indeed.  I'll have to re-read about witness
+asymmetric channels; I don't think I realized that was a consequence of
+using them.
+
+&gt;<i> What is the story with option_static_remotekey? I am interested to know how
+</I>&gt;<i> the negotiation of that option has a security issue but I don't see how it
+</I>&gt;<i> could.
+</I>
+Whoops, I got myself confused.  I meant option_data_loss_protect, which
+LND calls &quot;static channel backups&quot;.  I just git greped the bolts for
+&quot;static&quot; and copied the first plausible seeming result.  :facepalm:
+
+On Mon, Dec 14, 2020 at 12:08:27AM -0800, Ariel Lorenzo-Luaces wrote:
+&gt;<i> I don't think it's so clear that any party refusing to go go first can
+</I>&gt;<i> be assumed to have lost data.
+</I>
+Oh, I agree, it's definitely not clear.  I just said they could &quot;be
+*suspected* of having lost data&quot;. 
+
+On Mon, Dec 14, 2020 at 12:08:27AM -0800, Ariel Lorenzo-Luaces wrote:
+&gt;<i> If the rule is that the party receiving the connection is the one that
+</I>&gt;<i> must send the oblivious signatures then a party that has both lost
+</I>&gt;<i> data and is receiving a connection can just ignore the connection
+</I>&gt;<i> request.
+</I>&gt;<i> 
+</I>&gt;<i> There is plausible denyability because knowingly not answering a
+</I>&gt;<i> request can't be distinguished from just having connection issues or
+</I>&gt;<i> distinguished from a machine is just turned off.
+</I>
+In many cases, the network does behave differently in different
+cases:
+
+    $ nmap -p 80 dtrt.org  ## online and port available
+    80/tcp open  http
+
+    $ nmap -p 80 newmail.dtrt.org  ## online but no service listening
+    80/tcp closed http
+
+    $ nmap -p 22 10.0.0.1  ## online but connection refused
+    22/tcp filtered ssh
+
+    $ nmap -p 80 10.0.0.200  ## not online
+    Note: Host seems down. If it is really up, but blocking our ping probes, try -Pn
+
+Moreover, there's the case where Bob tries to open a connection with
+Mallory, but Mallory immediately turns around and tries to open a
+connection with Bob.  In that case, Bob's unavailability might look
+suspicious (although it could just be NAT or something else innocuous).
+
+However, beyond IP network activity, there's potentially a lot of
+evidence a dishonest counterparty can gather about a
+recently-reconnected node to evaluate the probability that it suffered a
+data loss.  Perhaps most persuasive would be seeing what happened to
+that node's other channels.  Were they all closed?  Did the node fail to
+promptly broadcast a transaction with preimages trying to claim any
+pending HTLCs (which can be especially strong evidence if the dishonest
+counterparty was along the routing path for any of those HTLCs and so
+knows that the preimage was disclosed).  
+
+The reason option_data_loss_protects works in theory is that the only
+way attacker Mallory can test her hypothesis that victim Bob lost data
+is by Mallory broadcasting an old state that Bob, if he didn't actually
+lose data, can use to penalize Mallory in a way that may profit Bob.  In
+an ideal world, for every victim node that actually lost data there'd be
+several honeypot nodes that faked losing data in order to profit from
+dishonest counterparties.  Unfortunately, I doubt that's the case, for
+two reasons:
+
+  1. You can only operate a data loss honeypot by causing a channel to
+     be closed onchain, which is going to waste someone's fees.
+
+  2. A dishonest node may only try broadcasting an old state when their
+     channel balance is low, near the minimum allowed by the channel
+     reserve.  The guidelines for channel reserve amounts were chosen
+     (I believe) under the assumption that Mallory can be highly
+     confident that Bob has the latest state, so the reserve is just
+     the bare amount needed to prevent some annoying griefing.  The
+     reserve is probably not large enough to compensate for the work and
+     fee-paying costs of operating data loss honeypots.
+
+That said, most nodes seem to be honest and hopefully the nodes playing
+with high-value channels are using some sort of live replication, so I
+don't think there have been any issues so far.
+
+-Dave
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 833 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201214/9ee971e1/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201214/9ee971e1/attachment.sig</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002914.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+	<LI>Next message: <A HREF="002917.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2916">[ date ]</a>
+              <a href="thread.html#2916">[ thread ]</a>
+              <a href="subject.html#2916">[ subject ]</a>
+              <a href="author.html#2916">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

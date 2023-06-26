@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Packet switching via intermediary rendezvous node
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Packet%20switching%20via%20intermediary%20rendezvous%20node&In-Reply-To=%3CmKdbY7QncujpBgDJpLi0tIX6k-aRMW_Bon93cpt1jqJd1lcqAWhdoHlMgN2jWw5f98IlHPK3_WuQtEde2SukR3j8xHIcdlaiazyRVGMnqG8%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001552.html">
+   <LINK REL="Next"  HREF="001574.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Packet switching via intermediary rendezvous node</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Packet%20switching%20via%20intermediary%20rendezvous%20node&In-Reply-To=%3CmKdbY7QncujpBgDJpLi0tIX6k-aRMW_Bon93cpt1jqJd1lcqAWhdoHlMgN2jWw5f98IlHPK3_WuQtEde2SukR3j8xHIcdlaiazyRVGMnqG8%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Packet switching via intermediary rendezvous node">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Nov  9 16:10:56 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001552.html">[Lightning-dev] &quot;Trustless&quot; Pathfinding Service
+</A></li>
+        <LI>Next message: <A HREF="001574.html">[Lightning-dev] Packet switching via intermediary rendezvous	node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1553">[ date ]</a>
+              <a href="thread.html#1553">[ thread ]</a>
+              <a href="subject.html#1553">[ subject ]</a>
+              <a href="author.html#1553">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+Although, packet switching was part of the agenda, we decided, that we would defer this to some later version of BOLT spec.
+
+Interestingly, some sort of packet switching becomes possible, due to the below features we did not defer:
+
+1.  Multi-hop onion packets (i.e. s/realm/packettype/)
+2.  Identify &quot;next&quot; by node-id instead of short-channel-id (actually, we solved this by &quot;short-channel-id is not binding&quot; and next hop is identified by short-channel-id still).
+3.  Onion ephemeral key switching (required by rendez-vous routing).
+
+-----------
+
+Suppose we define the below packettype (notice below type number is even, but I am uncertain how &quot;is OK to be odd&quot;, is appropriate for this):
+
+packettype 0: same as current realm 0
+packettype 2: ephemeral key switch (use ephemeral key in succeeding 65-byte packet)
+packettype 4: identify next node by node-id on succeeding 65-byte packet
+
+Suppose I were to receive a packettype 0 in an onion.  It identifies a short-channel-id.  Now suppose this particular channel has no capacity.  As I showed in thread &quot; Link-level payment splitting via intermediary rendezvous nodes&quot; <A HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/001547.html,">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/001547.html,</A> it is possible, that I can route it via some other route *composed of multiple channels*, by using packettype 4 at the end of this route to connect it to the rest of the onion I receive.
+
+However, in this case, in effect, the short-channel-id simply identifies the &quot;next&quot; node along this route.
+
+Suppose we also identify a new packettype (packettype 4)) where he &quot;next&quot; node is identified by its node-id.
+
+Let us make the below scenarios.
+
+1.  Suppose the node-id so identified, I have a channel with this node.  And suppose this channel has capacity.  I can send the payment directly to that node.  This is no different from today.
+2.  Suppose the node-id so identified, I have a channel with this node.  But this channel has not capacity.  However, I can look for alternate route.  And by using rendez-vous feature &quot;switch ephemeral key&quot; I can generate a route that is multiple hops, in order to reach the identified node-id, and connect the rest of the onion to this.  This case is same as if the node is identified by short-channel-id.
+3.  Suppose the node-id so identified, I have not a channel with this node.  However, I can again look for alternate route.  Again, by using &quot;switch ephemeral key&quot; feature, I can generate a route that is multiple hops, in order to reach the identified node-id, and again connect the rest of the onion to this.
+
+Now, the case 3 above, can build up packet switching.  I might have a routemap that contains the destination node-id and have an accurate route through the network, and identify the path directly to the next node.  If not, I could guess/use statistics that one of my peers is likely to know how to route to that node, and also forward a packettype 4 to the same node-id to my peer.
+
+This particular packet switching, also allows some uncertainty about the destination.  For instance, even if I wish to pay CJP, actually I make an onion with packettype 4 Rene, packettype 4 CJP. packettype 0 HMAC=0.  Then I send the above onion (appropriately layered-encrypted) to my direct peer cdecker, who attempts to make an effort to route to Rene.  When Rene receives it, it sees packettype 4 CJP, and then makes an effort to route to CJP, who sees packettype 0 HMAC=0 meaning CJP is the recipient.
+
+Further, this is yet another use of the siwtch-ephemeral-key packettype.
+
+Thus:
+
+1.  It allows packet switching
+2.  It increases anonymity set of rendez-vous routing. Node that sees packettype 2 (switch ephemeral key) does not know, if it is sending to a packet-switched or link-level payment rerouting, or if it is the rendes-vous for a deniable payment.
+3.  Mapless Lightning nodes (<A HREF="001552.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/001552.html</A>) could ask a peer to be their pathfinding provider, with some amount of uncertinaty (it is possible that somebody else sent a packettype 4 to me, and I selected you as peer who might know the destination; also, the destination specified may not be the final destination, and I might also be someone who received a packettype 2 and switched keys before forwarding the packettype 4 to you).
+4.  It justifies multiple features (support for packettype 2 and packettype 4) having a single feature bit, again making it difficult to justify discriminating nodes with this feature bit enabled.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181109/2a8a45a8/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181109/2a8a45a8/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001552.html">[Lightning-dev] &quot;Trustless&quot; Pathfinding Service
+</A></li>
+	<LI>Next message: <A HREF="001574.html">[Lightning-dev] Packet switching via intermediary rendezvous	node
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1553">[ date ]</a>
+              <a href="thread.html#1553">[ thread ]</a>
+              <a href="subject.html#1553">[ subject ]</a>
+              <a href="author.html#1553">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

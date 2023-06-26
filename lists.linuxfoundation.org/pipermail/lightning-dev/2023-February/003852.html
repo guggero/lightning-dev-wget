@@ -1,0 +1,269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Highly Available Lightning Channels
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Highly%20Available%20Lightning%20Channels&In-Reply-To=%3CCALZpt%2BHQoVLxfUCyE%2BX96VLXfBV7S_7WHX7b_UK%2B4ggH5NfHuQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003860.html">
+   <LINK REL="Next"  HREF="003853.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Highly Available Lightning Channels</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Highly%20Available%20Lightning%20Channels&In-Reply-To=%3CCALZpt%2BHQoVLxfUCyE%2BX96VLXfBV7S_7WHX7b_UK%2B4ggH5NfHuQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Highly Available Lightning Channels">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Feb 14 21:42:24 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003860.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+        <LI>Next message: <A HREF="003853.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3852">[ date ]</a>
+              <a href="thread.html#3852">[ thread ]</a>
+              <a href="subject.html#3852">[ subject ]</a>
+              <a href="author.html#3852">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Joost,
+
+&gt;<i> For a long time I've held the expectation that eventually payers on the
+</I>lightning network will become very strict about node performance. That they
+will &gt; require a routing node to operate flawlessly or else apply a hefty
+penalty such as completely avoiding the node for an extended period of time
+- multiple &gt; weeks. The consequence of this is that routing nodes would
+need to manage their liquidity meticulously because every failure
+potentially has a large
+&gt;<i> impact on future routing revenue.
+</I>
+I think the performance question depends on the type of payment flows
+considered. If you're an
+end-user sending a payment to your local Starbucks for coffee, here fast
+payment sounds the end-goal.
+If you're doing remittance payment, cheap fees might be favored, and in
+function of those flows you're
+probably not going to select the same &quot;performant&quot; routing nodes. I think
+adding latency as a criteria for
+pathfinding construction has already been mentioned in the past for LDK [0].
+
+&gt;<i> I think movement in this direction is important to guarantee
+</I>competitiveness with centralised payment systems and their (at least
+theoretical) ability to
+&gt;<i> process a payment in the blink of an eye. A lightning wallet trying
+</I>multiple paths to find one that works doesn't help with this.
+
+Or there is the direction to build forward-error-correction code on top of
+MPP, like in traditional
+networking [1]. The rough idea, you send more payment shards than the
+requested sum, and then
+you reveal the payment secrets to the receiver after an onion interactivity
+round to finalize payment.
+
+&gt;<i> A common argument against strict penalisation is that it would lead to
+</I>less efficient use of capital. Routing nodes would need to maintain pools of
+&gt;<i> liquidity to guarantee successes all the time. My opinion on this is that
+</I>lightning is already enormously capital efficient at scale and that it is
+worth
+&gt;<i> sacrificing a slight part of that efficiency to also achieve the lowest
+</I>possible latency.
+
+At the end of the day, we add more signal channels between HTLC senders and
+the routing
+nodes offering capital liquidity, if the signal mechanisms are efficient, I
+think they should lead
+to better allocation of the capital. So yes, I think more liquidity might
+be used by routing nodes
+to serve finely tailored HTLC requests by senders, however this liquidity
+should be rewarded
+by higher routing fees.
+
+&gt;<i> This brings me to the actual subject of this post. Assuming strict
+</I>penalisation is good, it may still not be ideal to flip the switch from one
+day to the other. &gt; Routing nodes may not offer the required level of
+service yet, causing senders to end up with no nodes to choose from.
+
+&gt;<i> One option is to gradually increase the strength of the penalties, so
+</I>that routing nodes are given time to adapt to the new standards. This does
+require &gt; everyone to move along and leaves no space for cheap routing
+nodes with less leeway in terms of liquidity.
+
+I think if we have lessons to learn on policy rules design and deployment
+on the base-layer
+(the full-rbf saga), it's to be careful in the initial set of rules, and
+how we ensure smooth
+upgradeability, from one version to another. Otherwise the re-deployment
+cost towards
+the new version might incentive the old routing node to stay on the
+non-optimal versions,
+and as we have historical buckets in routing algorithms, or preference for
+older channels,
+this might lead the end-user to pay higher fees, than they could access to.
+
+&gt;<i> Therefore I am proposing another way to go about it: extend the
+</I>`channel_update` field `channel_flags` with a new bit that the sender can
+use to signal &gt; `highly_available`.
+
+&gt;<i> It's then up to payers to decide how to interpret this flag. One way
+</I>could be to prefer `highly_available` channels during pathfinding. But if
+the routing
+&gt;<i> node then returns a failure, a much stronger than normal penalty will be
+</I>applied. For routing nodes this creates an opportunity to attract more
+traffic by &gt; marking some channels as `highly_available`, but it also comes
+with the responsibility to deliver.
+
+This is where the open question lies to me - &quot;highly available&quot; can be
+defined with multiple
+senses, like fault-tolerance, latency processing, equilibrated liquidity.
+And a routing node might
+not be able to optimize its architecture for the same end-goal (e.g more
+watchtower on remote
+host probably increases the latency processing).
+
+&gt;<i> Without shadow channels, it is impossible to guarantee liquidity up to
+</I>the channel capacity. It might make sense for senders to only assume high
+&gt;<i> availability for amounts up to `htlc_maximum_msat`.
+</I>
+As a note, I think &quot;senders assumption&quot; should be well-documented,
+otherwise there will be
+performance discrepancies between node implementations or even versions.
+E.g, an upgraded
+sender penalizing a node for the lack of shadow/parallel channels
+fulfilling HTLC amounts up to
+`htlc_maximum_msat`.
+
+&gt;<i> A variation on this scheme that requires no extension of `channel_update`
+</I>is to signal availability implicitly through routing fees. So the more
+expensive &gt; a channel is, the stronger the penalty that is applied on
+failure will be. It seems less ideal though, because it
+could disincentivize cheap but reliable
+&gt;<i> channels on high traffic links.
+</I>
+&gt;<i> The effort required to implement some form of a `highly_available` flag
+</I>seem limited and it may help to get payment success rates up. Interested to
+&gt;<i> hear your thoughts.
+</I>
+I think signal availability should be explicit rather than implicit. Even
+if it's coming with more
+gossip bandwidth data consumed. I would say for bandwidth performance
+management, relying
+on new gossip messages, where they can be filtered in function of the level
+of services required
+is interesting.
+
+Best,
+Antoine
+
+[0] <A HREF="https://github.com/lightningdevkit/rust-lightning/issues/1647">https://github.com/lightningdevkit/rust-lightning/issues/1647</A>
+[1] <A HREF="https://www.rfc-editor.org/rfc/rfc6363.html">https://www.rfc-editor.org/rfc/rfc6363.html</A>
+
+
+
+
+Le lun. 13 f&#233;vr. 2023 &#224; 11:46, Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> For a long time I've held the expectation that eventually payers on the
+</I>&gt;<i> lightning network will become very strict about node performance. That they
+</I>&gt;<i> will require a routing node to operate flawlessly or else apply a hefty
+</I>&gt;<i> penalty such as completely avoiding the node for an extended period of time
+</I>&gt;<i> - multiple weeks. The consequence of this is that routing nodes would need
+</I>&gt;<i> to manage their liquidity meticulously because every failure potentially
+</I>&gt;<i> has a large impact on future routing revenue.
+</I>&gt;<i>
+</I>&gt;<i> I think movement in this direction is important to guarantee
+</I>&gt;<i> competitiveness with centralised payment systems and their (at least
+</I>&gt;<i> theoretical) ability to process a payment in the blink of an eye. A
+</I>&gt;<i> lightning wallet trying multiple paths to find one that works doesn't help
+</I>&gt;<i> with this.
+</I>&gt;<i>
+</I>&gt;<i> A common argument against strict penalisation is that it would lead to
+</I>&gt;<i> less efficient use of capital. Routing nodes would need to maintain pools
+</I>&gt;<i> of liquidity to guarantee successes all the time. My opinion on this is
+</I>&gt;<i> that lightning is already enormously capital efficient at scale and that it
+</I>&gt;<i> is worth sacrificing a slight part of that efficiency to also achieve the
+</I>&gt;<i> lowest possible latency.
+</I>&gt;<i>
+</I>&gt;<i> This brings me to the actual subject of this post. Assuming strict
+</I>&gt;<i> penalisation is good, it may still not be ideal to flip the switch from one
+</I>&gt;<i> day to the other. Routing nodes may not offer the required level of service
+</I>&gt;<i> yet, causing senders to end up with no nodes to choose from.
+</I>&gt;<i>
+</I>&gt;<i> One option is to gradually increase the strength of the penalties, so that
+</I>&gt;<i> routing nodes are given time to adapt to the new standards. This does
+</I>&gt;<i> require everyone to move along and leaves no space for cheap routing nodes
+</I>&gt;<i> with less leeway in terms of liquidity.
+</I>&gt;<i>
+</I>&gt;<i> Therefore I am proposing another way to go about it: extend the
+</I>&gt;<i> `channel_update` field `channel_flags` with a new bit that the sender can
+</I>&gt;<i> use to signal `highly_available`.
+</I>&gt;<i>
+</I>&gt;<i> It's then up to payers to decide how to interpret this flag. One way could
+</I>&gt;<i> be to prefer `highly_available` channels during pathfinding. But if the
+</I>&gt;<i> routing node then returns a failure, a much stronger than normal penalty
+</I>&gt;<i> will be applied. For routing nodes this creates an opportunity to attract
+</I>&gt;<i> more traffic by marking some channels as `highly_available`, but it also
+</I>&gt;<i> comes with the responsibility to deliver.
+</I>&gt;<i>
+</I>&gt;<i> Without shadow channels, it is impossible to guarantee liquidity up to the
+</I>&gt;<i> channel capacity. It might make sense for senders to only assume high
+</I>&gt;<i> availability for amounts up to `htlc_maximum_msat`.
+</I>&gt;<i>
+</I>&gt;<i> A variation on this scheme that requires no extension of `channel_update`
+</I>&gt;<i> is to signal availability implicitly through routing fees. So the more
+</I>&gt;<i> expensive a channel is, the stronger the penalty that is applied on failure
+</I>&gt;<i> will be. It seems less ideal though, because it could disincentivize cheap
+</I>&gt;<i> but reliable channels on high traffic links.
+</I>&gt;<i>
+</I>&gt;<i> The effort required to implement some form of a `highly_available` flag
+</I>&gt;<i> seem limited and it may help to get payment success rates up. Interested to
+</I>&gt;<i> hear your thoughts.
+</I>&gt;<i>
+</I>&gt;<i> Joost
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230214/893867dd/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230214/893867dd/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003860.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+	<LI>Next message: <A HREF="003853.html">[Lightning-dev] Highly Available Lightning Channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3852">[ date ]</a>
+              <a href="thread.html#3852">[ thread ]</a>
+              <a href="subject.html#3852">[ subject ]</a>
+              <a href="author.html#3852">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

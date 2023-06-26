@@ -1,0 +1,136 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Quick analysis of channel_update data
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Quick%20analysis%20of%20channel_update%20data&In-Reply-To=%3CCAL3Hpbd_Po7pBrTtnbC%2BNq87Vf%2BNppt2be9a-u7qexnnHOM9RQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001810.html">
+   <LINK REL="Next"  HREF="001812.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Quick analysis of channel_update data</H1>
+    <B>Fabrice Drouin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Quick%20analysis%20of%20channel_update%20data&In-Reply-To=%3CCAL3Hpbd_Po7pBrTtnbC%2BNq87Vf%2BNppt2be9a-u7qexnnHOM9RQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Quick analysis of channel_update data">fabrice.drouin at acinq.fr
+       </A><BR>
+    <I>Tue Jan  8 17:22:23 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001810.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+        <LI>Next message: <A HREF="001812.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1811">[ date ]</a>
+              <a href="thread.html#1811">[ thread ]</a>
+              <a href="subject.html#1811">[ subject ]</a>
+              <a href="author.html#1811">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, 8 Jan 2019 at 17:11, Christian Decker
+&lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt; wrote:
+&gt;<i>
+</I>&gt;<i> Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; Fortunately, this seems fairly easy to handle: discard the newer
+</I>&gt;<i> &gt; duplicate (unless &gt; 1 week old).  For future more advanced
+</I>&gt;<i> &gt; reconstruction schemes (eg. INV or minisketch), we could remember the
+</I>&gt;<i> &gt; latest timestamp of the duplicate, so we can avoid requesting it again.
+</I>&gt;<i>
+</I>&gt;<i> Unfortunately this assumes that you have a single update partner, and
+</I>&gt;<i> still results in flaps, and might even result in a stuck state for some
+</I>&gt;<i> channels.
+</I>&gt;<i>
+</I>&gt;<i> Assume that we have a network in which a node D receives the updates
+</I>&gt;<i> from a node A through two or more separate paths:
+</I>&gt;<i>
+</I>&gt;<i> A --- B --- D
+</I>&gt;<i>  \--- C ---/
+</I>&gt;<i>
+</I>&gt;<i> And let's assume that some channel of A (c_A) is flapping (not the ones
+</I>&gt;<i> to B and C). A will send out two updates, one disables and the other one
+</I>&gt;<i> re-enables c_A, otherwise they are identical (timestamp and signature
+</I>&gt;<i> are different as well of course). The flush interval in B is sufficient
+</I>&gt;<i> to see both updates before flushing, hence both updates get dropped and
+</I>&gt;<i> nothing apparently changed (D doesn't get told about anything from
+</I>&gt;<i> B). The flush interval of C triggers after getting the re-enable, and D
+</I>&gt;<i> gets the disabling update, followed by the enabling update once C's
+</I>&gt;<i> flush interval triggers again. Worse if the connection A-C gets severed
+</I>&gt;<i> between the updates, now C and D learned that the channel is disabled
+</I>&gt;<i> and will not get the re-enabling update since B has dropped that one
+</I>&gt;<i> altogether. If B now gets told by D about the disable, it'll also go
+</I>&gt;<i> &quot;ok, I'll disable it as well&quot;, leaving the entire network believing that
+</I>&gt;<i> the channel is disabled.
+</I>&gt;<i>
+</I>&gt;<i> This is really hard to debug, since A has sent a re-enabling
+</I>&gt;<i> channel_update, but everybody is stuck in the old state.
+</I>
+I think there may even be a simpler case where not replacing updates
+will result in nodes not knowing that a channel has been re-enabled:
+suppose you got 3 updates U1, U2, U3 for the same channel, U2 disables
+it, U3 enables it again and is the same as U1. If you discard it and
+just keep U1, and your peer has U2, how will you tell them that the
+channel has been enabled again ? Unless &quot;discard&quot; here means keep the
+update but don't broadcast it ?
+
+
+&gt;<i> At least locally updating timestamp and signature for identical updates
+</I>&gt;<i> and then not broadcasting if they were the only changes would at least
+</I>&gt;<i> prevent the last issue of overriding a dropped state with an earlier
+</I>&gt;<i> one, but it'd still leave C and D in an inconsistent state until we have
+</I>&gt;<i> some sort of passive sync that compares routing tables and fixes these
+</I>&gt;<i> issues.
+</I>
+But then there's a risk that nodes would discard channels as stale
+because they don't get new updates when they reconnect.
+
+&gt;<i> I think all the bolted on things are pretty much overkill at this point,
+</I>&gt;<i> it is unlikely that we will get any consistency in our views of the
+</I>&gt;<i> routing table, but that's actually not needed to route, and we should
+</I>&gt;<i> consider this a best effort gossip protocol anyway. If the routing
+</I>&gt;<i> protocol is too chatty, we should make efforts towards local policies at
+</I>&gt;<i> the senders of the update to reduce the number of flapping updates, not
+</I>&gt;<i> build in-network deduplications. Maybe something like &quot;eager-disable&quot;
+</I>&gt;<i> and &quot;lazy-enable&quot; is what we should go for, in which disables are sent
+</I>&gt;<i> right away, and enables are put on an exponential backoff timeout (after
+</I>&gt;<i> all what use are flappy nodes for routing?).
+</I>
+Yes there are probably heuristics that would help reducing gossip
+traffic, and I see your point but I was thinking about doing the
+opposite: &quot;eager-enable&quot; and &quot;lazy-disable&quot;, because from a sender's
+p.o.v trying to use a disabled channel is better than ignoring an
+enabled channel.
+
+Cheers,
+Fabrice
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001810.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+	<LI>Next message: <A HREF="001812.html">[Lightning-dev] Quick analysis of channel_update data
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1811">[ date ]</a>
+              <a href="thread.html#1811">[ thread ]</a>
+              <a href="subject.html#1811">[ subject ]</a>
+              <a href="author.html#1811">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

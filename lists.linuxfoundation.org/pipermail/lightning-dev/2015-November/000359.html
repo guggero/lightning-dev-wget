@@ -1,0 +1,174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Payment channel without timeout protected from	malleability
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Payment%20channel%20without%20timeout%20protected%20from%0A%09malleability&In-Reply-To=%3CCA%2B1nnrm6rKd%2BePMh7iWcuZK4XGiW5-koi7FWthrjfcn3OzsxSQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000355.html">
+   <LINK REL="Next"  HREF="000360.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Payment channel without timeout protected from	malleability</H1>
+    <B>Nicolas Dorier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Payment%20channel%20without%20timeout%20protected%20from%0A%09malleability&In-Reply-To=%3CCA%2B1nnrm6rKd%2BePMh7iWcuZK4XGiW5-koi7FWthrjfcn3OzsxSQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Payment channel without timeout protected from	malleability">nicolas.dorier at gmail.com
+       </A><BR>
+    <I>Fri Nov 27 16:18:21 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000355.html">[Lightning-dev] Payment channel without timeout protected from malleability
+</A></li>
+        <LI>Next message: <A HREF="000360.html">[Lightning-dev] Payment channel without timeout protected from malleability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#359">[ date ]</a>
+              <a href="thread.html#359">[ thread ]</a>
+              <a href="subject.html#359">[ subject ]</a>
+              <a href="author.html#359">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> A also passes the original unsigned commitment to B, who verifies that
+</I>&gt;<i> it's in the right format (ie, can be revoked), and hashes to the hash
+</I>&gt;<i> that he signed.
+</I>
+No, if A pass the unsigned commitment to B then B can malleate the anchor.
+(because B would know the txid of the anchor at broadcast time)
+B does not have to verify it is in right format, because he does not have
+anything to loose by signing a random hash.
+B can verify he signed the hash of the first commitment after A announce
+his already confirmed anchor.
+
+&gt;<i> Someone other than B (ie a third party) could malleate the anchor between
+</I>&gt;<i> broadcast and confirmation just for their own amusement.
+</I>
+Yes, actually the only malleability vector which B can use to his advantage
+is HighS, not all BIP62 vectors.
+Knowing miners will most likely run at least 0.11.2 (if CLTV is acceepted)
+HighS should be more likely rejected.
+
+&gt;<i> B can't reuse pubkeys between different channels with this protocol
+</I>&gt;<i> either, but that's good practice anyway.
+</I>
+Right, neither A should. If A reuse a key, then B can guess the redeem
+hash, then would identify the transaction to malleate at broadcast time,
+before A's announcement.
+
+I'd prefer seggregated witness to fix the problem cleanly, but I think that
+opening the channel as I said is a good enough workaround until it happen.
+The only attack B can try is malleate all transaction to HighS.
+When CLTV will pass, there is not lot of probability of such attack to
+succeed, because bitcoind should block HighS.
+
+&gt;<i> 'without timeout' is only possible with OP_CSV - not naturally
+</I>with what we have currently. ;)
+
+The anchor does not have to use OP_CSV at all. But yes, for commitment, I'm
+assuming OP_CSV passed.
+
+&gt;<i> To be able to build a valid payment channel on top of the anchor,
+</I>B has to be sure that A cannot get her money back at any point in the
+future. Given just a hash that B should sign, B has no clue what is
+the output of the transaction he just signed.
+
+Actually B do not care about it. Remember I am separating &quot;A's anchor
+broadcast&quot; from &quot;A's announcement of anchor to B&quot;.
+When A announce the anchor, then B can check if he really signed the first
+commitment or something else, but he can't malleate anything since the
+anchor is already confirmed.
+B does not have anything to loose by signing unknown hash. (if he use a non
+reusable key)
+
+Again, yes, a network-wide HighS attack would be the only way to malleate
+the anchor.
+If CLTV fork pass, then it is fair to consider that the odd of such attack
+succeeding is very low. HighS should be blocked from 0.11.1 if I remember
+well.
+
+
+On Fri, Nov 27, 2015 at 6:09 PM, Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; wrote:
+
+&gt;<i> On Fri, Nov 27, 2015 at 04:37:04PM +0900, Nicolas Dorier wrote:
+</I>&gt;<i> &gt; By adapting an idea from gmaxwell (
+</I>&gt;<i> &gt; <A HREF="https://bitcointalk.org/index.php?topic=303088.0">https://bitcointalk.org/index.php?topic=303088.0</A>) it is possible to
+</I>&gt;<i> open a
+</I>&gt;<i> &gt; channel without suffering from malleability attack.
+</I>&gt;<i> &gt; The process for A to open channel with B is the following:
+</I>&gt;<i> &gt; * A asks B pubkey
+</I>&gt;<i> &gt; * A create the first commitment transaction
+</I>&gt;<i> &gt; * A extract the hash that B needs to sign to be able to broadcast the
+</I>&gt;<i> &gt; commitment
+</I>&gt;<i> &gt; * A asks B to sign the hash, but do not disclose the commitment
+</I>&gt;<i> &gt; * A broadcast the anchor
+</I>&gt;<i> &gt; * After confirmation, A announce the anchor to B.
+</I>&gt;<i>
+</I>&gt;<i> A also passes the original unsigned commitment to B, who verifies that
+</I>&gt;<i> it's in the right format (ie, can be revoked), and hashes to the hash
+</I>&gt;<i> that he signed.
+</I>&gt;<i>
+</I>&gt;<i> &gt; B can't identify A's anchor before announcement because he does not know
+</I>&gt;<i> &gt; the P2SH of the multisig.
+</I>&gt;<i> &gt; Am I missing something ?
+</I>&gt;<i>
+</I>&gt;<i> Someone other than B (ie a third party) could malleate the anchor between
+</I>&gt;<i> broadcast and confirmation just for their own amusement.
+</I>&gt;<i>
+</I>&gt;<i> B can't reuse pubkeys between different channels with this protocol
+</I>&gt;<i> either, but that's good practice anyway.
+</I>&gt;<i>
+</I>&gt;<i> From the same forum post, using child-pays-for-parent seems plausible.
+</I>&gt;<i> Doing:
+</I>&gt;<i>
+</I>&gt;<i>   txA: spend 6 BTC to
+</I>&gt;<i>      5 BTC to A&amp;B
+</I>&gt;<i>      1 BTC to A
+</I>&gt;<i>
+</I>&gt;<i>   txB: spend 1 BTC from txA:1 to
+</I>&gt;<i>      0.999 BTC to A
+</I>&gt;<i>
+</I>&gt;<i> should be pretty safe: either someone malleates txA and mines it for
+</I>&gt;<i> 0 fee; or they mine both txA+txB for 0.001 BTC fee, and txA can't be
+</I>&gt;<i> malleated. But CPFP doesn't work yet, and segregated witness seems like
+</I>&gt;<i> it'll happen sooner anyway?
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> aj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20151128/454bf694/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20151128/454bf694/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000355.html">[Lightning-dev] Payment channel without timeout protected from malleability
+</A></li>
+	<LI>Next message: <A HREF="000360.html">[Lightning-dev] Payment channel without timeout protected from malleability
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#359">[ date ]</a>
+              <a href="thread.html#359">[ thread ]</a>
+              <a href="subject.html#359">[ subject ]</a>
+              <a href="author.html#359">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

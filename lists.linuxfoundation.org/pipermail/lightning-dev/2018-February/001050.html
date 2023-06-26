@@ -1,0 +1,251 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAO3Pvs89ku9s%3DFSjLOq0CRtTCmLFkGbGZKfX%3Dsb0miQBTHZiwA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001043.html">
+   <LINK REL="Next"  HREF="001053.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAO3Pvs89ku9s%3DFSjLOq0CRtTCmLFkGbGZKfX%3Dsb0miQBTHZiwA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">laolu32 at gmail.com
+       </A><BR>
+    <I>Sun Feb 25 23:23:54 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001043.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+        <LI>Next message: <A HREF="001053.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1050">[ date ]</a>
+              <a href="thread.html#1050">[ thread ]</a>
+              <a href="subject.html#1050">[ subject ]</a>
+              <a href="author.html#1050">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> With that said, this should instead be a distinct `chan_update_horizon`
+</I>&gt;<i> message (or w/e name). If a particular bit is set in the `init` message,
+</I>&gt;<i> then the next message *both* sides send *must* be `chan_update_horizon`.
+</I>
+Tweaking this a bit, if we make it: don't send *any* channel updates at all
+unless the other side sends this message, then this allows both parties to
+precisely control their initial load, and also if they even *want*
+channel_update messages at all.
+
+Purely routing nodes don't need any updates at all. In the case they wish to
+send (assumed to be infrequent in this model), they'll get the latest update
+after their first failure.
+
+Similarly, leaf/edge nodes can opt to receive the latest updates if they
+wish to minimize payment latency due to routing failures that are the result
+of dated information.
+
+IMO, the only case where a node would want the most up to date link policy
+state is for optimization/analysis, or to minimize payment latency at the
+cost of additional load.
+
+--Laolu
+
+On Fri, Feb 23, 2018 at 4:45 PM Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt;
+wrote:
+
+&gt;<i> Hi Rusty,
+</I>&gt;<i>
+</I>&gt;<i> &gt; 1. query_short_channel_id
+</I>&gt;<i> &gt; IMPLEMENTATION: trivial
+</I>&gt;<i>
+</I>&gt;<i> *thumbs up*
+</I>&gt;<i>
+</I>&gt;<i> &gt; 2. query_channel_range/reply_channel_range
+</I>&gt;<i> &gt; IMPLEMENTATION: requires channel index by block number, zlib
+</I>&gt;<i>
+</I>&gt;<i> For the sake of expediency of deployment, if we add a byte (or two) to
+</I>&gt;<i> denote the encoding/compression scheme, we can immediately roll out the
+</I>&gt;<i> vanilla (just list the ID's), then progressively roll out more
+</I>&gt;<i> context-specific optimized schemes.
+</I>&gt;<i>
+</I>&gt;<i> &gt; 3. A gossip_timestamp field in `init`
+</I>&gt;<i> &gt; This is a new field appended to `init`: the negotiation of this feature
+</I>&gt;<i> bit
+</I>&gt;<i> &gt; overrides `initial_routing_sync`
+</I>&gt;<i>
+</I>&gt;<i> As I've brought up before, from my PoV, we can't append any additional
+</I>&gt;<i> fields to the innit message as it already contains *two* variable sized
+</I>&gt;<i> fields (and no fixed size fields). Aside from this, it seems that the
+</I>&gt;<i> `innit` message should be simply for exchange versioning information,
+</I>&gt;<i> which
+</I>&gt;<i> may govern exactly *which* messages are sent after it. Otherwise, by adding
+</I>&gt;<i> _additional_ fields to the `innit` message, we paint ourselves in a corner
+</I>&gt;<i> and can never remove it. Compared to using the `innit` message to set up
+</I>&gt;<i> the
+</I>&gt;<i> initial session context, where we can safely add other bits to nullify or
+</I>&gt;<i> remove certain expected messages.
+</I>&gt;<i>
+</I>&gt;<i> With that said, this should instead be a distinct `chan_update_horizon`
+</I>&gt;<i> message (or w/e name). If a particular bit is set in the `init` message,
+</I>&gt;<i> then the next message *both* sides send *must* be `chan_update_horizon`.
+</I>&gt;<i>
+</I>&gt;<i> Another advantage of making this a distinct message, is that either party
+</I>&gt;<i> can at any time update this horizon/filter to ensure that they only receive
+</I>&gt;<i> the *freshest* updates.Otherwise, one can image a very long lived
+</I>&gt;<i> connections (say weeks) and the remote party keeps sending me very dated
+</I>&gt;<i> updates (wasting bandwidth) when I only really want the *latest*.
+</I>&gt;<i>
+</I>&gt;<i> This can incorporate decker's idea about having a high+low timestamp. I
+</I>&gt;<i> think this is desirable as then for the initial sync case, the receiver can
+</I>&gt;<i> *precisely* control their &quot;verification load&quot; to ensure they only process a
+</I>&gt;<i> particular chunk at a time.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Fabrice wrote:
+</I>&gt;<i> &gt; We could add a `data` field which contains zipped ids like in
+</I>&gt;<i> &gt; `reply_channel_range` so we can query several items with a single
+</I>&gt;<i> message ?
+</I>&gt;<i>
+</I>&gt;<i> I think this is an excellent idea! It would allow batched requests in
+</I>&gt;<i> response to a channel range message. I'm not so sure we need to jump
+</I>&gt;<i> *straight* to compressing everything however.
+</I>&gt;<i>
+</I>&gt;<i> &gt; We could add an additional `encoding_type` field before `data` (or it
+</I>&gt;<i> &gt; could be the first byte of `data`)
+</I>&gt;<i>
+</I>&gt;<i> Great minds think alike :-)
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> If we're in rough agreement generally about this initial &quot;kick can&quot;
+</I>&gt;<i> approach, I'll start implementing some of this in a prototype branch for
+</I>&gt;<i> lnd. I'm very eager to solve the zombie churn, and initial burst that can
+</I>&gt;<i> be
+</I>&gt;<i> very hard on light clients.
+</I>&gt;<i>
+</I>&gt;<i> -- Laolu
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> On Wed, Feb 21, 2018 at 10:03 AM Fabrice Drouin &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">fabrice.drouin at acinq.fr</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> On 20 February 2018 at 02:08, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+</I>&gt;&gt;<i> wrote:
+</I>&gt;&gt;<i> &gt; Hi all,
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;         This consumed much of our lightning dev interop call today!  But
+</I>&gt;&gt;<i> &gt; I think we have a way forward, which is in three parts, gated by a new
+</I>&gt;&gt;<i> &gt; feature bitpair:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> We've built a prototype with a new feature bit `channel_range_queries`
+</I>&gt;&gt;<i> and the following logic:
+</I>&gt;&gt;<i> When you receive their init message and check their local features
+</I>&gt;&gt;<i> - if they set `initial_routing_sync` and `channel_range_queries` then
+</I>&gt;&gt;<i> do nothing (they will send you a `query_channel_range`)
+</I>&gt;&gt;<i> - if they set `initial_routing_sync` and not `channel_range_queries`
+</I>&gt;&gt;<i> then send your routing table (as before)
+</I>&gt;&gt;<i> - if you support `channel_range_queries` then send a
+</I>&gt;&gt;<i> `query_channel_range` message
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> This way new and old nodes should be able to understand each other
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; 1. query_short_channel_id
+</I>&gt;&gt;<i> &gt; =========================
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; 1. type: 260 (`query_short_channel_id`)
+</I>&gt;&gt;<i> &gt; 2. data:
+</I>&gt;&gt;<i> &gt;    * [`32`:`chain_hash`]
+</I>&gt;&gt;<i> &gt;    * [`8`:`short_channel_id`]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> We could add a `data` field which contains zipped ids like in
+</I>&gt;&gt;<i> `reply_channel_range` so we can query several items with a single
+</I>&gt;&gt;<i> message ?
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; 1. type: 262 (`reply_channel_range`)
+</I>&gt;&gt;<i> &gt; 2. data:
+</I>&gt;&gt;<i> &gt;    * [`32`:`chain_hash`]
+</I>&gt;&gt;<i> &gt;    * [`4`:`first_blocknum`]
+</I>&gt;&gt;<i> &gt;    * [`4`:`number_of_blocks`]
+</I>&gt;&gt;<i> &gt;    * [`2`:`len`]
+</I>&gt;&gt;<i> &gt;    * [`len`:`data`]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> We could add an additional `encoding_type` field before `data` (or it
+</I>&gt;&gt;<i> could be the first byte of `data`)
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; Appendix A: Encoding Sizes
+</I>&gt;&gt;<i> &gt; ==========================
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; I tried various obvious compression schemes, in increasing complexity
+</I>&gt;&gt;<i> &gt; order (see source below, which takes stdin and spits out stdout):
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;         Raw = raw 8-byte stream of ordered channels.
+</I>&gt;&gt;<i> &gt;         gzip -9: gzip -9 of raw.
+</I>&gt;&gt;<i> &gt;         splitgz: all blocknums first, then all txnums, then all
+</I>&gt;&gt;<i> outnums, then gzip -9
+</I>&gt;&gt;<i> &gt;         delta: CVarInt encoding:
+</I>&gt;&gt;<i> blocknum_delta,num,num*txnum_delta,num*outnum.
+</I>&gt;&gt;<i> &gt;         deltagz: delta, with gzip -9
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Corpus 1: LN mainnet dump, 1830 channels.[1]
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;         Raw: 14640 bytes
+</I>&gt;&gt;<i> &gt;         gzip -9: 6717 bytes
+</I>&gt;&gt;<i> &gt;         splitgz: 6464 bytes
+</I>&gt;&gt;<i> &gt;         delta: 6624 bytes
+</I>&gt;&gt;<i> &gt;         deltagz: 4171 bytes
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; Corpus 2: All P2SH outputs between blocks 508000-508999 incl, 790844
+</I>&gt;&gt;<i> channels.[2]
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt;         Raw: 6326752 bytes
+</I>&gt;&gt;<i> &gt;         gzip -9: 1861710 bytes
+</I>&gt;&gt;<i> &gt;         splitgz: 964332 bytes
+</I>&gt;&gt;<i> &gt;         delta: 1655255 bytes
+</I>&gt;&gt;<i> &gt;         deltagz: 595469 bytes
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i> &gt; [1] <A HREF="http://ozlabs.org/~rusty/short_channels-mainnet.xz">http://ozlabs.org/~rusty/short_channels-mainnet.xz</A>
+</I>&gt;&gt;<i> &gt; [2] <A HREF="http://ozlabs.org/~rusty/short_channels-all-p2sh-508000-509000.xz">http://ozlabs.org/~rusty/short_channels-all-p2sh-508000-509000.xz</A>
+</I>&gt;&gt;<i> &gt;
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Impressive!
+</I>&gt;&gt;<i> _______________________________________________
+</I>&gt;&gt;<i> Lightning-dev mailing list
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180225/3253059c/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180225/3253059c/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001043.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+	<LI>Next message: <A HREF="001053.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1050">[ date ]</a>
+              <a href="thread.html#1050">[ thread ]</a>
+              <a href="subject.html#1050">[ subject ]</a>
+              <a href="author.html#1050">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,218 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Just%20in%20Time%20Routing%20%28JIT-Routing%29%20and%20a%0A%09channel%20rebalancing%20heuristic%20as%20an%20add%20on%20for%20improved%0A%09routing%20success%20in%20BOLT%201.0&In-Reply-To=%3C4SbrMCe_DMJNl5ZXwwOZQFeYQzsQujpqar0jJJV_uAimHNtfPflAy6Ju7PwC5TIkSRoNAopoRxVB9WeMj-ZtsfCE0llKHR7JfhYm919ptHo%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001891.html">
+   <LINK REL="Next"  HREF="001906.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Just%20in%20Time%20Routing%20%28JIT-Routing%29%20and%20a%0A%09channel%20rebalancing%20heuristic%20as%20an%20add%20on%20for%20improved%0A%09routing%20success%20in%20BOLT%201.0&In-Reply-To=%3C4SbrMCe_DMJNl5ZXwwOZQFeYQzsQujpqar0jJJV_uAimHNtfPflAy6Ju7PwC5TIkSRoNAopoRxVB9WeMj-ZtsfCE0llKHR7JfhYm919ptHo%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Mar  6 10:38:27 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001891.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a channel rebalancing heuristic as an add on for improved routing success in BOLT 1.0
+</A></li>
+        <LI>Next message: <A HREF="001906.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1892">[ date ]</a>
+              <a href="thread.html#1892">[ thread ]</a>
+              <a href="subject.html#1892">[ subject ]</a>
+              <a href="author.html#1892">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Rene,
+
+The base idea is good at first glance.
+
+However, let us consider this situation:
+
+
+          0.1   1.0
+        A --------- B
+    1.5 |         / 0.5
+        |        /
+        |       /
+        |      /
+        |     /
+        |    /
+        |   /
+        |  /
+    0.5 | / 0.75
+        C
+
+
+A must pay B, 1.0 BTC.
+
+A knows the exact state of AB and AC channels, but only knows that BC has total 1.25 capacity.
+
+A sends via route A-&gt;C-&gt;B.
+It knows that it has sufficient capacity in AC.
+It also knows that the total capacity in CB has a chance of transferring 1.0BTC.
+
+So what happens (let us assume Lightning fees are negligible).
+
+1.  A locks 1.0 in AC in an HTLC.
+2.  C cannot forward since it has only 0.75 in CB.
+    It initiates a rebalance.
+3.  C notices it has 0.5 BTC in AC.
+    It can transfer 0.25BTC from AC to CB to be able to get 1.0 in CB that it can forward.
+    So it routes 0.25 BTC via C-&gt;A-&gt;B-&gt;C.
+4.  C locks 0.25 in CA in an HTLC.
+5.  A cannot forward the C-&gt;A-&gt;B-&gt;C payment since it only has 0.1BTC in AB.
+    It initiates a rebalance.
+6.  A notices it has 0.5 BTC in AC (1.0 is currently locked in an HTLC, leaving it 0.5BTC).
+    It can transfer 0.15BTC in AC to AB to be able to get 0.25 in AC that it can forward.
+    So it routes 0.15 BTC via A-&gt;C-&gt;B-&gt;C.
+7.  A locks 0.15 in AC in an HTLC.
+8.  C is now in a bind.
+    If it forwards the 0.15 BTC, then it will still fail the earlier A-&gt;C-&gt;B 1.0 payment.
+    This is because it will lose 0.15 BTC from its side here, leading to 0.6 BTC, then receive 0.25 BTC from the rebalance, only having 0.85 BTC.
+    If it does not forward, A is unable to rebalance and fails the rebalance of C, which fails the original payment from A-&gt;C-&gt;B.
+
+Thus it seems to me, that precisely because of the lack of a global view, such kinds of complicated HTLC networks will form, then still lead to payment failure.
+
+--
+
+Perhaps it is better to consider that a high-level payment failure requires failure of all possible routes.
+&gt;<i>From that point of view, a failure of a single payment attempt is not a big deal.
+</I>
+--
+
+With that said, it may still be valuable to try doing this.
+It will massively increase the complexity in c-lightning.
+We would need a new persistent db table (meaning not in Python, at least until we make c-lightning into a bus connecting its actual running components that send commands to each other via the same bus that external commands and plugins use).
+
+Then we can evaluate a small network of such nodes on mainnet LN and see how often rebalance failures occur.
+
+Regards,
+ZmnSCPxj
+
+&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+On Tuesday, March 5, 2019 9:47 PM, Ren&#233; Pickhardt via Lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+
+&gt;<i> Hey everyone,
+</I>&gt;<i>
+</I>&gt;<i> In this mail I introduce the Just in Time Routing schema (aka JIT Routing). Its main idea is to mitigate the disadvantages from our current source based routing (i.e.: guessing a route that will work in the sense that it has enough liquidity in each channel) and make the routing process a little bit more like the best effort routing that we know from IP-forwarding. As far as I know this will not decrease the privacy of the nodes. As part of this Routing scheme nodes need to be able to quickly rebalance their channels.&#160;Thus in this mail I also propose a heuristic for doing this efficiently which I have implemented and seems to provide pretty good results. Obviously the heuristic should be tested with the help of a simulation. I did not have the chance to do that yet. Partly also because I am lacking a proper dataset and I don't want to do this on artificial data.
+</I>&gt;<i>
+</I>&gt;<i> The advantages of JIT Routing are:
+</I>&gt;<i> *&#160;it is possible to do now without any protocol modification. In particular no modifications of the onions are necessary.
+</I>&gt;<i> * routing nodes can already easily implement it. By implementing it they will increase the routing success even for nodes which are running older implementations
+</I>&gt;<i> * it seems to be logically equivalent to AMP Routing. In particular its properties will also help base AMP once it is part of the protocol.
+</I>&gt;<i> * local channel balance information along the route can now be part of the path finding process while not decreasing the privacy by sharing information about channel balances with others. In fact the privacy of nodes is even being increased.&#160;
+</I>&gt;<i>
+</I>&gt;<i> The disadvantages seem:&#160;
+</I>&gt;<i> * it might economically not be incentivized for a routing node in every situation. Theoretically it can even happen that a node pays a fee in order to use this technique but can't earn the routing fee as the onion fails later. Nodes can implement risk management strategies to mitigate this issue.
+</I>&gt;<i> * The routing process might take a longer time as it starts sub routing processes.&#160;&#160;
+</I>&gt;<i> * While doing JIT routing the capacity for channels should be reserved even before HTLCs are set up (to prevent hostile recursive chains of rebalancing operations)
+</I>&gt;<i>
+</I>&gt;<i> Obviously routing single big payments is a challenge for the lightning network. During the developer summit in Adelaide we have agreed to put Base AMP to BOLT 1.1. To review Base AMP the idea is basically after receiving a payment hash to create several onions on various routes to the recipient. While Base AMP in theory can find the maxflow / min cut and achieve maximum liquidity it is not clear yet how well Base AMP will really work.
+</I>&gt;<i>
+</I>&gt;<i> While it has been shown that smaller payments have a higher chance to be routed successfully there is the downside that we have more payments which increases the likelihood that any one of those payment eventually fails. As far as I know there have not been any studies researching this fact. Also the fact remains that Base AMP is still a source base routing protocol putting the sender into a tough spot as it has to guess which routes might work.
+</I>&gt;<i>
+</I>&gt;<i> How to JIT Routing?
+</I>&gt;<i>
+</I>&gt;<i> For the BOLTs we basically need one Recommendation (in fact even today nodes can do this without this explicit recommendation, but I would suggest to add the recommendation):&#160;
+</I>&gt;<i>
+</I>&gt;<i> If a node cannot forward an incoming HTLC because the node has not enough funds on the outgoing channel the node MAY pause the routing process and try to rebalance the channel that misses liquidity. If it isn't able to rebalance the channel it should fail the onion sending back an insufficient wire funds error `temporary_channel_failure`
+</I>&gt;<i>
+</I>&gt;<i> Let us consider the following Graph and situation for an example:&#160;
+</I>&gt;<i>
+</I>&gt;<i> &#160; 100 / 110&#160; &#160; &#160;80 / 200
+</I>&gt;<i> S ----------&gt; B --------&gt; R
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; &#160; \&#160; &#160; &#160; &#160; &#160;/
+</I>&gt;<i> &#160; &#160; &#160; &#160; 80/200&#160; \&#160; &#160; &#160;/&#160; 100/200
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; \ /&#160;
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;T
+</I>&gt;<i>
+</I>&gt;<i> Meaning we have the following channels:
+</I>&gt;<i> S ---&gt; B capacity: 110&#160; &#160;A funds: 100&#160; B funds:&#160; 10
+</I>&gt;<i> B ---&gt; R capacity: 200&#160; &#160;B funds:&#160; 80&#160; R funds: 120
+</I>&gt;<i> B ---&gt; T capacity: 200&#160; &#160;B funds:&#160; 80&#160; T funds: 120
+</I>&gt;<i> T ---&gt; R capacity: 200&#160; &#160;T funds: 100&#160; R funds: 100
+</I>&gt;<i>
+</I>&gt;<i> Let us assume S wants to send a payment of 90 to R. With this distribution of funds this will not work with a single route S ---&gt; B ---&gt; R as the channel B---&gt;R can only forward 78 (taking the channel reserve of 1% into consideration)
+</I>&gt;<i>
+</I>&gt;<i> Now with Base AMP after a protocol update this would be resolved by making two onions forwarding for example 45 each. Also S would have to pay more routing fees as the basefee of B will be charged twice.&#160;
+</I>&gt;<i>
+</I>&gt;<i> Onion 1: S ---&gt; B ---&gt; R
+</I>&gt;<i> Onion 2: S ---&gt; B ---&gt; T ---&gt; R
+</I>&gt;<i>
+</I>&gt;<i> However it is S again who has to guess how the problems with the liquidity are it does not know how B has spread its funds between R and T (and potentially other channels)
+</I>&gt;<i>
+</I>&gt;<i> With the above recommendation in place B can create a different onion with lets say moving 50 from the B---&gt; T channel to the B ---&gt; R channel resulting in the following situation:&#160;
+</I>&gt;<i>
+</I>&gt;<i> &#160; 100 / 110&#160; &#160; &#160;130 / 200
+</I>&gt;<i> S ----------&gt; B --------&gt; R
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; &#160; \&#160; &#160; &#160; &#160; &#160;/
+</I>&gt;<i> &#160; &#160; &#160; &#160; 30/200&#160; \&#160; &#160; &#160;/&#160; 50/200
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; \ /&#160;
+</I>&gt;<i> &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160; &#160;T
+</I>&gt;<i>
+</I>&gt;<i> Meaning we have the following channels:
+</I>&gt;<i> S ---&gt; B capacity: 110&#160; &#160;A funds: 100&#160; B funds:&#160; 10
+</I>&gt;<i> B ---&gt; R capacity: 200&#160; &#160;B funds: 130&#160; R funds:&#160; 70
+</I>&gt;<i> B ---&gt; T capacity: 200&#160; &#160;B funds:&#160; 30&#160; T funds: 170
+</I>&gt;<i> T ---&gt; R capacity: 200&#160; &#160;T funds:&#160; 50&#160; R funds: 150
+</I>&gt;<i>
+</I>&gt;<i> Now B can easily pass the original onion with a value of 90 which was designed for the route S ---&gt; B ---&gt; R
+</I>&gt;<i>
+</I>&gt;<i> Obviously there can also be issues when B tries to rebalance their channels as the attempted event of rebalancing might trigger another JIT operation at another node (potentially making a later stage of the original onion harder to be forwarded). Also B does not have full information about the T---&gt; R channel. Yet B has more information about B's neighbourhood than S does as B knows which channels are liquid and how many paths exist between the endpoints of those channels. This B should be able to make a more educated decision as the originator node S. Since B would only do a rebalancing if the routing fees for the rebalancing are cheaper than the fees they collect (and other nodes would do the same) the risk for and infinit cascade of rebalancing operations should be mitigated. Also the total CLTV for the rebalancing operation should be smaller than the original onion.&#160; A sender of the onion could obviously start with larger cltv_deltas to allow routing nodes to have some buffer. This is also good in the sense of shadow routing as described in the BOLTs.&#160;
+</I>&gt;<i>
+</I>&gt;<i> Another problem that might arise is the question if the routing node is able to quickly compute rebalancing paths. I have been working on a c-lightning plugin for rebalancing over the weekend (it is actually when I came up with the idea of JIT routing). Currently I use the following promising heuristic for rebalancing:
+</I>&gt;<i> I look at the friend of a friend network of the node that wants to rebalance channels. This network consists of alle channel partners of the node and their channels. This will in particular have all triangles and rectangles of the lightning network that the node that wants to rebalance is part of. Now I remove the node that wants to rebalance from the friend of the friend network. The resulting graph should always stay pretty small. In a regular small world network the friend of a friend graph consists of roughly 10k nodes. In particular after pruning nodes with degree 1 (which can't be used to rebalance on this subgraph) we have a pretty small network. After extracting this subnetwork (which for general operation could always be maintained while gossip messages are coming in) the computation to suggest several hundred rebalancing cycles and even ordering them by price takes less than 1 second on my machine.&#160;
+</I>&gt;<i> So far I have been pretty successful finding several (cheap!) rebalancing suggestions in this network from my lightning node (which has about 40 channels)&#160;
+</I>&gt;<i>
+</I>&gt;<i> I will release the code for the rebalancing schema soon but I wanted to have the idea already out in order to get more feedback while working on this.&#160;
+</I>&gt;<i>
+</I>&gt;<i> best Rene
+</I>&gt;<i>
+</I>&gt;<i> &#160;
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> <A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+</I>&gt;<i>
+</I>&gt;<i> Skype: rene.pickhardt&#160;
+</I>&gt;<i>
+</I>&gt;<i> mobile: +49 (0)176 5762 3618
+</I>
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001891.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a channel rebalancing heuristic as an add on for improved routing success in BOLT 1.0
+</A></li>
+	<LI>Next message: <A HREF="001906.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1892">[ date ]</a>
+              <a href="thread.html#1892">[ thread ]</a>
+              <a href="subject.html#1892">[ subject ]</a>
+              <a href="author.html#1892">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

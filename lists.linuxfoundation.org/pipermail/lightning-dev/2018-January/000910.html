@@ -1,0 +1,122 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [1.1] Proposed `funding_cancelled` message
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5B1.1%5D%20Proposed%20%60funding_cancelled%60%20message&In-Reply-To=%3CxJvZV_2R0Fhy2ZkQ19oLgZ7-_XBxdjwac6BRgrpa9c1PExEzp7kqN-HiBCvHoFqxyyZxcMlMARC-Ju2dUfRXO3j9TfWh2CKLijHN_PvyndQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000908.html">
+   <LINK REL="Next"  HREF="000958.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [1.1] Proposed `funding_cancelled` message</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5B1.1%5D%20Proposed%20%60funding_cancelled%60%20message&In-Reply-To=%3CxJvZV_2R0Fhy2ZkQ19oLgZ7-_XBxdjwac6BRgrpa9c1PExEzp7kqN-HiBCvHoFqxyyZxcMlMARC-Ju2dUfRXO3j9TfWh2CKLijHN_PvyndQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] [1.1] Proposed `funding_cancelled` message">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Jan  9 05:44:14 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000908.html">[Lightning-dev] [1.1] Proposed `funding_cancelled` message
+</A></li>
+        <LI>Next message: <A HREF="000958.html">[Lightning-dev] [1.1] Proposed `funding_cancelled` message
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#910">[ date ]</a>
+              <a href="thread.html#910">[ thread ]</a>
+              <a href="subject.html#910">[ subject ]</a>
+              <a href="author.html#910">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning,
+
+&gt;<i> -------- Original Message --------
+</I>&gt;<i> Subject: Re: [Lightning-dev] [1.1] Proposed `funding_cancelled` message
+</I>&gt;<i> Local Time: January 9, 2018 2:28 AM
+</I>&gt;<i> UTC Time: January 8, 2018 6:28 PM
+</I>&gt;<i> From: <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>
+</I>&gt;<i> To: ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt;
+</I>&gt;<i> lightning-dev\\@lists.linuxfoundation.org &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt;
+</I>&gt;<i>
+</I>&gt;<i> Hello,
+</I>&gt;<i>
+</I>&gt;&gt;<i> intended to inform the fundee node that the funder node is definitely sure that the channel funding transaction can never confirm
+</I>&gt;<i>
+</I>&gt;<i> If the deprecated tx initially sent funds to the fundee via push_msat,
+</I>&gt;<i> then the fundee may not want to trust the funder on this. One way to
+</I>&gt;<i> do it trustlessly would be for the funder to attach the actual
+</I>&gt;<i> deprecated funding tx (not necessarily signed, but still could be big)
+</I>&gt;<i> to the funding_cancelled message, then the fundee would be able to
+</I>&gt;<i> verify that its inputs have indeed been spent by the overriding tx.
+</I>
+This will not work easily for the multi-channel funding transaction case.
+
+Suppose the funder node A wants to make two channels to two other nodes B and C using a single funding transaction.
+
+1.  In parallel, it initiates the open_channel on both B and C.
+2.  B and C respond with accept_channel.  A can now create the funding transaction.
+3.  In parallel, it sends the funding_created to both B and C.
+4.  B responds with funding_signed.  However, C suddenly disconnects instead of responding with funding_signed.
+5.  A cannot safely broadcast the funding transaction.  So it does funding_cancelled to B instead.
+
+It is not safe for A to send the funding transaction to B, because B can turn around and broadcast the funding transaction itself (for example, B and C can be in cahoots with each other, and force A to push_msat more funds to C).  In the above case there is no replacement created - the intent is not to increase the fees to speed up opening the channel, the intent is to create a single funding transaction that can be used to anchor A&lt;-&gt;B and A&lt;-&gt;C channels.
+
+Of course, A can simply double-spend the inputs it used for the multi-channel funding transaction to an address it controls solely, but that just adds an otherwise-unnecessary transaction with the cost paid by A.  A would prefer to simply silently forget the A&lt;-&gt;B and A&lt;-&gt;C channels and let B waste its resources hopelessly scanning each block for a transaction that A will never want to broadcast.
+
+The important part to remember for this proposal is that the current 1.0 spec already allow both replace-by-fee and muilti-channel funding transactions, but at the cost of wasting resources on the fundee side, while only the funder side gets the benefit (either faster channel opens or cheaper channel opens).  Remember that the protocols for both replace-by-fee funding transactions and multi-channel funding transactions simply require implementation on the funder side, with the fundee side using the same protocol as the simple single-channel non-replaceable funding transaction case.  To prevent this, a fundee node might restrict the number of pending channel opening attempts that a peer can have with it; implementing `funding_cancelled` lets the funder free up this imposed resource limit on the fundee side.
+
+(one could say that the c-lightning one-channel-one-peer is an example of this limiting of the resources an external node can consume, for example; of course, my understanding is that this limit will be lifted later on)
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180109/64e7e93c/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180109/64e7e93c/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000908.html">[Lightning-dev] [1.1] Proposed `funding_cancelled` message
+</A></li>
+	<LI>Next message: <A HREF="000958.html">[Lightning-dev] [1.1] Proposed `funding_cancelled` message
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#910">[ date ]</a>
+              <a href="thread.html#910">[ thread ]</a>
+              <a href="subject.html#910">[ subject ]</a>
+              <a href="author.html#910">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

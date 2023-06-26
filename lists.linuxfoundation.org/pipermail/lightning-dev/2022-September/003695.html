@@ -1,0 +1,156 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%60htlc_maximum_msat%60%20as%20a%20valve%20for%20flow%20control%0A%20on%20the%20Lightning%20Network&In-Reply-To=%3CYy70E1UhFOlk76tP%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003691.html">
+   <LINK REL="Next"  HREF="003697.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%60htlc_maximum_msat%60%20as%20a%20valve%20for%20flow%20control%0A%20on%20the%20Lightning%20Network&In-Reply-To=%3CYy70E1UhFOlk76tP%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network">aj at erisian.com.au
+       </A><BR>
+    <I>Sat Sep 24 12:12:03 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003691.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="003697.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3695">[ date ]</a>
+              <a href="thread.html#3695">[ thread ]</a>
+              <a href="subject.html#3695">[ subject ]</a>
+              <a href="author.html#3695">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Sep 22, 2022 at 08:40:30AM +0200, Ren&#233; Pickhardt via Lightning-dev wrote:
+&gt;<i> While trying to estimate the expected liquidity distribution in depleted
+</I>&gt;<i> channels due to drain via Markov Models I realized that we can exploit the
+</I>&gt;<i> `htlc_maxium_msat` setting to act as a control valve and regulate the
+</I>&gt;<i> &quot;pressure&quot; coming from the drain and mitigate the depletion of channels.
+</I>
+This is really neat!
+
+I think &quot;channel drain&quot; confounds two issues (or, at least, I do when
+I think about it):
+
+ 1) one is you're trying to collect as many forwarding fees as you can,
+    and since a drained channel prevents you from forwarding txs, that
+    feels like a hit on profits
+
+ 2) the other is that a drained channel *can't* forward a payment even
+    for no profit, so even attempting to forward a payment over a drained
+    channel wastes everyone's time, increases payment latency, and may
+    increase payment failures if you go through too many failures without
+    finding a successful path
+
+This seems like a great idea for solving (2) -- if you make lightning
+nodes look at htlc_max_msat and throttle their use of a channel based
+on its value, then channels can set that value so that their payment
+flow is balanced on average, at which point depletion becomes rare,
+and payments usually succeed.
+
+I think a simple way of thinking about it is: suppose people are
+forwarding X BTC per hour through a channel in one direction, and 2X BTC
+through it in the other direction, with all payments being 1000 sats
+exactly. Then if you set htlc_max_msat to 500sats on the overloaded
+direction, and everyone then triggers their AMP paths and sends half
+their payments through a slightly more expensive path, you'll be at
+X-vs-X BTC per hour, with balanced flows and stable channel balances.
+
+OTOH, it is relying on senders doing things that are slightly less optimal
+in the short term (pay higher fees) for things that benefit them only in
+the long term (avoid payment latency/failures due to depleted channels),
+and only if most people cooperate. Perhaps there's some privacy-preserving
+way that channel operators could throttle payments based on htlc_max_msat
+(and channel depletion percentage?) as well, so that cheaters are less
+likely to prosper?
+
+
+
+But as far as (1) goes -- this isn't actually an improvement: instead
+of rejecting X BTC per hour from the overloaded direction because
+your channel's depleted, you're now not even getting the opportunity
+to forward those payments and collect the corresponding fees. It's no
+worse for your profit margins, but it's not any better. (And it could
+be worse if you're throttling both sides, and only getting 0.95*X BTC
+per hour in both directions.
+
+But there aren't many ways you can actually do better with (1).
+
+One way is if you have a cheap way to rebalance your channels -- in that
+case, rebalance your channel, let it drain again, collecting fees all the
+while, and repeat. If rebalancing is cheaper than the fees you collect,
+this works great!
+
+The other way is if fees rates are expected to change -- if they're likely
+to go down later, then you might as well deplete your channel now, since
+you'll collect more fees for it now than you would later; likewise if you
+expect fees to up up later, then you might want to retain some balance
+now, so you can deplete it later. But that's a very dynamic situation,
+and the profits are limited -- you can only drain your channel once while
+waiting for fee rates to be ready to change, and your profit is going to
+be capped by your channel capacity times the difference in the fee rates.
+
+
+
+This approach seems *much* better than the fee rate cards idea:
+
+ * you're not decreasing your channel profitability half the time in
+   order to avoid your channel depleting
+
+ * you're making routing decisions *less* dependent on internal/private
+   state, rather than more
+
+ * you're not adding much gossip/probing traffic -- you might need
+   to refine your htlc_max_msat a few times each time you change fees,
+   but it shouldn't be often, and this should be reducing the frequency
+   you have to change fees anyway
+
+ * you're providing a way of throttling payment traffic independent of
+   fees -- since fees are competitive, they can have discontinuous effects
+   where a small change to fee can cause a large change to traffic volume;
+   but this seems like it should mostly have a proportional response,
+   with a small decrease in htlc_max_msat resulting in a small decrease in
+   payment volume, and conversely. Much better for stability/optimisation!
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003691.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="003697.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3695">[ date ]</a>
+              <a href="thread.html#3695">[ thread ]</a>
+              <a href="subject.html#3695">[ subject ]</a>
+              <a href="author.html#3695">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

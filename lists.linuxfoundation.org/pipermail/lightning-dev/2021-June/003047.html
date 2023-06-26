@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Payment Latency by Fast Forwards
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3CAbrsg0-g_0RMBjJ0u0jJf5O0CIdnHdnTwjbgsUn_Be0VaSZP2t4VhHVQOG0weBkZks_2_c7aFRbw8DZzg_2gc-7iYEnFadhsnHnPulz31Hk%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003045.html">
+   <LINK REL="Next"  HREF="003048.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Payment Latency by Fast Forwards</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Payment%20Latency%20by%20Fast%20Forwards&In-Reply-To=%3CAbrsg0-g_0RMBjJ0u0jJf5O0CIdnHdnTwjbgsUn_Be0VaSZP2t4VhHVQOG0weBkZks_2_c7aFRbw8DZzg_2gc-7iYEnFadhsnHnPulz31Hk%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Improving Payment Latency by Fast Forwards">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Jun  2 02:45:47 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003045.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+        <LI>Next message: <A HREF="003048.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3047">[ date ]</a>
+              <a href="thread.html#3047">[ thread ]</a>
+              <a href="subject.html#3047">[ subject ]</a>
+              <a href="author.html#3047">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning LL,
+
+&gt;<i> Hi Z,
+</I>&gt;<i>
+</I>&gt;<i> I just went through the presentation which made your thinking very clear. Thanks.
+</I>&gt;<i> I will not be able to match this effort so please bear with me as I try and explain my own thinking.
+</I>&gt;<i> I don't see why fast forwards (FF) need &quot;symmetrically encumbered outputs&quot;? To me the protocol should be asymmetric.
+</I>&gt;<i>
+</I>&gt;<i> This is what I think happens when offering a FF HTLC:
+</I>&gt;<i> 1. The offerer creates and signs a new commitment tx as normal with the HTLC except it has the same revocation key as the last one.
+</I>&gt;<i> 2. The offerer patches their balance output by sending a tx spending from it to a new tx which has the HTLC output and their balance output (unencumbered).
+</I>&gt;<i>
+</I>&gt;<i> The HTLC is now irrevocably committed from the perspective of the receiver.
+</I>&gt;<i> Now the receiver presents the pre-image and the offerer then:
+</I>&gt;<i>
+</I>&gt;<i> 1. The offerer creates and signs a new commitment tx as normal consolidating the funds into the receiver's balance output except once again it has the same revocation key as the last one.
+</I>&gt;<i> 2. The offerer patches their commitment tx balance output again by sending a tx spending from it to a new tx which splits into the receiver's balance (the value of the claimed HTLC) and the offerer's remaining balance.
+</I>&gt;<i>
+</I>&gt;<i> You can repeat the above process without having the receiver's revocation keys online or their commitment tx keys for many HTLCs while the offerer still has balance towards the receiver.
+</I>&gt;<i> The on-chain cost is about the same as before for an uncooperative close.
+</I>&gt;<i>
+</I>&gt;<i> Once the receiver brings their keys on line they can consolidate the FF state into a new commitment txs on both sides and with a proper revocation operate the channel normally. What has been the receiver up until now can finally send funds.
+</I>&gt;<i>
+</I>&gt;<i> Am I missing something?
+</I>
+Basically, you are taking advantage of the fact that we **actually** let the commitments on both sides be desynchronized with each other.
+I tend to elide this fact when explaining, and also avoid it when planning protocols.
+
+However I believe the idea is correct.
+
+Anyway, as I understood it:
+
+So suppose we start with this pair of commitment txes:
+
+    +--------------------------+
+    |  Commitment tx 1 of A    |
+    +------------+-------------+
+    |            | (A[0] &amp;&amp; B) |
+    |            |||(A &amp;&amp; CSV) |
+    |    SigB    +-------------+
+    |            |      B      |
+    |            |             |
+    +------------+-------------+
+
+    +--------------------------+
+    |  Commitment tx 1 of B    |
+    +------------+-------------+
+    |    SigA    |      A      |
+    |            |             |
+    |            +-------------+
+    |            | (A &amp;&amp; B[0]) |
+    |            |||(B &amp;&amp; CSV) |
+    +------------+-------------+
+
+Now Alice wants to offer an HTLC to Bob.
+What Alice does is:
+
+* **Retain** the Alice commitment tx and create an HTLC tx spending from it.
+* **Advance** the Bob commitment tx (and letting it desync from the Alice commitment tx), adding the same HTLC.
+
+So after Alice sends its new signatures, our offchain txes are:
+
+    +--------------------------+    +--------------------------+
+    |  Commitment tx 1 of A    |    |          HTLC Tx         |
+    +------------+-------------+    +------------+-------------+
+    |            | (A[0] &amp;&amp; B) |---&gt;|  SigA[0]   | (A[0] &amp;&amp; B) |
+    |            |||(A &amp;&amp; CSV) |    |            |||(A &amp;&amp; CSV) |
+    |    SigB    +-------------+    |            +-------------+
+    |            |      B      |    |            |    A-&gt;B     |
+    |            |             |    |            |    HTLC     |
+    +------------+-------------+    +------------+-------------+
+
+    +--------------------------+
+    | Commitment tx *2* of B   |
+    +------------+-------------+
+    |    SigA    |      A      |
+    |            |             |
+    |            +-------------+
+    |            | (A &amp;&amp; B[1]) |
+    |            |||(B &amp;&amp; CSV) |
+    |            +-------------+
+    |            |    A-&gt;B     |
+    |            |    HTLC     |
+    +------------+-------------+
+
+Notes:
+
+* Again, for Alice to offer the HTLC to Bob, only Alice has to make new signatures (`SigA[0]` and `SigA` for commitment tx *2* of Bob).
+* If Alice goes offline and Bob decides to drop onchain, Bob only needs to sign the new commitment tx.
+  We can argue that dropping channels *should* be rare enough that requiring privkeys for this operation is not a burden.
+* If Alice decides to drop the channel onchain, Bob only needs to bring in the privkey for the HTLC tx, which we can (at a lower, detailed level) be different from the &quot;main&quot; B privkey.
+
+So yes, I think it seems workable without symmetric encumbrance.
+
+Regards.
+ZmnSCPxj
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003045.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+	<LI>Next message: <A HREF="003048.html">[Lightning-dev] Improving Payment Latency by Fast Forwards
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3047">[ date ]</a>
+              <a href="thread.html#3047">[ thread ]</a>
+              <a href="subject.html#3047">[ subject ]</a>
+              <a href="author.html#3047">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

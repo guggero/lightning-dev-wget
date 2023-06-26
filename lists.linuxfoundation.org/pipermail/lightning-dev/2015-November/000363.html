@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Better privacy with SNARKs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Better%20privacy%20with%20SNARKs&In-Reply-To=%3C20151130000759.GA21468%40sapphire.erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000358.html">
+   <LINK REL="Next"  HREF="000310.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Better privacy with SNARKs</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Better%20privacy%20with%20SNARKs&In-Reply-To=%3C20151130000759.GA21468%40sapphire.erisian.com.au%3E"
+       TITLE="[Lightning-dev] Better privacy with SNARKs">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Nov 30 00:07:59 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000358.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+        <LI>Next message: <A HREF="000310.html">[Lightning-dev] Lightning, the death of BIP62,	and Segregated Witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#363">[ date ]</a>
+              <a href="thread.html#363">[ thread ]</a>
+              <a href="subject.html#363">[ subject ]</a>
+              <a href="author.html#363">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, Nov 26, 2015 at 09:15:16PM +1000, Anthony Towns wrote:
+&gt;<i>   revealP( Q, R, sigA, sigB, sigC ) {
+</I>&gt;<i>     check_multisig_verify(2, P, R, 2, sigA, sigB); code_separtor();
+</I>&gt;<i>     check_multisig_verify(2, Q, R, 2, sigA, sigC); code_separtor();
+</I>&gt;<i>     check_multisig_verify(2, P, Q, 2, sigC, sigB);
+</I>&gt;<i>   }
+</I>&gt;<i> Translating from pseudocode into script is a little hard too.
+</I>
+I think:
+
+  2 5 ROLL 5 ROLL 2 &lt;P&gt; 5 ROLL
+  2 8 ROLL 6 PICK 2 5 PICK 11 ROLL
+  2 5 PICK 11 PICK 2 10 PICK 5 PICK
+  C_MSIG_V CODESEP C_MSIG_V CODESEP C_MSIG_V
+
+might work (signing by providing sig_a, sig_b, sig_c, q_pub,
+r_pub). That's 34B of operators and 31B for P, for the redeem script,
+and 3*59B for signatures made using using N=g/2, 2*31B for Q and R,
+and 5B to push them on the stack, for a total of 65B redeem script and
+244B scriptsig. (There's no need to use N=g/2 in this scheme, but since
+you're intending to reveal P/Q/R, there's no reason not to and it saves
+a few bytes, so...)
+
+That compares to: &quot;SHA256 &lt;H&gt; EQUALVERIFY&quot; giving a 35B redeem script,
+and a 33B scriptsig; so the privacy gain would be at a cost of an extra
+236B per HTLC per channel, when cleared on the blockchain.
+
+At 40 satoshis per byte, the extra cost per HTLC is 9440 satoshi, which
+is about 3c per HTLC by my count.
+
+I think a minimal HTLC looks something like:
+
+ IF_DUP IF 1SUB
+   IF SHA256 &lt;revoke&gt; EQUALVERIFY ELSE &lt;reveal R&gt; ENDIF &lt;a_pub&gt;
+ ELSE
+   &lt;t&gt; CLTV &lt;d&gt; CSV &lt;b_pub&gt;
+ ENDIF
+ CHECKSIG
+
+for the payer's commitment, spendable with:
+
+  &lt;sigA&gt; &lt;revoke secret&gt; 2
+  &lt;sigA&gt; &lt;htlc preimage&gt; 1
+  &lt;sigB&gt; 0
+
+That's 19 opcodes, 2*33B pubkeys, 1*32B revoke hash, and however many bytes
+to reveal R. So another 117B, plus another 67B for the signature and
+branch code. To spend an HTLC, you also need the other bits for a txin,
+which is 42 bytes:
+
+  42+117+67+35     = 261B  (sha256, refunding HTLC)
+  42+117+67+65     = 291B  (ecc, refunding HTLC)
+
+  42+117+67+35+33  = 294B  (sha256, claiming HTLC)
+  42+117+67+65+244 = 531B  (ecc, claiming HTLC)
+
+So it's really only an overhead of ~80% when claiming, and ~11% when
+refunding? So at $350/BTC, 40 satoshi per byte, that's 7.4c for an ECC
+claim versus 4.1c for a SHA256 claim.
+
+I think you'd want to account for that as &quot;cost of closing a channel is
+4c (or 7c) times the number of simultaneous incoming HTLCs I'll accept,
+plus 4c times the number of simultaneous outgoing HTLCs I'll do&quot;.
+
+(Trying to make sure every HTLC pays you at least 4c in fees isn't
+workable if you want to support really small microtransactions, obviously)
+
+That said, it still seems like you might be better off just forgetting
+a 2c HTLC as far as the commitment tx goes, if it's going to cost you 4c
+to collect it. Account for it while the channel's open, sure, and update
+balances when it goes through, but actually committing to it looks like
+it might be a net negative... (If you've got some subscription with a
+miner such that you don't pay per byte for your transactions, that would
+change things too, I guess)
+
+Cheers,
+aj
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000358.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+	<LI>Next message: <A HREF="000310.html">[Lightning-dev] Lightning, the death of BIP62,	and Segregated Witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#363">[ date ]</a>
+              <a href="thread.html#363">[ thread ]</a>
+              <a href="subject.html#363">[ subject ]</a>
+              <a href="author.html#363">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

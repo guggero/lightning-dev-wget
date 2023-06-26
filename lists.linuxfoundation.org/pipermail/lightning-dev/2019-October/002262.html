@@ -1,0 +1,179 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3C87a79i8s8b.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002268.html">
+   <LINK REL="Next"  HREF="002264.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3C87a79i8s8b.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Oct 30 10:04:04 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002268.html">[Lightning-dev] asynchronous Lightning network payments
+</A></li>
+        <LI>Next message: <A HREF="002264.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2262">[ date ]</a>
+              <a href="thread.html#2262">[ thread ]</a>
+              <a href="subject.html#2262">[ subject ]</a>
+              <a href="author.html#2262">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; writes:
+&gt;<i> We started to look at the `push_me` outputs again. Will refer to them as
+</I>&gt;<i> `anchor` outputs from now on, to prevent confusion with `push_msat` on the
+</I>&gt;<i> `open_channel` message.
+</I>&gt;<i>
+</I>&gt;<i> The cpfp carve-out <A HREF="https://github.com/bitcoin/bitcoin/pull/15681">https://github.com/bitcoin/bitcoin/pull/15681</A> has been
+</I>&gt;<i> merged and for reasons described earlier in this thread, we now need to a=
+</I>dd
+&gt;<i> a csv time lock to every non-anchor output on the commitment transaction.
+</I>&gt;<i>
+</I>&gt;<i> To realize this, we are currently considering the following changes:
+</I>&gt;<i>
+</I>&gt;<i> * Add `to_remote_delay OP_CHECKSEQUENCEVERIFY OP_DROP` to the `to_remote`
+</I>&gt;<i> output. `to_remote_delay` is the csv delay that the remote party accepted
+</I>&gt;<i> in the funding flow for their outputs. This not only ensures that the
+</I>&gt;<i> carve-out works as intended, but also removes the incentive to game the
+</I>&gt;<i> other party into force-closing. If desired, both parties can still agree =
+</I>to
+&gt;<i> have different `to_self_delay` values.
+</I>
+I think we should unify to_self_delay if we're doing this.  Otherwise
+the game returns.
+
+&gt;<i> * Add `1 OP_CHECKSEQUENCEVERIFY OP_DROP` to the non-revocation clause of
+</I>&gt;<i> the HTLC outputs.
+</I>
+&gt;<i> For the anchor outputs we consider:
+</I>&gt;<i>
+</I>&gt;<i> * Output type: normal P2WKH. At one point, an additional spending path was
+</I>&gt;<i> proposed that was unconditional except for a 10 block csv lock. The
+</I>&gt;<i> intention of this was to prevent utxo set pollution by allowing anyone to
+</I>&gt;<i> clean up. This however also opens up the possibility for an attacker to
+</I>&gt;<i> 'use up' the cpfp carve-out after those 10 blocks. If the user A is offli=
+</I>ne
+&gt;<i> for that period of time, a malicious peer B may already have broadcasted
+</I>&gt;<i> the commitment tx and pinned down user A's anchor output with a low fee
+</I>&gt;<i> child. That way, the commitment tx could still remain unconfirmed while an
+</I>&gt;<i> important htlc expires.
+</I>
+Agreed, this doesn't really work.  We actually needed a bitcoin rule
+that allowed a single anyone-can-spend output.  Seems like we didn't get
+that.
+
+&gt;<i> * For the keys to use for `to_remote_anchor` and `to_local_anchor`, we=E2=
+</I>=80=99d
+&gt;<i> like to introduce new addresses that both parties communicate in the
+</I>&gt;<i> `open_channel` and `accept_channel` messages. We don=E2=80=99t want to re=
+</I>use the
+&gt;<i> main commitment output addresses, because those may (at some point) be co=
+</I>ld
+&gt;<i> storage addresses and the cpfp is likely to happen from a hot wallet.
+</I>
+This is horribly spammy.  At the moment we see ~ one unilateral close
+every 3 blocks.  Hopefully that will reduce, but there'll always be
+some.
+
+&gt;<i> * Within each version of the commitment transaction, both anchors always
+</I>&gt;<i> have equal values and are paid for by the initiator.
+</I>
+Who pays if they can't afford it?  What if they push_msat everything to
+the other side?
+
+&gt;<i> The value of the
+</I>&gt;<i> anchors is the dust limit that was negotiated in the `open_channel` or
+</I>&gt;<i> `accept_channel` message of the party that publishes the transaction.
+</I>
+Now initiator has to care about the other side's dust limit, which is
+bad.  And as accepter I now want this much higher, since I get those
+funds instantly.  I don't think we gain anything by making this
+configurable at all; just pick a number and be done.
+
+Somewhere between 1000 and 10,000 sat is a good idea.
+
+&gt;<i> Furthermore, there doesn=E2=80=99t seem to be a compelling reason anymore=
+</I> for
+&gt;<i> tweaking the keys (new insights into watchtower designs, encrypt by txid).
+</I>
+That's not correct.  This seems more like &quot;forgotten insights&quot; than &quot;new
+insights&quot;, which isn't surprising how long ago Tadge and I did the
+watchtower design (BTW: I was the one who came up with encrypt by
+txid for that!).
+
+There are several design constraints in the original watchtowers:
+
+1. A watchtower shouldn't be able to guess the channel history.
+2. ... even if it sees a unilateral tx.
+3. ... even if it sees a revoked unilateral tx it has a penalty for.
+4. A watchtower shouldn't be able to tell if it's being used for both
+   parties in the same channel.
+
+If you don't rotate keys, a watchtower can brute-force the HTLCs for all
+previous transactions it was told about, and previous channel balances.
+
+We removed key rotation on the to-remote output because you can simply
+not tell the watchtower about txs which don't have anything but an
+output to you.
+
+Here are the options I see:
+
+1. Abandon privacy from watchtowers and don't rotate keys.  Watchtowers
+   will be able to brute-force your history if they see a unilateral
+   close.
+
+2. Remove HTLC output key rotation, and assume watchtowers don't handle
+   HTLCs (so you don't tell them about early txs where the peer has no
+   output but there are HTLCs pending).  This seems less useful, since
+   HTLC txs require metadata anyway.
+
+3. Change to-local key rotation to use BIP32 (unhardened).  We could
+   also take some of the 48 bits (maybe 24?) we currently use to encode
+   the commitment number, to encode a BIP32 sub-path for this channel.
+   This would make it easier for hardware wallets to reconstruct.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002268.html">[Lightning-dev] asynchronous Lightning network payments
+</A></li>
+	<LI>Next message: <A HREF="002264.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2262">[ date ]</a>
+              <a href="thread.html#2262">[ thread ]</a>
+              <a href="subject.html#2262">[ subject ]</a>
+              <a href="author.html#2262">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

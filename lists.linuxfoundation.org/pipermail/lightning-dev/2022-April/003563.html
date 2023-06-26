@@ -1,0 +1,129 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3C01bb53fc-5a36-ee88-6e38-c88384617927%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003562.html">
+   <LINK REL="Next"  HREF="003556.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3C01bb53fc-5a36-ee88-6e38-c88384617927%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Fri Apr 22 18:50:45 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003562.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003556.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3563">[ date ]</a>
+              <a href="thread.html#3563">[ thread ]</a>
+              <a href="subject.html#3563">[ subject ]</a>
+              <a href="author.html#3563">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+On 4/22/22 9:15 AM, Alex Myers wrote:
+&gt;<i> Hi Matt,
+</I>&gt;<i> 
+</I>&gt;<i> Appreciate your responses.&#160; Hope you'll bear with me as I'm a bit new to this.
+</I>&gt;<i> 
+</I>&gt;<i>     Instead of trying to make sure everyone&#8217;s gossip acceptance matches exactly, which as you point
+</I>&gt;<i>     it seems like a quagmire, why not (a) do a sync on startup and (b) do syncs of the *new* things.
+</I>&gt;<i> 
+</I>&gt;<i> I'm not opposed to this technique, and maybe it ends up as a better solution.&#160; The rationale for not 
+</I>&gt;<i> going full Erlay approach was that it's far less overhead to maintain a single sketch than to 
+</I>&gt;<i> maintain a per-peer sketch and associated state for every gossip peer.&#160; In this way there's very 
+</I>&gt;<i> little cost to adding additional gossip peers, which further encourages propagation and convergence 
+</I>&gt;<i> of the gossip network.
+</I>
+I'm not sure what you mean by per-node state here - I'd think you can implement it with a simple 
+&quot;list of updates that happened since time X&quot; data, instead of having to maintain per-peer state.
+
+&gt;<i> IIUC Erlay's design was concerned for privacy of originating nodes.&#160; Lightning gossip is public by 
+</I>&gt;<i> nature, so I'm not sure we should constrain ourselves to the same design route without trying the 
+</I>&gt;<i> alternative first.
+</I>
+Part of the design of Erlay, especially the insight of syncing updates instead of full mempools, was 
+actually this precise issue - Bitcoin Core nodes differ in policy for a number of reasons 
+(especially across updates), and thus syncing the full mempool will result in degenerate cases of 
+trying over and over and over again to sync stuff your peer is rejecting. At least if I recall 
+correctly.
+
+&gt;<i>     if we're gonna add a minisketch-based sync anyway, please lets also use it for initial sync
+</I>&gt;<i>     after restart
+</I>&gt;<i> 
+</I>&gt;<i> This was out of the scope of what I had in mind, but I will give this some thought. I could see how 
+</I>&gt;<i> a block_height reference coupled with set reconciliation could provide some better options here. 
+</I>&gt;<i> This may not be all that difficult to shoe-horn in.
+</I>&gt;<i> 
+</I>&gt;<i> Regardless of single sketch or per-peer set reconciliation, it should be easier to implement with 
+</I>&gt;<i> tighter rules on rate-limiting. (Keep in mind, the node's graph can presumably be updated 
+</I>&gt;<i> independently of the gossip it rebroadcasts if desired.) As a thought experiment, if we consider a 
+</I>&gt;<i> CLN-LDK set reconciliation, and that each node is gossiping with 5 other peers in an evenly spaced 
+</I>&gt;<i> frequency, we would currently see 42.8 commonly accepted channel_updates over an average 60s window 
+</I>&gt;<i> along with 11 more updates which LDK accepts and CLN rejects (spam.)[1] Assuming the other 5 peers 
+</I>&gt;<i> have shared 5/6ths of this gossip before the CLN/LDK set reconciliation, we're left with CLN seeing 
+</I>&gt;<i> 7 updates to reconcile, while LDK sees 18.&#160; Already we've lost 60% efficiency due to lack of a 
+</I>&gt;<i> common rate-limit heuristic.
+</I>
+I do not believe that we will ever form a strong agreement on exactly what the rate-limits should 
+be. And even if we do, we still have the issue of upgrades, where a simple change to the rate-limits 
+causes sync to suddenly blow up and hit degenerate cases all over the place. Unless we can make the 
+sync system relatively robust against slightly different policies, I think we're kinda screwed.
+
+Worse, what happens if someone sends updates at exactly the limit of the rate-limiters? Presumably 
+people will do this because &quot;that's what the limit is and I want to send updates as often as I can 
+becaux...&quot;. Now you'll still have similar issues, I believe.
+
+&gt;<i> I understand gossip traffic is manageable now, but I'm not sure it will be that long before it 
+</I>&gt;<i> becomes an issue. Furthermore, any particular set reconciliation technique would benefit from a 
+</I>&gt;<i> simple common rate-limit heuristic, not to mention originating nodes, who may not currently realize 
+</I>&gt;<i> their channel updates are being rejected by a portion of the network due to differing criteria 
+</I>&gt;<i> across implementations.
+</I>
+Yes, I agree there is definitely a concern with differing criteria resulting in nodes not realizing 
+their gossip is not propagating. I agree guidelines would be nice, but guidelines doesn't solve the 
+issue for sync, sadly, I think. Luckily lightning does provide a mechanism to bypass the rejection - 
+send an update back with an HTLC failure. If you're trying to route an HTLC and a node has new 
+parameters for you, it'll helpfully let you know when you try to use the old parameters.
+
+Matt
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003562.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003556.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3563">[ date ]</a>
+              <a href="thread.html#3563">[ thread ]</a>
+              <a href="subject.html#3563">[ subject ]</a>
+              <a href="author.html#3563">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,249 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Griefing-Penalty: A proposal for mitigating Griefing Attack
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Griefing-Penalty%3A%20A%20proposal%20for%20mitigating%0A%20Griefing%20Attack&In-Reply-To=%3CCAPvY%3DRgdYbC0MV%2BieyeKRLKSafG%3DcsxU5abujr84Wwkv5h4XaA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002732.html">
+   <LINK REL="Next"  HREF="002734.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Griefing-Penalty: A proposal for mitigating Griefing Attack</H1>
+    <B>Subhra Mazumdar</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Griefing-Penalty%3A%20A%20proposal%20for%20mitigating%0A%20Griefing%20Attack&In-Reply-To=%3CCAPvY%3DRgdYbC0MV%2BieyeKRLKSafG%3DcsxU5abujr84Wwkv5h4XaA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Griefing-Penalty: A proposal for mitigating Griefing Attack">subhra.mazumdar1993 at gmail.com
+       </A><BR>
+    <I>Fri Jun  5 07:34:01 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002732.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+        <LI>Next message: <A HREF="002734.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2733">[ date ]</a>
+              <a href="thread.html#2733">[ thread ]</a>
+              <a href="subject.html#2733">[ subject ]</a>
+              <a href="author.html#2733">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+       Thanks for your invaluable feedback. The attack stated for the
+construction
+<A HREF="https://gist.github.com/subhramazumdar/cf7b043a73db136f6a23091d20e51751">https://gist.github.com/subhramazumdar/cf7b043a73db136f6a23091d20e51751</A>
+holds true for the path S-&gt;A-&gt;B-&gt;C-&gt;R. A will end up paying the money
+without receiving anything from S.
+
+&gt;<i>Initial contract establishment has to be done from S to R always, not R to
+</I>S.
+
+Multi-stage contracts can be done from R to S (arguably the simple
+resolution of HTLC chains is &quot;really' the second stage) for after the
+initial establishment, but initial establishment always has to be from S to
+R.
+If the initial contract establishment starts from S, we can still face
+reverse-griefing - if an intermediate node, say C, refuses to sign the
+contract then again B can be reverse-griefed by A. It will deny canceling
+the contract with B and wait for the locktime to expire, thereby
+victimizing B.
+
+
+What might possibly work here is that the parties must first exchange
+signatures for the error hash in order to unlock collateral and avoid
+reverse-griefing and only after that, exchange signatures for payment hash.
+
+Again if S starts the locking phase by supplying the error hash in one
+round followed by exchanging signature for payment hash in the next round,
+it might supply a wrong error hash so that R is not able to supply proof of
+cancelation. Even if S has not tampered with the error hash value, an
+intermediate may refuse to forward the contract with terms of error hash.
+Again we are stuck with the same problem because R possesses the witness to
+the error hash. If the contract is not forwarded to R, the preimage will
+not be revealed.
+
+
+Given the terms of the contract is (quoting for R and C, for the rest of
+the channel it is the same except the change in the locktime, penalty, and
+payment locked by each party): R and C establish the contract for 7 msat,
+using 1 msat from C and 6 msat from R:
+
+  * R shows x such that h = h(x) is true, with R getting 7 msat.
+
+  * R shows r such that y = h(r) is true, with C getting 1 msat and R
+getting 6 msat.
+
+  * After one day, C gets 7 msat.
+
+What we think might work for our case is that we let the exchange of
+signature for lock phase happen over two rounds - R initiating the first
+round involving error hash and S initiating the second round involving
+payment hash, as follows:
+
+Initially, let R exchange signatures with C over the following terms of the
+contract.
+
+&#8220;  * (Terms of Cancelation) R shows r such that y = h(r) is true, with C
+getting 1 msat and R getting 6 msat.
+
+  * After one day, C gets 7 msat.
+
+C exchange signature with B and this continues till A has established the
+contract with S. This allows an honest intermediary in the release phase to
+unlock the money if R has triggered cancelation of the contracts.
+
+After S has signed the cancelation contract with A, the second round is
+initiated for forwarding the payment. S exchange signatures with A for the
+payment hash. This will avoid the problem mentioned in the previous
+construction whereby an intermediate party ends up paying its successor
+without being remunerated by a malicious payer. The rest of the
+intermediate parties does the same. Finally, C will exchange signature with
+R over the following terms:
+
+  * (Terms of Payment) R shows x such that h = h(x) is true, with R getting
+7 msat.
+
+R will wait for a constant amount of time in order to receive incoming
+contract request from C. After that, given the condition, it will either
+release the preimage of error hash or payment hash. If R griefs, it will
+lose funds in the form of penalty.
+
+Regarding the second attack:
+
+&gt;<i>Then, 1 Planck interval before the 1-day limit, R uses the second clause
+</I>to cancel the entire payment.
+
+This is exactly the same result as with the current griefing attack: F is
+induced to lock its funds for 1 day minus 1 Planck interval, but is never
+compensated for it.
+
+It is immaterial whether the mechanism used is `update_fail_htlc` or some
+other mechanism.
+
+We had mentioned in the paper &lt;<A HREF="https://arxiv.org/abs/2005.09327">https://arxiv.org/abs/2005.09327</A>&gt; under
+Discussions (Section 6.3) that we do not handle attacks concerning
+soft-griefing, i.e., if a party withholds the preimage for a long time but
+releases just before the expiration of locktime. We think with the current
+set of instructions supported in Bitcoin, it is hard to settle
+soft-griefing related disputes, accounting penalty for each unit of elapsed
+time. In case of soft-griefing, we neither impose the griefing penalty, nor
+is there a chance to reverse-grief.
+
+On Mon, Jun 1, 2020 at 7:39 AM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning Subhra,
+</I>&gt;<i>
+</I>&gt;<i> &gt;     There may be other issues as well with the overall setup, please
+</I>&gt;<i> wait, I am considering as well what would happen if we correctly establish
+</I>&gt;<i> the contracts from S to R.
+</I>&gt;<i>
+</I>&gt;<i> Unfortunately the Mitigating Reverse-Griefing contract reintroduces
+</I>&gt;<i> griefing.
+</I>&gt;<i>
+</I>&gt;<i> First, let us simplify the setup to S -&gt; F -&gt; R.
+</I>&gt;<i>
+</I>&gt;<i> In the griefing attack of today the setup would be:
+</I>&gt;<i>
+</I>&gt;<i> * S-&gt;F has the contract, funded by S only:
+</I>&gt;<i>   * If F can reveal x such that h = h(x) for a known h, F can claim the
+</I>&gt;<i> fund.
+</I>&gt;<i>   * After 2 days, S can recover the fund.
+</I>&gt;<i> * F-&gt;R has the contract, funded by F only:
+</I>&gt;<i>   * If R can reveal x such that h = h(x) for a known h, R can claim the
+</I>&gt;<i> fund.
+</I>&gt;<i>   * After 1 day, F can recover the fund.
+</I>&gt;<i>
+</I>&gt;<i> Then, 1 Planck interval before the 1-day limit, R cancels the HTLC by
+</I>&gt;<i> doing some form of `update_fail_htlc` to F.
+</I>&gt;<i> This causes F to not earn any funds, even though it had its funds locked
+</I>&gt;<i> for 1 day minus 1 Planck interval; thus in practice, R can lock the funds
+</I>&gt;<i> of F for a little less than the time limit imposed.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> With the Mitigating Reverse Griefing technique, the setup would be:
+</I>&gt;<i>
+</I>&gt;<i> * S-&gt;F has the contract, funded by S and F:
+</I>&gt;<i>   * If F can reveal x such that h = h(x) for a known h, F can claim the
+</I>&gt;<i> fund.
+</I>&gt;<i>   * If F can reveal r such that y = h(r) for a known y, S and F can
+</I>&gt;<i> recover their original contributions to the fund.
+</I>&gt;<i>   * After 2 days, S can claim the fund.
+</I>&gt;<i> * F-&gt;R has the contract, funded by F and R:
+</I>&gt;<i>   * If R can reveal x such that h = h(x) for a known h, R can claim the
+</I>&gt;<i> fund.
+</I>&gt;<i>   * If R can reveal r such that y = h(r) for a known y, F and R can
+</I>&gt;<i> recover their original contributions to the fund.
+</I>&gt;<i>   * After 1 day, F can claim the fund.
+</I>&gt;<i>
+</I>&gt;<i> Then, 1 Planck interval before the 1-day limit, R uses the second clause
+</I>&gt;<i> to cancel the entire payment.
+</I>&gt;<i>
+</I>&gt;<i> This is exactly the same result as with the current griefing attack: F is
+</I>&gt;<i> induced to lock its funds for 1 day minus 1 Planck interval, but is never
+</I>&gt;<i> compensated for it.
+</I>&gt;<i> It is immaterial whether the mechanism used is `update_fail_htlc` or some
+</I>&gt;<i> other mechanism.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> So not only does Mitigating Reverse-Griefing just replace reverse-griefing
+</I>&gt;<i> with the attack described in my previous post, which I am now calling
+</I>&gt;<i> backflip-reverse-griefing (because calling it &quot;reverse-reverse-griefing&quot;
+</I>&gt;<i> would be ***SO BORING AND OBVIOUS***), it also returns the original
+</I>&gt;<i> griefing attack.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I think it is a principle of protocol design that, in general, protecting
+</I>&gt;<i> against one attack could open you up to the opposite of that attack.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> It is helpful to remember that the original griefing attack is basically a
+</I>&gt;<i> withholding attack, wherein a participant does not respond after a
+</I>&gt;<i> particular step in the protocol.
+</I>&gt;<i> By adding more steps, you simply add more places where a participant can
+</I>&gt;<i> stop responding after some step in the protocol, and thus add even more
+</I>&gt;<i> attack surface.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>
+-- 
+Yours sincerely,
+Subhra Mazumdar.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200605/213e7821/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200605/213e7821/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002732.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+	<LI>Next message: <A HREF="002734.html">[Lightning-dev] Griefing-Penalty: A proposal for mitigating	Griefing Attack
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2733">[ date ]</a>
+              <a href="thread.html#2733">[ thread ]</a>
+              <a href="subject.html#2733">[ subject ]</a>
+              <a href="author.html#2733">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

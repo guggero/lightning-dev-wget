@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3Cdd8a5dff-3669-6eb6-a9c1-4e0daf48c397%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003592.html">
+   <LINK REL="Next"  HREF="003590.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3Cdd8a5dff-3669-6eb6-a9c1-4e0daf48c397%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Fri May 27 05:12:43 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003592.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003590.html">[Lightning-dev] Principle Limitations to the reliability of the	Lightning Network Protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3593">[ date ]</a>
+              <a href="thread.html#3593">[ thread ]</a>
+              <a href="subject.html#3593">[ subject ]</a>
+              <a href="author.html#3593">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+On 5/26/22 8:59 PM, Alex Myers wrote:
+&gt;&gt;<i> Ah, this is an additional proposal on top, and requires a gossip &quot;hard fork&quot;, which means your new
+</I>&gt;&gt;<i> protocol would only work for taproot channels, and any old/unupgraded channels will have to be
+</I>&gt;&gt;<i> propagated via the old mechanism. I'd kinda prefer to be able to rip out the old gossip sync code
+</I>&gt;&gt;<i> sooner than a few years from now :(.
+</I>&gt;<i> 
+</I>&gt;<i> I viewed it as a soft fork, where if you want to use set reconciliation, anything added to the set would be subject to a constricted ruleset - in this case the gossip must be accompanied by a blockheight tlv (or otherwise reference a blockheight) and it must not replace a message in the current 100 block range.
+</I>&gt;<i> 
+</I>&gt;<i> It doesn't necessarily have to reference blockheight, but that would simplify many edge cases.  The key is merely that a node is responsible for limiting it's own gossip to a predefined interval, and it must be easily verifiable for any other nodes building and reconciling sketches.  Given that we have access to a timechain, this just made the most sense.
+</I>
+Ah, good point, you can just add it as a TLV. It still implies that &quot;old-gossip&quot; can't go away for a 
+lont time - ~everyone has to upgrade, so we'll have two parallel systems. Worse, people are relying 
+on the old behavior and some nodes may avoid upgrading to avoid the new rate-limits :(.
+
+&gt;&gt;&gt;<i> If some nodes have 600000 and others have 600099 (because you broke the
+</I>&gt;&gt;&gt;<i> ratelimiting recommendation, and propagated both approx the same
+</I>&gt;&gt;&gt;<i> time), then the network will split, sure.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Right, so what do you do in that case, though? AFAIU, in your proposed sync mechanism if a node does
+</I>&gt;&gt;<i> this once, you're stuck with all of your gossip reconciliations with every peer &quot;wasting&quot; one
+</I>&gt;&gt;<i> difference &quot;slot&quot; for a day or however long it takes before the peer does a sane update. In my
+</I>&gt;&gt;<i> proposed alternative it only appears once and then you move on (or maybe once more on startup, but
+</I>&gt;&gt;<i> we can maybe be willing to take on some extra cost there?).
+</I>&gt;<i> 
+</I>&gt;<i> This case may not be all that difficult. Easiest answer is you offer a spam proof to your peer.  Send both messages, signed by the offending node as proof they violated the set reconciliation rate limit, then remove both from your sketch. You may want to keep the evidence it in your data store, at least until it's superceded by the next valid update, but there's no reason it must occupy a slot of the sketch.  Meanwhile, feel free to use the message as you wish, just keep both out of the sketch. It's not perfect, but the sketch capacity is not compromised and the second incidence of spam should not propagate at all. (It may be possible to keep one, but this is the simplest answer.)
+</I>
+Right, well if we're gonna start adding &quot;spam-proofs&quot; we shouldn't start talking about complexity of 
+tracking the changed-set :p.
+
+Worse, unlike tracking the chanaged-set as proposed this protocol is a ton of unused code to handle 
+an edge case we should only rarely hit...in other words code that will almost certainly be buggy, 
+untested, and fail if people start hitting it. In general, I'm not a huge fan of protocols with any 
+more usually-unused code than is strictly necessary.
+
+This also doesn't capture things like channel_update extensions - BOLTs today say a recipient &quot;MAY 
+choose NOT to for messages longer than the minimum expected length&quot; - so now we'd need remove that 
+(and I guess have a fixed &quot;maximum length&quot; for channel updates that everyone agrees to...basically 
+we have to have exact consensus on valid channel updates across nodes.
+
+&gt;&gt;<i> Heh, I'm surprised you'd complain about this - IIUC your existing gossip storage system keeps this
+</I>&gt;&gt;<i> as a side-effect so it'd be a single integer for y'all :p. In any case, if it makes the protocol a
+</I>&gt;&gt;<i> chunk more efficient I don't see why its a big deal to keep track of the set of which invoices have
+</I>&gt;&gt;<i> changed recently, you could even make it super efficient by just saying &quot;anything more recent than
+</I>&gt;&gt;<i> timestamp X except a few exceptions that we got with some lag against the update timestamp&quot;.
+</I>&gt;<i> 
+</I>&gt;<i> The benefit of a single global sketch is less overhead in adding additional gossip peers, though looking at the numbers, sketch decoding time seems to be the more significant driving factor than rebuilding sketches (when they're incremental.) I also like maximizing the utility of the sketch by adding the full gossip store if possible.
+</I>
+Note that the alternative here does not prevent you from having a single global sketch. You can keep 
+a rolling global sketch that you send to all your peers at once, it would just be a bit of a 
+bandwidth burst when they all request a few channel updates/announcements from you.
+
+More generally, I'm somewhat surprised to hear a performance concern here - I can't imagine we'd be 
+including any more entries in such a sketch than Bitcoin Core does transactions to relay to peers, 
+and this is exactly the design direction they went in (because of basically the same concerns).
+
+&gt;<i> I still think getting the rate-limit responsibility to the originating node would be a win in either case. It will chew into sketch capacity regardless.
+</I>
+That's fair, though I do still very much struggle with how inflexible this proposal would be towards 
+any future changes to relay policy. Basically we're locking ourselves into a fixed rate-limit that 
+everyone has to agree to, with problems introduced if we ever go to change it.
+
+Matt
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003592.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003590.html">[Lightning-dev] Principle Limitations to the reliability of the	Lightning Network Protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3593">[ date ]</a>
+              <a href="thread.html#3593">[ thread ]</a>
+              <a href="subject.html#3593">[ subject ]</a>
+              <a href="author.html#3593">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

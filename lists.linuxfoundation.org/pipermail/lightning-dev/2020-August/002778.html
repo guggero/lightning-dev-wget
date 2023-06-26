@@ -1,0 +1,117 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Thoughts on Improving MPP
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20Improving%20MPP&In-Reply-To=%3CPsRNZo_Bj_GksIa8aJNEUq0WkHBq30T9LwrQPWywK3sbyMMjvoOzfACOuYcwe_FRSerfndSv2S-SwEUMyRwkxE16YszyrSCkFQ-BDh_stWQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002777.html">
+   <LINK REL="Next"  HREF="002779.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Thoughts on Improving MPP</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20Improving%20MPP&In-Reply-To=%3CPsRNZo_Bj_GksIa8aJNEUq0WkHBq30T9LwrQPWywK3sbyMMjvoOzfACOuYcwe_FRSerfndSv2S-SwEUMyRwkxE16YszyrSCkFQ-BDh_stWQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Thoughts on Improving MPP">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Aug 16 19:10:13 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002777.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+        <LI>Next message: <A HREF="002779.html">[Lightning-dev] Dynamic Commitments: Upgrading Channels Without	On-Chain Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2778">[ date ]</a>
+              <a href="thread.html#2778">[ thread ]</a>
+              <a href="subject.html#2778">[ subject ]</a>
+              <a href="author.html#2778">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning once again Lightningfolk,
+
+An idea I have been entertaining is that rather than splitting payments by half in case of an adaptive split, we should split in terms of a Fibonacci sequence.
+
+Intuitively, if we split payments in half all the time, then it implies that we have a set of &quot;standard&quot; bins that are some constant times the powers of two.
+For example, if we start with 1,000,000 msat, splitting by half results in splits of 500,000; 250,000; 125,000; 62,500; 31,250; 15,625; and it is as if we are using bins of 15,625 times powers of two.
+
+Now, let us consider the *worst case* number of splits when we have some channel capacity.
+
+For example, if we have a channel capacity of 4,294,967,295 msat.
+In that case, we would require 32 splits, from values ranging from 2^0 to 2^31, if we were to use the &quot;split by half&quot; rule.
+
+However, what if we instead used amount bins that are derived from the Fibonacci sequence?
+For the same 4,294,967,295 capacity, we would split up into bins of:
+
+29,712,150,73; 1,134,903,170; 165,580,141; 14,930,352; 5,702,887; 2,178,309; 317,811; 121,393; 17,711; 377; 55; 13; 3
+
+That is 13 splits.
+
+But that is unfair!
+4,294,967,295 is specifically chosen as a worst-case behavior of the power-of-two splitting.
+So how do we choose a similar worst-case for the Fibonacci sequence?
+
+An intuition we must have is that we derived the worst-case example for power-of-two splitting by adding the powers of two in sequence: 1 + 2 + 4 + 8 ... etc.
+
+Now, what about if we add the Fibonacci sequence in sequence?
+Will that similarly provide a worst-case example similar to the 4,294,967,295 example?
+1 + 1 + 2 + 3 + 5 ...
+
+A thing to note is that if we add two adjacent Fibonacci sequence items, such as 2 + 3, we get the *next* Fibonacci sequence item.
+Thus, if our &quot;worst-case&quot; generation sums up two adjacent Fibonacci sequence items, that will actually cause the splits to move up, meaning fewer splits needed.
+Thus, to generate the worst-case example for the Fibonacci sequence, we should actually *skip* an entry each time.
+Thus for the Fibonacci sequence: 1; 1; 2; 3; 5; 8; 13; 21; 34; 55; .... we should sum up 1 + 2 + 5 + 13 + 34 + ....
+
+And a thing we should notice is to compare that to the worst-case generation for the power-of-two sequence: 1 + 2 + 4 + 8 + 16 + ....
+
+   1 + 2 + 5 + 13 + 34 + ...
+   1 + 2 + 4 + 8  + 16 + ...
+
+What you should notice is that the numbers being added to the worst-case Fibonacci case quickly becomes larger, faster, than the worst-case power-of-two.
+
+What this means is that, given an arbitrary random channel capacity, in order to fully utilize that capacity for transport, we expect that it would require fewer splits, on average, if we use Fibonacci sequence than power-of-two sequence.
+
+So I think Fibonacci sequence for our payment splitting schedule is better than the power-of-two sequence we currently use (I believe `lnd` as well also started with such a simple &quot;split by half&quot; solution).
+We expect this to lead to fewer splits in general (given that each HTLC is a risk of paying fees later, we want fewer splits) and better utilization of available channel capacity.
+
+Now, of course, we are doing payment *splitting*, i.e. if a big payment does not go through we try again with multiple smaller payments.
+Getting into a power-of-two schedule is easy: just divide by 2.
+
+In order to get into an approximately Fibonacci sequence, we can divide by the Golden Ratio, i.e. `phi`, i.e. 1.6180339887... i.e. (1 + sqrt(5))/2
+This is because two consecutive entries in the Fibonacci sequence have a ratio that approximately converges towards this number.
+So for example, if we start with a 1,000,000 msat payment that fails, we should split it into 618,034 and 381,966 splits.
+And so on.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002777.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+	<LI>Next message: <A HREF="002779.html">[Lightning-dev] Dynamic Commitments: Upgrading Channels Without	On-Chain Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2778">[ date ]</a>
+              <a href="thread.html#2778">[ thread ]</a>
+              <a href="subject.html#2778">[ subject ]</a>
+              <a href="author.html#2778">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

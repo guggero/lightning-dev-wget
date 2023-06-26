@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splicing Proposal: Now with RBF
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Now%20with%20RBF&In-Reply-To=%3C87bm6hoq6e.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001648.html">
+   <LINK REL="Next"  HREF="001626.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splicing Proposal: Now with RBF</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splicing%20Proposal%3A%20Now%20with%20RBF&In-Reply-To=%3C87bm6hoq6e.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Splicing Proposal: Now with RBF">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu Nov 22 01:29:29 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001648.html">[Lightning-dev] Splicing Proposal: Now with RBF
+</A></li>
+        <LI>Next message: <A HREF="001626.html">[Lightning-dev] Proposal to include some form of best effort routing, fragmentation and local AMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1653">[ date ]</a>
+              <a href="thread.html#1653">[ thread ]</a>
+              <a href="subject.html#1653">[ subject ]</a>
+              <a href="author.html#1653">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>lisa neigut &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">niftynei at gmail.com</A>&gt; writes:
+&gt;<i> Hello Rusty. Exciting stuff!  A few observations:
+</I>&gt;<i>
+</I>&gt;<i> On Fri, Nov 16, 2018 at 12:18 AM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> ### Confirming a splice: `splice_confirm`
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1. type: 43 (`splice_confirm`) (`option_splice`)
+</I>&gt;&gt;<i> 2. data:
+</I>&gt;&gt;<i>    * [`32`:`channel_id`]
+</I>&gt;&gt;<i>    * [`64`:`signature`]
+</I>&gt;&gt;<i>    * [`2`:`num_witnesses`]
+</I>&gt;&gt;<i>    * [`num_witnesses*witness_stack`]
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>
+</I>&gt;<i> I don't believe that you need the `signature` field here; if I'm
+</I>&gt;<i> understanding correctly the sigs for the inputs should be the witness stack
+</I>&gt;<i> that you're sending.
+</I>
+You're exactly right, that should be struck.  Copy &amp; paste from
+funding_signed I think.
+
+&gt;&gt;<i> The sender:
+</I>&gt;&gt;<i>
+</I>&gt;<i> ...
+</I>&gt;<i>
+</I>&gt;&gt;<i>   - MUST ensure it will have sufficient funds post-splice above its
+</I>&gt;&gt;<i>     reserve to pay for the splice transaction at the new feerate.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> If fees outstrip the value of the updated splice transaction, what then?
+</I>&gt;<i> It's not really possible to abandon a splice, practically you'd end up
+</I>&gt;<i> closing the channel. This feels like an obvious observation, but worth
+</I>&gt;<i> noting that splicing is 'risky' in that regard i.e. channel closure due to
+</I>&gt;<i> extenuating circumstances (fee spike).
+</I>
+Our simplfication of only having one splice in progress at a time, that
+if it goes wrong for any reason, you can't splice any more.
+
+But yes, closing the channel is the &quot;fix&quot;.  Not pretty, but simple.
+
+&gt;&gt;<i> Message Changes During Splicing
+</I>&gt;&gt;<i> -------------------------------
+</I>&gt;&gt;<i> Once you've sent `splice_confirm` each commitment transaction is needs
+</I>&gt;&gt;<i> to be duplicated for every splice transaction (thanks to RBF, there can
+</I>&gt;&gt;<i> be multiple at once).  These are in rbf-received order (increasing fee
+</I>&gt;&gt;<i> order, if initiator is spec compliant):
+</I>&gt;&gt;<i>
+</I>&gt;<i> Are HTLC's to be duplicated as well? CPFP seems like a neater construction
+</I>&gt;<i> than RBF in this case, as it avoids fee rate negotiation and ballooning
+</I>&gt;<i> HTLC/commitment txn management. It also makes the single-payer for fees
+</I>&gt;<i> (initiator) less burdensome which is nice for skewed benefit updates. We
+</I>&gt;<i> can reuse the scheme we came up with for commitment txns (either party can
+</I>&gt;<i> spend, I believe).
+</I>&gt;<i>
+</I>&gt;<i> Was there an argument against using CPFP on funding txns that I'm not
+</I>&gt;<i> remembering?
+</I>
+On-chain space.  It's better for the chain to use RBF, but I'm being
+swayed by your arguments, given the complexity of the RBF approach
+above, and the (hopeful) rarity of this case.
+
+&gt;&gt;<i> NOTES:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1. I suggest that the option_data_loss_protect fields MUST BE set here if
+</I>&gt;&gt;<i>    option_splice (there's no reason not to AFAICT).  Or do we want to try
+</I>&gt;&gt;<i> TLV
+</I>&gt;&gt;<i>    here?
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> +1 for moving to TLV, in the spirit of moving towards the new spec
+</I>&gt;<i> guidelines.
+</I>
+OK, I'll try that in rev 2...
+
+Thanks,
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001648.html">[Lightning-dev] Splicing Proposal: Now with RBF
+</A></li>
+	<LI>Next message: <A HREF="001626.html">[Lightning-dev] Proposal to include some form of best effort routing, fragmentation and local AMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1653">[ date ]</a>
+              <a href="thread.html#1653">[ thread ]</a>
+              <a href="subject.html#1653">[ subject ]</a>
+              <a href="author.html#1653">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [BOLT RFC#1] Encryption spec
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20RFC%231%5D%20Encryption%20spec&In-Reply-To=%3C87furyc9tu.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000549.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [BOLT RFC#1] Encryption spec</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20RFC%231%5D%20Encryption%20spec&In-Reply-To=%3C87furyc9tu.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [BOLT RFC#1] Encryption spec">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Jun 28 02:43:09 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000549.html">[Lightning-dev] [BOLT RFC#1] Encryption spec
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#550">[ date ]</a>
+              <a href="thread.html#550">[ thread ]</a>
+              <a href="subject.html#550">[ subject ]</a>
+              <a href="author.html#550">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>CJP &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">cjp at ultimatestunts.nl</A>&gt; writes:
+&gt;<i> Hi,
+</I>&gt;<i>
+</I>&gt;<i> I'm about to start implementing an encryption layer for Amiko Pay, and
+</I>&gt;<i> since there already is a BOLT for encryption, I thought I might as well
+</I>&gt;<i> see if I can use it. Now that I've read it[1], I have some questions.
+</I>
+Good!
+
+&gt;<i> But first, let me comment that, in general, I like the general design of
+</I>&gt;<i> the encryption layer. It's generic and simple, making it easy to
+</I>&gt;<i> analyze, which is A Good Thing.
+</I>&gt;<i>
+</I>&gt;<i> My first question is: would it be possible / useful for a node to use
+</I>&gt;<i> different public keys for different links? I guess it is possible: the
+</I>&gt;<i> node that's establishing the connection knows what link it tries to
+</I>&gt;<i> connect, so it can already send out an authenticate message. The other
+</I>&gt;<i> node initially doesn't know what link the new connection belongs to,
+</I>&gt;<i> but, after receiving the authenticate message, it knows, so it can
+</I>&gt;<i> select its own corresponding key and reply with its own authenticate
+</I>&gt;<i> message. Then again, I'm not sure if this is very useful. Using
+</I>&gt;<i> different keys could be good for privacy (not revealing that both links
+</I>&gt;<i> go to the same node), but a node that listens for multiple links on the
+</I>&gt;<i> same network location (e.g. host:port in TCP) already shows to its peers
+</I>&gt;<i> that both links have a shared identity. The key used for authentication
+</I>&gt;<i> could be different from keys used for other things, like routing
+</I>&gt;<i> addresses or output addresses of microtransaction channels, maybe linked
+</I>&gt;<i> in master/slave key configurations (one key signs the other). Maybe
+</I>&gt;<i> there still is a deniability problem (your peer reveals data and you
+</I>&gt;<i> want to say 'it wasn't me') but I'm not sure that can be solved.
+</I>
+One can imagine a front end cache which points to different backends
+depending on who the incoming connection is for.  (The classic http
+multihost problem).
+
+This is one reason packets are extensible, if we turn out to want this
+in future.
+
+&gt;<i> I was wondering to what degree communication truly looks like random
+</I>&gt;<i> data, or can be distinguished from it. I guess that the very first 4
+</I>&gt;<i> bytes, usually being the little-endian value 33, already gives away that
+</I>&gt;<i> this protocol is being used. Furthermore, timing analysis could reveal
+</I>&gt;<i> the size of messages being sent, possibly revealing information about
+</I>&gt;<i> what is being done with the payload protocol inside the encryption
+</I>&gt;<i> layer. Is there a way to protect against that? You might want to append
+</I>&gt;<i> unused data to messages to make them fixed size (or at least multiples
+</I>&gt;<i> of a fixed size), or random size, but that reduces bandwidth efficiency,
+</I>&gt;<i> and the required amount of padding depends on the payload protocol.
+</I>
+The lengths (after that first packet) are encrypted.  We can add ping
+and pong messages for dummies later if we want to, but solving traffic
+analysis is not really a priority for now (AFAICT a bottomless well).
+
+&gt;<i> How is the authenticate message distinguished from other messages? I
+</I>&gt;<i> don't see something like a message type ID. Is it simply that the first
+</I>&gt;<i> message in a session is ALWAYS an authenticate message, and other
+</I>&gt;<i> messages are NEVER an authenticate message?
+</I>
+It's a protobuf, like all messages.  We should probably mention that :)
+
+&gt;<i> Right now, the description of session_sig in the authenticate message
+</I>&gt;<i> says: &quot;session_sig is the signature of the SHA256 of SHA256 of the
+</I>&gt;<i> receivers node_id, using the secret key corresponding to the sender's
+</I>&gt;<i> node_id&quot;. I am not sure how that is useful. More importantly, I don't
+</I>&gt;<i> understand what stops someone from performing a MITM attack. Shouldn't
+</I>&gt;<i> you include something like a signature of your sessionpubkey, signed
+</I>&gt;<i> with your node_id key?
+</I>
+Yes :(  It should sign the sessionpubkey of course.  I'll fix...
+
+&gt;<i> Assuming that a MITM attacker can guess the boundaries of messages, what
+</I>&gt;<i> stops him/her from duplicating messages, or removing messages? Is a
+</I>&gt;<i> certain state preserved between encryption/authentication of different
+</I>&gt;<i> messages?
+</I>
+The nonce increments:
+
+ Nonces are 64-bit little-endian numbers, which MUST begin at 0 and
+ MUST be incremented after each encryption (ie. twice per message), such
+ that headers are encrypted with even nonces and the message bodies
+ encrypted with odd nonces.
+
+&gt;<i> What is the meaning of the ack field in the authenticate message? The
+</I>&gt;<i> number of non-authenticate messages before an authenticate message *in a
+</I>&gt;<i> session* is always zero, isn't it?
+</I>
+It's to resume existing sessions.  It's underspecified because I had not
+implemented that (and my protocol test uses the count of commitments
+received, which turns out to be superior).
+
+&gt;<i> I see it's the number of messages
+</I>&gt;<i> *received and processed*. Since, to my knowledge, data streams in both
+</I>&gt;<i> directions are asynchronous, that could be a non-deterministic value,
+</I>&gt;<i> right? What should a receiving node check about the ack value? If it
+</I>&gt;<i> can't check anything, then what is the use of the value? Is this about
+</I>&gt;<i> message re-transmission across multiple sessions? In that case, please
+</I>&gt;<i> think about wrap-around behavior. I'm not sure a 64-bit counter will
+</I>&gt;<i> ever wrap around, but we should make sure the first time it happens
+</I>&gt;<i> won't be &quot;in the field&quot;.
+</I>
+64 bit counters won't wrap during my watch :)
+
+Thanks,
+Rusty.
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000549.html">[Lightning-dev] [BOLT RFC#1] Encryption spec
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#550">[ date ]</a>
+              <a href="thread.html#550">[ thread ]</a>
+              <a href="subject.html#550">[ subject ]</a>
+              <a href="author.html#550">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

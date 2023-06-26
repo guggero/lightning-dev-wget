@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Opening balanced channels using PSBT
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Opening%20balanced%20channels%20using%20PSBT&In-Reply-To=%3CCAO3Pvs_pQ2%3DbGByiBYh0XAeL%2BZ57yRwPukE%3D3zStfdUpd%3D4ZDw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003266.html">
+   <LINK REL="Next"  HREF="003267.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Opening balanced channels using PSBT</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Opening%20balanced%20channels%20using%20PSBT&In-Reply-To=%3CCAO3Pvs_pQ2%3DbGByiBYh0XAeL%2BZ57yRwPukE%3D3zStfdUpd%3D4ZDw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Opening balanced channels using PSBT">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Sep 22 23:30:56 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003266.html">[Lightning-dev] Opening balanced channels using PSBT
+</A></li>
+        <LI>Next message: <A HREF="003267.html">[Lightning-dev] Opening balanced channels using PSBT
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3251">[ date ]</a>
+              <a href="thread.html#3251">[ thread ]</a>
+              <a href="subject.html#3251">[ subject ]</a>
+              <a href="author.html#3251">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Ole,
+
+It's generally known that one can use out of band transaction construction,
+and the push_amt feature in the base funding protocol to simulate dual
+funded channels.
+
+The popular 'balanceofsatoshis' tool has a command that packages up the
+interaction (`open-balanced-channel`) into an easier to use format, IIRC it
+uses key send to ask a peer if they'll accept one and negotiate some of the
+params.
+
+The one thing you need to take mind of when doing this manually is that by
+default lnd will only lock the UTXOs allocated for the funding attempt for a
+few minutes. As a result, you need to make sure the process is finalized
+during that interval or the UTXOs will be unlocked and you risk accidentally
+double spending yourself.
+
+Lightning Pool also uses this little trick to allows users to purchase
+channels that are 50/50 balanced, and also purchase channel leases _for_ a
+third party (called sidecar channels) to help on board them onto Lightning:
+<A HREF="https://lightning.engineering/posts/2021-05-26-sidecar-channels/.">https://lightning.engineering/posts/2021-05-26-sidecar-channels/.</A> Compared
+to the above approaches, the process can be automatically batched w/ other
+channels created in that epoch, and uses traits of the Pool account system
+to make things atomic.
+
+Ultimately, the balanced-ness of a channel is a transitory state (for
+routing nodes, it's great for on-boarding end-users) and opening channels
+like these only serves to allow the channel to _start_ in the state. If your
+fees and channel policies aren't set accordingly, then it's possible that a
+normal payment or balance flow shifts the channel away from equilibrium
+shortly after the channel is open.
+
+-- Laolu
+
+On Tue, Sep 21, 2021 at 10:30 PM Ole Henrik Skogstr&#248;m &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">oleskogstrom at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hi
+</I>&gt;<i>
+</I>&gt;<i> I have found a way of opening balanced channels using LND's psbt option
+</I>&gt;<i> when opening channels. What I'm doing is essentially just joining funded
+</I>&gt;<i> PSBTs before signing and submitting them. This makes it possible to open a
+</I>&gt;<i> balanced channel between two nodes or open a ring of balanced channels
+</I>&gt;<i> between multiple nodes (ROF).
+</I>&gt;<i>
+</I>&gt;<i> I found this interesting, however I don't know if this is somehow unsafe
+</I>&gt;<i> or for some other reason a bad idea. If not, then it could be an
+</I>&gt;<i> interesting alternative to only being able to open unbalanced channels.
+</I>&gt;<i>
+</I>&gt;<i> To do this efficiently, nodes need to collaborate by sending PSBTs back
+</I>&gt;<i> and forth to each other and doing this manually is a pain, so if this makes
+</I>&gt;<i> sense to do, it would be best to automate it through a client.
+</I>&gt;<i>
+</I>&gt;<i> ----------------------
+</I>&gt;<i> --- Here is an example of the complete flow for a single channel:
+</I>&gt;<i> ----------------------
+</I>&gt;<i>
+</I>&gt;<i> ** Node A: generates a new address and sends address to Node B *(lncli
+</I>&gt;<i> newaddress p2wkh)
+</I>&gt;<i>
+</I>&gt;<i> ** Node A starts an Interactive channel **open** to Node B* *using psbt*
+</I>&gt;<i> (lncli openchannel --psbt &lt;node_b_pubkey&gt; 2000000 1000000)
+</I>&gt;<i>
+</I>&gt;<i> ** Node A funds the channel address *(bitcoin-cli walletcreatefundedpsbt
+</I>&gt;<i> [] '[{&quot;&lt;channel_address&gt;&quot;:0.02}]')
+</I>&gt;<i>
+</I>&gt;<i> ** Node B funds the refund transaction to Node A and sends PSBT back to
+</I>&gt;<i> Node A (*bitcoin-cli walletcreatefundedpsbt []
+</I>&gt;<i> '[{&quot;&lt;node_a_return_address&gt;&quot;:0.01}]')
+</I>&gt;<i>
+</I>&gt;<i> * *Node A joins the two PSBTs and sends it back to Node B (*bitcoin-cli
+</I>&gt;<i> joinpsbts '[&quot;&lt;channel_open_psbt&gt;&quot;, &quot;&lt;node_b_return_to_node_a_psbt&gt;&quot;]')
+</I>&gt;<i>
+</I>&gt;<i> ** Node B verifies the content and signs the joined PSBT before sending it
+</I>&gt;<i> back to Node A *(bitcoin-cli walletprocesspsbt &lt;joined_psbt&gt;)
+</I>&gt;<i>
+</I>&gt;<i> ** Node A: Verifies the content and signs the joined PSBT *(bitcoin-cli
+</I>&gt;<i> walletprocesspsbt &lt;joined_psbt&gt;)
+</I>&gt;<i>
+</I>&gt;<i> ** Node A: Completes channel open by publishing the fully signed PSBT*
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ----------------------
+</I>&gt;<i> --- Here is an example of the complete flow for a ring of channels between
+</I>&gt;<i> multiple nodes:
+</I>&gt;<i> ----------------------
+</I>&gt;<i>
+</I>&gt;<i> ** Node A starts an Interactive open channel to Node B using psbt* (lncli
+</I>&gt;<i> openchannel --psbt --no_publish &lt;node_b_pubkey&gt; 2000000 1000000)
+</I>&gt;<i> ** Node A funds the channel address* (bitcoin-cli walletcreatefundedpsbt
+</I>&gt;<i> [] '[{&quot;&lt;channel_address&gt;&quot;:0.02}]')
+</I>&gt;<i>
+</I>&gt;<i> ** Node B starts an Interactive open channel to Node C using psbt* (lncli
+</I>&gt;<i> openchannel --psbt --no_publish &lt;node_b_pubkey&gt; 2000000 1000000)
+</I>&gt;<i> ** Node B funds the channel address* (bitcoin-cli walletcreatefundedpsbt
+</I>&gt;<i> [] '[{&quot;&lt;channel_address&gt;&quot;:0.02}]')
+</I>&gt;<i>
+</I>&gt;<i> ** Node C starts an Interactive open channel to Node A using psbt* (lncli
+</I>&gt;<i> openchannel --psbt &lt;node_b_pubkey&gt; 2000000 1000000)
+</I>&gt;<i> ** Node C funds the channel address *(bitcoin-cli walletcreatefundedpsbt
+</I>&gt;<i> [] '[{&quot;&lt;channel_address&gt;&quot;:0.02}]')
+</I>&gt;<i>
+</I>&gt;<i> ** Node B and C sends Node A their PSBTs*
+</I>&gt;<i>
+</I>&gt;<i> ** Node A joins all the PSBTs* (bitcoin-cli joinpsbts
+</I>&gt;<i> '[&quot;&lt;A_funded_channel_psbt&gt;&quot;, &quot;&lt;B_funded_channel_psbt&gt;&quot;,
+</I>&gt;<i> &quot;&lt;C_funded_channel_psbt&gt;&quot;]')
+</I>&gt;<i>
+</I>&gt;<i> Using (bitcoin-cli walletprocesspsbt &lt;joined_psbt&gt;):
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ** Node A verifies and signs the PSBT and sends it to Node B (1/3
+</I>&gt;<i> signatures)* Node B verifies and signs the PSBT and sends it to Node C (2/3
+</I>&gt;<i> signatures)* Node C verifies and signs the PSBT (3/3 signatures) before
+</I>&gt;<i> sending it to Node A and B.*
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> ** Node A completes channel open (no_publish)* Node B completes channel
+</I>&gt;<i> open (no_publish)* Node C completes channel open and publishes the
+</I>&gt;<i> transaction.*
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> Ole Henrik Skogstr&#248;m
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210922/b4281beb/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210922/b4281beb/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003266.html">[Lightning-dev] Opening balanced channels using PSBT
+</A></li>
+	<LI>Next message: <A HREF="003267.html">[Lightning-dev] Opening balanced channels using PSBT
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3251">[ date ]</a>
+              <a href="thread.html#3251">[ thread ]</a>
+              <a href="subject.html#3251">[ subject ]</a>
+              <a href="author.html#3251">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

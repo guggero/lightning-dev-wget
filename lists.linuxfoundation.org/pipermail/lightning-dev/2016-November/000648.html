@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Analysis: alternative DoS prevention concept
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Analysis%3A%20alternative%20DoS%20prevention%20concept&In-Reply-To=%3C1478819514.1752.63.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000647.html">
+   <LINK REL="Next"  HREF="000649.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Analysis: alternative DoS prevention concept</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Analysis%3A%20alternative%20DoS%20prevention%20concept&In-Reply-To=%3C1478819514.1752.63.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] Analysis: alternative DoS prevention concept">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Thu Nov 10 23:11:54 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000647.html">[Lightning-dev] Single channel on mobile clients
+</A></li>
+        <LI>Next message: <A HREF="000649.html">[Lightning-dev] Analysis: alternative DoS prevention concept
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#648">[ date ]</a>
+              <a href="thread.html#648">[ thread ]</a>
+              <a href="subject.html#648">[ subject ]</a>
+              <a href="author.html#648">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+The problem
+===========
+
+One major vulnerability of the Lightning network is that, if someone
+wants to perform a DoS attack on the network, that possible for the
+attacker by sending many large transactions to himself, over a long
+route, and letting them time out (never reveal the payment pre-image).
+Nobody (including the attacker) gains or loses any funds, but a lot of
+funds get locked up, and the total cost of lost opportunity to innocent
+nodes is a lot higher than that of the attacker.
+
+In Milan, we came to a solution for this DoS mode, where nodes require
+either a fast commit or roll-back within a short amount of time (say 30
+seconds), or a proof that another channel was closed. This increases the
+cost for the attacker with the cost of closing a channel (I'm not sure
+if it actually decreases the cost for honest nodes: a channel close is
+no proof that the pre-image won't be revealed, so the funds probably
+have to stay locked up until the time-out anyway).
+
+I disliked this approach right from the moment it was proposed: it
+forces nodes to reveal, in certain situations, their channel state, to
+remote nodes, in a format that has to be understandable to those remote
+nodes. This basically limits the freedom in channel design to a design
+space that can be understood by all nodes in the network. Any design
+outside that space requires all other nodes to upgrade; such an upgrade
+would be very hard to deploy. Instead of being an individual decision
+between two peers, channel design now becomes a collective network
+decision.
+
+This interferes with my vision, presented in Montreal, of a
+heterogeneous network. Some examples of things that will become
+impossible, or very difficult to accomplish:
+* Transparent routing between side chains: nodes that don't know about a
+certain side chain can't verify a channel close on that side chain.
+* Trust-free de-centralized exchange between different block chains:
+different block chains, so same story.
+* Trust-free de-centralized exchange of different assets on the same
+block chain (e.g. colored coins): other nodes might reject this if they
+don't understand the amount locked in the HTLC.
+* Channel design upgrade: we're probably first going to deploy Rusty's
+channel design; I suppose some variation of the Poon/Dryja design will
+have benefits over Rusty's design, once Bitcoin is ready for it. I
+expect there will probably be other channel design upgrades in the
+future.
+
+Proposed solution
+=================
+
+As an alternative to the protection mechanism discussed in Milan, I
+explored the possibility to let the payer of the transaction pay (a part
+of) the transaction fees at the start of the transaction (when locking
+funds into HTLCs), such that, even in case of a roll-back, intermediate
+nodes would receive transaction fees. This could accomplish two goals:
+* compensate intermediate nodes for the damage inflicted on them by a
+DoS attack
+* put these costs onto the DoS attacker, thereby making the attack
+unattractive.
+
+Two variations are explored: one where the in-advance fee is constant,
+and one where it depends on the time it takes for the transaction to
+roll back. The consequences for the intermediate node incentives in all
+steps of the transaction are evaluated.
+
+Results
+=======
+
+<A HREF="https://cornwarecjp.github.io/amiko-pay/doc/lightning-incentives.ods">https://cornwarecjp.github.io/amiko-pay/doc/lightning-incentives.ods</A>
+
+The spreadsheet is based on a rough estimate of what Lightning market
+conditions can look like.
+
+The initial conclusion was optimistic: it is indeed possible to add such
+fees, up to a certain amount, without disturbing the incentives.
+However:
+* Given the assumptions in the spreadsheet, these fees can not be made
+high enough to fully compensate the intermediate nodes.
+* Since these fees are much smaller than the time value of the locked up
+money for a single node, they do not significantly impact an attacker
+who is already prepared to bear these costs for his own node.
+* Since there is an upper limit to the size of the total fee, and the
+total fee increases with the length of the route, this solution does not
+scale well with the length of the route.
+* Even if it would work (with different parameters), having a security
+solution that depends so much on market conditions is probably a bad
+idea, if we aren't really sure about these market conditions.
+
+
+Conclusions / discussion
+========================
+
+Although I'd really like to see alternative ways to address this DoS
+mode, I don't see how this solution could help. So, sorry, it's a
+negative result.
+
+The only alternative I see so far is that peer relationships become
+somewhat trusted, so that peers (implicitly) trust each other not to
+expose each other to large numbers of long-duration transactions. It's
+not clear though how nodes can live up to that expectation, especially
+when onion routing removes all information on the origin of
+transactions.
+
+To add a positive note: the way how the spreadsheet is set up might be
+of interest to you. Maybe you'd like to do some exploration of
+incentives for yourself in the future. The spreadsheet adds some insight
+in the orders of magnitude we could expect for certain parameters
+(although, ultimately, it will be up to the market to decide these). For
+instance:
+* I expect both the occupation rate of channels and the fee rate of
+nodes to be pretty low, and still investing your funds in channels is
+quite profitable. This is because transactions tend to be pretty fast,
+so their fees add up pretty quickly when doing that over the course of a
+year.
+* The time value of money lost to transactions that block all the way to
+their HTLC time-out is pretty huge compared to the tx fees. This is
+because HTLC time-out is typically a very long time compared to typical
+successful transaction durations: in order to avoid DoS-&gt;theft
+escalation, intermediate nodes have to have a significant time-out
+increment, so they can handle e.g. a local internet outage. This might
+be different with Tadge's channel watching delegation though.
+
+If you think I did anything wrong, or if you have any suggestions, let
+me know.
+
+- CJP
+
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000647.html">[Lightning-dev] Single channel on mobile clients
+</A></li>
+	<LI>Next message: <A HREF="000649.html">[Lightning-dev] Analysis: alternative DoS prevention concept
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#648">[ date ]</a>
+              <a href="thread.html#648">[ thread ]</a>
+              <a href="subject.html#648">[ subject ]</a>
+              <a href="author.html#648">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

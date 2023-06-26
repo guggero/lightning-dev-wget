@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C874lmvy4gh.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000990.html">
+   <LINK REL="Next"  HREF="000992.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3C874lmvy4gh.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">decker.christian at gmail.com
+       </A><BR>
+    <I>Mon Feb  5 13:02:38 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000990.html">[Lightning-dev] Manual channel funding
+</A></li>
+        <LI>Next message: <A HREF="000992.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#989">[ date ]</a>
+              <a href="thread.html#989">[ thread ]</a>
+              <a href="subject.html#989">[ subject ]</a>
+              <a href="author.html#989">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi everyone
+
+When we started drafting the specification we decided to postpone the
+topology syncronization mechanism until we have a better picture of the
+kind of loads that are to be expected in the network, e.g., churn and
+update rate, and instead implement a trivial gossip protocol to
+distribute the topology updates. This includes the dreaded initial
+synchonization dump that has caused some issues lately to all
+implementations, given that we dump several thousands of updates, that
+may require block metadata (short channel ID to txid conversion) lookup
+and a UTXO lookup (is this channel still active?).
+
+During the last call we decided to go for an incremental improvement,
+rather than a full synchronization mechanism (IBLT, rsync, ...). So
+let's discuss how that improvement could look like.
+
+In the following I'll describe a very simple extension based on a
+highwater mark for updates, and I think Pierre has a good proposal of
+his own, that I'll let him explain.
+
+We already have the `initial_routing_sync` feature bit, which (if
+implemented) allows disabling the initial gossip synchronization, and
+onyl forwarding newly received gossip messages. I propose adding a new
+feature bit (6, i.e., bitmask 0x40) indicating that the `init` message
+is extended with a u32 `gossip_timestamp`, interpreted as a UNIX
+timestamp. The `gossip_timestamp` is the lowest `channel_update` and
+`node_announcement` timestamp the recipient is supposed to send, any
+older update or announcement is to be skipped. This allows the `init`
+sender to specify how far back the initial synchronization should go.
+
+The logic to forward announcements thus follows this outline:
+
+ - Set `gossip_timestamp` for this peer
+ - Iterate through all `channel_update`s that have a timestamp that is
+   newer than the `gossip_timestamp` (skipping replaced ones as per BOLT
+   07)
+ - For each `channel_update` fetch the corresponding
+   `channel_announcement` and the endpoints `node_announcement`.
+ - Forward the messages in the correct order, i.e.,
+ - `channel_announcement`, then `channel_update`, and then `node_announcement`
+
+The feature bit is even, meaning that it is required from the peer,
+since we extend the `init` message itself, and a peer that does not
+support this feature would be unable to parse any future extensions to
+the `init` message. Alternatively we could create a new
+`set_gossip_timestamp` message that is only sent if both endpoints
+support this proposal, but that could result in duplicate messages being
+delivered between the `init` and the `set_gossip_timestamp` message and
+it'd require additional messages.
+
+`gossip_timestamp` is rather flexible, since it allows the sender to
+specify its most recent update if it believes it is completely caught
+up, or send a slightly older timestamp to have some overlap for
+currently broadcasting updates, or send the timestamp the node was last
+connected with the network, in the case of prolonged downtime.
+
+The reason I'm using timestamp and not the blockheight in the short
+channel ID is that we already use the timestamp for pruning. In the
+blockheight based timestamp we might ignore channels that were created,
+then not announced or forgotten, and then later came back and are now
+stable.
+
+I hope this rather simple proposal is sufficient to fix the short-term
+issues we are facing with the initial sync, while we wait for a real
+sync protocol. It is definitely not meant to allow perfect
+synchronization of the topology between peers, but then again I don't
+believe that is strictly necessary to make the routing successful.
+
+Please let me know what you think, and I'd love to discuss Pierre's
+proposal as well.
+
+Cheers,
+Christian
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000990.html">[Lightning-dev] Manual channel funding
+</A></li>
+	<LI>Next message: <A HREF="000992.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#989">[ date ]</a>
+              <a href="thread.html#989">[ thread ]</a>
+              <a href="subject.html#989">[ subject ]</a>
+              <a href="author.html#989">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

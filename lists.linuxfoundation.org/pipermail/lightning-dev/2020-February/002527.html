@@ -1,0 +1,121 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A New Routing Paradigm:Ant Routing	+`getroutequick` + Trampoline
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20New%20Routing%20Paradigm%3AAnt%20Routing%0A%09%2B%60getroutequick%60%20%2B%20Trampoline&In-Reply-To=%3CmbFkNL3mYyaubSHa22Kn5aJ1TdSv7d7qtuovtL_eBSKhyA1jGgnCzr7zTjw_0w38pFlkVWfPm6NKbenZ3A2WeeMSkSpXyp7YOeXkS4Haasc%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002526.html">
+   <LINK REL="Next"  HREF="002542.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A New Routing Paradigm:Ant Routing	+`getroutequick` + Trampoline</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20New%20Routing%20Paradigm%3AAnt%20Routing%0A%09%2B%60getroutequick%60%20%2B%20Trampoline&In-Reply-To=%3CmbFkNL3mYyaubSHa22Kn5aJ1TdSv7d7qtuovtL_eBSKhyA1jGgnCzr7zTjw_0w38pFlkVWfPm6NKbenZ3A2WeeMSkSpXyp7YOeXkS4Haasc%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] A New Routing Paradigm:Ant Routing	+`getroutequick` + Trampoline">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Feb 12 05:02:38 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002526.html">[Lightning-dev] A New Routing Paradigm:Ant Routing	+`getroutequick` + Trampoline
+</A></li>
+        <LI>Next message: <A HREF="002542.html">[Lightning-dev] Lightning Spec Meeting 2020/02/17
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2527">[ date ]</a>
+              <a href="thread.html#2527">[ thread ]</a>
+              <a href="subject.html#2527">[ subject ]</a>
+              <a href="author.html#2527">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning again Cezary,
+
+
+&gt;<i> &gt; That was really interesting to read this.
+</I>&gt;<i> &gt; Why you want to send Node ID inside pheromone? Why not to send random number, that would be then passed though invoice?
+</I>&gt;<i> &gt; To increase privacy, node could generate new random number every week and distribute pheromone gain.
+</I>&gt;<i>
+</I>&gt;<i> Our spam-limiting mechanism in current Lightning is tied to node IDs, and node IDs are effectively anchored onchain by the channels they have (and onchain is public anyway...).
+</I>&gt;<i> I was hoping to reuse the same mechanism to give an upper bound on how much spam you can ride on the Lightning pheromone network (the same bound applies to the current Lightning gossip, you can only spam Lightning by spamming Bitcoin, and spamming Bitcoin is costly).
+</I>&gt;<i>
+</I>&gt;<i> However, if you have other ideas about how to limit pheromone spam, I would gladly like to hear it.
+</I>
+For example, instead of considering distance-from-node, we could realize that it is the *channel* itself that is what limits the pheromone spam.
+So maybe the pheromone should count distance-from-*channel*.
+
+If I want to be a receiver, I just need to ensure that at least one of my open channels has been published as a pheromone (and I do not need to publish *all* my channels, just enough of them to have a good chance of being reachable).
+The pheromone would contain signatures of me and my counterparty.
+(In a post-Taproot world, it would contain a single signature, plus a proof that the UTXO involved is reserved *only* for Lightning network (for example, channel UTXOs could have a taprooted `OP_RETURN &quot;Lightning Is Awesome!!&quot;` branch which can never be used, but which can be revealed to show that it is for Lightning), and is not a locked UTXO that is *also* being used for another purpose, as that obviates the spam-limiting since multiple applications could now be spammed with a single onchain UTXO.)
+Crucially, the pubkeys used need not be our node IDs, and every channel will have different pubkeys, even if two channels are to the same two nodes.
+
+Now suppose I want to issue an invoice.
+I just check what channels I have that have been pheromone-broadcast.
+The invoice then contains the selected short-channel-id(s) rather than the actual node (though since invoices are signed, what pubkey do we use to sign it?).
+
+Then suppose I receive an incoming HTLC that is supposed to reach a short-channel-id of a channel I have.
+Either it is to me, or to my peer on that channel.
+If it is to me, then I should be able to recognize the payment hash / payment point on the HTLC/PTLC, and can claim it now.
+If I do not recognize it, it is probably to my counterparty, who can then check if it recognizes the payment hash / point and send back a definite `incorrect_or_unknown_payment_details`, signed by itself (which the payer can recognize as one of the signatories of the pheromone).
+Crucially, this lets me receive money via other, unpublished channels as well; the payment might be going in the direction of my channel, but I could also be on the shortest path between the payer and that specific channel.
+
+Now let us turn our attention to onion-routing a trampoline route when our pheromones are channel-based instead of node-based.
+Remember, onion-routing requires that we know a static public key of a node, with which we can make an asymmetric encryption.
+However, pheromones also show the two public keys involved in the channel, and our trampoline routing can use one or the other key arbitrarily (though budgets may need to add +1 hop in case it lands in the &quot;wrong&quot; direction).
+Then if I receive a trampoline-routed onion to a channel that I have, I can try to decrypt with my key, and if that succeeds, then I have unwrapped the onion and know the next trampoline (or I know that I am the final destination).
+If decryption fails (there is an HMAC again of the &quot;rest&quot; of the onion after all) then the onion is for my peer on that channel and I hand over the HTLC to it.
+Similarly, since payment point decorrelation will now be handled at the trampoline level, presumably the onion can now contain the tweak to be applied to the payment point.
+
+
+This gives a mild improvement in privacy: everyone else who is not involved in the channel has a 50/50 chance of guessing who is the real destination of the payment.
+Further, every channel I have has its own pubkey I own, which is not the same as the pubkey I own on another channel.
+I could use one channel as the destination when I am selling Ahura Mazda Holy Writings and Sanctified Commentary, and another channel as the destination when I am selling The Horned Man Depraved Sex Paraphernalia, even from the same Lightning node.
+With proper handling of UTXOs after closing (i.e. doing onchain mixing before spending onchain, or creating a new channel) then the single node I operate can sell both without anyone realizing I sell both kinds of products; I could claim that I was just an innocent third-party node that happened to have channels to both the Ahura Maza Holy Writings and Sanctified Commentary node, and The Horned Man Depravedd Sex Paraphernalia node.
+
+Regards,
+ZmnSCPXj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002526.html">[Lightning-dev] A New Routing Paradigm:Ant Routing	+`getroutequick` + Trampoline
+</A></li>
+	<LI>Next message: <A HREF="002542.html">[Lightning-dev] Lightning Spec Meeting 2020/02/17
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2527">[ date ]</a>
+              <a href="thread.html#2527">[ thread ]</a>
+              <a href="subject.html#2527">[ subject ]</a>
+              <a href="author.html#2527">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

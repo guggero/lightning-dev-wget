@@ -1,0 +1,120 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Protocol for multiple in-flight updates.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Protocol%20for%20multiple%20in-flight%20updates.&In-Reply-To=%3C87si1bnc4m.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000418.html">
+   <LINK REL="Next"  HREF="000422.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Protocol for multiple in-flight updates.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Protocol%20for%20multiple%20in-flight%20updates.&In-Reply-To=%3C87si1bnc4m.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Protocol for multiple in-flight updates.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Feb  2 01:18:17 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000418.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+        <LI>Next message: <A HREF="000422.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#421">[ date ]</a>
+              <a href="thread.html#421">[ thread ]</a>
+              <a href="subject.html#421">[ subject ]</a>
+              <a href="author.html#421">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>OK, I've thought about this some more, and here's my strawman protocol.
+
+Importantly, if we pipeline requests, we need something more
+sophisticated than &quot;discard if not your turn&quot; for overlaps.  Including
+the other side's commitment and retransmitting seems to work.
+
+Each side keeps two sets of &quot;proposals&quot;; mine and yours.  There are two
+kinds of proposals, &quot;add to my htlcs&quot; and &quot;remove from your htlcs&quot;.
+
+- As part of finalizing a commit tx, we always tell the other side
+  what the next revocation hash will be.
+  - This simplifies the protocol, as you need the other side's
+    revocation hash to produce a signature.
+- To add an HTLC, send the proposal.
+  - If they decline, fail the HTLC.
+  - If they accept, add to my proposals.
+- To close an HTLC, send fulfill/timeout/fail:
+  - They cannot decline this.
+  - Add to my proposals.
+- If we receive an add proposal:
+  - If we don't want it, send decline.
+  - If it's OK, send ack, add the their proposals.
+- If we receive a fulfill/timeout/fail:
+  - Add to their proposals.
+
+- If we have no outstanding add requests, we can send commit msg
+  - Send update_commit: signature of current state including our proposals.
+  - If we receive commit_accept with signature and their old revocation preimage.
+    - Commit our proposals
+    - Send update_commit_complete with our old revocation preimage.
+  - If we receive an update_commit message (conflict!)
+    - If signature matches current state + their proposals
+      - They didn't get our update_commit.
+      - Commit their proposals to current state, re-send update_commit
+        with that current state + our proposals.
+    - Otherwise signature matches current state + their proposals + our proposals
+      - Commit their proposals and our proposals to current state.
+      - Send update_commit_accept: signature and revocation preimage.
+      - Expect update_commit_complete or update_commit_accept.
+- If we receive an update_commit message (and we've not sent one!)
+  - Commit &quot;their changes&quot; to current state.
+  - Send update_commit_accept: signature and revocation preimage.
+  - Expect update_commit_complete.
+
+Packets involved:
+        update_add_htlc: [new htlc details]
+                update_decline_htlc: [reason]
+                update_accept_htlc
+        update_fulfill_htlc: [r value]
+        update_timeout_htlc: [htlc rhash]
+        update_fail_htlc: [htlc rhash]
+
+        update_commit: [sig]
+        update_commit_accept: [sig] [old commit preimage] [next commit hash]
+        update_commit_complete: [old commit preimage] [next commit hash]
+
+Cheers,
+Rusty.
+PS.  Yes, it's complex.  Better way welcome...
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000418.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+	<LI>Next message: <A HREF="000422.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#421">[ date ]</a>
+              <a href="thread.html#421">[ thread ]</a>
+              <a href="subject.html#421">[ subject ]</a>
+              <a href="author.html#421">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

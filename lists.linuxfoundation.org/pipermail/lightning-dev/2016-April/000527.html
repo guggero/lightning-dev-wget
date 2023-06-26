@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Clearing process in BOLT #2
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Clearing%20process%20in%20BOLT%20%232&In-Reply-To=%3C87twij5rmt.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000526.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Clearing process in BOLT #2</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Clearing%20process%20in%20BOLT%20%232&In-Reply-To=%3C87twij5rmt.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Clearing process in BOLT #2">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Sat Apr 30 10:15:54 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000526.html">[Lightning-dev] Clearing process in BOLT #2
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#527">[ date ]</a>
+              <a href="thread.html#527">[ thread ]</a>
+              <a href="subject.html#527">[ subject ]</a>
+              <a href="author.html#527">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt; writes:
+&gt;<i> Hello,
+</I>&gt;<i>
+</I>&gt;<i> I see a few issues with the clearing process as currently described in BOLT #2.
+</I>
+Hi!
+
+        BTW, I love these emails, they really help me clarify both my
+thinking and the text.  Please keep it up!
+
+&gt;<i>
+</I>&gt;<i> There seem to be a contradiction between:
+</I>&gt;<i>   &#167;4.1 &quot;A node MUST respond with update_fail_htlc to any HTLC received
+</I>&gt;<i> after it sent close_clearing.&quot;
+</I>&gt;<i> and:
+</I>&gt;<i>   &#167;3.3 &quot;There are three reasons for removing an HTLC: it has timed
+</I>&gt;<i> out, it has failed to route, or the R preimage is supplied.&quot;)
+</I>&gt;<i>   &#167;3.3 &quot;A node MUST check that id corresponds to an HTLC in its
+</I>&gt;<i> current commitment transaction.&quot;
+</I>
+        Hmm, 4.1 should say: &quot;A node must fail to route any HTLC
+received after it sent close_clearing&quot;.  Basically, once you announce
+you're shutting down the channel, you don't accept any more HTLCs.  You
+could still receive them, because the other node might not have received
+your &quot;close_clearing&quot; yet.
+
+&gt;<i> In &#167;4.1, the node must decline/remove the still-uncommitted HTLC,
+</I>&gt;<i> which is explicitely forbidden by &#167;3.3.
+</I>
+Yes, I see how you read it that but, but the intent of 4.1 was still
+that all responses are delayed until receipt of `update_commit`.
+
+&gt;<i> AFAICT, in this version of the
+</I>&gt;<i> procotol an HTLC can only be accepted, then committed, then removed.
+</I>&gt;<i> There is no way to decline an HTLC, the receiver must always accept it
+</I>&gt;<i> except when the sender doesn't have the money or there are two many
+</I>&gt;<i> pending HTLC, in which case the connection should be failed (&#167;3.2,
+</I>&gt;<i> although it is actually not clear for the too-many-htlc case).
+</I>
+It's the same with a node sending you an HTLC with too short a timeout
+or insufficient fee.  There's no harm in you signing the *offer*; you're
+just not going to forward or redeem it.
+
+Too-many-htlcs is a protocol violation, OTOH, and should immediately
+fail such a connection.  I've clarified that.
+
+&gt;<i> We could decide to just fail the connection instead of declining the
+</I>&gt;<i> htlc, but there is another issue: if the sender of a &quot;close_clearing&quot;
+</I>&gt;<i> message subsequently receives an update_add_htlc, there is no way to
+</I>&gt;<i> tell if the other party had received the close_clearing prior to
+</I>&gt;<i> sending the htlc since update_add_htlc message doesn't have an 'ack'
+</I>&gt;<i> field.
+</I>
+Yes, this is why we don't have a &quot;that HTLC will fail&quot; message.  We
+*could* add one, but it would be advisory only, and still require the
+originator to send a &quot;HTLC_UNADD&quot; (?) message.
+
+Since failure should be an unusual case, I considered that a premature
+optimization.
+
+&gt;<i> There is potentially the same issue with the signature process: when
+</I>&gt;<i> node A sends an update_commit message to B, it is expecting an
+</I>&gt;<i> update_revocation rather sooner than later. But what if B just ignores
+</I>&gt;<i> the update_commit message and keeps sending new htlcs ? There is no
+</I>&gt;<i> way for A to be sure that B indeed received the update_commit, for the
+</I>&gt;<i> same reason as above.
+</I>
+The intent was that B can't get more than one step ahead.  But I didn't
+say that explicitly.  Patch below.
+
+B could ignore update_commit.  But to make progess, at some point it has
+to send update_commit to A.  Then A sends update_revocation.
+
+Now, B can keep sending more htlcs to A, but it *can't* send another
+update_commit, because you're not allowed to send it before you receive
+the previous update_revocation.  So it has to ack it at that point.
+
+(My implementation never sends htlcs while waiting for an
+update_revocation, but it is explicitly legal, to allow more optimal
+pipelining).
+
+Here's the diff, I hope it clarifies.
+
+Thanks!
+Rusty.
+
+diff --git a/bolts/02-wire-protocol.md b/bolts/02-wire-protocol.md
+index e48aa1a..bb1a14a 100644
+--- a/bolts/02-wire-protocol.md
++++ b/bolts/02-wire-protocol.md
+@@ -379,9 +379,9 @@ Calculation&quot; ).  A node SHOULD fail the connection if this occurs.
+ `amount_msat` MUST BE greater than 0.
+ 
+ A node MUST NOT add a HTLC if it would result in it offering more than
+-1500 HTLCs in either commitment transaction.  At 32 bytes per HTLC
+-output, this is comfortably under the 100k soft-limit for standard
+-transaction relay.
++1500 HTLCs in either commitment transaction.  A node SHOULD fail the
++connection if this occurs.  At 32 bytes per HTLC output, this is
++comfortably under the 100k soft-limit for standard transaction relay.
+ 
+ A node SHOULD NOT offer a HTLC with a timeout less than `delay` in the
+ future.  See also &quot;Risks With HTLC Timeouts&quot;.
+@@ -484,6 +484,11 @@ staged changes, it generates the other node's commitment transaction with those
+ 
+ A node MUST NOT send an `update_commit` message which does not include any updates.  Note that a node MAY send an `update_commit` message which only alters the fee, and MAY send an `update_commit` message which doesn't change the commitment transaction other than the new revocation hash (due to dust, identical HTLC replacement, or insignificant or multiple fee changes).
+ 
++A node MUST acknowledge the previous `update_revocation` (if any) in
++the `update_commit` message.  A node SHOULD fail the connection if it
++receives an `update_commit` which does not acknowledge its previously
++sent `update_revocation`.
++
+ A node MUST NOT send out a message with an `ack` field lower than any
+ previous `ack` field.
+ 
+@@ -647,7 +652,7 @@ Either node (or both) can send a `close_clearing` message to initiate closing:
+ A node MUST NOT send a `update_add_htlc` after a `close_clearing`, and
+ must not send more than one `close_clearing`.  A node SHOULD send a `close_clearing` (if it has not already) after receiving `close_clearing`.
+ 
+-A node MUST respond with `update_fail_htlc` to any HTLC received after it sent `close_clearing`.
++A node MUST fail to route any HTLC added received after it sent `close_clearing`.
+ 
+ ### 4.1.1. close_clearing message format
+ 
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000526.html">[Lightning-dev] Clearing process in BOLT #2
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#527">[ date ]</a>
+              <a href="thread.html#527">[ thread ]</a>
+              <a href="subject.html#527">[ subject ]</a>
+              <a href="author.html#527">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

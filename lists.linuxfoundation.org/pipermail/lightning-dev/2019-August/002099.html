@@ -1,0 +1,340 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%20by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CCACdvm3PCt%2Bb%2B9f2r7XesqCQp_86YaxiVODyfCZwy%2BumGjJVsJg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002098.html">
+   <LINK REL="Next"  HREF="002101.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20Lightning%20Network%20Pathfinding%20Latency%0A%20by%20Path%20Splicing%20and%20Other%20Real-Time%20Strategy%20Game%20Techniques&In-Reply-To=%3CCACdvm3PCt%2Bb%2B9f2r7XesqCQp_86YaxiVODyfCZwy%2BumGjJVsJg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improving Lightning Network Pathfinding Latency by Path Splicing and Other Real-Time Strategy Game Techniques">bastien at acinq.fr
+       </A><BR>
+    <I>Fri Aug  2 08:30:30 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002098.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+        <LI>Next message: <A HREF="002101.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2099">[ date ]</a>
+              <a href="thread.html#2099">[ thread ]</a>
+              <a href="subject.html#2099">[ subject ]</a>
+              <a href="author.html#2099">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning ZmnSCPxj,
+
+The channel that is failing is then the channel *after* the error-reporting
+&gt;<i> node (assuming bit `NODE` (`0x2000`) is not set in the `failure_code`: if
+</I>&gt;<i> it is a node-level error we should back off by one node and mark the erring
+</I>&gt;<i> node as unreliable).
+</I>&gt;<i>
+</I>&gt;<i> Indeed, the other insight here is that, if we were able to receive an
+</I>&gt;<i> error report from forwarding node N, this implies that every node and
+</I>&gt;<i> channel between us and node N is reliable.
+</I>&gt;<i> `permuteroute` reuses this prefix, since it is known-reliable.
+</I>&gt;<i>
+</I>
+I think this is more subtle than that. The thread I linked provided more
+details, but in many cases you can't decide whether you should blacklist
+only the channel *after* the failing node or also the channel *before* the
+failing node. And it's even worse than that, if a node before the failing
+one is malicious, it can force some next node to fail (by simply holding
+the HTLC until close to the expiry) and in that case you should also
+blacklist
+some of the nodes *before* the failing node. And note that malicious nodes
+with that behavior would happily forward the error onion because it
+directly incriminates someone else.
+
+I agree that we should optimize for the most common use-case (which
+probably means ignoring these malicious node scenario for now), but I think
+it's important to keep them in mind. At some point people will attack the
+network so we need to give some thoughts about potential attacks and make
+sure our algorithms can heal properly.
+But that's not the most important discussion for this thread so let's
+shelve that for now :).
+
+The *real* issue is that costs are *both* fixed and proportional.
+&gt;<i> So we need to select a balancing factor between the fixed and proportional
+</I>&gt;<i> costs.
+</I>&gt;<i>
+</I>
+I fully agree with that.
+
+We can assume &quot;past performance is an indicator of future performance&quot; and
+&gt;<i> record the average payment size of the user in order to determine how to
+</I>&gt;<i> balance the fixed and proportional costs.
+</I>&gt;<i> Picking an example value of say 1mBTC at the start, when the user has not
+</I>&gt;<i> used the node yet, seems reasonable.
+</I>&gt;<i>
+</I>
+I also agree this sounds reasonable, this is what we had in mind as a
+starting point for eclair.
+
+Most solutions to the network flow problem seem to require an accurate view
+&gt;<i> of flows at each node, which we do not have.
+</I>&gt;<i>
+</I>
+Interesting, but for the first hop (local channels) we have the exact
+balance available for sending, and for next hops we can consider the
+channels
+balanced (with a random perturbation of X%). The combination of that
+and retries could provide interesting results (I plan on testing that on
+realistic simulations of the network, I can't know for sure if this will
+work until then).
+
+My first implementation of MPP for eclair uses an algorithm similar to
+flocking.
+I think your last suggestion of using something similar to `permuteroute`
+can be interesting to try too.
+I'll give that a shot if we're not satisfied with the results of the
+flocking implementation. Is it what you plan on doing for MPP in
+c-lightning?
+
+Cheers,
+Bastien
+
+
+Le ven. 2 ao&#251;t 2019 &#224; 01:02, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning Bastien,
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I think that the main points that make routing in the Lightning Network
+</I>&gt;<i> different from game path-finding algorithms are:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; -   Paths are consumed by payments, effectively moving available balance
+</I>&gt;<i> between sides of a channel
+</I>&gt;<i> &gt; -   The routing algorithm doesn't know remote channels balance
+</I>&gt;<i> allocation (and that changes constantly)
+</I>&gt;<i> &gt; -   The cost of a path depends on the value you're sending (proportional
+</I>&gt;<i> fees)
+</I>&gt;<i> &gt; -
+</I>&gt;<i> &gt; -   This encourages algorithms not to search for an optimal solution
+</I>&gt;<i> (because an optimal solution on outdated/incomplete data doesn't even make
+</I>&gt;<i> sense) but rather fast and good enough solutions with retries
+</I>&gt;<i>
+</I>&gt;<i> I believe the differences are smaller than you might initially think.
+</I>&gt;<i>
+</I>&gt;<i> Units move around on the map and a pathfinding algorithm cannot predict
+</I>&gt;<i> how the *other* units owned by allied players will be, once the current
+</I>&gt;<i> units asking for a path have moved along the path.
+</I>&gt;<i> i.e. the algorithm does not know how remote tiles are occupied (and that
+</I>&gt;<i> changes constantly)
+</I>&gt;<i>
+</I>&gt;<i> Faster units really should be able to walk around slower units, because
+</I>&gt;<i> there is often a tradeoff between speed and combat effectiveness and a
+</I>&gt;<i> player asking a faster unit to move probably is depending on their speed.
+</I>&gt;<i> i.e. paths can be blocked by slower units, effectively becoming
+</I>&gt;<i> slow-moving obstacles that need to be worked around.
+</I>&gt;<i>
+</I>&gt;<i> And so on.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; There are a few technicalities that might be a problem for some of your
+</I>&gt;<i> suggestions, I'm interested in your opinion on how to address them.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; For `permuteroute`, you mention the following pre-requisite:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; the original payer is informed of which node reported the failure and
+</I>&gt;<i> which channel failed.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; We currently don't have a solution for reliable error reporting, as
+</I>&gt;<i> pointed out in [1].
+</I>&gt;<i> &gt; I think making progress on this thread would be interesting and useful
+</I>&gt;<i> for routing heuristics.
+</I>&gt;<i>
+</I>&gt;<i> We already have sufficiently-good error reporting on route failures:
+</I>&gt;<i> <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md#returning-errors">https://github.com/lightningnetwork/lightning-rfc/blob/master/04-onion-routing.md#returning-errors</A>
+</I>&gt;<i>
+</I>&gt;<i> &gt; When an origin node receives an error message matching a transfer it
+</I>&gt;<i> initiated
+</I>&gt;<i> &gt; (i.e. it cannot return-forward the error any further) it generates the
+</I>&gt;<i> `ammag`
+</I>&gt;<i> &gt; and `um` keys for each hop in the route.
+</I>&gt;<i> &gt; It then iteratively decrypts the error message, using each hop's `ammag`
+</I>&gt;<i> &gt; key, and computes the HMAC, using each hop's `um` key.
+</I>&gt;<i>
+</I>&gt;<i> The number of iterations of decryption is how distant the error-reporting
+</I>&gt;<i> node is from the payer.
+</I>&gt;<i> Knowing the entire route, we can know which node reported the error.
+</I>&gt;<i> The channel that is failing is then the channel *after* the
+</I>&gt;<i> error-reporting node (assuming bit `NODE` (`0x2000`) is not set in the
+</I>&gt;<i> `failure_code`: if it is a node-level error we should back off by one node
+</I>&gt;<i> and mark the erring node as unreliable).
+</I>&gt;<i> The node reporting the error is the node that we start the limited-range
+</I>&gt;<i> search to &quot;heal&quot; the path.
+</I>&gt;<i> `permuteroute` does not *need* better error reporting than we already have.
+</I>&gt;<i>
+</I>&gt;<i> Of course, if a node is malingering and does not report anything, there is
+</I>&gt;<i> nothing we can do, but this is unavoidable anyway and does not prevent use
+</I>&gt;<i> of `permuteroute` in other cases either.
+</I>&gt;<i>
+</I>&gt;<i> Indeed, the other insight here is that, if we were able to receive an
+</I>&gt;<i> error report from forwarding node N, this implies that every node and
+</I>&gt;<i> channel between us and node N is reliable.
+</I>&gt;<i> `permuteroute` reuses this prefix, since it is known-reliable.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I thought about path pre-computation and path caching, but what bothered
+</I>&gt;<i> me is that the cost depends on the amount you want to send.
+</I>&gt;<i> &gt; When pre-computing / caching, you have to either ignore that completely
+</I>&gt;<i> (which can be fine, I don't think trying to always find the most
+</I>&gt;<i> &gt; cost-efficient route is a reasonable goal) or take into account some
+</I>&gt;<i> kind of &quot;universal&quot; factor that works for most amounts. How did you take
+</I>&gt;<i> &gt; that into account in your pre-computation experiments?
+</I>&gt;<i>
+</I>&gt;<i> Just to be clear: I have not run any experiments.
+</I>&gt;<i> I work on Lightning in a hobbyist capacity, am a small-time HODLer, and
+</I>&gt;<i> cannot even afford to run a mainnet LN node (which is why I had to ask Rene
+</I>&gt;<i> to time `getroute`).
+</I>&gt;<i> I mostly get by on sheer code review, tons of armchair reasoning, and
+</I>&gt;<i> sheer force of will.
+</I>&gt;<i>
+</I>&gt;<i> While costs depend on the amount you want to send, we observe that there
+</I>&gt;<i> are three main costs:
+</I>&gt;<i>
+</I>&gt;<i> * Risk of locking up funds for `cltv_delta` blocks
+</I>&gt;<i> * `fee_proportional_millionths`
+</I>&gt;<i> * `fee_base_msatoshi`
+</I>&gt;<i>
+</I>&gt;<i> Of these, the first two are proportional to the value being sent.
+</I>&gt;<i> So if you double the value, you double the cost, but you also double this
+</I>&gt;<i> same cost on *every* alternate path.
+</I>&gt;<i> And pathfinding algorithms do not judge the absolute cost, but the
+</I>&gt;<i> relative cost of every path.
+</I>&gt;<i> In short the cases below are equivalent and given the same map and the
+</I>&gt;<i> same source and destination, will result in the same path (assuming your
+</I>&gt;<i> variables do not overflow, of course):
+</I>&gt;<i>
+</I>&gt;<i> * Plains cost 1 movement point, Forests cost 2 movement point
+</I>&gt;<i> * Plains cost 2 movement point, Forests cost 4 movement point
+</I>&gt;<i> * Plains cost 3241 movement point, Forests cost 6482 movement point
+</I>&gt;<i>
+</I>&gt;<i> The issue is not so much that costs are proportional to the value being
+</I>&gt;<i> sent.
+</I>&gt;<i> The *real* issue is that costs are *both* fixed and proportional.
+</I>&gt;<i> So we need to select a balancing factor between the fixed and proportional
+</I>&gt;<i> costs.
+</I>&gt;<i>
+</I>&gt;<i> We can assume &quot;past performance is an indicator of future performance&quot; and
+</I>&gt;<i> record the average payment size of the user in order to determine how to
+</I>&gt;<i> balance the fixed and proportional costs.
+</I>&gt;<i> Picking an example value of say 1mBTC at the start, when the user has not
+</I>&gt;<i> used the node yet, seems reasonable.
+</I>&gt;<i>
+</I>&gt;<i> Using the average value here, assuming the distribution of values the user
+</I>&gt;<i> sends is the same in the future, minimizes the error between the cached
+</I>&gt;<i> result vs the actual resulting fees.
+</I>&gt;<i>
+</I>&gt;<i> Again, the point is that we need some sort of way to set limits on the
+</I>&gt;<i> fees and risk the user has for payments, hence the need for `maxfeepercent`
+</I>&gt;<i> and `maxdelay`.
+</I>&gt;<i> We cannot reliably get perfect paths on potentially-stale data anyway.
+</I>&gt;<i> So I think we can just use whatever path we find using precomputation and
+</I>&gt;<i> caching (using some &quot;example value&quot;), and then do a double-check that the
+</I>&gt;<i> generated path does not get past `maxfeepercent` and `maxdelay`.
+</I>&gt;<i> If the generated path gets past the limits, we fall back to a
+</I>&gt;<i> non-precomputed search: given a good-enough &quot;example value&quot; this should be
+</I>&gt;<i> rare in practice.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I do agree that multi-part payments and trampoline (hierarchical
+</I>&gt;<i> routing) can offer a lot of room for algorithmic improvements and your
+</I>&gt;<i> &gt; ideas on how to leverage them resonate with mine.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; An interesting thing to note is that trampoline (in the current proposal
+</I>&gt;<i> at least) allows trampoline nodes to leverage multi-part payments
+</I>&gt;<i> &gt; &quot;at each hop&quot;, meaning that a trampoline node can join/split arbitrarily
+</I>&gt;<i> an incoming payment to reach the next trampoline node.
+</I>&gt;<i>
+</I>&gt;<i> I agree, this is an interesting thing.
+</I>&gt;<i>
+</I>&gt;<i> &gt; While implementing a first version of multi-part payments, I realized
+</I>&gt;<i> that they need to be tightly integrated to the routing algorithm.
+</I>&gt;<i> &gt; Since each payment &quot;consumes&quot; a path, potentially &quot;stealing&quot; it from
+</I>&gt;<i> other payments, a naive implementation of multi-part payments
+</I>&gt;<i> &gt;  would try to use different paths for each sub-payment, but that's an
+</I>&gt;<i> inefficient way of solving it. Working on multi-part payments made
+</I>&gt;<i> &gt; me think that maybe our routing problem is more similar to a circulation
+</I>&gt;<i> or network flow problem [2] rather than path-finding. Have you
+</I>&gt;<i> &gt; thought about this? If so what is your opinion?
+</I>&gt;<i>
+</I>&gt;<i> Most solutions to the network flow problem seem to require an accurate
+</I>&gt;<i> view of flows at each node, which we do not have.
+</I>&gt;<i> For multi-part, this is actually similar to the issue of sending a blob of
+</I>&gt;<i> units from one location to another, while keeping the units in a cohesive
+</I>&gt;<i> blob without them forming a line of units where everyone walks nearly the
+</I>&gt;<i> exact same path.
+</I>&gt;<i> (older RTSs tend to form these lines when sending blobs of units on
+</I>&gt;<i> long-distance trips, with the downside that on reaching the combat location
+</I>&gt;<i> units come to battle one at a time rather than all at once, reducing the
+</I>&gt;<i> impact of the blob; players learned to micromanage these lines near the
+</I>&gt;<i> combat location so that at least the first entry into the attack is a small
+</I>&gt;<i> group of units rather than a solitary one.)
+</I>&gt;<i> Walking nearly the exact same path is, incidentally, the thing we want to
+</I>&gt;<i> avoid in multi-part payments, incidentally, so we have a similar problem as
+</I>&gt;<i> RTS games with lines of units going into battle one-by-one.
+</I>&gt;<i>
+</I>&gt;<i> Hence, why I proposed the use of flocking, which is a technique used to
+</I>&gt;<i> retain cohesion of a blob of units.
+</I>&gt;<i> For example, some RTS games have a concept of putting their units &quot;in
+</I>&gt;<i> formation&quot;, which is actually just a way to excuse the flocking behavior to
+</I>&gt;<i> the player.
+</I>&gt;<i>
+</I>&gt;<i> Another solution is to use `permuteoute`.
+</I>&gt;<i> Run normal single-pathfinding algo.
+</I>&gt;<i> Find the smallest-capacity channels in the returned route and
+</I>&gt;<i> `permuteroute` around those channels, resulting in an alternate route that
+</I>&gt;<i> avoids the smallest-capacity channels (which are more likely to fail when
+</I>&gt;<i> multiple payments run through them) but shares the rest of the path with
+</I>&gt;<i> the original route.
+</I>&gt;<i> Keep doing this until `permuteroute` fails, then we have a bunch of
+</I>&gt;<i> alternate routes we can try to use for multi-part routing.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190802/1cd3530b/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190802/1cd3530b/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002098.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+	<LI>Next message: <A HREF="002101.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2099">[ date ]</a>
+              <a href="thread.html#2099">[ thread ]</a>
+              <a href="subject.html#2099">[ subject ]</a>
+              <a href="author.html#2099">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

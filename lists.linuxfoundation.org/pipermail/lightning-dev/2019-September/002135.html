@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Miniscript on LN (was: eltoo implementation in	Bitcoin functional test framework)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Miniscript%20on%20LN%20%28was%3A%20eltoo%20implementation%20in%0A%09Bitcoin%20functional%20test%20framework%29&In-Reply-To=%3CmeJzkju5KrcUcivciODnRhRjmbGsoTMzRQqLzwFxGJf0trY7pYCG04P3ngVwE0KqrRn0JE615-5SDNl-zRCDAcv153zWDOYxjhwm1Zh0OaU%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002157.html">
+   <LINK REL="Next"  HREF="002138.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Miniscript on LN (was: eltoo implementation in	Bitcoin functional test framework)</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Miniscript%20on%20LN%20%28was%3A%20eltoo%20implementation%20in%0A%09Bitcoin%20functional%20test%20framework%29&In-Reply-To=%3CmeJzkju5KrcUcivciODnRhRjmbGsoTMzRQqLzwFxGJf0trY7pYCG04P3ngVwE0KqrRn0JE615-5SDNl-zRCDAcv153zWDOYxjhwm1Zh0OaU%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Miniscript on LN (was: eltoo implementation in	Bitcoin functional test framework)">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Sep  5 11:29:35 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002157.html">[Lightning-dev] Avoiding gossip spam: how many updates do you	need?
+</A></li>
+        <LI>Next message: <A HREF="002138.html">[Lightning-dev] Miniscript on LN (was: eltoo implementation in Bitcoin functional test framework)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2135">[ date ]</a>
+              <a href="thread.html#2135">[ thread ]</a>
+              <a href="subject.html#2135">[ subject ]</a>
+              <a href="author.html#2135">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I do not see much point in using miniscript for Lightning unless we decide to support transporting arbitrary contracts, as here: <A HREF="../2018-August/001383.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-August/001383.html</A>
+
+Otherwise, it would be far easier implementation-wise, to just have carefully-coded SCRIPT to transport HTLCs.
+It would even be possible, to write it in miniscript and compile it once, then debate endlessly on how to improve the output of the miniscript compiler, on the principle that all that a human-level or higher intelligence needs, to beat a compiler, is to make a single improvement to the compiled output.
+
+On the other hand, if we *were* to support arbitrary contracts over payment channels, we should note:
+
+* Very few contracts are &quot;routable&quot; (only HTLCs and DLCs come to mind, and various HTLCs-yielding-HTLCs constructions) over the network.
+  * Supporting arbitrary routing would be a massive massive massive headache as forwarding nodes need to have some assurance they can claim the incoming if the outgoing is claimed, or similar.
+    * While miniscript is more amenable to programmatic analysis, I do not know what property needs to be actually proven in order to prove that contracts can be forwarded somehow.
+* Any absolute timelocks on the contract will imply that the hosting payment channel (and channel factory, for that matter) has a lifetime up to the timelock.
+  * This should be easy to extract from the miniscript.
+  * This is needed as the payment channel cannot actually enforce time, only the blockchain layer can, thus enforcement of the timelock can only be done onchain.
+  * For Decker-Russell-Osuntokun, the channel unilateral close needs to be started *before* the absolute timelock, with the channel security parameter of the CSV-delay before the absolute timelock.
+    For Poon-Dryja the channel unilateral close can be done on the block before the absolute timelock (or some more blocks before that as a safety margin).
+* Any contract will automatically get a `|| (A &amp;&amp; B)` appended to it, where `A` and `B` are the channel counterparties.
+  * This is simply the right of all participants to agree to ignore the contract and settle it by other means, as in Smart Contracts Unchained: <A HREF="https://zmnscpxj.github.io/bitcoin/unchained.html">https://zmnscpxj.github.io/bitcoin/unchained.html</A>
+  * Consider how `update_fail_htlc` works: the HTLC does not explicitly contain a clause by which it can simply be &quot;failed&quot; other than by the timelock branch.
+    Yet `update_fail_htlc` does not require waiting for the timelock to arrive.
+    * This is simply the fact that the payment channel can be updated such that the contrract is deleted outright, with the contract funds reallocated in any way that both participants agree.
+
+
+Of note is that a miniscript compiler would be quite useful if we were to support arbitrary contracts over Poon-Dryja channels.
+This is because, as I pointed out in the linked post, there is a need to add the condition `&amp;&amp; (A &amp;&amp; B) || (revoke)` to the contract in order to ensure that the transaction first pays out to a revocable output with an `nSequence` restriction.
+The addition of these extra conditions would be trivial with miniscript, and the miniscript-to-SCRIPT compiler could potentially optimize away the extra conditions, if a Sufficiently Smart Compiler (TM) for miniscript is developed.
+
+Of course, under Decker-Russell-Osuntokun (which is what triggered this thread initially anyway), the additional conditions on the arbitrary contract are unnecessary and all that is needed is to analyze the contract for absolute timelocks.
+
+Forwardability of arbitrary contracts is more difficult to prove; I cannot imagine how it can be done.
+But surely it would be possible, my untrained intuition subroutine reports.
+
+Regards,
+ZmnSCPxj
+
+Sent with ProtonMail Secure Email.
+
+&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+On Thursday, September 5, 2019 12:04 AM, Antoine Riard &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">antoine.riard at gmail.com</A>&gt; wrote:
+
+&gt;<i> Hello all,
+</I>&gt;<i> Didn't listen to Pieter Wuille interview, so don't know how he was thinking to use miniscript for lightning.
+</I>&gt;<i> But currently in lightning all our scripts are templates, a use of a miniscript compiler would be to find optimized bitcoin scripts for a given policy which model the channel and then hardcode them in lightning backend.
+</I>&gt;<i> The other use I can see would be to use miniscript to write customizable conditional-payment than our basic HTLCs, real hurdle would be to implement on-chain monitoring and resolution right.
+</I>&gt;<i> Not sure how Eltoo fit into it as it's a sighash extension to get a new update mechanism, miniscript seems more tailored for the transfer layer.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> Antoine
+</I>&gt;<i>
+</I>&gt;<i> Le&#160;mer. 4 sept. 2019 &#224;&#160;08:53, Bastien TEINTURIER &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bastien at acinq.fr</A>&gt; a &#233;crit&#160;:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Good morning Richard,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; This is an interesting initiative, I'm curious to see the results!
+</I>&gt;<i> &gt; I know we haven't worked on any Eltoo implementation yet at Acinq and I don't know if others have attempted it.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; However I have a very open question that may impact your project.
+</I>&gt;<i> &gt; I'm starting to look at miniscript [1] (still a total noob though) and listened to an interview where Pieter Wuille briefly mentioned that using miniscript for lightning may be more future-proof and extensible than directly using bitcoin script.
+</I>&gt;<i> &gt; Have you considered first re-writing the Eltoo scripts with miniscript? Or did someone else on this list attempt this already?
+</I>&gt;<i> &gt; Do people on this list have opinions on whether that is the right direction for Eltoo scripts (and maybe even for Bolt 1.x scripts if any_prevout never makes it to Bitcoin scripts)?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Bastien
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; [1]&#160;<A HREF="http://bitcoin.sipa.be/miniscript/">http://bitcoin.sipa.be/miniscript/</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Le&#160;mer. 4 sept. 2019 &#224;&#160;13:20, Richard Myers &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rich at gotenna.com</A>&gt; a &#233;crit&#160;:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Hi All,
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; To better understand how the eltoo update scheme ( <A HREF="https://blockstream.com/eltoo.pdf">https://blockstream.com/eltoo.pdf</A> ) works in practice I implemented eltoo in the Bitcoin functional test framework. These simulations exercise a concrete implementation of the eltoo Bitcoin scripts and explore the data flow between nodes that use eltoo to update their channel state.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; My motivation for creating these tests is to have a framework for both understanding and refining the Bitcoin scripts and message passing protocol for eltoo. I&#8217;d love to hear what people think of my initial implementation.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; This simulation uses a fork of Bitcoin with cdecker&#8217;s SIGHASH_NOINPUT patch applied to the signet2 fork fjahr created with patches applied for signet (kallewoof), taproot (sipa) and anyprevout* (ajtowns).
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; <A HREF="https://github.com/remyers/signet2/blob/eltoo/test/functional/simulate_eltoo.py">https://github.com/remyers/signet2/blob/eltoo/test/functional/simulate_eltoo.py</A>
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Next steps:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; -   add bidirectional channel updates
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; -   derive public keys for settle transactions from a pre-shared basepoint
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Does anyone know of any other eltoo implementations? I&#8217;d love to compare notes and get the ball rolling on a detailed specification.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Special thanks to the Chaincode Summer Residency and Christian Decker for their helpful advice and encouragement while I worked on this project.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &#160;&#160;-- Richard
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002157.html">[Lightning-dev] Avoiding gossip spam: how many updates do you	need?
+</A></li>
+	<LI>Next message: <A HREF="002138.html">[Lightning-dev] Miniscript on LN (was: eltoo implementation in Bitcoin functional test framework)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2135">[ date ]</a>
+              <a href="thread.html#2135">[ thread ]</a>
+              <a href="subject.html#2135">[ subject ]</a>
+              <a href="author.html#2135">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

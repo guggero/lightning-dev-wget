@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Concurrent sigs in BOLT #2
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Concurrent%20sigs%20in%20BOLT%20%232&In-Reply-To=%3CCAL3Hpbd2GO3ob-TiiqMW03afYAfv3MsWJfXxeY7n1yq%2BKPxYgw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000522.html">
+   <LINK REL="Next"  HREF="000525.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Concurrent sigs in BOLT #2</H1>
+    <B>Fabrice Drouin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Concurrent%20sigs%20in%20BOLT%20%232&In-Reply-To=%3CCAL3Hpbd2GO3ob-TiiqMW03afYAfv3MsWJfXxeY7n1yq%2BKPxYgw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Concurrent sigs in BOLT #2">fabrice.drouin at acinq.fr
+       </A><BR>
+    <I>Thu Apr 28 10:39:51 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000522.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+        <LI>Next message: <A HREF="000525.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#523">[ date ]</a>
+              <a href="thread.html#523">[ thread ]</a>
+              <a href="subject.html#523">[ subject ]</a>
+              <a href="author.html#523">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi!
+
+On 26 April 2016 at 04:21, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+&gt;<i> Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt; writes:
+</I>&gt;&gt;<i> Hello,
+</I>&gt;<i>
+</I>&gt;<i> Hi Pierre!
+</I>&gt;<i>
+</I>&gt;<i>         I'm glad I'm not the only one who had trouble with this.  I just
+</I>&gt;<i> thought I was being dumb!  Concurrent updates are conceptually harder
+</I>&gt;<i> than the previous synchronous model, unfortunately.
+</I>&gt;<i>
+</I>&gt;&gt;<i> I am trying to understand how we should handle concurrent signatures,
+</I>&gt;&gt;<i> and I am wondering if we couldn't use an ordering of some sort to
+</I>&gt;&gt;<i> resolve conflicts when they occur, for example by simply comparing
+</I>&gt;&gt;<i> signatures. If two nodes send each other a signature at the same time,
+</I>&gt;&gt;<i> they could agree that the one that sent the &quot;greatest&quot; signature has
+</I>&gt;&gt;<i> to immediately resend a new signature including all pending changes.
+</I>&gt;&gt;<i> This new signature would encompass all the changes both parties wanted
+</I>&gt;&gt;<i> in the first place so everybody would be happy.
+</I>&gt;<i>
+</I>&gt;<i> I originally had an alternating priority scheme which worked, but I don't
+</I>&gt;<i> think it's necessary any more.
+</I>&gt;<i>
+</I>&gt;<i> This diagram is a simplification.  Each node tracks two commitment
+</I>&gt;<i> states: its own and the state of the other side.  This is because they
+</I>&gt;<i> can run independently.
+</I>&gt;<i>
+</I>&gt;<i> The rules are simple (though the results might not be!):
+</I>&gt;<i>
+</I>&gt;<i> 1) Nodes must process packets in order.
+</I>&gt;<i> 2) When you send something, update their state.
+</I>&gt;<i> 3) When you ack something, update their state.
+</I>&gt;<i> 4) When you receive something, update your own state.
+</I>&gt;<i> 5) When you receive an ack for something, update your own state.
+</I>&gt;<i>
+</I>&gt;<i> When you sign a commit tx, you sign their state at the time (this makes
+</I>&gt;<i> sense: you're signing their commit tx, not yours).
+</I>&gt;<i>
+</I>&gt;<i> So, when a node sends an ADD HTLC, it modifies the other side's state.
+</I>&gt;<i> It only modifies its own state when it receives an ack covering that ADD
+</I>&gt;<i> HTLC.
+</I>&gt;<i>
+</I>&gt;<i> The ADD HTLC receiver modifies its own state, and modifies the other
+</I>&gt;<i> side's state when it sends the next ack (in practice, we do that
+</I>&gt;<i> immediately because it doesn't matter, but diagram below does it
+</I>&gt;<i> strictly).
+</I>&gt;<i>
+</I>&gt;<i> Thus, in your case:
+</I>&gt;<i>
+</I>&gt;<i>            NODE A                            NODE B
+</I>&gt;<i>
+</I>&gt;<i>     Committed: []                                 Committed: []
+</I>&gt;<i>     States:    [] [X]                             States:    [] [Y]
+</I>&gt;<i>                 ADD HTLC X ----        ---- ADD HTLC Y
+</I>&gt;<i>                                \      /
+</I>&gt;<i>                                 \    /
+</I>&gt;<i>     Committed: []                \  /             Committed: []
+</I>&gt;<i>     States:    [] [X]             \/              States:    [] [Y]
+</I>&gt;<i>                     SIG A0 ---    /\    --- SIG B0
+</I>&gt;<i>                               \  /  \  /
+</I>&gt;<i>                                \/    \/
+</I>&gt;<i>                                /\    /\
+</I>&gt;<i>                            &lt;---  \  /  ---&gt;
+</I>&gt;<i>     Committed: []                 \/              Committed: []
+</I>&gt;<i>     States:    [Y] [X]            /\              States: [X] [Y]
+</I>&gt;<i>                                  /  \
+</I>&gt;<i>                                 /    \
+</I>&gt;<i>                            &lt;----      -----&gt;
+</I>&gt;<i>     Committed: [Y]                                Committed: [X]
+</I>&gt;<i>     States:    [Y] [X]                            States: [X] [Y]
+</I>&gt;<i>
+</I>&gt;<i> Now, at this point both nodes have outstanding changes, so they can send
+</I>&gt;<i> another SIG (which acks the received changes, thus modifying the other
+</I>&gt;<i> state):
+</I>&gt;<i>
+</I>&gt;<i>     Committed: [Y]                                Committed: [X]
+</I>&gt;<i>     States:    [Y] [X Y]                          States: [X] [X Y]
+</I>&gt;<i>                     SIG A1 ---          --- SIG B1
+</I>&gt;<i>                               \        /
+</I>&gt;<i>                                \      /
+</I>&gt;<i>                                 \    /
+</I>&gt;<i>                                  \  /
+</I>&gt;<i>                                   \/
+</I>&gt;<i>                                   /\
+</I>&gt;<i>                                  /  \
+</I>&gt;<i>                                 /    \
+</I>&gt;<i>                            &lt;----      -----&gt;
+</I>&gt;<i> PROCESS ACK:
+</I>&gt;<i>     Committed: [Y]                                Committed: [X]
+</I>&gt;<i>     States:    [X Y] [X Y]                        States: [X Y] [X Y]
+</I>&gt;<i> PROCESS SIG:
+</I>&gt;<i>     Committed: [X Y]                              Committed: [X Y]
+</I>&gt;<i>     States:    [X Y] [X Y]                        States: [X Y] [X Y]
+</I>&gt;<i>
+</I>
+What if instead of immediately sending a new SIG, A and B then decide
+to send each
+other a new HTLC? Could we get stuck in an infinite loop where A and B
+never converge on a
+commitment tx?
+Or should it be specified that the only valid answer to a signature is
+either a signature (if there
+are outstanding changes) or a revocation ?
+
+Cheers,
+
+Fabrice
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000522.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+	<LI>Next message: <A HREF="000525.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#523">[ date ]</a>
+              <a href="thread.html#523">[ thread ]</a>
+              <a href="subject.html#523">[ subject ]</a>
+              <a href="author.html#523">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,293 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PoDLEs revisited
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3CCAH5Bsr1OgdLV%3DcgDLyn-kCTSvZikgabMCA_fDJNrZZkVyVkf6w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="002930.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PoDLEs revisited</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3CCAH5Bsr1OgdLV%3DcgDLyn-kCTSvZikgabMCA_fDJNrZZkVyVkf6w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] PoDLEs revisited">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Mon Jan  4 06:13:05 UTC 2021</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="002930.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2929">[ date ]</a>
+              <a href="thread.html#2929">[ thread ]</a>
+              <a href="subject.html#2929">[ subject ]</a>
+              <a href="author.html#2929">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Happy New Year Lightning Developers,
+
+I've recently been closely looking at the dual funding proposal [1] because
+it uses a DLEQ proof (PoDLE) which we are also working on specifying as
+part of DLC ECDSA adaptor signatures [2].
+While reading it I had some queries and ideas that I thought were worth
+sharing (even though they are very very late).
+
+# Background
+
+Lisa posted a draft proposal [1] which includes the PoDLE and explained it
+in [3] along with a good list of its weaknesses.
+The original discussion thread where the idea was conceived is [4] and
+there is an excellent summary in the following optech [5] which I post
+below:
+
+&gt;<i> Another proposal was to use PoDLE, which was originally developed for
+</I>JoinMarket based on a suggestion by Gregory Maxwell. This protocol allows
+an initiating user such as Mallory to commit to a UTXO in a way that
+prevents anyone from identifying that UTXO. The participating user, such as
+Bob, publishes the commitment across the network (e.g. the JoinMarket
+network) so that nobody else will start a session with Mallory while she&#8217;s
+using that particular UTXO. Then Bob asks Mallory to identify her UTXO and,
+if it&#8217;s a valid UTXO that matches her commitment, Bob discloses his UTXO to
+Mallory so that they can proceed with the protocol (e.g. a coinjoin). If
+Mallory aborts the protocol before completion, the commitment previously
+published across the network prevents her from being able to start a new
+session with any other user and so learn their UTXO. Mallory&#8217;s only option
+is to spend her coins from herself to herself in order to generate a new
+UTXO&#8212;a process that costs her money and so limits her ability to spy on
+users. (Note, though, that PoDLE as implemented in JoinMarket allows
+Mallory up to three retries by default so honest users aren&#8217;t penalized for
+occasional accidental failures, such as a loss of network connectivity.)
+The idea is to adapt this protocol for LN in order to prevent attackers
+from learning which available UTXOs are controlled by LN users.
+
+Especially relevant to this post is the idea posted by Darosior here [6]
+which was summarized as follows:
+
+&gt;<i> One proposal to fix this would require the person proposing to open the
+</I>channel (e.g. Mallory) to provide their UTXO(s) in a ready-to-spend state
+so that probing would cost money (e.g. transaction fees). A downside of
+this approach is that the construction proposed would be easily
+identifiable by block chain analysis, making it easy to determine when a
+dual-funded channel was opened
+
+The goals of this post is to (i) see if I understand the PoDLE idea
+correctly, to (ii) refine Darosior's idea and to (iii) propose a minimal
+alternative idea.
+
+#  Requirements
+
+Informally, here are the desirable properties I came up with for a dual
+funding protocol:
+
+1. If a malicious initiator learns a peer UTXO, then the initiator should
+have to spend their UTXOs before reusing them against the next peer (should
+be forced to spend them to repeat attack -- *if attacking sequentially*).
+2. A malicious initiator should not be able to use the same UTXOs in
+parallel with multiple peers (to learn the UTXOs of multiple makers with a
+single UTXO).
+3. An honest initiator should not have to spend their UTXOs if they execute
+with a malicious peer.
+4. dual-funded opening transactions should not have any distinguishing
+features (i.e. sighash flags).
+5. An honest but intermittently failing initiator should not have their
+UTXO details sent by an honest peer to other parties.
+
+Note I am going to ignore property (2) because of proposals below can turn
+their protection against sequential attacks (1) into protection against
+parallel attacks (2) by having the peer choose a random time delay and see
+if anything is gossiped to them that would indicate malicious behavior by
+the initiator in some other channel.
+
+# PoDLEs
+
+To solve this problem in JoinMarket, Waxwing had the idea [8] of turning
+knowledge of a secret key for a particular UTXO into a kind of unlinkable
+credential.
+Given a UTXO public key P1, the initiator projects their private key onto a
+different generator J to produce P2.
+P2 is unlinkable to P1 (without a proof) but is fully determined by P1.
+This allows participants to maintain a blacklist of P2s without learning
+the P1s.
+Having the P1s in the blacklist would make the blacklist itself useful for
+chain analysis because it contains a list of UTXOs that tried to open
+channels (but perhaps accidentally failed).
+
+The idea is like this:
+1. Taker asks some maker's if they want to do a coinjoin and sends them all
+SHA256(P2)
+2. When they find the maker they want to proceed with they reveal P2 and
+prove DLEQ((P1, G), (P2, J)) i.e. P1 and P2 have the same private key just
+different base points.
+3. If they haven't received SHA256(P2)from the gossip network (i.e. it's
+not in the blacklist), the maker then sends their own UTXO data AND gossips
+SHA256(P2)
+4. They carry on the protocol.
+
+The current lightning proposal [1] follows the same logic except that it
+only gossips SHA256(P2) in case of malicious behavior (this seems sensible).
+If I understood it correctly, then it achieves properties (1,4,5).
+
+The main downside is that it introduces a new gossip message. The
+difficulties associated with this are listed in [3].
+Notably it is missing property (3) - protection against malicious peers who
+gossip SHA256(P2) even when there was no wrongdoing.
+
+A question I have is why is SHA256(P2) sent up front? I think that P2 can
+just be sent along with the proof later on in the case of dual funding.
+Waxwing gave an explanation of it in the case of joinmarket in [7] but I
+didn't grasp it.
+
+# Darosior's SIGHASH_SINGLE|SIGHASH_ANYONECANPAY
+
+The proposal from Darosior [6] is to have the taker provide their inputs in
+a ready to broadcast state using SIGHASH_SIGNLE|SIGHASH_ANYONECANPAY.
+This way the peer never needs to send their inputs directly to the
+initiator (the initiator will only find out about them when the transaction
+is broadcast).
+I encourage the reader to look at [6] which has nice diagrams and is very
+short and to the point.
+This achieves all properties except for (4 - distinguishable on-chain)
+which is why it was dismissed.
+
+I think it is possible to extend the idea to achieve (4) and therefore
+obtain all desired properties.
+Simply put peers can just use the SINGLE|ANYONECANPAY signature as back ups
+in case of abort. Here's how it could work in my mind:
+
+1. Initiator requests dual-funding and provides a TX_temp spending their
+input set to a main output and a change output (does not sign it yet). They
+also provide a sighash SIGNLE|ANYONECANPAY signature on the main output
+spending into TX_backup-fund and a signature on the first commitment
+transaction spending from TX_backup-fund (exactly as in [6]).
+2. Peer responds with commitment TX signature for TX_backup-fund.
+3. Initiator responds with the signatures for TX_temp.
+*Peer now has a fully functional transaction chain with which to open the
+channel -- now they can attempt to upgrade to a SIGHASH_ALL opening*.
+4. Peer (if possible) checks there are no existing transactions in the
+chain or mempool spending from the taker's inputs. If not it responds with
+its inputs, change and commitment tx signature for a SIGHASH_ALL TX_fund.
+5. Initiator responds with commitment TX signature and TX_fund input
+signatures.
+6. Peer broadcasts TX_fund.
+*If at any point after step 3 Initiator does not respond for ~2 seconds
+they broadcast TX_temp and TX_backup-funding*
+
+We have (4) because the SINGLE|ANYONECANPAY signature only appears on-chain
+in case of abort (i.e. TX_backup-funding makes it on-chain).
+It appears to be pretty close to the ideal solution in terms of privacy and
+security.
+If the malicious initiator learns an output they will always have to spend
+one of their inputs otherwise they will quickly get hit by the TX_temp +
+TX_backup-funding.
+Note that it is possible the node is just slow in which case even if step
+TX_backup-funding makes it in both parties should just carry on with the
+channel.
+
+The downsides are that it involves six rounds of communication and cannot
+use the &quot;interactive tx building&quot; protocol developed for the original
+proposal
+
+# Signaling Transactions
+
+Finally I present a simple but unintuitive protocol that achieves roughly
+the same properties as the PoDLE protocol but without lightning gossip
+messages.
+
+Whenever the initiator adds an input in the interactive tx building they
+provide signatures on a &quot;signaling&quot; transaction spending that input (and
+any inputs they have added so far).
+The signaling transactions will typically spend the funds back to the
+initiator's wallet.
+Before revealing any of their inputs, the peer checks that none of the
+inputs added by the initiator are in their mempool/chain.
+If the initiator aborts the protocol after learning one of the peer's
+inputs the peer broadcasts one of the signaling transactions.
+
+Like the PoDLE proposal this doesn't achieve (3) since a malicious peer
+could broadcast the signaling transaction making the honest initiator pay a
+transaction fee before using the input in another session.
+To mitigate this a bit, the transactions could be RBF and have a 1
+sat-per-byte feerate to give the initiator a decent amount of time to use
+their input productively before the tx confirms (and paying a low fee if it
+ever does confirm).
+
+The advantages of signaling transactions over PoDLE is that it doesn't
+involve any wonky crypto or new gossip messages.
+The advantage of the PoDLE proposal over this is that a malicious peer can
+only blacklist the UTXO (not necessarily force you to spend it).
+
+# Summary
+
+The preference of protocol depends on how you weigh the importance of a
+malicious non-initiating peer griefing the initiator.
+To protect fully, the extended version of Darosior's protocol does not
+allow griefing.
+There is always a lot to be said for ruling out a class of attack even if
+it costs you a few rounds of communication.
+
+Is griefing a real concern though? Layer-2 is full of opportunities to
+grief your counterparty and the ones presented here are hardly the worst.
+If you're opening channels with someone who wants to grief you, you are
+already in trouble.
+PoDLEs have very weak griefing in the form of unfairly adding your UTXO to
+the blacklist but comes at the cost of complexity and a few difficult to
+answer questions.
+I think the simplicity of signaling transactions may be worth the extra
+griefing capabilities it offers a malicious peer given they are hardly as
+bad as the griefing capabilities they will have if you open a channel to
+them!
+
+Cheers,
+
+LL
+
+[1] <A HREF="https://github.com/niftynei/lightning-rfc/pull/1">https://github.com/niftynei/lightning-rfc/pull/1</A>
+&lt;<A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/524">https://github.com/lightningnetwork/lightning-rfc/pull/524</A>&gt;
+[2] <A HREF="https://github.com/discreetlogcontracts/dlcspecs/pull/114">https://github.com/discreetlogcontracts/dlcspecs/pull/114</A>
+[3]
+<A HREF="../2020-February/002516.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/002516.html</A>
+[4]
+<A HREF="../2020-January/002466.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/002466.html</A>
+[5]
+<A HREF="https://bitcoinops.org/en/newsletters/2020/02/05/#interactive-construction-of-ln-funding-transactions">https://bitcoinops.org/en/newsletters/2020/02/05/#interactive-construction-of-ln-funding-transactions</A>
+[6]
+<A HREF="../2020-January/002475.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/002475.html</A>
+[7]
+<A HREF="../2020-February/002522.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/002522.html</A>
+[8] <A HREF="https://joinmarket.me/blog/blog/poodle/">https://joinmarket.me/blog/blog/poodle/</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210104/08adc787/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210104/08adc787/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="002930.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2929">[ date ]</a>
+              <a href="thread.html#2929">[ thread ]</a>
+              <a href="subject.html#2929">[ subject ]</a>
+              <a href="author.html#2929">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

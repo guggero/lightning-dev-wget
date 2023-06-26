@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Potential vulnerability in Lightning backends: BOLT-11 &quot;payment hash&quot; does not commit to payment!
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Potential%20vulnerability%20in%20Lightning%20backends%3A%0A%20BOLT-11%20%22payment%20hash%22%20does%20not%20commit%20to%20payment%21&In-Reply-To=%3CCALZpt%2BF88DZw8F0YKck2LdG%3DNBLusg7xxFyd7PSaD1fMaPWvjQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003983.html">
+   <LINK REL="Next"  HREF="003994.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Potential vulnerability in Lightning backends: BOLT-11 &quot;payment hash&quot; does not commit to payment!</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Potential%20vulnerability%20in%20Lightning%20backends%3A%0A%20BOLT-11%20%22payment%20hash%22%20does%20not%20commit%20to%20payment%21&In-Reply-To=%3CCALZpt%2BF88DZw8F0YKck2LdG%3DNBLusg7xxFyd7PSaD1fMaPWvjQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Potential vulnerability in Lightning backends: BOLT-11 &quot;payment hash&quot; does not commit to payment!">antoine.riard at gmail.com
+       </A><BR>
+    <I>Mon Jun 19 20:34:10 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003983.html">[Lightning-dev] Potential vulnerability in Lightning backends:	BOLT-11 &quot;payment hash&quot; does not commit to payment!
+</A></li>
+        <LI>Next message: <A HREF="003994.html">[Lightning-dev] LN Summit 2024 Organization
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3986">[ date ]</a>
+              <a href="thread.html#3986">[ thread ]</a>
+              <a href="subject.html#3986">[ subject ]</a>
+              <a href="author.html#3986">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi calle,
+
+Thanks for the report.
+
+&gt;<i>From my understanding of what you're describing, the attack is possible
+</I>because LNBits backend does not check that an external received HTLC
+`amount_msat` satisfies the invoice amount for both matching preimage and
+payment secret. This sounds plausible to me.
+
+If you're a custodial wallet, payment processor or account management
+software based on LDK, and you respect the API recommendations of using
+`create_inbound_payment`, you should not be affected as amount equivalence
+checks are handled by the implementation:
+<A HREF="https://github.com/lightningdevkit/rust-lightning/blob/c3c105075aeb8128699e043f777b4c89c452e54d/lightning/src/ln/channelmanager.rs#L4469">https://github.com/lightningdevkit/rust-lightning/blob/c3c105075aeb8128699e043f777b4c89c452e54d/lightning/src/ln/channelmanager.rs#L4469</A>
+
+The &quot;checking ids&quot; sounds a workable mitigation to firewall internal
+invoice state from external ones, though beware issues with id collision,
+if it can be determined by the attacker.
+
+Potential safety issues with invoices have been known since CVE-2020-26896.
+
+Good disclosure security practice suggests having previously warned the
+Lightning implementation maintainers on their respective security
+communication channels to ease patch coordination if needed with
+second-line vendors like wallets and processors.
+
+Best,
+Antoine
+
+Le lun. 19 juin 2023 &#224; 17:19, callebtc via Lightning-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i> Dear list,
+</I>&gt;<i>
+</I>&gt;<i> earlier last month, our team at LNbits discovered a rather interesting
+</I>&gt;<i> exploit which wich would enable an attacker to create balances out of thin
+</I>&gt;<i> air by abusing a quirk in how invoices are handled internally. We've
+</I>&gt;<i> patched this in LNbits version 0.10.5 and urge anyone to update ASAP if you
+</I>&gt;<i> haven't done so already. I want to describe the attack here, since my gut
+</I>&gt;<i> feeling is that carrying out the same exploit is possible in other
+</I>&gt;<i> Lightning applications. If you're working on custodial wallets, payment
+</I>&gt;<i> processors, account management software, etc. you probably want to read
+</I>&gt;<i> this.
+</I>&gt;<i>
+</I>&gt;<i> In short, the attacker was able to insert a bolt-11 payment hash of
+</I>&gt;<i> payment A into a different payment, creating a malicious invoice B that can
+</I>&gt;<i> trick the backend into believing that B == A.
+</I>&gt;<i>
+</I>&gt;<i> Here is how it goes:
+</I>&gt;<i>
+</I>&gt;<i> - Attacker creates invoice A of amount 1000 sat in LNbits
+</I>&gt;<i> - Attacker creates invoice B' of amount 1 sat on her own node
+</I>&gt;<i> - Attacker deserializes B', inserts payment_hash(A) into payment_hash(B),
+</I>&gt;<i> re-signs the invoice, and serializes it again, producing malicious invoice B
+</I>&gt;<i> - Attacker creates a new account in LNbits and pays B
+</I>&gt;<i>
+</I>&gt;<i> - LNbits backend uses payment_hash(B) to check whether this is an internal
+</I>&gt;<i> payment or a payment via LN
+</I>&gt;<i> - Backend finds A in its database since we implicitly assume that
+</I>&gt;<i> payment_hash(A) commits to A
+</I>&gt;<i>
+</I>&gt;<i> ** This is the critical part! Payment hashes do *NOT* commit to any
+</I>&gt;<i> payment details (like amount) but only to the preimage! **
+</I>&gt;<i>
+</I>&gt;<i> - Backend settles payment internally by crediting A debiting B
+</I>&gt;<i> - Attacker has &quot;created&quot; 999 sats
+</I>&gt;<i>
+</I>&gt;<i> Mitigation:
+</I>&gt;<i>
+</I>&gt;<i> The mitigation is quite simple. Backends should either use self-generated
+</I>&gt;<i> unique &quot;checking id's&quot; for looking up internal payments or use additional
+</I>&gt;<i> checks to make sure that the invoice details have not been messed around
+</I>&gt;<i> with (e.g., asserting amount(A) == amount(B)).
+</I>&gt;<i>
+</I>&gt;<i> Lessons:
+</I>&gt;<i>
+</I>&gt;<i> I think there are two lessons here. First, it's good to realize the level
+</I>&gt;<i> of sophistication of LN-savvy attackers. This attack clearly involves a
+</I>&gt;<i> fundamental understanding of bolt-11 and requires custom tooling to produce
+</I>&gt;<i> the malicious invoice.
+</I>&gt;<i>
+</I>&gt;<i> The second lesson is more valuable: The &quot;payment hash&quot; of an invoice is
+</I>&gt;<i> not a &quot;payment&quot; hash but merely a &quot;preimage&quot; hash &#8211; and nothing else.
+</I>&gt;<i> Naming this field as such increases the chance of developers implicitly
+</I>&gt;<i> assuming that the hash commits to payment details like amount, pubkey, etc.
+</I>&gt;<i> I will from now on call this simply the &quot;preimage hash&quot; and invite you to
+</I>&gt;<i> do so too.
+</I>&gt;<i>
+</I>&gt;<i> Best
+</I>&gt;<i>
+</I>&gt;<i> Calle
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230619/51635592/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230619/51635592/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003983.html">[Lightning-dev] Potential vulnerability in Lightning backends:	BOLT-11 &quot;payment hash&quot; does not commit to payment!
+</A></li>
+	<LI>Next message: <A HREF="003994.html">[Lightning-dev] LN Summit 2024 Organization
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3986">[ date ]</a>
+              <a href="thread.html#3986">[ thread ]</a>
+              <a href="subject.html#3986">[ subject ]</a>
+              <a href="author.html#3986">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

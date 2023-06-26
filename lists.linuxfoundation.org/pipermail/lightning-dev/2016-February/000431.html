@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Protocol for multiple in-flight updates.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Protocol%20for%20multiple%20in-flight%20updates.&In-Reply-To=%3C87io249du1.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000429.html">
+   <LINK REL="Next"  HREF="000430.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Protocol for multiple in-flight updates.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Protocol%20for%20multiple%20in-flight%20updates.&In-Reply-To=%3C87io249du1.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Protocol for multiple in-flight updates.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Feb  5 00:54:14 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000429.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+        <LI>Next message: <A HREF="000430.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#431">[ date ]</a>
+              <a href="thread.html#431">[ thread ]</a>
+              <a href="subject.html#431">[ subject ]</a>
+              <a href="author.html#431">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>OK, so this is based on my understanding of what Joseph's protocol will
+look like when done, from here and perusing the lnd source.  See
+proposals if this is all simply revision; it's mainly to document my
+understanding.
+
+Each HTLC has one of these states:
+
+	ADD_PRESTAGE
+	ADD_STAGED
+	ADD_SIGNING_AND_REVOKING
+	ADD_COMPLETE
+	ADD_REJECTED
+
+	TIMEOUT_PRESTAGE
+	TIMEOUT_STAGED
+	TIMEOUT_SIGNING_AND_REVOKING
+	TIMEOUT_COMPLETE
+
+	SETTLE_PRESTAGE
+	SETTLE_STAGED
+	SETTLE_SIGNING_AND_REVOKING
+	SETTLE_COMPLETE
+
+Each side starts with a commit tx with 0 HTLCs.  HTLCs are numbered
+using a counter, but these numbers explicitly sent on the wire.
+Proposed changes are processed in order.
+
+Adding An HTLC
+--------------
+A: HTLC = ADD_PRESTAGE.  Send &quot;add request { htlc details }&quot;.
+B: Receive &quot;add request&quot;.
+   (If reject, reply and forget HTLC, we'll ignore this)
+   If accept, HTLC = ADD_STAGED (since both sides know it), send &quot;accept&quot;
+A: Receive &quot;accept&quot;.  HTLC = ADD_STAGED.
+
+Removing An HTLC
+----------------
+There's timeout and there's settle; the only difference is settle
+requires the R value.
+
+A: HTLC must be in ADD_COMPLETE state.  HTLC = SETTLE/TIMEOUT_PRESTAGE.
+   Send &quot;settle/timeout request { htlc id [r value] }&quot;.
+B: Receive &quot;request&quot;.  Check r value for settle, time for timeout.
+   HTLC = SETTLE/TIMEOUT_STAGED (since both sides know it), send &quot;accept&quot;
+A: Receive &quot;accept&quot;.  HTLC = ADD_STAGED.
+
+Committing
+----------
+Both sides can do this.  I can't figure out how the HTLC states work
+here, since we might have sent the signature, but not received theirs.
+Should there be a separate SIG_SENT and SIG_RECEIVED states?  
+
+A: Move HTLCs all *_STAGED htlcs to *_SIGNING_AND_REVOKING, then
+   generate their commit tx using all the ADD_COMPLETE and
+   ADD_SIGNING_AND_REVOKING htlcs.  Sign it, and send
+   &quot;commit { staged-htlcs; sig }&quot;
+B: Receive commit, generate our commit tx using all the ADD_COMPLETE,
+   and any TIMEOUT_PRESTAGE or SETTLE_PRESTAGE which are not listed
+   in staged-htlcs.  Check their signature is valid for this.
+   [FIXME: Does B update states here?]
+   Send &quot;commit revocation { old-revocation-preimage }&quot; for
+   the previous commit tx.
+A: Receive commit revocation, move all the HTLCs we moved in
+   step 1 above from *_SIGNING_AND_REVOKING to *_COMPLETE.
+   (If we never create two commits in-flight at once, this is simply
+   every *_SIGNING_AND_REVOKING htlc).
+
+Proposals
+=========
+
+There's no reason to &quot;accept&quot; anything except an add request.  Thus the
+states SETTLE_PRESTAGE and TIMEOUT_PRESTAGE are redundant.
+
+There are also other failures (ie. upstream node rejected).  This
+suggests a FAIL messages, perhaps with a reason message (which might be
+encrypted back to the payer).
+
+C-lightning only allows closes be sent from the HTLC recipient.  I
+thought that would be simpler but it doesn't make any real difference
+(it only applies to TIMEOUT; FAIL and SETTLE have to come from recipient
+anyway).  I would defined TIMEOUT to be the responsibility of the HTLC
+proposer.
+
+In order to reduce latency, we want to be able to start staging an HTLC
+on the outgoing channel before it's committed on the incoming one.  But
+this means an HTLC recipient can't commit to the HTLC until the HTLC
+sender does.
+
+This has a few implications:
+1) We need a new &quot;unstage request&quot; to unstage if the incoming HTLC fails
+   to complete in reasonable time.  This requires no accept response.
+2) We don't need to commit to adds and removes in order wrt each other;
+   a commit message always commits to:
+        - All HTLCs proposed and commited by the other side, and
+        - All removes staged by the other side up to some counter, and
+        - All HTLCs proposed by this side up to some counter, and
+        - All removes sent by this side.
+3) This implies we should count htlcs and remove requests separately;
+   the htlc count could also serve as an HTLC ID which makes timeout/fail/abort
+   messages shorter than using R hashes.
+
+Oh, and it should be illegal to send a noop commit (ie. one which
+doesn't change the commit tx).
+
+That's enough email for now!
+Rusty.
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000429.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+	<LI>Next message: <A HREF="000430.html">[Lightning-dev] Protocol for multiple in-flight updates.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#431">[ date ]</a>
+              <a href="thread.html#431">[ thread ]</a>
+              <a href="subject.html#431">[ subject ]</a>
+              <a href="author.html#431">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

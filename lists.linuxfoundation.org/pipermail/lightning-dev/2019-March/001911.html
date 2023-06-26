@@ -1,0 +1,458 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] option_static_remotekey
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20option_static_remotekey&In-Reply-To=%3C87y35h3tbd.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001909.html">
+   <LINK REL="Next"  HREF="001912.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] option_static_remotekey</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20option_static_remotekey&In-Reply-To=%3C87y35h3tbd.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [RFC] option_static_remotekey">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu Mar 14 23:55:02 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001909.html">[Lightning-dev] Fee structure
+</A></li>
+        <LI>Next message: <A HREF="001912.html">[Lightning-dev] Potential Privacy issue with dual funded channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1911">[ date ]</a>
+              <a href="thread.html#1911">[ thread ]</a>
+              <a href="subject.html#1911">[ subject ]</a>
+              <a href="author.html#1911">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all!
+
+        Roasbeef suggested we split up option_simplified_commitment,
+since it is fairly ambitious.  In particular, he wanted the static
+remote_key feature ASAP, and Christian agreed.
+
+I chose to add the fairly trivial symmetric output to this, as it
+affects the same output, and resolves the gaming around &quot;no, you close
+please, no you close&quot;...
+
+No PR yet, but you can see it here:
+
+        <A HREF="https://github.com/rustyrussell/lightning-rfc/commit/c5adc5ae19b29b0d8947a9d3acf181134e7dc352">https://github.com/rustyrussell/lightning-rfc/commit/c5adc5ae19b29b0d8947a9d3acf181134e7dc352</A>
+
+And pasted below for inline commentry:
+
+commit c5adc5ae19b29b0d8947a9d3acf181134e7dc352
+Author: Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+Date:   Fri Mar 15 10:02:28 2019 +1030
+
+    option_static_remotekey: first draft.
+    
+    This separates out the symmetric CTLV and static remotekey changes
+    from the more ambitious option_simplified_commitment (which also
+    included pushme outputs and bring-your-own-fee for HTLC outputs).
+    
+    This is a much simpler stepping stone, and resolves one immediate
+    problem.
+    
+    Suggested-by: @roasbeef
+    Signed-off-by: Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+
+diff --git a/.aspell.en.pws b/.aspell.en.pws
+index b1a1ad3..20664f2 100644
+--- a/.aspell.en.pws
++++ b/.aspell.en.pws
+@@ -330,3 +330,4 @@ zlib
+ ZLIB
+ APIs
+ duplicative
++remotekey
+diff --git a/02-peer-protocol.md b/02-peer-protocol.md
+index e377f3f..d6fc760 100644
+--- a/02-peer-protocol.md
++++ b/02-peer-protocol.md
+@@ -356,6 +356,12 @@ This message introduces the `channel_id` to identify the channel. It's derived f
+ 
+ #### Requirements
+ 
++Both peers:
++  - if `option_static_remotekey` was negotiated:
++    - `option_static_remotekey` applies to all commitment transactions
++  - otherwise:
++    - `option_static_remotekey` does not apply to any commitment transactions
++
+ The sender MUST set:
+   - `channel_id` by exclusive-OR of the `funding_txid` and the `funding_output_index` from the `funding_created` message.
+   - `signature` to the valid signature, using its `funding_pubkey` for the initial commitment transaction, as defined in [BOLT #3](03-transactions.md#commitment-transaction).
+@@ -367,6 +373,12 @@ The recipient:
+   - on receipt of a valid `funding_signed`:
+     - SHOULD broadcast the funding transaction.
+ 
++#### Rationale
++
++We decide on `option_static_remotekey` at this point when we first have to generate the commitment
++transaction.  Even if a later reconnection does not negotiate this parameter, this channel will honor it.
++This simplifies channel state, particularly penalty transaction handling.
++
+ ### The `funding_locked` Message
+ 
+ This message indicates that the funding transaction has reached the `minimum_depth` asked for in `accept_channel`. Once both nodes have sent this, the channel enters normal operating mode.
+@@ -1107,7 +1119,7 @@ messages are), they are independent of requirements here.
+    * [`32`:`channel_id`]
+    * [`8`:`next_local_commitment_number`]
+    * [`8`:`next_remote_revocation_number`]
+-   * [`32`:`your_last_per_commitment_secret`] (option_data_loss_protect)
++   * [`32`:`your_last_per_commitment_secret`] (option_data_loss_protect option_static_remotekey)
+    * [`33`:`my_current_per_commitment_point`] (option_data_loss_protect)
+ 
+ `next_local_commitment_number`: A commitment number is a 48-bit
+@@ -1156,12 +1168,14 @@ The sending node:
+   next `commitment_signed` it expects to receive.
+   - MUST set `next_remote_revocation_number` to the commitment number of the
+   next `revoke_and_ack` message it expects to receive.
+-  - if it supports `option_data_loss_protect`:
++  - if it supports `option_data_loss_protect` or `option_static_remotekey`:
+     - if `next_remote_revocation_number` equals 0:
+       - MUST set `your_last_per_commitment_secret` to all zeroes
+     - otherwise:
+       - MUST set `your_last_per_commitment_secret` to the last `per_commitment_secret`
+     it received
++  - if `option_static_remotekey`` applies to the commitment transaction:
++	- MUST NOT include `my_current_per_commitment_point`.
+ 
+ A node:
+   - if `next_local_commitment_number` is 1 in both the `channel_reestablish` it
+@@ -1195,8 +1209,17 @@ A node:
+       - SHOULD fail the channel.
+ 
+  A receiving node:
+-  - if it supports `option_data_loss_protect`, AND the `option_data_loss_protect`
+-  fields are present:
++  - if `option_static_remotekey` applies to the commitment transaction:
++    - if `next_remote_revocation_number` is greater than expected above, AND
++    `your_last_per_commitment_secret` is correct for that
++    `next_remote_revocation_number` minus 1:
++      - MUST NOT broadcast its commitment transaction.
++      - SHOULD fail the channel.
++    - otherwise:
++	  - if `your_last_per_commitment_secret` does not match the expected values:
++        - SHOULD fail the channel.
++  - otherwise, if it supports `option_data_loss_protect`, AND the `option_data_loss_protect`
++    fields are present:
+     - if `next_remote_revocation_number` is greater than expected above, AND
+     `your_last_per_commitment_secret` is correct for that
+     `next_remote_revocation_number` minus 1:
+@@ -1288,6 +1311,13 @@ is valid. However, this also means the fallen-behind node has revealed this
+ fact (though not provably: it could be lying), and the other node could use this to
+ broadcast a previous state.
+ 
++`option_static_remotekey` removes the changing `to_remote` key,
++so the `my_current_per_commitment_point` is unnecessary and thus
++removed, but the disclosure of previous secret still allows
++fall-behind detection.  An implementation can offer both, however, and
++fall back to the `option_data_loss_protect` behavior if
++`option_simplified_commitment` is not negotiated.
++
+ # Authors
+ 
+ [ FIXME: Insert Author List ]
+diff --git a/03-transactions.md b/03-transactions.md
+index 087b673..9ff2b05 100644
+--- a/03-transactions.md
++++ b/03-transactions.md
+@@ -90,6 +90,8 @@ To allow an opportunity for penalty transactions, in case of a revoked commitmen
+ The reason for the separate transaction stage for HTLC outputs is so that HTLCs can timeout or be fulfilled even though they are within the `to_self_delay` delay.
+ Otherwise, the required minimum timeout on HTLCs is lengthened by this delay, causing longer timeouts for HTLCs traversing the network.
+ 
++If `option_static_remotekey` applies to the commitment transaction, then the `to_self_delay` used for all transactions is the greater of the `to_self_delay` sent by each peer.  Otherwise, each peer sends the `to_self_delay` to be used for the other peer's commitment and HTLC transactions.
++
+ The amounts for each output MUST be rounded down to whole satoshis. If this amount, minus the fees for the HTLC transaction, is less than the `dust_limit_satoshis` set by the owner of the commitment transaction, the output MUST NOT be produced (thus the funds add to fees).
+ 
+ #### `to_local` Output
+@@ -117,7 +119,22 @@ If a revoked commitment transaction is published, the other party can spend this
+ 
+ #### `to_remote` Output
+ 
+-This output sends funds to the other peer and thus is a simple P2WPKH to `remotepubkey`.
++This output sends funds to the other peer, thus is not encumbered by a
++revocation private key.
++
++If `option_static_remotekey` applies to the commitment transaction, the `to_remote` output is delayed similarly to the `to_local` output, and is to a fixed key:
++
++    `to_self_delay`
++    OP_CSV
++    OP_DROP
++    &lt;remote_pubkey&gt;
++    OP_CHECKSIG
++
++The output is spent by a transaction with `nSequence` field set to `to_self_delay` (which can only be valid after that duration has passed) and witness:
++
++    &lt;remote_sig&gt;
++
++Otherwise, this output is a simple P2WPKH to `remotepubkey`.
+ 
+ #### Offered HTLC Outputs
+ 
+@@ -316,7 +333,8 @@ Thus, a simplified formula for *expected weight* is used, which assumes:
+ 
+ This yields the following *expected weights* (details of the computation in [Appendix A](#appendix-a-expected-weights)):
+ 
+-    Commitment weight:   724 + 172 * num-untrimmed-htlc-outputs
++    Commitment weight (no option_static_remotekey): 724 + 172 * num-untrimmed-htlc-outputs
++    Commitment weight (option_static_remotekey: 772 + 172 * num-untrimmed-htlc-outputs
+     HTLC-timeout weight: 663
+     HTLC-success weight: 703
+ 
+@@ -334,14 +352,14 @@ The fee for an HTLC-success transaction:
+ 
+ The base fee for a commitment transaction:
+   - MUST be calculated to match:
+-    1. Start with `weight` = 724.
++    1. Start with `weight` = 772 (`option_static_remotekey`) or 724.
+     2. For each committed HTLC, if that output is not trimmed as specified in
+     [Trimmed Outputs](#trimmed-outputs), add 172 to `weight`.
+     3. Multiply `feerate_per_kw` by `weight`, divide by 1000 (rounding down).
+ 
+ #### Example
+ 
+-For example, suppose there is a `feerate_per_kw` of 5000, a `dust_limit_satoshis` of 546 satoshis, and a commitment transaction with:
++For example, suppose `option_static_remotekey` was not negotiated, and there is a `feerate_per_kw` of 5000, a `dust_limit_satoshis` of 546 satoshis, and a commitment transaction with:
+ * two offered HTLCs of 5000000 and 1000000 millisatoshis (5000 and 1000 satoshis)
+ * two received HTLCs of 7000000 and 800000 millisatoshis (7000 and 800 satoshis)
+ 
+@@ -371,9 +389,12 @@ fee (which adds the 1000 and 800 satoshi HTLCs that would make dust
+ outputs) is 7140 satoshi. The final fee may be even higher if the
+ `to_local` or `to_remote` outputs fall below `dust_limit_satoshis`.
+ 
++(If `option_static_remotekey` was negotiated, the weight would be 1116,
++ and the fee would be 5580 satoshis).
++
+ ### Fee Payment
+ 
+-Base commitment transaction fees are extracted from the funder's amount; if that amount is insufficient, the entire amount of the funder's output is used.
++Base commitment transaction fees and amounts for `to_local_pushme` and `to_remote_pushme` outputs are extracted from the funder's amount; if that amount is insufficient, the entire amount of the funder's output is used.
+ 
+ Note that after the fee amount is subtracted from the to-funder output,
+ that output may be below `dust_limit_satoshis`, and thus will also
+@@ -411,9 +432,9 @@ committed HTLCs:
+ 
+ ## Key Derivation
+ 
+-Each commitment transaction uses a unique set of keys: `localpubkey` and `remotepubkey`.
++Each commitment transaction uses a unique `localpubkey`, and a `remotepubkey`.
+ The HTLC-success and HTLC-timeout transactions use `local_delayedpubkey` and `revocationpubkey`.
+-These are changed for every transaction based on the `per_commitment_point`.
++These are changed for every transaction based on the `per_commitment_point`, with the exception of `remotepubkey` if `option_static_remotekey` is negotiated.
+ 
+ The reason for key change is so that trustless watching for revoked
+ transactions can be outsourced. Such a _watcher_ should not be able to
+@@ -426,8 +447,9 @@ avoid storage of every commitment transaction, a _watcher_ can be given the
+ the scripts required for the penalty transaction; thus, a _watcher_ need only be
+ given (and store) the signatures for each penalty input.
+ 
+-Changing the `localpubkey` and `remotepubkey` every time ensures that commitment
+-transaction ID cannot be guessed; every commitment transaction uses an ID
++Changing the `localpubkey` every time ensures that commitment
++transaction ID cannot be guessed except in the trivial case where there is no
++`to_local` output, as every commitment transaction uses an ID
+ in its output script. Splitting the `local_delayedpubkey`, which is required for
+ the penalty transaction, allows it to be shared with the _watcher_ without
+ revealing `localpubkey`; even if both peers use the same _watcher_, nothing is revealed.
+@@ -441,14 +463,13 @@ For efficiency, keys are generated from a series of per-commitment secrets
+ that are generated from a single seed, which allows the receiver to compactly
+ store them (see [below](#efficient-per-commitment-secret-storage)).
+ 
+-### `localpubkey`, `remotepubkey`, `local_htlcpubkey`, `remote_htlcpubkey`, `local_delayedpubkey`, and `remote_delayedpubkey` Derivation
++### `localpubkey`, `local_htlcpubkey`, `remote_htlcpubkey`, `local_delayedpubkey`, and `remote_delayedpubkey` Derivation
+ 
+ These pubkeys are simply generated by addition from their base points:
+ 
+ 	pubkey = basepoint + SHA256(per_commitment_point || basepoint) * G
+ 
+ The `localpubkey` uses the local node's `payment_basepoint`;
+-the `remotepubkey` uses the remote node's `payment_basepoint`;
+ the `local_htlcpubkey` uses the local node's `htlc_basepoint`;
+ the `remote_htlcpubkey` uses the remote node's `htlc_basepoint`;
+ the `local_delayedpubkey` uses the local node's `delayed_payment_basepoint`;
+@@ -459,6 +480,19 @@ secrets are known (i.e. the private keys corresponding to `localpubkey`, `local_
+ 
+     privkey = basepoint_secret + SHA256(per_commitment_point || basepoint)
+ 
++### `remotepubkey` Derivation
++
++If `option_static_remotekey` is negotiated the `remotepubkey` is simply the
++remote node's `payment_basepoint`, otherwise it is calculated as above using
++the remote node's `payment_basepoint`.
++
++The simplified derivation means that a node can spend a commitment
++transaction even if it has lost data and doesn't know the
++corresponding `payment_basepoint`.  A watchtower could correlate
++transactions given to it which only have a `to_remote` output if it
++sees one of them onchain, but such transactions do not need any
++enforcement and should not be handed to a watchtower.
++
+ ### `revocationpubkey` Derivation
+ 
+ The `revocationpubkey` is a blinded key: when the local node wishes to create a new
+@@ -644,12 +678,17 @@ The *expected weight* of a commitment transaction is calculated as follows:
+ 		- var_int: 1 byte (pk_script length)
+ 		- pk_script (p2wsh): 34 bytes
+ 
+-	output_paying_to_remote: 31 bytes
++	output_paying_to_remote (no option_static_remotekey): 31 bytes
+ 		- value: 8 bytes
+ 		- var_int: 1 byte (pk_script length)
+ 		- pk_script (p2wpkh): 22 bytes
+ 
+-	 htlc_output: 43 bytes
++	output_paying_to_remote (option_static_remotekey): 43 bytes
++		- value: 8 bytes
++		- var_int: 1 byte (pk_script length)
++		- pk_script (p2wsh): 34 bytes
++
++	htlc_output: 43 bytes
+ 		- value: 8 bytes
+ 		- var_int: 1 byte (pk_script length)
+ 		- pk_script (p2wsh): 34 bytes
+@@ -658,7 +697,7 @@ The *expected weight* of a commitment transaction is calculated as follows:
+ 		- flag: 1 byte
+ 		- marker: 1 byte
+ 
+-	 commitment_transaction: 125 + 43 * num-htlc-outputs bytes
++	 commitment_transaction (no option_static_remotekey): 125 + 43 * num-htlc-outputs bytes
+ 		- version: 4 bytes
+ 		- witness_header &lt;---- part of the witness data
+ 		- count_tx_in: 1 byte
+@@ -671,15 +710,30 @@ The *expected weight* of a commitment transaction is calculated as follows:
+ 			....htlc_output's...
+ 		- lock_time: 4 bytes
+ 
++	 commitment_transaction (option_static_remotekey): 137 + 43 * num-htlc-outputs bytes
++		- version: 4 bytes
++		- witness_header &lt;---- part of the witness data
++		- count_tx_in: 1 byte
++		- tx_in: 41 bytes
++			funding_input
++		- count_tx_out: 1 byte
++		- tx_out: 86 + 43 * num-htlc-outputs bytes
++			output_paying_to_remote,
++			output_paying_to_local,
++			....htlc_output's...
++		- lock_time: 4 bytes
++
+ Multiplying non-witness data by 4 results in a weight of:
+ 
+-	// 500 + 172 * num-htlc-outputs weight
++	// 500 + 172 * num-htlc-outputs weight (no option_static_remotekey)
++	// 548 + 172 * num-htlc-outputs weight (option_static_remotekey)
+ 	commitment_transaction_weight = 4 * commitment_transaction
+ 
+ 	// 224 weight
+ 	witness_weight = witness_header + witness
+ 
+-	overall_weight = 500 + 172 * num-htlc-outputs + 224 weight
++	overall_weight (no option_static_remotekey) = 500 + 172 * num-htlc-outputs + 224 weight
++	overall_weight (option_static_remotekey) = 548 + 172 * num-htlc-outputs + 224 weight
+ 
+ ## Expected Weight of HTLC-timeout and HTLC-success Transactions
+ 
+diff --git a/05-onchain.md b/05-onchain.md
+index bed7d45..a454d05 100644
+--- a/05-onchain.md
++++ b/05-onchain.md
+@@ -89,21 +89,25 @@ trigger any action.
+ # Commitment Transaction
+ 
+ The local and remote nodes each hold a *commitment transaction*. Each of these
+-commitment transactions has four types of outputs:
++commitment transactions has six types of outputs:
+ 
+ 1. _local node's main output_: Zero or one output, to pay to the *local node's*
+-commitment pubkey.
++delayed pubkey.
+ 2. _remote node's main output_: Zero or one output, to pay to the *remote node's*
+-commitment pubkey.
++pubkey.
+ 3. _local node's offered HTLCs_: Zero or more pending payments (*HTLCs*), to pay
+ the *remote node* in return for a payment preimage.
+ 4. _remote node's offered HTLCs_: Zero or more pending payments (*HTLCs*), to
+ pay the *local node* in return for a payment preimage.
+ 
+ To incentivize the local and remote nodes to cooperate, an `OP_CHECKSEQUENCEVERIFY`
+-relative timeout encumbers the *local node's outputs* (in the *local node's
++relative timeout encumbers some outputs: the *local node's outputs* (in the *local node's
+ commitment transaction*) and the *remote node's outputs* (in the *remote node's
+-commitment transaction*). So for example, if the local node publishes its
++commitment transaction*). If `option_static_remotekey` applies
++to the commitment transaction, then the *to_remote* output of each commitment is
++identically encumbered, for fairness.
++
++Without `option_static_remotekey`, if the local node publishes its
+ commitment transaction, it will have to wait to claim its own funds,
+ whereas the remote node will have immediate access to its own funds. As a
+ consequence, the two commitment transactions are not identical, but they are
+diff --git a/09-features.md b/09-features.md
+index d06fcff..5e62127 100644
+--- a/09-features.md
++++ b/09-features.md
+@@ -26,6 +26,7 @@ These flags may only be used in the `init` message:
+ | 3  | `initial_routing_sync` | Indicates that the sending node needs a complete routing information dump | [BOLT #7](07-routing-gossip.md#initial-sync) |
+ | 4/5  | `option_upfront_shutdown_script` | Commits to a shutdown scriptpubkey when opening channel | [BOLT #2](02-peer-protocol.md#the-open_channel-message) |
+ | 6/7  | `gossip_queries`           | More sophisticated gossip control | [BOLT #7](07-routing-gossip.md#query-messages) |
++| 38/39| `option_static_remotekey`   | Static key for remote output, symmetric delays | [BOLT #3](03-transactions.md) |
+ 
+ ## Assigned `globalfeatures` flags
+ 
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001909.html">[Lightning-dev] Fee structure
+</A></li>
+	<LI>Next message: <A HREF="001912.html">[Lightning-dev] Potential Privacy issue with dual funded channels
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1911">[ date ]</a>
+              <a href="thread.html#1911">[ thread ]</a>
+              <a href="subject.html#1911">[ subject ]</a>
+              <a href="author.html#1911">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

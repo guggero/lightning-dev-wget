@@ -1,0 +1,95 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Thoughts on Improving MPP
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20Improving%20MPP&In-Reply-To=%3CTjfkkdzcJKDE9dMrzHeTpAYDE_8gMU1VaZ-ZJX6zY1YKRYLJaBm_tAc5nq9731eo-VBy94NyB4FbuLjcY0k_GMYbgXWGOVszyu3anv91nD0%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002775.html">
+   <LINK REL="Next"  HREF="002777.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Thoughts on Improving MPP</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Thoughts%20on%20Improving%20MPP&In-Reply-To=%3CTjfkkdzcJKDE9dMrzHeTpAYDE_8gMU1VaZ-ZJX6zY1YKRYLJaBm_tAc5nq9731eo-VBy94NyB4FbuLjcY0k_GMYbgXWGOVszyu3anv91nD0%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Thoughts on Improving MPP">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Aug 12 18:20:13 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002775.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+        <LI>Next message: <A HREF="002777.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2776">[ date ]</a>
+              <a href="thread.html#2776">[ thread ]</a>
+              <a href="subject.html#2776">[ subject ]</a>
+              <a href="author.html#2776">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Lightning world,
+
+A minor report from the MPP trenches.
+
+One of the resources that the C-Lightning MPP implementation is hitting is the limit on the number of HTLCs a channel can have.
+
+For the 0.9.0 release, the initial consideration was that we can count the number of channels with outgoing capacity, and from there derive a number of HTLCs that the payer can afford to put on the network.
+Very roughly speaking, for every channel with outgoing capacity, we allocate 10 HTLCs.
+This is the &quot;limit&quot; on our connectivity to the network: adding more HTLCs beyond this risks overloading our local connectivity and we would be unable to get good capacity.
+
+However, we neglected to consider the *incoming number-of-HTLCs limit* of the the payee.
+I believe this is the cause of this reported issue: <A HREF="https://github.com/ElementsProject/lightning/issues/3926">https://github.com/ElementsProject/lightning/issues/3926</A>
+In the report, the payer node has 16 channels, and thus it allows up to 160 HTLCs.
+Initial splitting of the payment led to 51 starting splits, and since we do not implement re-merging of sub-payments, that number of splits can only grow.
+Yet it seems that the payee had far fewer channels than the payer, and the much higher number of splits then could not fit in the incoming channels of the payee.
+
+This is exacerbated by the use of the same failure code `temporary_channel_failure` for hitting both *msat capacity* and *number of HTLCs* limits.
+Our assumption was that any such `temporary_channel_failure` was due only to *msat capacity* being hit.
+We then annotated that channel with the smallest HTLC that failed to route through it, and do not route through that channel for sub-payments equal or larger than that size.
+This lead our code into splitting the 51 payments even further into more smaller payments, when it would have been objectively better to instead *merge* those payments (or not split up into such tiny pieces in the first place!).
+Unfortunately, the local annotations would then be poisoned --- it would think that very small payments were failing because of the *msat capacity* of the channel being ridiculously low.
+This ended up convincing the payment subsystem that it would be better to keep on splitting payments **even more**, leading to &gt;100 payments outgoing, further preventing the receiver from being able to receive (because the problem was not *msat capacity* but rather *number of HTLCs*) and further crashing ourselves into the problem.
+
+So, I think it would be reasonable:
+
+* To count the number of channels the payee has (if the receiver is not published, count the number of routehints in the invoice), and use it as well as the basis of the number of HTLCs the receiver can get, and to get the lower of this and the outgoing channels of the payer.
+
+
+Overall, the issue is probably fixable if we consider the number of channels of the payer (as C-Lightning 0.9.0 does) ***and*** also the number of channels of the payee.
+We can consider that, if we assume the rest of the public LN is well-connected, the only bottlenecks are at the payer and at the payee, and that for intermediate nodes there are a large number of alternate routes available.
+So it may be sufficient to just limit based on the smaller of the number of payer-side channels and the number of payee-side channels.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002775.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+	<LI>Next message: <A HREF="002777.html">[Lightning-dev] Thoughts on Improving MPP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2776">[ date ]</a>
+              <a href="thread.html#2776">[ thread ]</a>
+              <a href="subject.html#2776">[ subject ]</a>
+              <a href="author.html#2776">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

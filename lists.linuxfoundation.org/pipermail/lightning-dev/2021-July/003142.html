@@ -1,0 +1,299 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Error Codes for LN
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Error%20Codes%20for%20LN&In-Reply-To=%3CCAH%3DWSfQpG28gPNq6XUJ05y4N%2B4TfEUUUc2aDwMRy6%2Bsq-TNaDQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003110.html">
+   <LINK REL="Next"  HREF="003112.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Error Codes for LN</H1>
+    <B>Carla Kirk-Cohen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Error%20Codes%20for%20LN&In-Reply-To=%3CCAH%3DWSfQpG28gPNq6XUJ05y4N%2B4TfEUUUc2aDwMRy6%2Bsq-TNaDQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Error Codes for LN">kirkcohenc at gmail.com
+       </A><BR>
+    <I>Wed Jul 28 08:25:52 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003110.html">[Lightning-dev] Error Codes for LN
+</A></li>
+        <LI>Next message: <A HREF="003112.html">[Lightning-dev] Eltoo / Anyprevout &amp; Baked in Sequences
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3142">[ date ]</a>
+              <a href="thread.html#3142">[ thread ]</a>
+              <a href="subject.html#3142">[ subject ]</a>
+              <a href="author.html#3142">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty,
+
+Thanks for taking a look!
+
+I like the idea of being able to reference a specific message/field
+that your node finds problematic. Definitely makes the job simpler
+than trying to define every error evar.
+
+&gt;<i> erroneous_message is the message we're complaining about (including
+</I>2-byte type), which may be truncated (but must be at least 2 bytes)
+
+Do you think this could be reduced to just the 2-byte message type?
+If the reason for including the whole message is so that the error
+recipient can match it to the original message, we could possibly just
+include the field that we had a problem with as another TLV? That way
+we save on having to resend the whole message, and guarantee that we'd
+be delivering the problematic field value (it could be cut off if we
+truncate the message).
+
+With this approach, there's a chance that we can't match errors back
+to their original message if the same channel sends the same message
+with the same incorrect field more than once, but I don't see much
+practical need to exactly match error to original message in this case,
+since we know which field is broken.
+
+&gt;<i> (We should similarly add this TLV to warnings?)
+</I>
+Sounds like a good idea to me!
+
+&gt;<i> But it's worth noting that with the exception of timeouts, these are
+</I>all expressible in form &quot;problem is this message, this field&quot;. Perhaps
+its worth having a special TLV case for timeouts in the message?
+
+If we're confident that the only error that we're going to need that
+doesn't follow the &quot;problem/message&quot; structure is timeouts, then a
+`timeout` tlv sounds reasonable. If we're also going to add these
+fields to warning messages, I'm wondering whether it could be useful
+to define an `error_code` enum, where `timeout` is one of the cases?
+Perhaps overkill if we're certain that the only value will ever be
+`timeout`.
+
+Putting that all together, an update on your proposed solution:
+1. `tlv_stream`: `error_tlvs`
+2. types:
+    1. type: 1 (`erroneous_msgtype`)
+    2. data:
+        * [`u16`:`type`]
+    1. type: 3 (`erroneous_fieldnum`)
+    2. data:
+        * [`tu64`:`fieldnum`]
+    1. type: 5 (`suggested_value`)
+    2. data:
+        * [`...*byte`:`value`]
+    1. type: 7 (`erroneous_value`)
+    2. data:
+        * [`...*byte`:`value`]
+    1. type: 9 (`error_code`)
+    2. data:
+        * [`u16`:`code`]
+
+Cheers,
+  - Carla
+
+On Wed, Jul 7, 2021 at 2:36 AM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> Carla Kirk-Cohen &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">kirkcohenc at gmail.com</A>&gt; writes:
+</I>&gt;<i> &gt; Hi all,
+</I>&gt;<i>
+</I>&gt;<i> Hi Carla,
+</I>&gt;<i>
+</I>&gt;<i>         I apologize for not responding to this earlier, but it was
+</I>&gt;<i> raised again in the recent spec meeting
+</I>&gt;<i> (
+</I>&gt;<i> <A HREF="https://lightningd.github.io/meetings/ln_spec_meeting/2021/ln_spec_meeting.2021-07-05-20.06.log.html">https://lightningd.github.io/meetings/ln_spec_meeting/2021/ln_spec_meeting.2021-07-05-20.06.log.html</A>
+</I>&gt;<i> ).
+</I>&gt;<i>
+</I>&gt;<i> I love the idea of more specific error codes, BTW!
+</I>&gt;<i>
+</I>&gt;<i> Feedback interleaved:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Since we shouldn&#8217;t have non-ascii values in the error string itself,
+</I>&gt;<i> &gt; this can most easily be achieved by adding TLV fields after the
+</I>&gt;<i> &gt; data field. In terms of supporting nodes that have not upgraded,
+</I>&gt;<i> &gt; we could either include the error code in the data field to cover
+</I>&gt;<i> &gt; our bases, or introduce a feature bit so that we know whether
+</I>&gt;<i> &gt; to backfill the data field. This gives upgraded nodes an improved
+</I>&gt;<i> &gt; quality of life, while leaving older nodes unaffected.
+</I>&gt;<i>
+</I>&gt;<i> Older nodes should definitely ignore extra fields; it's in the spec and
+</I>&gt;<i> we've relied on this to extend messages in the past, so this part is
+</I>&gt;<i> easy.
+</I>&gt;<i>
+</I>&gt;<i> Technically, all defined types are now assumed to have an optional TLV
+</I>&gt;<i> appended, since f068dd0d (Bolt 1: Specify that extensions to existing
+</I>&gt;<i> messages must use TLV (#754)).
+</I>&gt;<i>
+</I>&gt;<i> &gt; While we can&#8217;t enumerate every possible error, there are quite
+</I>&gt;<i> &gt; a few cases in the spec where we can introduce explicit error
+</I>&gt;<i> &gt; codes. For the sake of the skim-readers, I&#8217;ve left that list at
+</I>&gt;<i> &gt; the end of the email.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Taking the example of our node receiving an invalid signature for
+</I>&gt;<i> &gt; a htlc, a new error would look like this:
+</I>&gt;<i>
+</I>&gt;<i> I think this is both too much, and not enough.
+</I>&gt;<i>
+</I>&gt;<i> Too much:
+</I>&gt;<i> - Many of these errors are &quot;your implementation is broken&quot;, which is
+</I>&gt;<i>   really not something actionable by the recipient.
+</I>&gt;<i> - A lot of work to fill in all these error cases, which will (because
+</I>&gt;<i>   they're usually impossible) will be untested and broken.
+</I>&gt;<i>
+</I>&gt;<i> Not enough:
+</I>&gt;<i> - Look at the proposal for channel_types, where you would object to the
+</I>&gt;<i>   channel_type if you don't like it.  This would be grouped under
+</I>&gt;<i>   &quot;Funding params unacceptable&quot;, which is actually 99% of errors at this
+</I>&gt;<i>   point and does not say what the problem is with specificity.
+</I>&gt;<i>
+</I>&gt;<i> I took a different approach with onion messages[1], where you (optionally)
+</I>&gt;<i> specify the field number, even an optional suggested value:
+</I>&gt;<i>
+</I>&gt;<i>     1. type: 1 (`erroneous_field`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`tu64`:`tlv_fieldnum`]
+</I>&gt;<i>     1. type: 3 (`suggested_value`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*byte`:`value`]
+</I>&gt;<i>     1. type: 5 (`error`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*utf8`:`msg`]
+</I>&gt;<i>
+</I>&gt;<i> In our case, we need to refer to which message (if any) caused the
+</I>&gt;<i> error, and we have non-tlv fields, so it can't simply use the tlv field
+</I>&gt;<i> number.
+</I>&gt;<i>
+</I>&gt;<i> Here's my straw proposal:
+</I>&gt;<i>
+</I>&gt;<i> 1. `tlv_stream`: `error_tlvs`
+</I>&gt;<i> 2. types:
+</I>&gt;<i>     1. type: 1 (`erroneous_message`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*byte`:`message`]
+</I>&gt;<i>     1. type: 3 (`erroneous_fieldnum`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`tu64`:`fieldnum`]
+</I>&gt;<i>     1. type: 5 (`suggested_value`)
+</I>&gt;<i>     2. data:
+</I>&gt;<i>         * [`...*byte`:`value`]
+</I>&gt;<i>
+</I>&gt;<i> erroneous_message is the message we're complaining about (including
+</I>&gt;<i> 2-byte type), which may be truncated (but must be at least 2 bytes).
+</I>&gt;<i>
+</I>&gt;<i> fieldnum is either the 0-based field number (for fixed fields), or the
+</I>&gt;<i> number of fixed fields + the tlv type (for tlv fields).
+</I>&gt;<i>
+</I>&gt;<i> suggested_value is the optional value if we have an idea if what we
+</I>&gt;<i> expected / prefer.
+</I>&gt;<i>
+</I>&gt;<i> &gt; This new kind of error provides us with an error code that tells us
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; exactly what has gone wrong, and metadata pointing to the htlc
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; with an invalid sig. This information can be logged, or stored in a
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; more permanent error store to help diagnose issues in the future.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Right now, the spec is pretty strict on error handling [13], indicating
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; that senders/recipients of errors `MUST` fail the channel referenced
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; in the error.
+</I>&gt;<i>
+</I>&gt;<i> &gt; This isn&#8217;t very practical, and I believe that the majority
+</I>&gt;<i> &gt; of the impls don&#8217;t abide by this instruction.
+</I>&gt;<i>
+</I>&gt;<i> This was inevitable eventually, but c-lightning deliberately treated
+</I>&gt;<i> errors as fatal for a long time so people would *notice* and *report*
+</I>&gt;<i> these issues.
+</I>&gt;<i>
+</I>&gt;<i> To be fair, *LND* didn't treat them as fatal.  As so naturally your
+</I>&gt;<i> engineers didn't *think* of them as a big deal (and testing didn't show
+</I>&gt;<i> it up), so it would send errors for cases which it clearly didn't want
+</I>&gt;<i> to close the channel (e.g. peer too slow to respond!).
+</I>&gt;<i>
+</I>&gt;<i> Hence this PR, which makes these less fatal, and adds warning support:
+</I>&gt;<i>
+</I>&gt;<i>         <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/834">https://github.com/lightningnetwork/lightning-rfc/pull/834</A>
+</I>&gt;<i>
+</I>&gt;<i> (We should similarly add this TLV to warnings?)
+</I>&gt;<i>
+</I>&gt;<i> &gt; Candidates for error codes:
+</I>&gt;<i>
+</I>&gt;<i> The vast majority of these are &quot;contact your developer, peer says we did
+</I>&gt;<i> something illegal&quot;.  Which is always nice to have more information
+</I>&gt;<i> about, but not critital.
+</I>&gt;<i>
+</I>&gt;<i> The exceptions are:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Funding Process:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * Funding process timeout [2]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * Fees out of range [3]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * Funding tx spent [11]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * Funding params unacceptable (eg, channel too small)
+</I>&gt;<i> ...
+</I>&gt;<i> &gt; Channel State Machine:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * HTLC timeout [4]
+</I>&gt;<i> ...
+</I>&gt;<i> &gt; Fee Updates
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * Update fee to low/high [9]
+</I>&gt;<i> ...
+</I>&gt;<i>
+</I>&gt;<i> And BTW this one is misguided:
+</I>&gt;<i>
+</I>&gt;<i> &gt; * Feature bit required
+</I>&gt;<i>
+</I>&gt;<i> If Alice says a feature bit is even (compulsory), and Bob doesn't offer
+</I>&gt;<i> it, that's on Bob!  Alice's behavior here is undefined: she may do a
+</I>&gt;<i> courtesy message to Bob, but she may also *assume* it's agreed.
+</I>&gt;<i>
+</I>&gt;<i> But it's worth noting that with the exception of timeouts, these are all
+</I>&gt;<i> expressable in form &quot;problem is this message, this field&quot;.  Perhaps it's
+</I>&gt;<i> worth having a special TLV case for timeouts in the message?
+</I>&gt;<i>
+</I>&gt;<i> Thanks for starting this ball rolling!
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Rusty.
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/759">https://github.com/lightningnetwork/lightning-rfc/pull/759</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210728/4b5ba70c/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210728/4b5ba70c/attachment-0001.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003110.html">[Lightning-dev] Error Codes for LN
+</A></li>
+	<LI>Next message: <A HREF="003112.html">[Lightning-dev] Eltoo / Anyprevout &amp; Baked in Sequences
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3142">[ date ]</a>
+              <a href="thread.html#3142">[ thread ]</a>
+              <a href="subject.html#3142">[ subject ]</a>
+              <a href="author.html#3142">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

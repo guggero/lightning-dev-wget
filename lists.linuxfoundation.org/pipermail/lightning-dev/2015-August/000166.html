@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A state machine.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3CCAJS_LCVnz72p3Q%2BBZGMPok-Jv5BfmMZ1cR6k%3DjD7B2GwoN62GQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000165.html">
+   <LINK REL="Next"  HREF="000144.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A state machine.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3CCAJS_LCVnz72p3Q%2BBZGMPok-Jv5BfmMZ1cR6k%3DjD7B2GwoN62GQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A state machine.">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Aug 31 02:24:26 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000165.html">[Lightning-dev] A state machine.
+</A></li>
+        <LI>Next message: <A HREF="000144.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#166">[ date ]</a>
+              <a href="thread.html#166">[ thread ]</a>
+              <a href="subject.html#166">[ subject ]</a>
+              <a href="author.html#166">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 31 August 2015 at 11:04, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> &gt; I was thinking it would be possible to update many HTLCs at once, so
+</I>&gt;<i> &gt; I was expecting a single PKT_UPDATE_CHANNEL rather than the ADD_HTLC,
+</I>&gt;<i> &gt; COMPLETE_HTLC, TIMEOUT_HTLC, etc variants. From a protocol POV, I guess
+</I>&gt;<i> &gt; that's something like:
+</I>&gt;<i> This is the kind of optimization we may see later, but I really shy away
+</I>&gt;<i> from doing it now.  Your diagram looks simpler because you removed all
+</I>&gt;<i> the rest of the handshaking.  Try this:
+</I>&gt;<i>
+</I>
+&#8203;I think the statepy.svg includes all the handshaking (including errors,
+but I think excluding internal errors) apart from the nop state
+transitions. Having a single PKT_UPDATE_CHANNEL would just combine those
+into one subgraph / one edge.
+
+I'm a bit surprised that CMD_CLOSE isn't a valid option when proposing an
+update -- it's valid during WAIT_FOR_UPDATE_SIG but not
+WAIT_FOR_HTLC_ACCEPT/WAIT_FOR_UPDATE_COMPLETE. (Correspondingly, PKT_CLOSE
+doesn't seem valid during WAIT_FOR_UPDATE_SIG)
+
+A: ADD_HTLC --&gt; B: DECLINE_HTLC
+&gt;<i>   OR
+</I>&gt;<i> A: ADD_HTLC --&gt; B: ACCEPT --&gt; A: SIGNATURE --&gt; B: COMPLETE
+</I>&gt;<i>
+</I>&gt;<i> After success:
+</I>&gt;<i>
+</I>&gt;<i> B: FULFILL_HTLC -&gt; A: ACCEPT --&gt; B: SIGNATURE --&gt; A: COMPLETE
+</I>&gt;<i>   OR
+</I>&gt;<i> B: ROUTEFAIL_HTLC -&gt; A: ACCEPT --&gt; B: SIGNATURE --&gt; A: COMPLETE
+</I>&gt;<i>   OR
+</I>&gt;<i> A: TIMEDOUT_HTLC -&gt; B: ACCEPT --&gt; A: SIGNATURE --&gt; B: COMPLETE
+</I>&gt;<i>
+</I>&gt;<i> This makes the constraints clearer, eg. you can't DECLINE_HTLC anything
+</I>&gt;<i> but an ADD_HTLC.
+</I>&gt;<i>
+</I>
+&#8203;Your states currently allow declining those though:
+
+        case STATE_NORMAL_LOWPRIO:
+        case STATE_NORMAL_HIGHPRIO:
+                } else if (input_is(input, CMD_SEND_HTLC_COMPLETE)) {
+                        /* We are to send an HTLC complete. */
+                        set_effect(effect, send,
+                                   pkt_htlc_complete(effect, sdata,
+idata-&gt;cmd));
+                        return prio(state, STATE_WAIT_FOR_HTLC_ACCEPT);
+
+        case STATE_WAIT_FOR_HTLC_ACCEPT_LOWPRIO:
+        case STATE_WAIT_FOR_HTLC_ACCEPT_HIGHPRIO:
+                /* HTLCs can also evoke a refusal. */
+                if (input_is(input, PKT_UPDATE_DECLINE_HTLC)) {
+                        fail_cmd(effect, CMD_SEND_HTLC_UPDATE, idata-&gt;pkt);
+                        /* Toggle between high and low priority states. */
+                        return toggle_prio(state, STATE_NORMAL);
+                }
+
+If your counterparty proposes a broken HTLC update, I'm not sure there's
+harm in being allowed to decline it? They can choose to close the channel
+if they think you're unreasonable, retry the update if they found a
+mistake, or just forget it and not worry (if they were issuing a ROUTEFAIL,
+it's not /their/ funds that are on the line eg).
+
+I also wonder if
+
+  A: TIMEDOUT_HTLC -&gt; B: DECLINE (err_time_sync_lost)
+
+might be useful.
+
+&gt;<i> AFAICS, you still have a potential deadlock atm if you think you're
+</I>&gt;<i> &gt; high priority but your counterparty also thinks they're high priority,
+</I>&gt;<i> &gt; or just missed your update packet. I think there might be a similar
+</I>&gt;<i> &gt; deadlock if both systems think they're low priority.
+</I>&gt;<i> They can't get into that state.
+</I>
+
+&#8203;Sorry, I was assuming that one or both implementations were buggy. I meant
+to make that explicit.&#8203; You're talking with strangers on the network, so
+you can't assume their software is bug free, right?
+
+BTW, your states currently switch priority even when an update is declined,
+so the low bit of the current commitment id (which obviously isn't changed
+on a declined update) doesn't actually give you the priority afaics.
+
+Cheers,
+aj
+
+
+-- 
+Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150831/b67b1611/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150831/b67b1611/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000165.html">[Lightning-dev] A state machine.
+</A></li>
+	<LI>Next message: <A HREF="000144.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#166">[ date ]</a>
+              <a href="thread.html#166">[ thread ]</a>
+              <a href="subject.html#166">[ subject ]</a>
+              <a href="author.html#166">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

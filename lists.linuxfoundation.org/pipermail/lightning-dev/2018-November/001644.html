@@ -1,0 +1,595 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [PATCH] First draft of option_simplfied_commitment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%20option_simplfied_commitment&In-Reply-To=%3Ce0c177b5-99ab-4ca9-81e3-3bb53d92d262%40bluematt.me%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001643.html">
+   <LINK REL="Next"  HREF="001647.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [PATCH] First draft of option_simplfied_commitment</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%20option_simplfied_commitment&In-Reply-To=%3Ce0c177b5-99ab-4ca9-81e3-3bb53d92d262%40bluematt.me%3E"
+       TITLE="[Lightning-dev] [PATCH] First draft of option_simplfied_commitment">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Wed Nov 21 02:54:18 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001643.html">[Lightning-dev] [PATCH] First draft of option_simplfied_commitment
+</A></li>
+        <LI>Next message: <A HREF="001647.html">[Lightning-dev] [PATCH] First draft of option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1644">[ date ]</a>
+              <a href="thread.html#1644">[ thread ]</a>
+              <a href="subject.html#1644">[ subject ]</a>
+              <a href="author.html#1644">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Not sure if others already realized this, but in thinking about our RBF 
+policy hack from Adelaide a bit more, to allow the carve-out exception 
+of &quot;last tx in a package, which has only one unconfirmed ancestor&quot; to 
+always be available for the &quot;honest party&quot; when broadcasting a 
+commitment transaction, we also need at least a CSV delay of 1 block on 
+the HTLC transaction outputs (as otherwise those transactions could 
+count as the carve-out tx).
+
+Matt
+
+On 11/21/18 2:17 AM, Rusty Russell wrote:
+&gt;<i> I'm also starting to implement this, to see what I missed!
+</I>&gt;<i> 
+</I>&gt;<i> Original at <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/513">https://github.com/lightningnetwork/lightning-rfc/pull/513</A>
+</I>&gt;<i> 
+</I>&gt;<i> Pasted here for your reading convenience:
+</I>&gt;<i> 
+</I>&gt;<i> - Option is sticky; it set at open time, it stays with channel
+</I>&gt;<i>    - I didn't want to have to handle penalty txs on channels which switch
+</I>&gt;<i>    - We could, however, upgrade on splice.
+</I>&gt;<i> - Feerate is fixed at 253
+</I>&gt;<i>    - `feerate_per_kw` is still in open /accept (just ignored): multifund may want it.
+</I>&gt;<i> - closing tx negotiates *upwards* not *downwards*
+</I>&gt;<i>    - Starting from base fee of commitment tx = 282 satoshi.
+</I>&gt;<i> - to_remote output is always CSV delayed.
+</I>&gt;<i> - pushme outputs are paid for by funder, but only exist if the matching
+</I>&gt;<i>    to_local/remote output exists.
+</I>&gt;<i> - After 10 blocks, they become anyone-can-spend (they need to see the
+</I>&gt;<i>    to-local/remote witness script though).
+</I>&gt;<i> - remotepubkey is not rotated.
+</I>&gt;<i> - You must spend your pushme output; you may sweep for others.
+</I>&gt;<i> 
+</I>&gt;<i> Signed-off-by: Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;
+</I>&gt;<i> 
+</I>&gt;<i> diff --git a/02-peer-protocol.md b/02-peer-protocol.md
+</I>&gt;<i> index 7cf9ebf..6ec1155 100644
+</I>&gt;<i> --- a/02-peer-protocol.md
+</I>&gt;<i> +++ b/02-peer-protocol.md
+</I>&gt;<i> @@ -133,7 +133,9 @@ node can offer.
+</I>&gt;<i>   (i.e. 1/4 the more normally-used 'satoshi per 1000 vbytes') that this
+</I>&gt;<i>   side will pay for commitment and HTLC transactions, as described in
+</I>&gt;<i>   [BOLT #3](03-transactions.md#fee-calculation) (this can be adjusted
+</I>&gt;<i> -later with an `update_fee` message).
+</I>&gt;<i> +later with an `update_fee` message).  Note that if
+</I>&gt;<i> +`option_simplified_commitment` is negotiated, this `feerate_per_kw`
+</I>&gt;<i> +is treated as 253 for all transactions.
+</I>&gt;<i>   
+</I>&gt;<i>   `to_self_delay` is the number of blocks that the other node's to-self
+</I>&gt;<i>   outputs must be delayed, using `OP_CHECKSEQUENCEVERIFY` delays; this
+</I>&gt;<i> @@ -208,7 +210,8 @@ The receiving node MUST fail the channel if:
+</I>&gt;<i>     - `push_msat` is greater than `funding_satoshis` * 1000.
+</I>&gt;<i>     - `to_self_delay` is unreasonably large.
+</I>&gt;<i>     - `max_accepted_htlcs` is greater than 483.
+</I>&gt;<i> -  - it considers `feerate_per_kw` too small for timely processing or unreasonably large.
+</I>&gt;<i> +  - if `option_simplified_commitment` is not negotiated:
+</I>&gt;<i> +    - it considers `feerate_per_kw` too small for timely processing or unreasonably large.
+</I>&gt;<i>     - `funding_pubkey`, `revocation_basepoint`, `htlc_basepoint`, `payment_basepoint`, or `delayed_payment_basepoint`
+</I>&gt;<i>   are not valid DER-encoded compressed secp256k1 pubkeys.
+</I>&gt;<i>     - `dust_limit_satoshis` is greater than `channel_reserve_satoshis`.
+</I>&gt;<i> @@ -228,7 +231,7 @@ The *channel reserve* is specified by the peer's `channel_reserve_satoshis`: 1%
+</I>&gt;<i>   
+</I>&gt;<i>   The sender can unconditionally give initial funds to the receiver using a non-zero `push_msat`, but even in this case we ensure that the funder has sufficient remaining funds to pay fees and that one side has some amount it can spend (which also implies there is at least one non-dust output). Note that, like any other on-chain transaction, this payment is not certain until the funding transaction has been confirmed sufficiently (with a danger of double-spend until this occurs) and may require a separate method to prove payment via on-chain confirmation.
+</I>&gt;<i>   
+</I>&gt;<i> -The `feerate_per_kw` is generally only of concern to the sender (who pays the fees), but there is also the fee rate paid by HTLC transactions; thus, unreasonably large fee rates can also penalize the recipient.
+</I>&gt;<i> +The `feerate_per_kw` is generally only of concern to the sender (who pays the fees), but there is also the fee rate paid by HTLC transactions; thus, unreasonably large fee rates can also penalize the recipient.  It is ignored for `option_simplified_commitment`.
+</I>&gt;<i>   
+</I>&gt;<i>   Separating the `htlc_basepoint` from the `payment_basepoint` improves security: a node needs the secret associated with the `htlc_basepoint` to produce HTLC signatures for the protocol, but the secret for the `payment_basepoint` can be in cold storage.
+</I>&gt;<i>   
+</I>&gt;<i> @@ -340,6 +343,12 @@ This message introduces the `channel_id` to identify the channel. It's derived f
+</I>&gt;<i>   
+</I>&gt;<i>   #### Requirements
+</I>&gt;<i>   
+</I>&gt;<i> +Both peers:
+</I>&gt;<i> +  - if `option_simplified_commitment` was negotiated:
+</I>&gt;<i> +    - `option_simplified_commitment` applies to all commitment and HTLC transactions
+</I>&gt;<i> +  - otherwise:
+</I>&gt;<i> +    - `option_simplified_commitment` does not apply to any commitment or HTLC transactions
+</I>&gt;<i> +
+</I>&gt;<i>   The sender MUST set:
+</I>&gt;<i>     - `channel_id` by exclusive-OR of the `funding_txid` and the `funding_output_index` from the `funding_created` message.
+</I>&gt;<i>     - `signature` to the valid signature, using its `funding_pubkey` for the initial commitment transaction, as defined in [BOLT #3](03-transactions.md#commitment-transaction).
+</I>&gt;<i> @@ -351,6 +360,12 @@ The recipient:
+</I>&gt;<i>     - on receipt of a valid `funding_signed`:
+</I>&gt;<i>       - SHOULD broadcast the funding transaction.
+</I>&gt;<i>   
+</I>&gt;<i> +#### Rationale
+</I>&gt;<i> +
+</I>&gt;<i> +We decide on `option_simplified_commitment` at this point when we first have to generate the commitment
+</I>&gt;<i> +transaction.  Even if a later reconnection does not negotiate this parameter, this channel will honor it.
+</I>&gt;<i> +This simplifies channel state, particularly penalty transaction handling.
+</I>&gt;<i> +
+</I>&gt;<i>   ### The `funding_locked` Message
+</I>&gt;<i>   
+</I>&gt;<i>   This message indicates that the funding transaction has reached the `minimum_depth` asked for in `accept_channel`. Once both nodes have sent this, the channel enters normal operating mode.
+</I>&gt;<i> @@ -508,8 +523,11 @@ The funding node:
+</I>&gt;<i>       - SHOULD send a `closing_signed` message.
+</I>&gt;<i>   
+</I>&gt;<i>   The sending node:
+</I>&gt;<i> -  - MUST set `fee_satoshis` less than or equal to the
+</I>&gt;<i> - base fee of the final commitment transaction, as calculated in [BOLT #3](03-transactions.md#fee-calculation).
+</I>&gt;<i> +  - if `option_upfront_shutdown_script` applies to the final commitment transaction:
+</I>&gt;<i> +    - MUST set `fee_satoshis` greater than or equal to 282.
+</I>&gt;<i> +  - otherwise:
+</I>&gt;<i> +    - MUST set `fee_satoshis` less than or equal to the
+</I>&gt;<i> +      base fee of the final commitment transaction, as calculated in [BOLT #3](03-transactions.md#fee-calculation).
+</I>&gt;<i>     - SHOULD set the initial `fee_satoshis` according to its
+</I>&gt;<i>    estimate of cost of inclusion in a block.
+</I>&gt;<i>     - MUST set `signature` to the Bitcoin signature of the close
+</I>&gt;<i> @@ -543,9 +561,18 @@ progress is made, even if only by a single satoshi at a time. To avoid
+</I>&gt;<i>   keeping state and to handle the corner case, where fees have shifted
+</I>&gt;<i>   between disconnection and reconnection, negotiation restarts on reconnection.
+</I>&gt;<i>   
+</I>&gt;<i> -Note there is limited risk if the closing transaction is
+</I>&gt;<i> -delayed, but it will be broadcast very soon; so there is usually no
+</I>&gt;<i> -reason to pay a premium for rapid processing.
+</I>&gt;<i> +In the `option_simplified_commitment` case, the fees on the commitment
+</I>&gt;<i> +transaction itself are minimal (it is assumed that a child transaction will
+</I>&gt;<i> +supply additional fee incentive), so that forms a floor for negotiation.
+</I>&gt;<i> +[BOLT #3](03-transactions.md#fee-calculation), gives 282 satoshis (1116
+</I>&gt;<i> +weight, 254 `feerate_per_kw`).
+</I>&gt;<i> +
+</I>&gt;<i> +Otherwise, the commitment transaction usually pays a premium fee, so that
+</I>&gt;<i> +forms a ceiling.
+</I>&gt;<i> +
+</I>&gt;<i> +Note there is limited risk if the closing transaction is delayed, but it will
+</I>&gt;<i> +be broadcast very soon; so there is usually no reason to pay a premium for
+</I>&gt;<i> +rapid processing.
+</I>&gt;<i>   
+</I>&gt;<i>   ## Normal Operation
+</I>&gt;<i>   
+</I>&gt;<i> @@ -763,7 +790,10 @@ is destined, is described in [BOLT #4](04-onion-routing.md).
+</I>&gt;<i>   A sending node:
+</I>&gt;<i>     - MUST NOT offer `amount_msat` it cannot pay for in the
+</I>&gt;<i>   remote commitment transaction at the current `feerate_per_kw` (see &quot;Updating
+</I>&gt;<i> -Fees&quot;) while maintaining its channel reserve.
+</I>&gt;<i> +Fees&quot;) while maintaining its channel reserve
+</I>&gt;<i> +  - if `option_simplified_commitment` applies to this commitment transaction and the sending
+</I>&gt;<i> +    node is the funder:
+</I>&gt;<i> +    - MUST be able to additionally pay for `to_local_pushme` and `to_remote_pushme` above its reserve.
+</I>&gt;<i>     - MUST offer `amount_msat` greater than 0.
+</I>&gt;<i>     - MUST NOT offer `amount_msat` below the receiving node's `htlc_minimum_msat`
+</I>&gt;<i>     - MUST set `cltv_expiry` less than 500000000.
+</I>&gt;<i> @@ -782,7 +812,7 @@ Fees&quot;) while maintaining its channel reserve.
+</I>&gt;<i>   A receiving node:
+</I>&gt;<i>     - receiving an `amount_msat` equal to 0, OR less than its own `htlc_minimum_msat`:
+</I>&gt;<i>       - SHOULD fail the channel.
+</I>&gt;<i> -  - receiving an `amount_msat` that the sending node cannot afford at the current `feerate_per_kw` (while maintaining its channel reserve):
+</I>&gt;<i> +  - receiving an `amount_msat` that the sending node cannot afford at the current `feerate_per_kw` (while maintaining its channel reserve and any `to_local_pushme` and `to_remote_pushme` fees):
+</I>&gt;<i>       - SHOULD fail the channel.
+</I>&gt;<i>     - if a sending node adds more than its `max_accepted_htlcs` HTLCs to
+</I>&gt;<i>       its local commitment transaction, OR adds more than its `max_htlc_value_in_flight_msat` worth of offered HTLCs to its local commitment transaction:
+</I>&gt;<i> @@ -997,6 +1027,11 @@ A node:
+</I>&gt;<i>   
+</I>&gt;<i>   ### Updating Fees: `update_fee`
+</I>&gt;<i>   
+</I>&gt;<i> +If `option_simplified_commitment` applies to the commitment transaction,
+</I>&gt;<i> +`update_fee` is never used: the `feerate_per_kw` is always considered 253, but
+</I>&gt;<i> +the funder also pays 2000 satoshi for the `to_local_pushme` and
+</I>&gt;<i> +`to_remote_pushme` outputs.
+</I>&gt;<i> +
+</I>&gt;<i>   An `update_fee` message is sent by the node which is paying the
+</I>&gt;<i>   Bitcoin fee. Like any update, it's first committed to the receiver's
+</I>&gt;<i>   commitment transaction and then (once acknowledged) committed to the
+</I>&gt;<i> @@ -1020,13 +1055,19 @@ given in [BOLT #3](03-transactions.md#fee-calculation).
+</I>&gt;<i>   #### Requirements
+</I>&gt;<i>   
+</I>&gt;<i>   The node _responsible_ for paying the Bitcoin fee:
+</I>&gt;<i> -  - SHOULD send `update_fee` to ensure the current fee rate is sufficient (by a
+</I>&gt;<i> +  - if `option_simplified_commitment` applies to the commitment transaction:
+</I>&gt;<i> +    - MUST NOT send `update_fee`.
+</I>&gt;<i> +  - otherwise:
+</I>&gt;<i> +    - SHOULD send `update_fee` to ensure the current fee rate is sufficient (by a
+</I>&gt;<i>         significant margin) for timely processing of the commitment transaction.
+</I>&gt;<i>   
+</I>&gt;<i>   The node _not responsible_ for paying the Bitcoin fee:
+</I>&gt;<i>     - MUST NOT send `update_fee`.
+</I>&gt;<i>   
+</I>&gt;<i>   A receiving node:
+</I>&gt;<i> +  - if `option_simplified_commitment` applies to the commitment transaction:
+</I>&gt;<i> +    - SHOULD fail the channel.
+</I>&gt;<i> +	- MUST NOT update the `feerate_per_kw`.
+</I>&gt;<i>     - if the `update_fee` is too low for timely processing, OR is unreasonably large:
+</I>&gt;<i>       - SHOULD fail the channel.
+</I>&gt;<i>     - if the sender is not responsible for paying the Bitcoin fee:
+</I>&gt;<i> @@ -1038,7 +1079,12 @@ A receiving node:
+</I>&gt;<i>   
+</I>&gt;<i>   #### Rationale
+</I>&gt;<i>   
+</I>&gt;<i> -Bitcoin fees are required for unilateral closes to be effective &#8212;
+</I>&gt;<i> +Fee adjustments are unnecessary for `option_simplified_commitment` which
+</I>&gt;<i> +relies on &quot;pushme&quot; outputs and a child transaction which will provide
+</I>&gt;<i> +additional fee incentive which can be calculated at the time it is spent, and
+</I>&gt;<i> +replaced by higher-fee children if required.
+</I>&gt;<i> +
+</I>&gt;<i> +Without this option, bitcoin fees are required for unilateral closes to be effective &#8212;
+</I>&gt;<i>   particularly since there is no general method for the broadcasting node to use
+</I>&gt;<i>   child-pays-for-parent to increase its effective fee.
+</I>&gt;<i>   
+</I>&gt;<i> diff --git a/03-transactions.md b/03-transactions.md
+</I>&gt;<i> index e769961..440bd0d 100644
+</I>&gt;<i> --- a/03-transactions.md
+</I>&gt;<i> +++ b/03-transactions.md
+</I>&gt;<i> @@ -82,6 +82,8 @@ To allow an opportunity for penalty transactions, in case of a revoked commitmen
+</I>&gt;<i>   The reason for the separate transaction stage for HTLC outputs is so that HTLCs can timeout or be fulfilled even though they are within the `to_self_delay` delay.
+</I>&gt;<i>   Otherwise, the required minimum timeout on HTLCs is lengthened by this delay, causing longer timeouts for HTLCs traversing the network.
+</I>&gt;<i>   
+</I>&gt;<i> +If `option_simplified_commitment` applies to the commitment transaction, then the `to_self_delay` used for all transactions is the greater of the `to_self_delay` sent by each peer.  Otherwise, each peer sends the `to_self_delay` to be used for the other peer's commitment amd HTLC transactions.
+</I>&gt;<i> +
+</I>&gt;<i>   The amounts for each output MUST be rounded down to whole satoshis. If this amount, minus the fees for the HTLC transaction, is less than the `dust_limit_satoshis` set by the owner of the commitment transaction, the output MUST NOT be produced (thus the funds add to fees).
+</I>&gt;<i>   
+</I>&gt;<i>   #### `to_local` Output
+</I>&gt;<i> @@ -109,7 +111,40 @@ If a revoked commitment transaction is published, the other party can spend this
+</I>&gt;<i>   
+</I>&gt;<i>   #### `to_remote` Output
+</I>&gt;<i>   
+</I>&gt;<i> -This output sends funds to the other peer and thus is a simple P2WPKH to `remotepubkey`.
+</I>&gt;<i> +This output sends funds to the other peer, thus is not encumbered by a
+</I>&gt;<i> +revocation private key.
+</I>&gt;<i> +
+</I>&gt;<i> +If `option_simplified_commitment` applies to the commitment transaction, the `to_remote` output is delayed similarly to the `to_local` output, and is to a fixed key:
+</I>&gt;<i> +
+</I>&gt;<i> +        `to_self_delay`
+</I>&gt;<i> +        OP_CSV
+</I>&gt;<i> +        OP_DROP
+</I>&gt;<i> +        &lt;remote_pubkey&gt;
+</I>&gt;<i> +
+</I>&gt;<i> +The output is spent by a transaction with `nSequence` field set to `to_self_delay` (which can only be valid after that duration has passed) and witness:
+</I>&gt;<i> +
+</I>&gt;<i> +    &lt;remote_sig&gt;
+</I>&gt;<i> +
+</I>&gt;<i> +Otherwise, this output is a simple P2WPKH to `remotepubkey`.
+</I>&gt;<i> +
+</I>&gt;<i> +
+</I>&gt;<i> +#### `to_local_pushme` and `to_remote_pushme` Output (option_simplified_commitment)
+</I>&gt;<i> +
+</I>&gt;<i> +This output can be spent by the local and remote nodes respectivey to provide incentive to mine the transaction, using child-pays-for-parent.  They are only added if the `to_local` and `to_remote` outputs exist, respectively.
+</I>&gt;<i> +
+</I>&gt;<i> +    OP_DEPTH
+</I>&gt;<i> +    OP_IF
+</I>&gt;<i> +        &lt;pubkey&gt; OP_CHECKSIG
+</I>&gt;<i> +    OP_ELSE
+</I>&gt;<i> +        10 OP_CSV
+</I>&gt;<i> +    OP_ENDIF
+</I>&gt;<i> +
+</I>&gt;<i> +The `&lt;pubkey&gt;` is `&lt;local_delayedpubkey&gt;` to `to_local_pushme` and
+</I>&gt;<i> +`&lt;remote_delayedpubkey&gt;` for `to_remote_pushme`.  The output amount is
+</I>&gt;<i> +1000 satoshi, to encourage spending of the output.  Once the
+</I>&gt;<i> +`remote_pubkey` is revealed (by spending the `to_local` output) and
+</I>&gt;<i> +the commitment transaction is 10 blocks deep, anyone can spend it.
+</I>&gt;<i> +
+</I>&gt;<i>   
+</I>&gt;<i>   #### Offered HTLC Outputs
+</I>&gt;<i>   
+</I>&gt;<i> @@ -294,6 +329,9 @@ The fee calculation for both commitment transactions and HTLC
+</I>&gt;<i>   transactions is based on the current `feerate_per_kw` and the
+</I>&gt;<i>   *expected weight* of the transaction.
+</I>&gt;<i>   
+</I>&gt;<i> +Note that if `option_simplified_commitment` applies to the commitment
+</I>&gt;<i> +transaction then `feerate_per_kw` is 253.
+</I>&gt;<i> +
+</I>&gt;<i>   The actual and expected weights vary for several reasons:
+</I>&gt;<i>   
+</I>&gt;<i>   * Bitcoin uses DER-encoded signatures, which vary in size.
+</I>&gt;<i> @@ -306,10 +344,12 @@ Thus, a simplified formula for *expected weight* is used, which assumes:
+</I>&gt;<i>   * Signatures are 73 bytes long (the maximum length).
+</I>&gt;<i>   * There are a small number of outputs (thus 1 byte to count them).
+</I>&gt;<i>   * There are always both a `to_local` output and a `to_remote` output.
+</I>&gt;<i> +* (if `option_simplified_commitment`) there are always both a `to_local_pushme` and `to_remote_pushme` output.
+</I>&gt;<i>   
+</I>&gt;<i>   This yields the following *expected weights* (details of the computation in [Appendix A](#appendix-a-expected-weights)):
+</I>&gt;<i>   
+</I>&gt;<i> -    Commitment weight:   724 + 172 * num-untrimmed-htlc-outputs
+</I>&gt;<i> +    Commitment weight (no option_simplified_commitment):   724 + 172 * num-untrimmed-htlc-outputs
+</I>&gt;<i> +    Commitment weight (option_simplified_commitment:  1116 + 172 * num-untrimmed-htlc-outputs
+</I>&gt;<i>       HTLC-timeout weight: 663
+</I>&gt;<i>       HTLC-success weight: 703
+</I>&gt;<i>   
+</I>&gt;<i> @@ -366,7 +406,7 @@ outputs) is 7140 satoshi. The final fee may be even higher if the
+</I>&gt;<i>   
+</I>&gt;<i>   ### Fee Payment
+</I>&gt;<i>   
+</I>&gt;<i> -Base commitment transaction fees are extracted from the funder's amount; if that amount is insufficient, the entire amount of the funder's output is used.
+</I>&gt;<i> +Base commitment transaction fees and amounts for `to_local_pushme` and `to_remote_pushme` outputs are extracted from the funder's amount; if that amount is insufficient, the entire amount of the funder's output is used.
+</I>&gt;<i>   
+</I>&gt;<i>   Note that after the fee amount is subtracted from the to-funder output,
+</I>&gt;<i>   that output may be below `dust_limit_satoshis`, and thus will also
+</I>&gt;<i> @@ -390,23 +430,29 @@ committed HTLCs:
+</I>&gt;<i>   2. Calculate the base [commitment transaction fee](#fee-calculation).
+</I>&gt;<i>   3. Subtract this base fee from the funder (either `to_local` or `to_remote`),
+</I>&gt;<i>      with a floor of 0 (see [Fee Payment](#fee-payment)).
+</I>&gt;<i> +4. If `option_simplified_commitment` applies to the commitment transaction,
+</I>&gt;<i> +   subtract 2000 satoshis from the funder (either `to_local` or `to_remote`).
+</I>&gt;<i>   3. For every offered HTLC, if it is not trimmed, add an
+</I>&gt;<i>      [offered HTLC output](#offered-htlc-outputs).
+</I>&gt;<i>   4. For every received HTLC, if it is not trimmed, add an
+</I>&gt;<i>      [received HTLC output](#received-htlc-outputs).
+</I>&gt;<i>   5. If the `to_local` amount is greater or equal to `dust_limit_satoshis`,
+</I>&gt;<i>      add a [`to_local` output](#to_local-output).
+</I>&gt;<i> +6. If `option_simplified_commitment` applies to the commitment transaction,
+</I>&gt;<i> +   and `to_local` was added, add `to_local_pushme`.
+</I>&gt;<i>   6. If the `to_remote` amount is greater or equal to `dust_limit_satoshis`,
+</I>&gt;<i>      add a [`to_remote` output](#to_remote-output).
+</I>&gt;<i> +6. If `option_simplified_commitment` applies to the commitment transaction,
+</I>&gt;<i> +   and `to_remote` was added, add `to_remote_pushme`.
+</I>&gt;<i>   7. Sort the outputs into [BIP 69 order](#transaction-input-and-output-ordering).
+</I>&gt;<i>   
+</I>&gt;<i>   # Keys
+</I>&gt;<i>   
+</I>&gt;<i>   ## Key Derivation
+</I>&gt;<i>   
+</I>&gt;<i> -Each commitment transaction uses a unique set of keys: `localpubkey` and `remotepubkey`.
+</I>&gt;<i> +Each commitment transaction uses a unique `localpubkey`, and a `remotepubkey`.
+</I>&gt;<i>   The HTLC-success and HTLC-timeout transactions use `local_delayedpubkey` and `revocationpubkey`.
+</I>&gt;<i> -These are changed for every transaction based on the `per_commitment_point`.
+</I>&gt;<i> +These are changed for every transaction based on the `per_commitment_point`, with the exception of `remotepubkey` if `option_simplified_commitment` is negotiated.
+</I>&gt;<i>   
+</I>&gt;<i>   The reason for key change is so that trustless watching for revoked
+</I>&gt;<i>   transactions can be outsourced. Such a _watcher_ should not be able to
+</I>&gt;<i> @@ -419,8 +465,9 @@ avoid storage of every commitment transaction, a _watcher_ can be given the
+</I>&gt;<i>   the scripts required for the penalty transaction; thus, a _watcher_ need only be
+</I>&gt;<i>   given (and store) the signatures for each penalty input.
+</I>&gt;<i>   
+</I>&gt;<i> -Changing the `localpubkey` and `remotepubkey` every time ensures that commitment
+</I>&gt;<i> -transaction ID cannot be guessed; every commitment transaction uses an ID
+</I>&gt;<i> +Changing the `localpubkey` every time ensures that commitment
+</I>&gt;<i> +transaction ID cannot be guessed except in the trivial case where there is no
+</I>&gt;<i> +`to_local` output, as every commitment transaction uses an ID
+</I>&gt;<i>   in its output script. Splitting the `local_delayedpubkey`, which is required for
+</I>&gt;<i>   the penalty transaction, allows it to be shared with the _watcher_ without
+</I>&gt;<i>   revealing `localpubkey`; even if both peers use the same _watcher_, nothing is revealed.
+</I>&gt;<i> @@ -434,14 +481,13 @@ For efficiency, keys are generated from a series of per-commitment secrets
+</I>&gt;<i>   that are generated from a single seed, which allows the receiver to compactly
+</I>&gt;<i>   store them (see [below](#efficient-per-commitment-secret-storage)).
+</I>&gt;<i>   
+</I>&gt;<i> -### `localpubkey`, `remotepubkey`, `local_htlcpubkey`, `remote_htlcpubkey`, `local_delayedpubkey`, and `remote_delayedpubkey` Derivation
+</I>&gt;<i> +### `localpubkey``local_htlcpubkey`, `remote_htlcpubkey`, `local_delayedpubkey`, and `remote_delayedpubkey` Derivation
+</I>&gt;<i>   
+</I>&gt;<i>   These pubkeys are simply generated by addition from their base points:
+</I>&gt;<i>   
+</I>&gt;<i>   	pubkey = basepoint + SHA256(per_commitment_point || basepoint) * G
+</I>&gt;<i>   
+</I>&gt;<i> -The `localpubkey` uses the local node's `payment_basepoint`; the `remotepubkey`
+</I>&gt;<i> -uses the remote node's `payment_basepoint`; the `local_delayedpubkey`
+</I>&gt;<i> +The `localpubkey` uses the local node's `payment_basepoint`; the `local_delayedpubkey`
+</I>&gt;<i>   uses the local node's `delayed_payment_basepoint`; the `local_htlcpubkey` uses the
+</I>&gt;<i>   local node's `htlc_basepoint`; and the `remote_delayedpubkey` uses the remote
+</I>&gt;<i>   node's `delayed_payment_basepoint`.
+</I>&gt;<i> @@ -451,6 +497,17 @@ secrets are known (i.e. the private keys corresponding to `localpubkey`, `local_
+</I>&gt;<i>   
+</I>&gt;<i>       privkey = basepoint_secret + SHA256(per_commitment_point || basepoint)
+</I>&gt;<i>   
+</I>&gt;<i> +### `remotepubkey` Derivation
+</I>&gt;<i> +
+</I>&gt;<i> +If `option_simplified_commitment` is negotiated the `remotepubkey` is simply the remote node's `payment_basepoint`, otherwise it is calculated as above using the remote node's `payment_basepoint`.
+</I>&gt;<i> +
+</I>&gt;<i> +The simplified derivation means that a node can spend a commitment
+</I>&gt;<i> +transaction even if it has lost data and doesn't know the
+</I>&gt;<i> +corresponding `payment_basepoint`.  A watchtower could correlate
+</I>&gt;<i> +transactions given to it which only have a `to_remote` output if it
+</I>&gt;<i> +sees one of them onchain, but such transactions do not need any
+</I>&gt;<i> +enforcement and should not be handed to a watchtower.
+</I>&gt;<i> +
+</I>&gt;<i>   ### `revocationpubkey` Derivation
+</I>&gt;<i>   
+</I>&gt;<i>   The `revocationpubkey` is a blinded key: when the local node wishes to create a new
+</I>&gt;<i> @@ -636,12 +693,22 @@ The *expected weight* of a commitment transaction is calculated as follows:
+</I>&gt;<i>   		- var_int: 1 byte (pk_script length)
+</I>&gt;<i>   		- pk_script (p2wsh): 34 bytes
+</I>&gt;<i>   
+</I>&gt;<i> -	output_paying_to_remote: 31 bytes
+</I>&gt;<i> +	output_paying_to_remote (no option_simplified_commitment): 31 bytes
+</I>&gt;<i>   		- value: 8 bytes
+</I>&gt;<i>   		- var_int: 1 byte (pk_script length)
+</I>&gt;<i>   		- pk_script (p2wpkh): 22 bytes
+</I>&gt;<i>   
+</I>&gt;<i> -	 htlc_output: 43 bytes
+</I>&gt;<i> +	output_paying_to_remote (option_simplified_commitment): 43 bytes
+</I>&gt;<i> +		- value: 8 bytes
+</I>&gt;<i> +		- var_int: 1 byte (pk_script length)
+</I>&gt;<i> +		- pk_script (p2wsh): 34 bytes
+</I>&gt;<i> +
+</I>&gt;<i> +	output_pushme (option_simplified_commitment): 43 bytes
+</I>&gt;<i> +		- value: 8 bytes
+</I>&gt;<i> +		- var_int: 1 byte (pk_script length)
+</I>&gt;<i> +		- pk_script (p2wsh): 34 bytes
+</I>&gt;<i> +
+</I>&gt;<i> +    htlc_output: 43 bytes
+</I>&gt;<i>   		- value: 8 bytes
+</I>&gt;<i>   		- var_int: 1 byte (pk_script length)
+</I>&gt;<i>   		- pk_script (p2wsh): 34 bytes
+</I>&gt;<i> @@ -650,7 +717,7 @@ The *expected weight* of a commitment transaction is calculated as follows:
+</I>&gt;<i>   		- flag: 1 byte
+</I>&gt;<i>   		- marker: 1 byte
+</I>&gt;<i>   
+</I>&gt;<i> -	 commitment_transaction: 125 + 43 * num-htlc-outputs bytes
+</I>&gt;<i> +	 commitment_transaction (no option_simplified_commitment): 125 + 43 * num-htlc-outputs bytes
+</I>&gt;<i>   		- version: 4 bytes
+</I>&gt;<i>   		- witness_header &lt;---- part of the witness data
+</I>&gt;<i>   		- count_tx_in: 1 byte
+</I>&gt;<i> @@ -663,15 +730,32 @@ The *expected weight* of a commitment transaction is calculated as follows:
+</I>&gt;<i>   			....htlc_output's...
+</I>&gt;<i>   		- lock_time: 4 bytes
+</I>&gt;<i>   
+</I>&gt;<i> +	 commitment_transaction (option_simplified_commitment): 223 + 43 * num-htlc-outputs bytes
+</I>&gt;<i> +		- version: 4 bytes
+</I>&gt;<i> +		- witness_header &lt;---- part of the witness data
+</I>&gt;<i> +		- count_tx_in: 1 byte
+</I>&gt;<i> +		- tx_in: 41 bytes
+</I>&gt;<i> +			funding_input
+</I>&gt;<i> +		- count_tx_out: 1 byte
+</I>&gt;<i> +		- tx_out: 172 + 43 * num-htlc-outputs bytes
+</I>&gt;<i> +			output_paying_to_remote,
+</I>&gt;<i> +			output_paying_to_local,
+</I>&gt;<i> +			output_pushme,
+</I>&gt;<i> +			output_pushme,
+</I>&gt;<i> +			....htlc_output's...
+</I>&gt;<i> +		- lock_time: 4 bytes
+</I>&gt;<i> +
+</I>&gt;<i>   Multiplying non-witness data by 4 results in a weight of:
+</I>&gt;<i>   
+</I>&gt;<i> -	// 500 + 172 * num-htlc-outputs weight
+</I>&gt;<i> +	// 500 + 172 * num-htlc-outputs weight (no option_simplified_commitment)
+</I>&gt;<i> +	// 892 + 172 * num-htlc-outputs weight (option_simplified_commitment)
+</I>&gt;<i>   	commitment_transaction_weight = 4 * commitment_transaction
+</I>&gt;<i>   
+</I>&gt;<i>   	// 224 weight
+</I>&gt;<i>   	witness_weight = witness_header + witness
+</I>&gt;<i>   
+</I>&gt;<i> -	overall_weight = 500 + 172 * num-htlc-outputs + 224 weight
+</I>&gt;<i> +	overall_weight (no option_simplified_commitment) = 500 + 172 * num-htlc-outputs + 224 weight
+</I>&gt;<i> +	overall_weight (option_simplified_commitment) = 892 + 172 * num-htlc-outputs + 224 weight
+</I>&gt;<i>   
+</I>&gt;<i>   ## Expected Weight of HTLC-timeout and HTLC-success Transactions
+</I>&gt;<i>   
+</I>&gt;<i> diff --git a/05-onchain.md b/05-onchain.md
+</I>&gt;<i> index 231c209..c5fb5e1 100644
+</I>&gt;<i> --- a/05-onchain.md
+</I>&gt;<i> +++ b/05-onchain.md
+</I>&gt;<i> @@ -89,21 +89,29 @@ trigger any action.
+</I>&gt;<i>   # Commitment Transaction
+</I>&gt;<i>   
+</I>&gt;<i>   The local and remote nodes each hold a *commitment transaction*. Each of these
+</I>&gt;<i> -commitment transactions has four types of outputs:
+</I>&gt;<i> +commitment transactions has six types of outputs:
+</I>&gt;<i>   
+</I>&gt;<i>   1. _local node's main output_: Zero or one output, to pay to the *local node's*
+</I>&gt;<i> -commitment pubkey.
+</I>&gt;<i> +delayed pubkey.
+</I>&gt;<i>   2. _remote node's main output_: Zero or one output, to pay to the *remote node's*
+</I>&gt;<i> -commitment pubkey.
+</I>&gt;<i> +pubkey.
+</I>&gt;<i> +1. _local node's push output_: Zero or one output, to pay to the *local node's*
+</I>&gt;<i> +delayed pubkey.
+</I>&gt;<i> +2. _remote node's push output_: Zero or one output, to pay to the *remote node's*
+</I>&gt;<i> +pubkey.
+</I>&gt;<i>   3. _local node's offered HTLCs_: Zero or more pending payments (*HTLCs*), to pay
+</I>&gt;<i>   the *remote node* in return for a payment preimage.
+</I>&gt;<i>   4. _remote node's offered HTLCs_: Zero or more pending payments (*HTLCs*), to
+</I>&gt;<i>   pay the *local node* in return for a payment preimage.
+</I>&gt;<i>   
+</I>&gt;<i>   To incentivize the local and remote nodes to cooperate, an `OP_CHECKSEQUENCEVERIFY`
+</I>&gt;<i> -relative timeout encumbers the *local node's outputs* (in the *local node's
+</I>&gt;<i> +relative timeout encumbers some outputs: the *local node's outputs* (in the *local node's
+</I>&gt;<i>   commitment transaction*) and the *remote node's outputs* (in the *remote node's
+</I>&gt;<i> -commitment transaction*). So for example, if the local node publishes its
+</I>&gt;<i> +commitment transaction*). If `option_simplified_commitment` applies
+</I>&gt;<i> +to the commitment transaction, then the *to_remote* output of each commitment is
+</I>&gt;<i> +identically encumbered, for fairness.
+</I>&gt;<i> +
+</I>&gt;<i> +Without `option_simplified_commitment`, if the local node publishes its
+</I>&gt;<i>   commitment transaction, it will have to wait to claim its own funds,
+</I>&gt;<i>   whereas the remote node will have immediate access to its own funds. As a
+</I>&gt;<i>   consequence, the two commitment transactions are not identical, but they are
+</I>&gt;<i> @@ -140,6 +148,11 @@ A node:
+</I>&gt;<i>         - otherwise:
+</I>&gt;<i>           - MUST use the *last commitment transaction*, for which it has a
+</I>&gt;<i>           signature, to perform a *unilateral close*.
+</I>&gt;<i> +      - MUST spend any `to_local_pushme` output, providing sufficient fees as incentive to include the commitment transaction in a block
+</I>&gt;<i> +	    - SHOULD use [replace-by-fee](<A HREF="https://github.com/bitcoin/bips/blob/master/bip-0125.mediawiki">https://github.com/bitcoin/bips/blob/master/bip-0125.mediawiki</A>) or other mechanism on the spending transaction if it proves insufficient for timely inclusion in a block.
+</I>&gt;<i> +
+</I>&gt;<i> +A node:
+</I>&gt;<i> +  - MAY monitor the blockchain for unspent `to_local_pushme` and `to_remote_pushme` outputs and try to spend them after 10 confirmations.
+</I>&gt;<i>   
+</I>&gt;<i>   ## Rationale
+</I>&gt;<i>   
+</I>&gt;<i> @@ -154,7 +167,8 @@ need not consume resources monitoring the channel state.
+</I>&gt;<i>   There exists a bias towards preferring mutual closes over unilateral closes,
+</I>&gt;<i>   because outputs of the former are unencumbered by a delay and are directly
+</I>&gt;<i>   spendable by wallets. In addition, mutual close fees tend to be less exaggerated
+</I>&gt;<i> -than those of commitment transactions. So, the only reason not to use the
+</I>&gt;<i> +than those of commitment transactions (or in the case of `option_simplified_commitment`,
+</I>&gt;<i> +the commitment transaction may require a child transaction to cause it to be mined). So, the only reason not to use the
+</I>&gt;<i>   signature from `closing_signed` would be if the fee offered was too small for
+</I>&gt;<i>   it to be processed.
+</I>&gt;<i>   
+</I>&gt;<i> diff --git a/09-features.md b/09-features.md
+</I>&gt;<i> index d06fcff..caea38b 100644
+</I>&gt;<i> --- a/09-features.md
+</I>&gt;<i> +++ b/09-features.md
+</I>&gt;<i> @@ -26,6 +26,7 @@ These flags may only be used in the `init` message:
+</I>&gt;<i>   | 3  | `initial_routing_sync` | Indicates that the sending node needs a complete routing information dump | [BOLT #7](07-routing-gossip.md#initial-sync) |
+</I>&gt;<i>   | 4/5  | `option_upfront_shutdown_script` | Commits to a shutdown scriptpubkey when opening channel | [BOLT #2](02-peer-protocol.md#the-open_channel-message) |
+</I>&gt;<i>   | 6/7  | `gossip_queries`           | More sophisticated gossip control | [BOLT #7](07-routing-gossip.md#query-messages) |
+</I>&gt;<i> +| 8/9  | `option_simplified_commitment`           | Simplified commitment transactions | [BOLT #3](03-transactions.md) |
+</I>&gt;<i>   
+</I>&gt;<i>   ## Assigned `globalfeatures` flags
+</I>&gt;<i>   
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> 
+</I></PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001643.html">[Lightning-dev] [PATCH] First draft of option_simplfied_commitment
+</A></li>
+	<LI>Next message: <A HREF="001647.html">[Lightning-dev] [PATCH] First draft of option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1644">[ date ]</a>
+              <a href="thread.html#1644">[ thread ]</a>
+              <a href="subject.html#1644">[ subject ]</a>
+              <a href="author.html#1644">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

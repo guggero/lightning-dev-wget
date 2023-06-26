@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Payment%20Point%20Feature%20Family%20%28MultiSig%2C%20DLC%2C%0A%09Escrow%2C%20...%29&In-Reply-To=%3CnLYFUNwUAckKv9DLVIc0cGpyiZ6JZ3lmS2yhs9jrL_icTyc-bErchZVILg-1QfEu8v-Eue7NPBnSm-CnCmxaCRcIgXQrtCr_7hf-H9qE0zg%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002216.html">
+   <LINK REL="Next"  HREF="002227.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Payment%20Point%20Feature%20Family%20%28MultiSig%2C%20DLC%2C%0A%09Escrow%2C%20...%29&In-Reply-To=%3CnLYFUNwUAckKv9DLVIc0cGpyiZ6JZ3lmS2yhs9jrL_icTyc-bErchZVILg-1QfEu8v-Eue7NPBnSm-CnCmxaCRcIgXQrtCr_7hf-H9qE0zg%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC,	Escrow, ...)">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Oct 11 07:46:44 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002216.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+        <LI>Next message: <A HREF="002227.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2225">[ date ]</a>
+              <a href="thread.html#2225">[ thread ]</a>
+              <a href="subject.html#2225">[ subject ]</a>
+              <a href="author.html#2225">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Nadav and Lloyd,
+
+
+&gt;<i> I really like the Premium-free American Call Option mitigation you've described here! I totally agree that it is probably best to move to computational security rather than rational security. I hadn't thought about how well High AMP inter-operates with the AND/OR scheme to make things like barrier escrows :) I wonder if there is some nice generalization of this kind of setup so that being a Barrier Escrow as a Service can be another way to make money by participating in the Lightning ecosystem. Maybe this modified High AMP is all there is to it and all we need is some standard communication interface for these Barrier Escrows?
+</I>
+
+Indeed, from my current thinking, only the computationally-intractable-security High AMP is needed.
+
+Note that the secret `z` behind `Z` can itself also serve as:
+
+* The blinding scalar in route decorrelation.
+* The ACK response scalar in Stuckless.
+
+This discussion is valuable in fact because ***I would have been perfectly and totally fine with economically-rational High AMP***.
+But being able to ab^H^Hreuse the High AMP mechanism to implement barrier escrow means we might very well do better to design a unified package of features that implement decorrelation, High AMP, Stuckless, barrier escrow, etc. using the same mechanism, while providing a proof-of-payment (&quot;pay-for-scalar&quot;) on top of which we can hook things like pay-for-signature and pay-for-Pedersen-decommitment.
+
+So let us define some terms.
+
+* Attempt - a single sequence of pointlocked timelocked contracts that terminate at some payee.
+  It either fails or succeeds atomically.
+* Sub-payment - one or more attempts, each of which semantically pay for &quot;the same thing&quot; for &quot;the same value&quot;, set up in parallel.
+  Pre-Stuckless, each sub-payment only has a single attempt at a time.
+  After Stuckless, a sub-payment may have multiple attempts running in parallel, but only one attempt will be claimable.
+* Payment - one or more sub-payments, each of which semantically pay for &quot;different parts of an entire thing&quot;, set up in parallel.
+  Pre-AMP, a payment contains only a single sub-payment.
+  After AMP, a payment may have multiple sub-payments, and all sub-payments will be claimed atomically.
+
+So let me propose the below, when we switch to payment points:
+
+* The payee receives a PTLC offer:
+  * It pays in exchange for the secret behind `S + Z`.
+  * The peyee knows the secret behind `S`, and the packet includes a TLV identifying *which* `S` exactly is being used.
+    * I believe the `S + Z` and `S` should be enough for the payee to determine `Z`.
+  * The offer also includes an onion-encrypted packet that tells the payee where to get the secret `z` behind `Z`.
+    * On contacting the payer, the payee gets:
+      * `z_route` a blinding factor for this route (cross-route decorrelation / Stuckless ACK)
+        * This uniquely identifies a single attempt of a sub-payment.
+      * `z_all` a blinding factor (High AMP computational-intractability).
+        * This uniquely identifies a single sub-payment.
+      * To claim *this* attempt the payee computes the sum of all `z_all` for all routes, plus the `z_route` for this particular incoming payment.
+      * If a different attempt of the same sub-payment is already requested by the payee, then the payer will send only `z_all` (which the payee then matches with the `z_all` of a different attempt) but not `z_route`, indicating to the payee that the two attempts are parallel attempts of the same sub-payment.
+      * Having separate blinding factors lets payers do Stuckless and multipath simultaneously, i.e. split the payment in paths, then make more than one parallel attempt for each split-out path.
+
+* A forwarding node receives a PTLC offer that it should forward:
+  * It pays in exchange for the secret behind `F`.
+  * It includes a secret `y`.
+  * The forwarding node should unwrap the onion packet by one layer and send to the next node a PTLC offer in exchange for the secret behind `F + Y`, where `Y = y * G`.
+
+Forwarding nodes thus learn almost nothing, and the use of higher constructions like barrier escrows etc. are not known to forwarding nodes (and thus cannot be censored by them).
+
+Then:
+
+* Suppose a payer wants to make a single payment.
+  * It selects random `z_all`.
+  * It generates a route.
+  * It selects random `z_blind` for each forwarding node and the payee in the route and computes `z_route` as the sum of all `z_blind`.
+  * It computes `Z` for this route as `(z_route + z_all) * G`.
+  * It offers a PTLC to the first forwarding node for `S + z_blind[0] * G + z_all * G`.
+    * In the packet, the first hop node gets `y = z_blind[1]`, next gets `y = z_blind[2]`, the final payee has no `y`.
+  * The payee then receives a payment for `S + Z`, where `Z` is the sum of all `z_blind` times `G`, plus `z_all * G`.
+    * The payee then contacts the payer via an anonymous contact point and learns `z_all` and `z_route`.
+    * The payee can then learn `z` as `z_all + z_route` and acquire the money.
+  * The payer learns `s + z_route + z_all`.
+    * the payer knows `z_all` and `z_route`, and can subtract them to acquire `s`, the proof-of-payment (on top of which pay-for-data, pay-for-signature, and pay-for-Pedersen-decommitment can be acquired).
+
+* Suppose a payer wants to make a payment, splitting it up via AMP to two sub-payments.
+  * It selects two random `z_all`: `z_all[0]`, `z_all[1]`.
+  * It generates two routes.
+  * It generates random `z_blind` for each forwarding node and `z_route` for the two routes (`z_route[0]`, `z_route[1]`).
+  * It computes Z for each sub-payment as `(z_route[i] + z_all[0] + z_all[1]) * G`.
+  * For each route:
+    * It offers a PTLC to the first forwarding node for `S + z_blind[0] * G + (z_all[0] + z_all[1]) * G`.
+  * The payee receives one sub-payment, where `Z` is `(z_route[0] + z_all[0] + z_all[1]) * G`.
+    * The payee then contacts the payer and learns `z_all[0]` and `z_route[0]`.
+    * The payee is still unable to claim this sub-payment, as it only knows `z_all[0]` but needs to know `z_all`, i.e. `z_all[0] + z_all[1]`.
+  * The payee receives the other sub-payment, where `Z` is `(z_route[1] + z_all[0] + z_all[1]) * G`.
+    * The payee then contacts the payer and learns `z_all[1]` and `z_route[1]`.
+  * The payee now knows `z_all[0]` and `z_all[1]`, which is enough to compute `z_all`, and can now claim `each attempt / sub-payment.
+
+* Suppose a payer wants to make a payment, splitting it up via AMP to two sub-payments.
+  Further, the payer wants to make two simultaneous attempts per sub-payment, via Stuckless.
+  * Decide how to split the sub-payments.
+    * Each sub-payment has its own `z_all[i]`, and a summed up `z_all` can be created.
+      * The AMP splitting can be decided dynamically: given an existing sub-payment with a given `z_all` for it, we can destroy that sub-payment (if it has no attempts on-going) and create two new ones simply by selecting a new random `z_all[0]`, and computing `z_all[1] = z_all - z_all[0]`, with a similar rule to split up the amounts to be sent: the sum of `z_all[i]` for these two new sub-payments would then equal the original `z_all` for the destroyed sub-payment.
+    * Decide to make multiple attempts for each sub-payment.
+      * Generate random blinding factors for the route the attempt will take.
+      * Each attempt then has its own `z_route` that blinds the underlying factor.
+      * (basically I got lazy at this point and decided to just say: reader can probably figure this out themselves, just remember the hierarhcy payment -&gt; sub-payment -&gt; attempt.)
+
+If a barrier escrow is desired, then all that is needed is to locate some node that supports High AMP and request (somehow) an invoice from it.
+Then each of the participants in the setup of the complicated multi-transaction setup designates its own `z_all[p]` share and provide `z_all[p] * G`, possibly with a signature to ensure that the participant knows exactly what the `z_all[p]` is and is not trying to cancel keys, or using the MuSig technique of multiplying `h(a * G | b * G ... p * G)` to all the public keys before summing them up.
+
+
+&gt;<i> I've been pitching the language name as &quot;Improv&quot; (since it's scriptless!).
+</I>
+Excellent choice, I see you are a sentience possessing much acculturation.
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002216.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+	<LI>Next message: <A HREF="002227.html">[Lightning-dev] A Payment Point Feature Family (MultiSig, DLC, Escrow, ...)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2225">[ date ]</a>
+              <a href="thread.html#2225">[ thread ]</a>
+              <a href="subject.html#2225">[ subject ]</a>
+              <a href="author.html#2225">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Route%20reliability%3C-%3Efee%20trade-off%20control%0A%09parameter&In-Reply-To=%3CCAJ5H3Z6gKWvXCKdrv2EUG528FZfooDRV1c%2B8VmxJULTV4_NvSA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003343.html">
+   <LINK REL="Next"  HREF="003345.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Route%20reliability%3C-%3Efee%20trade-off%20control%0A%09parameter&In-Reply-To=%3CCAJ5H3Z6gKWvXCKdrv2EUG528FZfooDRV1c%2B8VmxJULTV4_NvSA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Mon Nov 15 18:50:52 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003343.html">[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter
+</A></li>
+        <LI>Next message: <A HREF="003345.html">[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3344">[ date ]</a>
+              <a href="thread.html#3344">[ thread ]</a>
+              <a href="subject.html#3344">[ subject ]</a>
+              <a href="author.html#3344">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear Joost,
+
+First I am happy that you also agree that reliability can and should be
+expressed as a probability as discussed in [0].
+
+The problem that you address is that of feature engineering[1]. Which
+consists of two (or even more) steps:
+
+1.) Feature selection: That means in payment delivery we will compute a min
+cost flow [2] with a chosen cost function (historically people used
+dijkstra seach for single paths with the cost function representing the
+weights on the edges of the graph -which is what most folks currently still
+do). While [2] and I personally agree with you that the cost function
+should be a combination the two features fees and reliability (as in
+successprobability) Matt Corallo righfully pointed out [3] that other
+features might be chosen in the future to deliver more optimal results. For
+example implementations currently often use CLTV as a feature (which I
+honestly find horrible) and I am currently investigating if one could add
+latency of channels or - for known IP addresses - either the geo distance
+or IP distance.
+
+2.) Combining features: This is the question that you are asking. Often
+people use a linear weighted sum to combine features. This is what often
+happens implicitly in neural networks. While this is often good enough and
+while it is often practical to either learn the weights or give users a
+choice there are many situation where the weighted linear sum does not work
+well with the selected features. An example for the weighted sum is the
+risk-factor in c-lightning that could have been used to decide if one
+wanted the dijkstra seach to either optimize for CLTV delta or for paid
+routing fees. Also in our paper [2] in which we discuss the same two
+features that you mentioned we explain how a linear sum of two features can
+be optimal due to the lagrangian bounding principle. However in practice
+(of machine learning) it has been shown that using the harmonic mean [4]
+between features often works very well without the necessity to learn a
+weight / parameter. This has for example been done when c-lightnign
+recently switched to probabilistic path finding [5]. In this thread you
+find a long discussion and evaluation how the harmonic mean outperformed
+the linear sum.
+
+I think the main issue that you address here is that there is no universal
+truth for situations like this. In practice only tests and experience will
+help us to make good decisions.
+
+with kind Regards Rene
+
+[0]:
+<A HREF="../2021-March/002984.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-March/002984.html</A>
+[1]: <A HREF="https://en.wikipedia.org/wiki/Feature_engineering">https://en.wikipedia.org/wiki/Feature_engineering</A>
+[2]: <A HREF="https://arxiv.org/abs/2107.05322">https://arxiv.org/abs/2107.05322</A>
+[3]:
+<A HREF="../2021-September/003219.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-September/003219.html</A>
+[4]:  <A HREF="https://en.wikipedia.org/wiki/Harmonic_mean">https://en.wikipedia.org/wiki/Harmonic_mean</A>
+[5]: <A HREF="https://github.com/ElementsProject/lightning/pull/4771">https://github.com/ElementsProject/lightning/pull/4771</A>
+
+
+
+
+On Mon, Nov 15, 2021 at 4:26 PM Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; wrote:
+
+&gt;<i> In Lightning pathfinding the two main variables to optimize for are
+</I>&gt;<i> routing fee and reliability. Routing fee is concrete. It is the sat amount
+</I>&gt;<i> that is paid when a payment succeeds. Reliability is a property of a route
+</I>&gt;<i> that can be expressed as a probability. The probability that a route will
+</I>&gt;<i> be successful.
+</I>&gt;<i>
+</I>&gt;<i> During pathfinding, route options are compared against each other. So for
+</I>&gt;<i> example:
+</I>&gt;<i>
+</I>&gt;<i> Route A: fee 10 sat, success probability 50%
+</I>&gt;<i> Route B: fee 20 sat, success probability 80%
+</I>&gt;<i>
+</I>&gt;<i> Which one is the better route? That depends on user preference. A patient
+</I>&gt;<i> user will probably go for route A in the hope of saving on fees whereas for
+</I>&gt;<i> a time-sensitive payment route B looks better.
+</I>&gt;<i>
+</I>&gt;<i> It would be great to offer this trade-off to the user in a simple way.
+</I>&gt;<i> Preferably a single [0, 1] value that controls the selection process. At 0,
+</I>&gt;<i> the route is only optimized for fees and probabilities are ignored
+</I>&gt;<i> completely. At 1, the route is only optimized for reliability and fees are
+</I>&gt;<i> ignored completely.
+</I>&gt;<i>
+</I>&gt;<i> But how to choose between the routes A and B for a value somewhere in
+</I>&gt;<i> between 0 and 1? For example 0.5 - perfect balance between reliability and
+</I>&gt;<i> fee. But what does that mean exactly?
+</I>&gt;<i>
+</I>&gt;<i> Anyone got an idea on how to approach this best? I am looking for a simple
+</I>&gt;<i> formula to decide between routes, preferably with a reasonably sound
+</I>&gt;<i> probability-theoretical basis (whatever that means).
+</I>&gt;<i>
+</I>&gt;<i> Joost
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>
+
+-- 
+<A HREF="https://www.rene-pickhardt.de">https://www.rene-pickhardt.de</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211115/392fcbf0/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211115/392fcbf0/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003343.html">[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter
+</A></li>
+	<LI>Next message: <A HREF="003345.html">[Lightning-dev] Route reliability&lt;-&gt;fee trade-off control	parameter
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3344">[ date ]</a>
+              <a href="thread.html#3344">[ thread ]</a>
+              <a href="subject.html#3344">[ subject ]</a>
+              <a href="author.html#3344">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

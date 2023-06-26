@@ -1,0 +1,206 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] On Mempool Funny Games against Multi-Party Funded	Transactions
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20On%20Mempool%20Funny%20Games%20against%20Multi-Party%20Funded%0A%09Transactions&In-Reply-To=%3CCALZpt%2BGzv15Dc_4ZK2yDHxuaS4rYfHQLPq-qnxa6PLxo0BU4%2BQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003032.html">
+   <LINK REL="Next"  HREF="003034.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] On Mempool Funny Games against Multi-Party Funded	Transactions</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20On%20Mempool%20Funny%20Games%20against%20Multi-Party%20Funded%0A%09Transactions&In-Reply-To=%3CCALZpt%2BGzv15Dc_4ZK2yDHxuaS4rYfHQLPq-qnxa6PLxo0BU4%2BQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] On Mempool Funny Games against Multi-Party Funded	Transactions">antoine.riard at gmail.com
+       </A><BR>
+    <I>Thu May  6 13:44:04 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003032.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+        <LI>Next message: <A HREF="003034.html">[Lightning-dev] On Mempool Funny Games against Multi-Party	Funded Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3033">[ date ]</a>
+              <a href="thread.html#3033">[ thread ]</a>
+              <a href="subject.html#3033">[ subject ]</a>
+              <a href="author.html#3033">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+In this post I would like to highlight some DoS attacks against multi-party
+Bitcoin protocols during their funding phases. Recent discussions around
+DLC funding flow [0] and dual-funding of LN channel [1] remind me that some
+timevalue DoS/fee inflation issues are common to any multi-party funded
+transactions. I'm not sure how much developers meddle in that kind of
+protocols/applications are aware of them and how well they mitigate against
+them.
+
+The first issue is a timevalue DoS by exploiting standardness malleability.
+The second one is a fee inflation one by exploiting RBF policy rules. User
+utxo aren't directly at risk but those attacks might reveal themselves as
+severe nuisances. More sophisticated variations do exist, but those ones
+are pretty easy and cheap to execute with a high-rate of success.
+
+# The Model : Multi-Party Funded Transaction
+
+Let's say Alice, Bob and Caroll commit one input in a single transaction.
+Each of them receive inputs from others, verify the outpoint existence (and
+is a segwit one if you have a chain of child transactions) and sign the
+whole transaction data with sighash_all to enforce the expected protocol
+semantics. One of them collects all the witnesses and broadcasts the
+finalized transaction. This broadcaster might be responsible to fee-bump
+the transaction through CPFP if the feerate as previously negotiated isn't
+good enough for a quick confirmation.
+
+Once the transaction is confirmed, the protocol moves in its operation
+phase (e.g start channel updates) or might even end up here (e.g a basic
+one-stage coinjoin). But those later phases are out of concern.
+
+I think this rough model applies to a wide set of L2 bitcoin protocols
+(DLC, Coinjoin, Payjoin, dual-funded LN channel, swaps ?). Notice that
+*single-party funded*, multi-party transactions (e.g batching_tx to N
+payouts) are excluded from this discussion. Although they do share the same
+risks, exploits against them are a bit harder, as the attacker has to
+execute a real RBF-pinning on a payout output, more costly in feerate.
+
+Accepting input and committing coins with a low-trusted counterparty opens
+the way to some troubles.
+
+# 1st issue : Standardness Malleability of Counterparty Input
+
+Current Core's script interpreter is applying some stricter checks beyond
+the consensus one, like MINIMALIF or NULLFAIL (bip143). While non-compliant
+with those checks, witness data might still succeed consensus checks. A L2
+client only verifying input for consensus validity will miss standardness
+validity and sign/broadcast a non-propagating transaction.
+
+In the model described above, Alice might furnish a non-MINIMALIF compliant
+p2wsh spending input to Bob and Caroll, they will accept it as a valid
+input, finish the transaction finalization and try to broadcast. It will
+fail to propagate and confirm. If Bob and Caroll are relying on a
+full-node, they can observe the failure directly and move their coins.
+Otherwise, if they don't have access to a mempool policy verifier, they
+should move their coins after some timeout.
+
+In both cases, victims of this malleability will waste timevalue on their
+coins and likely fees for a double-spend of their honest inputs, as it's
+better to cancel out the corrupted multi-party funding transaction. If the
+double-spend timeout only occurs after a meaningful timeout, e.g 2048
+blocks ahead from signatures exchange like for the recent LN change [2],
+this timevalue loss might be in the same range that one's suffered on LN's
+revokeable outputs. The attacker coin might be of far lower value than the
+victim ones and the asymmetry should be underscored, *one* malicious input
+lets you affect *N* victim ones.
+
+As a simple mitigation, participants of the multi-party funded transaction
+should verify the absence of standardness malleability of contributed
+witnessScripts. Though AFAIK, we don't have such tooling available
+ready-to-integrate in L2 stack client [3].
+
+Notice, I'm not considering timevalue DoS inflicted by malicious
+broadcaster/orchestrator, where signatures are collected but transaction
+broadcast is withheld. This should be minded at counterparty/service
+selection but it's beyond the scope of an analysis centered on
+mempool/tx-relay risks.
+
+# 2nd issue : RBF opt-out by a Counterparty Double-Spend
+
+Current bip125 RBF rules make signaling mandatory to enable replacement,
+otherwise even a better-feerate candidate won't replace a conflicting
+transaction with a finalized nSequence field [4]. A L2 client might be in
+possession of better-feerate multi-party funded transactions but it won't
+propagate on today's network if a opt-out double-spend is already present.
+
+In the model described above, Alice might provide a consensus-and-standard
+valid input to Bob and Caroll, they will verify and accept it, finish the
+transaction finalization and broadcast. Meantimes, Alice will mass-connect
+to the network and announce a double-spend of its input with
+nSequence=0xffffffff. Alice-Bob-Caroll's funding transaction won't
+propagate on the network as it's an attempt to double-spend a rbf opt-out
+transaction.
+
+A L2 client, with only a view of its mempool at best, won't understand why
+the transaction doesn't confirm and if it's responsible for the
+fee-bumping, it might do multiple rounds of feerate increase through CPFP,
+in vain. As the fee-bumping algorithm is assumed to be known if the victim
+client is open source code, the attacker can predict when the fee-bumping
+logic reaches its upper bound. When this bound is reached, the attacker
+might evict its own malicious opt-out double-spend by replacing an
+unconfirmed parent. At the next rebroadcast attempt by the L2 client, the
+funding transaction should propagate associated with a maliciously inflated
+feerate.
+
+Currently, we don't have mitigation against this simple pinning, as it
+exploits the first-seen mempool behavior. Participants of the multi-party
+funding transaction might double-spend their contributed inputs after some
+timeout, encumbering the fees and timevalue losses for nothing.
+
+# Conclusion
+
+Multi-party bitcoin protocols offer a wider attack surface when you
+consider actual mempool acceptance/tx-relay rules compared to simple
+bitcoin applications. As all those protocols are currently under design or
+in early deployment phase, I don't believe DoS attacks described are
+concerning for now.
+
+That said, if we don't address them at some point in the future, they're
+likely going to be a major source of disruption for users and services
+providers of such advanced bitcoin protocols. Even if those attacks might
+sound tricky for now and attacker incentives are relatively loose, always
+remember how far people have been leveraging Internet infrastructure
+illnesses to apparently proceed with their Minecraft business [5]
+
+I think the issues described are mostly right but please point out any
+shortcomings.
+
+Cheers,
+Antoine
+
+[0] <A HREF="https://github.com/discreetlogcontracts/dlcspecs/issues/155">https://github.com/discreetlogcontracts/dlcspecs/issues/155</A>
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/851">https://github.com/lightningnetwork/lightning-rfc/pull/851</A>
+[2] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/839">https://github.com/lightningnetwork/lightning-rfc/pull/839</A>
+[3] We assume a protocol participant will first receive outpoints from
+others, validate their witnessScript,
+then release signatures. I don't think Core's `testmempoolaccept` lets you
+do a &quot;validate their witnessScript&quot;
+operation only without yelling first for lack of signature
+[4] <A HREF="https://github.com/bitcoin/bitcoin/blob/master/src/validation.cpp#L651">https://github.com/bitcoin/bitcoin/blob/master/src/validation.cpp#L651</A>
+[5]
+<A HREF="https://krebsonsecurity.com/2017/01/who-is-anna-senpai-the-mirai-worm-author/">https://krebsonsecurity.com/2017/01/who-is-anna-senpai-the-mirai-worm-author/</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210506/466d2c64/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210506/466d2c64/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003032.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+	<LI>Next message: <A HREF="003034.html">[Lightning-dev] On Mempool Funny Games against Multi-Party	Funded Transactions
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3033">[ date ]</a>
+              <a href="thread.html#3033">[ thread ]</a>
+              <a href="subject.html#3033">[ subject ]</a>
+              <a href="author.html#3033">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

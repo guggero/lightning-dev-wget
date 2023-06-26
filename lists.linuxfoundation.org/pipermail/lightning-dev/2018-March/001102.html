@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A protocol for requesting invoices
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20protocol%20for%20requesting%20invoices&In-Reply-To=%3Ca15d060c-8791-9c50-f004-d007872e9370%40bitonic.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001115.html">
+   <LINK REL="Next"  HREF="001114.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A protocol for requesting invoices</H1>
+    <B>Corn&#233; Plooy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20protocol%20for%20requesting%20invoices&In-Reply-To=%3Ca15d060c-8791-9c50-f004-d007872e9370%40bitonic.nl%3E"
+       TITLE="[Lightning-dev] A protocol for requesting invoices">corne at bitonic.nl
+       </A><BR>
+    <I>Mon Mar 19 12:06:03 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001115.html">[Lightning-dev] A protocol for requesting invoices
+</A></li>
+        <LI>Next message: <A HREF="001114.html">[Lightning-dev] A protocol for requesting invoices
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1102">[ date ]</a>
+              <a href="thread.html#1102">[ thread ]</a>
+              <a href="subject.html#1102">[ subject ]</a>
+              <a href="author.html#1102">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>
+</I>&gt;<i> What about enforcing a maximum payment amount that can be refunded?
+</I>&gt;<i> Can this help make the amount not a requirement? This way the payment
+</I>&gt;<i> amount will still be open to the payer, but it will have a constraint.
+</I>
+I see no use case anymore for leaving out the amount in the invoice. For
+any type of transaction where the payer decides the amount, he can do so
+by specifying the amount in the invoice request.
+
+&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; 3.&#160; True. Right now I'm thinking in the opposite direction:
+</I>&gt;&gt;&gt;<i> simplifying
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; BOLT 12 by removing the possibility of refunds. We can
+</I>&gt;&gt;&gt;<i> always add it
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; back later (with a proper set of features for all kinds of
+</I>&gt;&gt;&gt;<i> refunds) as
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; an optional feature.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> I want my refund :-) !
+</I>I did some further thinking on refunds. Generally speaking, they are a
+solution for when Transactions Get Messy, right? You agreed to a
+transaction, the Lightning payment happened, but now you want to change
+something. That 'something' can be, for instance, a full refund (e.g. if
+goods cannot be delivered), a partial refund (e.g. if goods arrived
+later than agreed, or with inferior quality), an extra payment by the
+payer (e.g. cheaper model out of stock, decided to buy the more
+expensive one instead), or no payment at all (e.g. payer changes mind
+after the payment, and wants the black/blue model instead of the
+white/gold one, which has the same price).
+
+There is some similarity between a &quot;BOLT 12&quot; transaction that allows
+refunds and other updates, and a microtransaction channel. Specifically,
+I think you want the new state to be signed by whoever may possibly have
+a legitimate interest *against* the update, and you want the old state
+to be invalidated. In BOLT 12, to support this, a state should typically
+contain the description field, a field that invalidates the previous
+state, a field that specifies how this state can be invalidated, and
+optionally a payment hash(*), which indicates that this state update is
+valid only in combination with the corresponding preimage. A transaction
+starts in a &quot;null&quot; state (no obligations between participants), and ends
+specifying certain obligations that have been fulfilled. TBD: maybe
+returning to null state by signing off that all obligations have been
+fulfilled? E.g. payer signing off that ordered goods have been received.
+Note that this must be different from canceling the transaction, since
+you want the payer to keep some kind of proof of ownership. Anyway, I
+think returning to null state should not be required on BOLT12 protocol
+level: not everybody wants this. Some suppliers may want to require it
+though.
+
+Looking at the protocol for this (generalized) refund usage, it seems
+clear that, often, you don't want to have to keep the communication line
+open the entire time: it can take days, weeks or longer until the final
+settlement of a transaction. You should be able to reconnect (typically
+in the same direction as the initial connect) and say &quot;hey, let's update
+the state of the transaction to this-or-that&quot;. So, on re-connecting, you
+also need to be able to specify *which* transaction to update.
+
+The format of the &quot;description&quot; field is unspecified for now; I think
+it's best to keep it that way. Machine-readable formats for this are a
+very complex subject, better solved at a higher level protocol. For now,
+assume it to be human-readable; maybe add a MIME type field so that its
+format is both unambiguous (technologically) and upgradeable.
+
+TBD: is there a use case for transactions between more than two parties?
+Or having smart contract (scriptless?) scripts? These would then
+typically be evaluated by a settlement service provider (e.g. the legal
+system) instead of a block chain.
+
+&gt;<i> All return onions still have the same problem of capacity though.
+</I>A partial onion is a very generic solution. If capacity is your greatest
+concern as payee, you just supply a zero-hop partial onion. Minimum
+privacy, but maximum ability of the payer to construct a route over
+channels with sufficient capacity. The choice is yours.
+
+&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; 4.&#160; This depends on the use case. The URL contains an optional
+</I>&gt;&gt;&gt;<i> invoice
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; ID. A payee can request a payment for a specific, single
+</I>&gt;&gt;&gt;<i> transaction
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; (for a single instance of delivery of goods/services) by
+</I>&gt;&gt;&gt;<i> handing over an
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; URL, including an invoice ID, to a single payer. This
+</I>&gt;&gt;&gt;<i> provides similar
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; functionality as BOLT 11, except that you now have a
+</I>&gt;&gt;&gt;<i> well-defined
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; channel for transmitting larger invoice descriptions and
+</I>&gt;&gt;&gt;<i> for using
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; partial onion routes. A payee can also hand over an URL
+</I>&gt;&gt;&gt;<i> without invoice
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; ID; this can be used and re-used by one or more payers,
+</I>&gt;&gt;&gt;<i> whenever they
+</I>&gt;&gt;&gt;<i> &#160;&#160;&#160;&#160; &#160;&#160;&#160;&#160; want to perform payments to this payee.
+</I>&gt;&gt;<i> How does the payer derive the payment hash? Or does the payer have to
+</I>&gt;&gt;<i> contact the payee again to get a fresh payment hash specifically for
+</I>&gt;&gt;<i> the payer?
+</I>Contact the payee again. Or, more generally, one of them knows how to
+contact the other to propose updates to the agreement; if the payee of
+the update agrees, he will provide the payment hash.
+
+CJP
+
+(*) together with amount and timeout: these allow the payer to know
+under what conditions the payee is likely to release the preimage.
+
+
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001115.html">[Lightning-dev] A protocol for requesting invoices
+</A></li>
+	<LI>Next message: <A HREF="001114.html">[Lightning-dev] A protocol for requesting invoices
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1102">[ date ]</a>
+              <a href="thread.html#1102">[ thread ]</a>
+              <a href="subject.html#1102">[ subject ]</a>
+              <a href="author.html#1102">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

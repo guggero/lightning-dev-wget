@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Covert channel recovery with Oblivious	Signatures
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%0A%09Signatures&In-Reply-To=%3CCAH5Bsr23xVnX-y6nZuRHh08JNHBNz0j8mZtqnXhZ7STSmfP1Uw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002913.html">
+   <LINK REL="Next"  HREF="002916.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Covert channel recovery with Oblivious	Signatures</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Covert%20channel%20recovery%20with%20Oblivious%0A%09Signatures&In-Reply-To=%3CCAH5Bsr23xVnX-y6nZuRHh08JNHBNz0j8mZtqnXhZ7STSmfP1Uw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Covert channel recovery with Oblivious	Signatures">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Mon Dec 14 05:31:23 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002913.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+        <LI>Next message: <A HREF="002916.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2914">[ date ]</a>
+              <a href="thread.html#2914">[ thread ]</a>
+              <a href="subject.html#2914">[ subject ]</a>
+              <a href="author.html#2914">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Dave,
+
+Thanks for taking a read. You brought up really good points that need
+addressing.
+
+This is really cool!  However, I don't understand why it's needed.  Your
+&gt;<i> goal seems to be for the sender to provide the commitment transaction
+</I>&gt;<i> and signatures before he learns whether the receiver actually needs
+</I>&gt;<i> them.  That's just as easily accomplished by sending the data upfront in
+</I>&gt;<i> plain text.
+</I>&gt;<i>
+</I>
+To be clear: The goal is to offer a cooperative settlement transaction up
+front to the (possibly) recovering party -- *not a commitment transaction*.
+Note we cannot send a cooperative settlement tx up front for each
+connection since they are not revocable -- the channel is over once it has
+been received.
+
+I admit I didn't properly consider just sending commitment transactions
+over. This is probably because it exposes the recovering party to the
+punishment mechanism and in my most recent line of research you *really*
+don't want to do this. The idea I'm working with in revocable signature
+based channels [1] is to make the node lose its static secret key if it
+posts a revoked commitment tx. This means they could lose ALL funds from
+ALL their channels with ALL their peers if they ever broadcast a single
+revoked commitment transaction. This would be a very bad thing to happen
+while you're trying to recover funds.
+
+I agree with your core point that in LN as it exists today the security
+assumption of both methods is that the adversary will be unable to
+distinguish a connection attempt after data loss from an ordinary one. If
+they can reliably do this then both methods can lead to loss of funds so
+why bother with the wonky crypto?
+
+I think there is a subtle reason why oblivious settlement signatures are
+still preferable: it is difficult to provide a coherent UX for recovery
+when just sending YOLO commitment transactions. It would be best if the
+recovery UX was &quot;hey user I've found 0.367 Bitcoin across these three
+channels would you like to recover them?&quot;. The user can then accept this or
+cancel the recovery process and go through some extra trouble to recover
+their data (in practice, data is often not completely lost but recoverable
+with some effort). This is how it could work using the oblivious settlement
+txs I proposed.
+
+Using YOLO commitment transactions this becomes &quot;hey user I've found 0.523
+Bitcoin across three channels&quot; which may actually be more than you are owed
+to entice you to shoot yourself in the foot. Even if it's exactly what you
+are owed, when you confirm the recovery your next message might be &quot;aaaand
+it's gone&quot; because one of the commit txs was revoked.
+
+It seems difficult to recommend YOLO commitment transactions becoming the
+standard way to recover funds. It could be preferable to the current system
+but even that is up for debate I guess. I feel like I can recommend
+oblivious settlements because (i) it's covert (like YOLO commitments txs
+unlike current system) and (ii) it's  &quot;what you see is what you get&quot; -- you
+are guaranteed to recover the funds that you are presented with once you
+finally trigger the recovery.
+
+Although I do think oblivious settlement txs is a good idea I am working on
+yet *another* recovery idea for doing peer provided encrypted backup and
+full channel restoration in a way that provides another guarantee: If the
+peer sends you an outdated encrypted backup (perhaps in the hope that it
+has a revoked commitment tx in it) -- you can punish them immediately upon
+receiving the backup (if you haven't actually had data loss).
+Unfortunately, It looks like this will use more heavy cryptographic
+primitives.
+
+I think the challenge in either protocol above is deciding which peer
+&gt;<i> goes first, because whoever sends the commitment transaction reveals
+</I>&gt;<i> what they think the current state is.  Any node that refuses to go first
+</I>&gt;<i> can then be suspected of having lost data.  BOLT2
+</I>&gt;<i> option_static_remotekey has this same problem, which is reasonably
+</I>&gt;<i> mitigated IMO by LN's penalty mechanism forcing any would-be thief to
+</I>&gt;<i> risk their own funds; this doesn't work for basic eltoo, though.
+</I>&gt;<i>
+</I>
+What is the story with option_static_remotekey? I am interested to know how
+the negotiation of that option has a security issue but I don't see how it
+could.
+
+[1]: <A HREF="https://github.com/LLFourn/witness-asymmetric-channel">https://github.com/LLFourn/witness-asymmetric-channel</A>
+
+Cheers,
+
+LL
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201214/160c7de0/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201214/160c7de0/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002913.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+	<LI>Next message: <A HREF="002916.html">[Lightning-dev] Covert channel recovery with Oblivious	Signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2914">[ date ]</a>
+              <a href="thread.html#2914">[ thread ]</a>
+              <a href="subject.html#2914">[ subject ]</a>
+              <a href="author.html#2914">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

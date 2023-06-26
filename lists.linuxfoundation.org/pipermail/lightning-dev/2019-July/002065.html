@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [PROPOSAL] Gossip protocol v2
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPROPOSAL%5D%20Gossip%20protocol%20v2&In-Reply-To=%3C87tvbpmm4h.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002076.html">
+   <LINK REL="Next"  HREF="002071.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [PROPOSAL] Gossip protocol v2</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPROPOSAL%5D%20Gossip%20protocol%20v2&In-Reply-To=%3C87tvbpmm4h.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [PROPOSAL] Gossip protocol v2">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Sun Jul 14 01:38:06 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002076.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+        <LI>Next message: <A HREF="002071.html">[Lightning-dev] Congestion and Flow control for Multipath Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2065">[ date ]</a>
+              <a href="thread.html#2065">[ thread ]</a>
+              <a href="subject.html#2065">[ subject ]</a>
+              <a href="author.html#2065">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+        At the last Summit we discussed using Schnorr sigs for gossip;
+we'll also need to change things for taproot-based channels, so I think
+it makes sense to combine the two changes.
+
+channel_announcement drops from 430 to 140 (plus feature bitmap).
+channel_update drops from to 136 to ~100 (assuming min &amp; max specified)
+node_announcement drops from 140 to &gt;= 101 (plus alias, color, addresses).
+
+Here's a rough draft based on what I think we've learned from current
+gossip:
+
+1. Optional fields are move into TLVs.
+2. chain_id is moved into a TLV, with bitcoin mainnet being default.
+3. Timestamp should be a block number.
+
+This final rule gives natural ratelimiting: you can only add one update
+per block.  SHOULD not use a block number from the last 60 seconds,
+SHOULD use previous block number to allow for emergency updates, SHOULD
+make bottom bit different from the previous update.
+
+This plays much better with minisketch encoding, since even if we reduce
+timestamp to 1 bit[1], propagation will Mostly Work.
+
+Finally, it provides an implicit timestamp to channel_announcement,
+which avoids the current dance we have to do (for the purposes of
+timestamp filtering, the timestamp for channel_announcement is taken
+from a channel_update).
+
+Strawmen below:
+
+1. type: 267 (`channel_announcementv2`)
+2. data:
+    * [`signature`:`musig_combo_signature`]
+    * [`short_channel_id`:`short_channel_id`]
+    * [`point`:`node_id_1`]
+    * [`point`:`node_id_2`]
+    * [`tlvs`:`channel_announcementv2_tlvs`]
+
+- Where musig_combo_signature is the signature of the rest of the
+  message using the node_ids and the bitcoin key.
+- The bitcoin key can be read directly from the outpoint referred to
+  by `short_channel_id`.
+- One tlv record will be chain_id, the default being bitcoin mainnet.
+- Another will be for feature bits.
+- The timestamp is implicitly the block number + 6, see below.
+
+1. type: 269 (`node_announcementv2`)
+2. data:
+    * [`signature`:`signature`]
+    * [`u32`:`timestamp`]
+    * [`point`:`node_id`]
+    * [`tlvs`:`node_announcementv2_tlvs`]
+
+- timestamp is simply a block number.
+- tlvs contain optional alias, color.
+- separate (odd) tlv types for each of IPv4/v6/Tor2/Tor3, length shows
+  if it encodes multiple addresses.
+
+1. type: 271 (`channel_updatev2`)
+2. data:
+    * [`signature`:`signature`]
+    * [`short_channel_id`:`short_channel_id`]
+    * [`u32`:`timestamp`]
+    * [`byte`:`channel_flags`]
+    * [`u16`:`cltv_expiry_delta`]
+    * [`u32`:`fee_base_msat`]
+    * [`u32`:`fee_proportional_millionths`]
+    * [`tlvs`:`channel_updatev2_tlvs`]
+
+- timestamp is a block number.
+- channel_flags is direction and disable, as now.
+- tlvs contains optional htlc_min_msat, htlc_max_msat, chain_hash (if
+  not bitcoin mainnet).
+
+Cheers,
+Rusty.
+[1] <A HREF="../2018-December/001741.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-December/001741.html</A>
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002076.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+	<LI>Next message: <A HREF="002071.html">[Lightning-dev] Congestion and Flow control for Multipath Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2065">[ date ]</a>
+              <a href="thread.html#2065">[ thread ]</a>
+              <a href="subject.html#2065">[ subject ]</a>
+              <a href="author.html#2065">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

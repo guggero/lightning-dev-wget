@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fixing a griefing attack on JIT Channels using	PTLCs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fixing%20a%20griefing%20attack%20on%20JIT%20Channels%20using%0A%09PTLCs&In-Reply-To=%3CPzK5hTRAaHiEA3UFXRGQIdeZE-ob6UOh4BFpifJjl0SULtTwynr1XZUWURn-UUStAabjlvvBSmNSpFJMwWa2RoPM40TS9cazNNehjvHR-KQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003941.html">
+   <LINK REL="Next"  HREF="003955.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fixing a griefing attack on JIT Channels using	PTLCs</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fixing%20a%20griefing%20attack%20on%20JIT%20Channels%20using%0A%09PTLCs&In-Reply-To=%3CPzK5hTRAaHiEA3UFXRGQIdeZE-ob6UOh4BFpifJjl0SULtTwynr1XZUWURn-UUStAabjlvvBSmNSpFJMwWa2RoPM40TS9cazNNehjvHR-KQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Fixing a griefing attack on JIT Channels using	PTLCs">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed May 10 12:52:56 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003941.html">[Lightning-dev] Fixing a griefing attack on JIT Channels using	PTLCs
+</A></li>
+        <LI>Next message: <A HREF="003955.html">[Lightning-dev] Jamming call May 15th
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3945">[ date ]</a>
+              <a href="thread.html#3945">[ thread ]</a>
+              <a href="subject.html#3945">[ subject ]</a>
+              <a href="author.html#3945">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning mailing list, et al.,
+
+Let me explain the various possible mitigations and their drawbacks.
+
+Many of these are either &quot;LSP trusts client&quot; or &quot;client trusts LSP&quot;, in the sense that it is possible for the second mover (client in &quot;LSP trusts client&quot;; LSP in &quot;client trusts LSP&quot;) to impose costs on, or outright steal from, the first mover.
+
+If you want a trust-minimized solution, you need some kind of third party that both LSP and client agree will actually enforce that the second mover does not cheat or otherwise impose costs on the first mover.
+This &quot;third party&quot; SHOULD really be the blockchain, meaning you should really be using at least 1-conf and probably 3-conf to avoid reorgs, but *shrug*.
+(You *could* use Liquid as a third party --- but Liquid is custodial, it just has a federation as a custodian instead of a single entity, you have to trust that the federation does not collude to steal all your funds, or that Blockstream has not installed Something Else (TM) in the HSMs they sold to the federation members.)
+
+Without a trusted third party (with the blockchain, being a decentralized open-source project with strong incentives against censorship, being your standard for trustworthiness), your choices are:
+
+* LSP issues a promise --- a signature committing to a funding output on a funding transaction --- that it will definitely make a 0-conf funding transaction get confirmed before some future target blockheight.
+  <A HREF="https://github.com/BitcoinAndLightningLayerSpecs/lsp/pull/24">https://github.com/BitcoinAndLightningLayerSpecs/lsp/pull/24</A>
+  If the funding transaction is not confirmed by then, or the output is not the correct `scriptPubKey` and amount, the client reports it publicly and starts a boycott of the LSP.
+  * The client refuses to send `channel_ready` (and therefore the HTLC cannot reach the client) until after the LSP issues this promise.
+    &quot;LSP trusts client&quot;.
+  * How often have boycotts actually worked anyway?
+* Client waits for the funding transaction to appear on its local mempool before sending `channel_ready`.
+  * &quot;LSP trusts client&quot;, somewhat, but far weaker than the above; you can argue this is actually &quot;client trusts LSP&quot; and I would agree with you.
+  * The LSP can still double-spend the funding transaction with coordination with a miner, as I noted in my critique of benthecarman proposal.
+    Mere broadcast is not an assurance of confirmation, we have been saying that about 0-conf for a long time.
+  * Not all clients naturally have access to a mempool --- BIP157/158 clients do not necessarily maintain their own mempool, though an Electrum SPV client can query the mempool of the Electrum server.
+* benthecarman proposal, as noted in previous post.
+  * &quot;client trusts LSP&quot;.
+* LSP waits for the client to hand over the preimage before broadcasting the funding tx.
+  * &quot;client trusts LSP&quot;.
+  * LSP can skip actual funding tx broadcast once the client has handed over the preimage.
+  * Can be implemented in multiple ways that are all equivalent:
+    * Outright give the preimage in some bespoke API call.
+    * LSP sends the `open_channel` blah blah dance until `channel_ready` exchange, does `update_add_htlc` and irrevocably committed dance, then waits until `update_fulfill_htlc` before broadcasting the funding tx.
+  * A client can implement the &quot;client waits for funding tx in its own mempool before preimage&quot; while the LSP implements this &quot;LSP waits for preimage before funding tx broadcast&quot;, and both of them will stall waiting for each other LOL ^.^ wahahahahaha deadlock is fun.
+    This is why LSPS has to pick one or the other, otherwise we will get incompatibilities between LSPs and clients.
+
+LSPS (Open LSP Specifications group) participants have indicated a desire to prefer &quot;LSP trusts client&quot;, because the LSP is a big target for various kinds of out-of-LSPS attacks.
+For example, a hacker could potentially modify the behavior of an LSP so that the LSP attacks the client, if the &quot;client trusts LSP&quot; model is used.
+Worse, somebody can ***accuse*** the LSP of actually attacking *some* client, and it can be hard for the LSP to provide substantial evidence that it is NOT attacking the client.
+(This is why the &quot;promise&quot; scheme I listed first above is valuable --- it is definite proof that the LSP is not attacking the client, if the client is unable to provide the promise as a proof-of-misbehaviour, then the client is just bullshitting and its claim of being cheated can be ignored, assuming of course that people actually believe in the strong cryptographic provisions of the signature scheme (which I might add is the same signature scheme used to secure Bitcoin itself, so... but humans are stupid, which is why AI should replace humans with something better).
+By the way have I mentioned I am human today?)
+
+However, the only truly &quot;LSP trusts client&quot; scheme that I have figured out is that first scheme where the LSP issues a cryptographically third-party-verifiable promise to get the funding tx confirmed by some later blockheight.
+This scheme has been controversial even among LSPS participants, however.
+
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003941.html">[Lightning-dev] Fixing a griefing attack on JIT Channels using	PTLCs
+</A></li>
+	<LI>Next message: <A HREF="003955.html">[Lightning-dev] Jamming call May 15th
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3945">[ date ]</a>
+              <a href="thread.html#3945">[ thread ]</a>
+              <a href="subject.html#3945">[ subject ]</a>
+              <a href="author.html#3945">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

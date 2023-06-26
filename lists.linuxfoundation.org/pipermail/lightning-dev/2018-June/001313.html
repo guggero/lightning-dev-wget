@@ -1,0 +1,142 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20eltoo%3A%20A%20Simplified%20update%0A%20Mechanism%20for%20Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3C20180620153150.4mdash2sj7r2aiwo%40email%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001312.html">
+   <LINK REL="Next"  HREF="001316.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts</H1>
+    <B>David A. Harding</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20eltoo%3A%20A%20Simplified%20update%0A%20Mechanism%20for%20Lightning%20and%20Off-Chain%20Contracts&In-Reply-To=%3C20180620153150.4mdash2sj7r2aiwo%40email%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts">dave at dtrt.org
+       </A><BR>
+    <I>Wed Jun 20 15:31:50 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001312.html">[Lightning-dev] [bitcoin-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts
+</A></li>
+        <LI>Next message: <A HREF="001316.html">[Lightning-dev] [bitcoin-dev] eltoo: A Simplified update	Mechanism for Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1313">[ date ]</a>
+              <a href="thread.html#1313">[ thread ]</a>
+              <a href="subject.html#1313">[ subject ]</a>
+              <a href="author.html#1313">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Jun 19, 2018 at 02:02:51PM -0400, David A. Harding wrote:
+&gt;<i> Anyone can rewrite a SIGHASH_NOINPUT input's outpoint, but the actual
+</I>&gt;<i> transaction containing the settlement is expected to have (at least) two
+</I>&gt;<i> inputs, with the second one originating the fees.  That second input's
+</I>&gt;<i> signature is (I assume) using SIGHASH_ALL to commit to all outpoints in
+</I>&gt;<i> the transaction, so it can't be arbitrarily rewritten by a third-party
+</I>&gt;<i> to apply to a different state outpoint
+</I>
+I realized that the fee-paying input could possibly be signed with
+SIGHASH_ALL|SIGHASH_ANYONECANPAY to allow anyone to arbitrarily
+rewrite the other input signed with SIGHASH_NOINPUT.  However, this
+reminded me of the well-known DoS against transactions signed with
+SIGHASH_ANYONECANPAY[1], which seems to apply generally against
+SIGHASH_NOINPUT as well and may allow theft from HTLCs.
+
+## DoS against Eltoo settlements
+
+Alice and Mallory have a channel with some state updates.  Alice tries
+to initiate a cooperate close, but Mallory stalls and instead broadcasts
+the trigger transaction and the first state (state 0).  Notably, the
+first state is bundled into a very large vsize transaction with a low
+feerate.  State 1 is added to another very large low-feerate
+transaction, as are states 2 through 9. 
+
+Alice could in theory RBF the state 0 transaction, but per BIP125 rule
+#3, she needs to pay an absolute fee greater than all the transactions
+being replaced (not just a higher feerate).  That could cost a lot.
+Alice could also create a transaction that binds the final state to the
+state 9 transaction and attempt CPFP, but increasing the feerate for the
+transaction ancestor group to a satisfactory degree would cost the same
+amount as RBF.
+
+So Alice is stuck waiting for states 0-9 to confirm before the final
+state can be confirmed.  During recent periods of full mempools on
+default nodes, the waiting time for 10 nBTC/vbyte transactions has been
+more than two weeks.
+
+## HTLC theft
+
+If Mallory is able to introduce significant settlement delays, HTLC
+security is compromised.  For example, imagine this route:
+
+    Mallory &lt;-&gt; Alice &lt;-&gt; Bob
+
+Mallory orders a widget from Bob and pays via LN by sending 1 BTC to
+Alice hashlocked and timelocked, which Alice forwards to Bob also
+hashlocked and timelocked.  Mallory releases the preimage to Bob, who
+claims the funds from Alice and ships the widget, giving Alice the
+preimage.
+
+At this point, Mallory broadcasts the transactions described in the
+preceding section.
+
+If the low feerate of states 0-9 prevent them from confirming before the
+timeout, Mallory can create a transaction containing a dishonest final
+state that executes the refund branch.  Like before, she can bury this
+in an ancestor transaction chain that would be cost prohibitive for Alice
+to RBF.
+
+Considered independently, this is a very expensive attack for Mallory,
+and so perhaps impractical.  But Mallory can join forces with someone
+already creating large low-feerate consolidation transactions.  Better
+yet, from Mallory's perspective, she can execute the attack against
+hundreds of channels at once (creating long chains of ancestor
+transactions that are large in aggregate rather than individually
+large), using the aggregate size of all the victims' channels against
+each of the individual victims.
+
+Thanks,
+
+-Dave
+
+[1] <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2014-August/006438.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2014-August/006438.html</A>
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 833 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180620/7ecf165a/attachment.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180620/7ecf165a/attachment.sig</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001312.html">[Lightning-dev] [bitcoin-dev] eltoo: A Simplified update Mechanism for Lightning and Off-Chain Contracts
+</A></li>
+	<LI>Next message: <A HREF="001316.html">[Lightning-dev] [bitcoin-dev] eltoo: A Simplified update	Mechanism for Lightning and Off-Chain Contracts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1313">[ date ]</a>
+              <a href="thread.html#1313">[ thread ]</a>
+              <a href="subject.html#1313">[ subject ]</a>
+              <a href="author.html#1313">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

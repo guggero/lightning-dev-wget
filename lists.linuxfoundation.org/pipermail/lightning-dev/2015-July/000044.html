@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Routing on the lightning network?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Routing%20on%20the%20lightning%20network%3F&In-Reply-To=%3CCAJS_LCV0ud%3DfEvuH6B5DLdQHewTfikrD6BoqD0sSfuoYGiAuNA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000036.html">
+   <LINK REL="Next"  HREF="000045.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Routing on the lightning network?</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Routing%20on%20the%20lightning%20network%3F&In-Reply-To=%3CCAJS_LCV0ud%3DfEvuH6B5DLdQHewTfikrD6BoqD0sSfuoYGiAuNA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Routing on the lightning network?">aj at erisian.com.au
+       </A><BR>
+    <I>Sat Jul 18 09:46:35 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000036.html">[Lightning-dev] Routing on the lightning network?
+</A></li>
+        <LI>Next message: <A HREF="000045.html">[Lightning-dev] Routing on the lightning network?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#44">[ date ]</a>
+              <a href="thread.html#44">[ thread ]</a>
+              <a href="subject.html#44">[ subject ]</a>
+              <a href="author.html#44">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 8 July 2015 at 10:21, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> 1) Each-hop routing:
+</I>&gt;<i> 2) Source routing:
+</I>&gt;<i> Is there anything I missed?
+</I>&gt;<i>
+</I>
+&#8203;&quot;Por que no los dos?&quot;
+
+If you have source routing from alice to bob to carol to dave, with
+specified fees for each hop, why should that preclude bob deciding to route
+to carol via eliza and frank (and sharing the hop's fee correspondingly)?
+Then &quot;each-hop&quot; routing falls out as the special case where you specify
+source routing directly from your hub to the final destination.
+
+3) Extensible source-routing
+    - client chooses how many layers are required (fees, reliability vs
+anonymity)
+    - at any point, holder of transaction may extend the route by adding
+intermediary hops (optimise fees, channels, hub/hub balances, etc)
+   Pros:
+    - only hop endpoints are visible at any step
+    - adaptable to changing network conditions
+    - source can be anonymous to destination, source and destination
+anonymous to intermediaries
+    - clients need minimal info (ability to estimate fees, info on hub
+reputation for anonymising)
+   Cons:
+    - does not let you avoid nodes
+      + (NSA sets up a hub with negative fees in every direction, hubs
+reroute everything though it to bump their fees)
+    - how to work out fees?
+    - how to figure out how to route to other hubs you don't want to have a
+direct channel with?
+
+I think the latter two points have to be solved with some sort of global
+(but not necessarily complete) routing announcement service, so you can
+query who has channels and do cheapest path finding amongst them;
+clients/leaf-nodes so they can estimate fees, hubs so they can do routing,
+optimise fees, and work out profitable new channels to connect. Maybe that
+can be derived from transactions on the blockchain though? But that's
+already in the lightning paper.
+
+I think a routed &quot;transaction&quot; looks something like:
+
+ To: Bob
+  - Here's 200 satoshi from Alice locked with R
+  - You need to send 195 satoshi to Carol with message X, who will unlock R.
+
+So extending the route would just be Bob making a new transaction:
+
+ To: Dave:
+  - Here's 198 satoshi from Bob locked with R
+  - You need to send 195 satoshi to Carol with message X, who will unlock R.
+
+which seems plausible -- though I haven't checked it against the actual
+protocol so maybe it fails in the details... If it's okay, then maliciously
+routing to /dev/null just means R never gets revealed, no one gets paid,
+and the transaction eventually is considered refunded/cancelled; and if it
+does get where it's going the only consequence versus going directly is it
+takes a little longer and Bob loses some fees.
+
+Speaking of fees, I wonder if the &quot;fee proportional to satoshi-hours&quot; is
+backwards -- rather than saying &quot;the intermediary wants to charge for how
+long finalisation takes&quot;, couldn't you just say &quot;the sender is willing to
+pay inversely to how long finalisation takes&quot; in every case?
+
+If I'm an intermediary, that works out as me being offered (F - k * t)
+satoshi to deliver X satoshi within t seconds, for some F and k, then if I
+want to take a cut of X*t*r to cover my costs, that just looks like me
+onsending X satoshi plus a fee of up to (F - k * t - X*t*r) = (F - (k+X*r)
+* t). If you can arrange that fee structure technically, a successful
+transaction means everyone has an incentive to close the txn ASAP
+(including the final recipient who receives the leftover fee as a
+time-sensitive bonus). In that case you just want to choose r based on your
+available funds in both directions, making it expensive when you're
+over-committed, and potentially offering refunds (r&lt;0) when you're
+unbalanced.
+
+I think it's possible to cancel an unroutable transaction so that the funds
+can be reused (by effectively routing back to the sender?); if it is,
+nominating a smaller but still time-sensitive fee to have that happen
+sooner rather than later might be good too. That could also be used to
+implement a fee-enforced TTL; if the success fee is characterised by (F_1,
+k_1) and the failure fee is (F_2, k_2), with F_1 &gt; F_2 and k_1 &gt; k_2 then
+failing becomes more profitable than succeeding at t &gt; (F_1-F_2) /
+(k_1-k_2). (F_2 &gt; F_1, failing is immediately better than succeeding; k_2 &gt;
+k_1, failing never become a better option; when passing on fees, probably
+would be clever to keep that time roughly constant, which is admittedly
+straight-forward). That might be useful if you want the protocol to have
+long timeouts for safety, but you want short timeouts in practice for
+responsiveness.
+
+Offering an insufficient fee seems like it would easily render a
+transaction unroutable; if one of the hubs is on a satellite or floating
+platform for anonymity purposes, it might want massively high fees; if
+onion routing is in place, this may only be discoverable mid-way through
+the routing.
+
+If you structure the transaction as &quot;&lt;Bob&gt; here's &lt;N-K*t&gt; satoshi, locked
+with &lt;R&gt; to be revealed by &lt;Carol&gt; once you deliver &lt;M&gt; and as many of
+those satoshi as possible to her&quot; with the actual payment Carol's expecting
+not encoded anywhere other than (encrypted) in M, then if Bob tries taking
+more fees than needed, he increases the risk Carol won't unlock R and he'll
+get nothing.
+
+I don't quite see how channels can be safely used for independent
+concurrent transactions though. If I (Bob) have an idle channel to Carol
+for 100k satoshi, and I want to route 100 satoshi on behalf of Alice to
+Dave (locked to R_1), and 200 satoshi from Anna to Doug (locked to R_2) and
+150 satoshi from Amelia to Drew through that channel simultaneously, how do
+I sign things given that any combination of those transactions could fail,
+breaking the potential &quot;chain&quot;? There's 7 scenarios that could happen then,
+do I need to send potential transactions for all of them to Carol?
+
+    CHANNEL -&gt; [a] Bob 999,900 | Carol + R_1 100
+
+    CHANNEL -&gt; [b] Bob 999,800 | Carol + R_2 200
+    [a]     -&gt; [c] Bob 999,700 | Carol + R_2 200
+
+    CHANNEL -&gt; [_] Bob 999,850 | Carol + R_3 150
+    [a]     -&gt; [_] Bob 999,750 | Carol + R_3 150
+    [b]     -&gt; [_] Bob 999,650 | Carol + R_3 150
+    [c]     -&gt; [_] Bob 999,550 | Carol + R_3 150
+
+If you can't have concurrent independent txns on a channel, then it seems
+like you want /really/ short timeouts (seconds not days) to keep things
+flowing -- your txn doesn't block just the satoshis its spending, it blocks
+/all/ the unspent satoshis in the channel...
+
+Cheers,
+aj (hoping the above is adding to the discussion)
+
+-- 
+Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt;
+&#8203;&#8203;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150718/2b1d2c60/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150718/2b1d2c60/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000036.html">[Lightning-dev] Routing on the lightning network?
+</A></li>
+	<LI>Next message: <A HREF="000045.html">[Lightning-dev] Routing on the lightning network?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#44">[ date ]</a>
+              <a href="thread.html#44">[ thread ]</a>
+              <a href="subject.html#44">[ subject ]</a>
+              <a href="author.html#44">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

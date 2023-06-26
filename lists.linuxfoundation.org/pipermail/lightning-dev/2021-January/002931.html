@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PoDLEs revisited
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3C87czyg8b0h.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002930.html">
+   <LINK REL="Next"  HREF="002932.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PoDLEs revisited</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PoDLEs%20revisited&In-Reply-To=%3C87czyg8b0h.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] PoDLEs revisited">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Jan  8 01:37:02 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002930.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+        <LI>Next message: <A HREF="002932.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2931">[ date ]</a>
+              <a href="thread.html#2931">[ thread ]</a>
+              <a href="subject.html#2931">[ subject ]</a>
+              <a href="author.html#2931">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Lloyd Fournier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lloyd.fourn at gmail.com</A>&gt; writes:
+&gt;<i> This achieves all properties except for (4 - distinguishable on-chain)
+</I>&gt;<i> which is why it was dismissed.
+</I>
+It also seems to require 2 txs per channel open?  (Interestingly I
+missed that post previously, thanks for the pointer!)
+
+&gt;<i> I think it is possible to extend the idea to achieve (4) and therefore
+</I>&gt;<i> obtain all desired properties.
+</I>&gt;<i> Simply put peers can just use the SINGLE|ANYONECANPAY signature as back ups
+</I>&gt;<i> in case of abort. Here's how it could work in my mind:
+</I>&gt;<i>
+</I>&gt;<i> 1. Initiator requests dual-funding and provides a TX_temp spending their
+</I>&gt;<i> input set to a main output and a change output (does not sign it yet). They
+</I>&gt;<i> also provide a sighash SIGNLE|ANYONECANPAY signature on the main output
+</I>&gt;<i> spending into TX_backup-fund and a signature on the first commitment
+</I>&gt;<i> transaction spending from TX_backup-fund (exactly as in [6]).
+</I>&gt;<i> 2. Peer responds with commitment TX signature for TX_backup-fund.
+</I>&gt;<i> 3. Initiator responds with the signatures for TX_temp.
+</I>&gt;<i> *Peer now has a fully functional transaction chain with which to open the
+</I>&gt;<i> channel -- now they can attempt to upgrade to a SIGHASH_ALL opening*.
+</I>&gt;<i> 4. Peer (if possible) checks there are no existing transactions in the
+</I>&gt;<i> chain or mempool spending from the taker's inputs. If not it responds with
+</I>&gt;<i> its inputs, change and commitment tx signature for a SIGHASH_ALL TX_fund.
+</I>&gt;<i> 5. Initiator responds with commitment TX signature and TX_fund input
+</I>&gt;<i> signatures.
+</I>&gt;<i> 6. Peer broadcasts TX_fund.
+</I>&gt;<i> *If at any point after step 3 Initiator does not respond for ~2 seconds
+</I>&gt;<i> they broadcast TX_temp and TX_backup-funding*
+</I>
+2 seconds is not sufficient; as an Australian (or Tor user) you should
+know this :)
+
+But otherwise, it's kinda nice (bar breaking the interactive construction).
+
+&gt;<i> We have (4) because the SINGLE|ANYONECANPAY signature only appears on-chain
+</I>&gt;<i> in case of abort (i.e. TX_backup-funding makes it on-chain).
+</I>&gt;<i> It appears to be pretty close to the ideal solution in terms of privacy and
+</I>&gt;<i> security.
+</I>&gt;<i> If the malicious initiator learns an output they will always have to spend
+</I>&gt;<i> one of their inputs otherwise they will quickly get hit by the TX_temp +
+</I>&gt;<i> TX_backup-funding.
+</I>&gt;<i> Note that it is possible the node is just slow in which case even if step
+</I>&gt;<i> TX_backup-funding makes it in both parties should just carry on with the
+</I>&gt;<i> channel.
+</I>&gt;<i>
+</I>&gt;<i> The downsides are that it involves six rounds of communication and cannot
+</I>&gt;<i> use the &quot;interactive tx building&quot; protocol developed for the original
+</I>&gt;<i> proposal
+</I>&gt;<i>
+</I>&gt;<i> # Signaling Transactions
+</I>&gt;<i>
+</I>&gt;<i> Finally I present a simple but unintuitive protocol that achieves roughly
+</I>&gt;<i> the same properties as the PoDLE protocol but without lightning gossip
+</I>&gt;<i> messages.
+</I>&gt;<i>
+</I>&gt;<i> Whenever the initiator adds an input in the interactive tx building they
+</I>&gt;<i> provide signatures on a &quot;signaling&quot; transaction spending that input (and
+</I>&gt;<i> any inputs they have added so far).
+</I>&gt;<i> The signaling transactions will typically spend the funds back to the
+</I>&gt;<i> initiator's wallet.
+</I>&gt;<i> Before revealing any of their inputs, the peer checks that none of the
+</I>&gt;<i> inputs added by the initiator are in their mempool/chain.
+</I>&gt;<i> If the initiator aborts the protocol after learning one of the peer's
+</I>&gt;<i> inputs the peer broadcasts one of the signaling transactions.
+</I>&gt;<i>
+</I>&gt;<i> Like the PoDLE proposal this doesn't achieve (3) since a malicious peer
+</I>&gt;<i> could broadcast the signaling transaction making the honest initiator pay a
+</I>&gt;<i> transaction fee before using the input in another session.
+</I>&gt;<i> To mitigate this a bit, the transactions could be RBF and have a 1
+</I>&gt;<i> sat-per-byte feerate to give the initiator a decent amount of time to use
+</I>&gt;<i> their input productively before the tx confirms (and paying a low fee if it
+</I>&gt;<i> ever does confirm).
+</I>&gt;<i>
+</I>&gt;<i> The advantages of signaling transactions over PoDLE is that it doesn't
+</I>&gt;<i> involve any wonky crypto or new gossip messages.
+</I>&gt;<i> The advantage of the PoDLE proposal over this is that a malicious peer can
+</I>&gt;<i> only blacklist the UTXO (not necessarily force you to spend it).
+</I>
+We only need a single UTXO for this, which is even better.
+
+So the initiator sends a &quot;good faith&quot; signed tx, which spends one of its
+UTXOs, to the accepter.  1sat-per-byte is probably a too low, but the
+accepter can provide a feerate for it[1].  Opener aborts if that
+&quot;good-faith&quot; feerate is too high.  It's implied that this is the first
+added input, too.
+
+If the accepter screws the opener by broadcasting it, the opener can
+still open a channel with someone else before it's confirmed: they just
+can't use *that* utxo if they want another node to DF.  Or simply take
+the loss, since the feerate is presumably minimal, and use CPFP.
+
+Cheers,
+Rusty.
+
+[1] The latest c-lightning implementation of the spec[2] already has the
+    accepter indicating min, max and preferred feerates (and then the
+    opener selects within that range).  This would simply add another
+    feerate field, suggest implementing as ceiling(min / 2, 1).
+[2] Which Lisa promises she'll publish RSN, so we can add your derived
+    points proposal to it.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002930.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+	<LI>Next message: <A HREF="002932.html">[Lightning-dev] PoDLEs revisited
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2931">[ date ]</a>
+              <a href="thread.html#2931">[ thread ]</a>
+              <a href="subject.html#2931">[ subject ]</a>
+              <a href="author.html#2931">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

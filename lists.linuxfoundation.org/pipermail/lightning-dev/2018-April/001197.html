@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Trustless WatchTowers?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Trustless%20WatchTowers%3F&In-Reply-To=%3CY5FJGsdqsf5iPZw1xPsqofDQNt3EewhyLW0vVbEXLk0CrUOQIgQ-lTyByvXF0lxUKPzxAryxBnTnCfBL_mF_QQCi1E5knlrCYsATRFZOr2c%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001196.html">
+   <LINK REL="Next"  HREF="001198.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Trustless WatchTowers?</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Trustless%20WatchTowers%3F&In-Reply-To=%3CY5FJGsdqsf5iPZw1xPsqofDQNt3EewhyLW0vVbEXLk0CrUOQIgQ-lTyByvXF0lxUKPzxAryxBnTnCfBL_mF_QQCi1E5knlrCYsATRFZOr2c%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Trustless WatchTowers?">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Apr 17 06:14:37 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001196.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+        <LI>Next message: <A HREF="001198.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1197">[ date ]</a>
+              <a href="thread.html#1197">[ thread ]</a>
+              <a href="subject.html#1197">[ subject ]</a>
+              <a href="author.html#1197">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Conner,
+
+&gt;<i> Hi ZmnSCPxj,
+</I>&gt;<i>
+</I>&gt;&gt;<i> Can you describe the &quot;encrypted blob&quot; approach to me? Or point me to
+</I>&gt;&gt;<i> materials?
+</I>&gt;<i>
+</I>&gt;<i> There's an awesome watchtower thread on the mailing list from 2016 that starts
+</I>&gt;<i> here [1]. It covers a broader range of possibilities than just the encrypted
+</I>&gt;<i> blob approach, and also considers other revocation schemes, e.g. elkrem.
+</I>&gt;<i>
+</I>&gt;<i> Similar to what you described, one encrypted blob approached discussed in
+</I>&gt;<i> that thread is:1. hint = tixd[:16]2. blob = Enc(data, txid[16:])3. Send (hint, blob) to watchtower.
+</I>&gt;<i>
+</I>&gt;<i> Whenever a new block is mined, the watchtower checks if it has an entry for each
+</I>&gt;<i> txid[:16]. If so, it decrypts using txid[16:], assembles the justice txn, andbroadcasts (assuming the reward output matches what was negotiated).
+</I>
+Thank you, that is indeed similar to what I was thinking given the name &quot;encrypted blob&quot;.
+
+Also, thank you for the link. I have not had much time to back-read anything older than 2017 in the archives. I observe that neither Poon nor Dryja seem to strongly participate in this list from 2017 onwards.
+
+&gt;&gt;<i> Do you have a description of the WatchTower protocol used in lnd? It may be&gt; useful to be intercompatible.
+</I>&gt;<i> We don't have anything written up formally, though what we have currently
+</I>&gt;<i> operates on the design above.
+</I>
+I understand. It would be good to know what you have, and perhaps consider planning a new BOLT document for such.
+
+Nicolas Dorier mentioned plans for BTCPay to somehow host &quot;merchant support networks&quot; where merchants may expose WatchTower endpoints, which other merchants may post revocation information for their channels to.
+
+&gt;<i> I'll also take this time to brain dump some recent investigations I've been doing on
+</I>&gt;<i>
+</I>&gt;<i> watchtowers. TL;DR @ fin.
+</I>&gt;<i>
+</I>&gt;<i> FWIW, I've been thinking about this in the context of the simple encrypted
+</I>&gt;<i> blob approach, though the observations can generalize to other schemes.
+</I>&gt;<i>
+</I>&gt;<i> As Laolu mentioned, the storage requirement for the watchtower is dominated bythe number of HTLC signatures included in the encrypted blob. Due toindependence of the second stage transactions, there is a combinatoric blowup inthe number of signatures that would need to be pre-signed under the revocationprivate key _if sweeping of HTLC outputs is batched_.
+</I>&gt;<i>
+</I>&gt;<i> If we want to batch sweep without more liberal sighash flags, I think we'd need to
+</I>&gt;<i> pre-sign n*2^n signatures. There are 2^n possible ways that n HTLCs can straddle
+</I>&gt;<i> the first and second stages, and each permutation would require n distinct signatures
+</I>&gt;<i> since the set of inputs is unique to each permutation. Needless to say, this isn't feasible
+</I>&gt;<i> with the maximum number of HTLCs allowed in the protocol.
+</I>
+Yes, I thought this too.
+
+&gt;<i> However, I have some observations that might inform an efficient set of
+</I>&gt;<i> signatures we can choose to include in the encrypted blobs.
+</I>&gt;<i>
+</I>&gt;<i> The first is that the HTLC timeout or HTLC success transaction _must_ bebroadcast before the attacker can move funds back into their wallet. If
+</I>&gt;<i> these transactions are never mined, it is actually fine to do nothing and leave
+</I>&gt;<i> those outputs in the breached state.
+</I>&gt;<i>
+</I>&gt;<i> If/when the victim comes back online, they themselves can sign and broadcast
+</I>&gt;<i> a justice transaction that executes the revocation clause of either the offered or
+</I>&gt;<i> received HTLC scripts, based on the observed spentness of the various commitmentHLTC outputs at that time. So, we can save on signature data by only requiring thewatchtower to act if second stage transactions are confirmed.
+</I>
+This is a good observation!  I initially thought that we would have to provide both the first-stage and second-stage revocation signatures.
+
+&gt;<i> One reallyyy nice thing about not having the watchtower sweep the HTLC outputson the commitment txn directly is that it doesn't need to know how toreconstruct the more complex HTLC redeem scripts. It only needs to reconstructcommitment to-local and second-stage to-local scripts and witnesses. This means
+</I>&gt;<i> the blob primarily contains:
+</I>&gt;<i>  - 1 revocation pubkey
+</I>&gt;<i>  - 1 local delay pubkey
+</I>&gt;<i>  - 1 CSV delay
+</I>&gt;<i>  - 2 commitment signatures - n HTLC signatures
+</I>&gt;<i> and we don't have to bother sending CLTVs, local/remote htlc pubkeys, or payment hashes at all.
+</I>&gt;<i>
+</I>&gt;<i> The storage for this ends up being something like ~100 + 64*(2+nhtlcs) when you
+</I>&gt;<i> include other things like the sweep address.
+</I>
+Thank you, that seems like a start at something that can be implemented.
+
+&gt;<i> The second observation is that the second stage transactions could be broadcast
+</I>&gt;<i> sequentially such that the CSV delays don't overlap at all. In this event, thewatchtower needs to sweep the HTLCs iteratively to prevent the attacker from
+</I>&gt;<i> sweeping any of the outputs as the relative timelocks expire.
+</I>
+Sorry, I seem confused this idea.  Can you give example for commitment with 2x HTLC?
+
+&gt;<i> One minimal solution could be to send signatures for independent sweep
+</I>&gt;<i> transactions, allowing the watchtower to sweep each HTLC output individually.
+</I>&gt;<i> This is nice because it permits the watchtower to sweep exactly the subset ofHTLCs that ever transition into the second stage, and under any permutationwrt. ordering of confirmed second stage transactions.
+</I>
+Yes, this seems like a good general idea.
+
+&gt;<i> With the single transaction per HTLC approach, the total number of signatures thatare sent to the watchtower remains linear in the number HTLCs on the commitmenttransaction. This approach does have the downside of consuming slightly more
+</I>&gt;<i> fees, since each output is swept with a distinct transaction.
+</I>&gt;<i>
+</I>&gt;<i> However, this approach is fairly efficient in preventing the attacker entirely from
+</I>&gt;<i> moving funds from the channel into their wallet wrt. to the amount of data stored.
+</I>&gt;<i> Considering that the majority of the channel balance is expected to be in
+</I>&gt;<i> the commitment outputs and that hypothetically on-chains fees are offset by the
+</I>&gt;<i> remote balance, this could be an acceptable tradeoff.
+</I>&gt;<i>
+</I>&gt;<i> I suspect that in practice, most second stage transactions will be valid by the time an attacker would drop to chain. Because of this, it's possible that they
+</I>&gt;<i> could be mined in the same block as the breach transaction.
+</I>&gt;<i>
+</I>&gt;<i> If everything is mined in the same block or in quick succession, it might be
+</I>&gt;<i> worthwhile to also pre-sign a justice txn that batch sweeps all HTLCs directlyfrom the second layer, requiring one additional signature/HTLC.
+</I>&gt;<i> This could be a plausible scenario if the offender breached unintentionally, and their implementation tries to proceed normally. However it does require all of the
+</I>&gt;<i> CSV delays to conincide. If that doesn't happen, the watchtower can alwaysresort to sweeping the outputs individually.
+</I>&gt;<i>
+</I>&gt;<i> All in all, I think the ability to sweep each HTLC independently is more-or-lessa requirement just given the complexity of how the on-chain state-space can manifest, especially if CLTVs have already expired. Other scenarios may
+</I>&gt;<i> be worth including on a case by case basis or if we feel they are justified. This
+</I>&gt;<i> could be handled dynamically by including some bitvector or some compact
+</I>&gt;<i> representation of how to reconstruct the transactions for any additional, included
+</I>&gt;<i> signatures.
+</I>
+Okay.  So it seems, the blob contains:
+
+1.  Revocation pubkey (from our revocation basepoint and per-commitment basepoint)
+2.  Their delayed payment pubkey (needed in scripts)
+3.  Our imposed to_self_delay (the setting we indicate, that we impose on the remote side)
+4.  Our payment pubkey
+5.  0 or 1 or 2 signatures for the main outputs. These sign a single transaction that claims only the main outputs.
+6.  0 or more second-stage HTLC revocation signatures.  These sign individual transactions (one per HTLC) that claims only the second-stage HTLC output.
+7.  scriptpubkey to put all the funds in.
+
+When the commitment txid is found onchain, the WatchTower creates a single main output claim transaction using the 1 or 2 signatures for the main outputs.  And for each HTLC outpoint on the commitment transaction, if it gets spent, the WatchTower creates one HTLC justice transaction from the second-stage HTLC transaction.
+
+Is that approximately what is needed?  Have I missed anything?
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180417/441f5a17/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180417/441f5a17/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001196.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+	<LI>Next message: <A HREF="001198.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1197">[ date ]</a>
+              <a href="thread.html#1197">[ thread ]</a>
+              <a href="subject.html#1197">[ subject ]</a>
+              <a href="author.html#1197">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,298 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [BOLT Draft] Onion Routing Spec
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3CCAO3Pvs9g_o1rMuBPFrupcMjekcTjg%2BQtO35u3LOqg7-qGr%2B14w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000561.html">
+   <LINK REL="Next"  HREF="000563.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [BOLT Draft] Onion Routing Spec</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BBOLT%20Draft%5D%20Onion%20Routing%20Spec&In-Reply-To=%3CCAO3Pvs9g_o1rMuBPFrupcMjekcTjg%2BQtO35u3LOqg7-qGr%2B14w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [BOLT Draft] Onion Routing Spec">laolu32 at gmail.com
+       </A><BR>
+    <I>Thu Aug  4 18:24:25 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000561.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+        <LI>Next message: <A HREF="000563.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#559">[ date ]</a>
+              <a href="thread.html#559">[ thread ]</a>
+              <a href="subject.html#559">[ subject ]</a>
+              <a href="author.html#559">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> I'm going back and forth about including the payloads in the header HMAC.
+</I>I
+&gt;<i> think we have three options here:
+</I>&gt;<i>
+</I>&gt;<i> 1) Include the payload in the header HMAC computation
+</I>
+I'd say personally, I prefer the first option. This results in &quot;fail fast&quot;
+behavior w.r.t packet forwarding, and additionally adds the smallest
+overhead.
+
+&gt;<i> we also lose the ability to do anonymous rendezvous meetings, where the
+</I>final
+&gt;<i> recipient provides half of the route in the form of a precompiled header
+</I>&gt;<i> (something that Hornet is using).
+</I>
+It doesn't appear that we loose the ability to do rendezvous routing if we
+follow through with the first option. The final recipient can still provide
+a
+precompiled header which is the e2e payload sent from the source to the
+rendezvous node. As the source knows the exact nested mix-header when
+sending,
+it can still be protected under the mix-header wide MAC.
+
+Additionally, in order to hide the next-hop after the rendezvous node from
+the
+source node, the destination can wrap the nested header in a layer of
+encryption, decryptable only by the rendezvous node.
+
+&gt;<i> Both the per-hop checkable schemes, combined with nodes signing the
+</I>packets
+&gt;<i> they forward, would give us the ability to identify misbehaving nodes and
+</I>&gt;<i> denounce them: if we receive a packet we check the integrity and if it
+</I>doesn't
+&gt;<i> match then we can prove to others that the node forwarded something broken
+</I>&gt;<i> with its signature, or it did not check the packet itself.
+</I>
+Great observation. However, it seems like this is currently out of scope
+(the
+implications of &quot;denouncing&quot; a node&quot;) and should be re-visited at a future
+time
+when we brainstorm some sort of &quot;reputation&quot; scheme.
+
+&gt;<i> There is a tradeoff between small packets and keeping the size uniform. I
+</I>think
+&gt;<i> we could bucketize sizes, e.g., have multiples of 32 bytes or 64 bytes
+</I>for the
+&gt;<i> fields, to have packets with similar sized payloads have the same packet
+</I>size.
+&gt;<i> That would allow us to also drop the e2e payload by setting a size of 0,
+</I>and
+&gt;<i> still be able to forward it, should we ever find a use for it.
+</I>
+Good point, we may have uses for non-uniform sizes as far as mix-headers in
+the
+future. So with this, then it appears there may be 3 types of mix-header
+formats:
+  1. Regular. Meaning no e2e payload, weighing in at 1234 bytes.
+  2. Extended. Meaning bearing the e2e payload with a size of 2468 bytes.
+  3. Rendezvous. Which nests another mix-header within the end-to-end
+payload,
+     with a size which is double that of the regular.
+
+If we like this taxonomy, then we may want to reserve the first 2 version
+bytes
+within the draft. A version 0 packet would encompass processing the first
+two
+types, while a version 1 packet denotes that this is a rendezvous packet.
+The
+rendezvous case needs to be distinct as it modifies the
+processing/forwarding
+at the final hop.
+
+Alternatively, we can use solely a version of 0 in the initial spec, with
+the
+final hop checking if the [1:34] bytes of the payload (if one is present)
+are a
+point on the curve.  If so, this triggers the rendezvous forwarding, with
+the
+mid-point node processing the packet again as normal, completing the
+rendezvous
+route.
+
+&gt;<i> We have to be careful when using timestamps in the packet as it makes
+</I>individual hops collatable.
+
+Excellent observation. Assuming we roll out a reasonably efficient solution
+for
+the collatable HTLC R-values across hops, naively selecting timestamps would
+present another correlation vector.
+
+&gt;<i> So my proposal would be to include a timestamp rounded up to the closest
+</I>hour
+&gt;<i> and have a sliding window of accepted timestamps of +/- 1 hour,
+</I>remembering the
+&gt;<i> secrets for that period and rejecting anything that is too far in the
+</I>future or
+&gt;<i> too far in the past.
+</I>
+This seems reasonable, also the size of the sliding window can easily be
+tuned
+in the future should we find it too large or small.
+
+&gt;<i> The more coarse the bigger the less likely an attacker is to guess which
+</I>&gt;<i> packets belong to the same route, but the more storage is required on the
+</I>&gt;<i> node's side.
+</I>
+Yep, there's a clear trade off between the window size of the accepted
+timestamps, and a node's storage overhead. We can tune this value to a
+ballpark
+estimate of the number of HTLCs/sec a large node with high frequency
+bi-directional throughput may forward at peak times.
+
+Let's say a HFB (High-Frequency Bitcoin) node on the network at peak
+forwards
+5k HTLC's per second: (5000/sec * 32 bytes) * 3600 sec = 576MB, if nodes are
+required to wait 1 hour between log prunings, and 288MB if we use a
+30-minute
+interval. Even with such a high throughput value, that seems reasonable.
+
+&gt;<i> We could just use the announced key, i.e., the one that participated in
+</I>the
+&gt;<i> channel setup, as a root key for HD key derivation. The derivation path
+</I>could
+&gt;<i> then be based on floor(blockheight / 144) so that we rotate keys every
+</I>day, and
+&gt;<i> don't need any additional communication to announce new public keys.
+</I>
+Great suggestion! However, I think instead of directly using the key which
+participated in the channel setup, we'd use a new independent key as the
+root
+for this HD onion derivation. This new independent key would then be
+authenticated via a signature of a schnorr multi-sign of the channel
+multi-sig
+key and the node's identity key (or alternatively two sigs). This safeguards
+against the compromise of one of the derived private keys leading to
+compromise
+of the master root HD priv key which would allow possibly stealing a node's
+coins. Additionally, a node can switch keys more easily, avoiding a channel
+tear down.
+
+However, the HD Onion Key approach can potentially cancel out the forward
+secrecy benefits. If an attacker gains access to the root HD pubkey, along
+with
+any of the child derived onion keys, then they can compute the root privkey.
+This allows the attacker to derive all the child priv keys, giving them the
+ability to decrypt all mix-headers encrypted since the HD Onion Key was
+published.
+
+I think we can patch this exploit by adding some precomputation for each
+node,
+and introducing an intermediate onion derivation point. Assuming we rotate
+every 144+ (1 day) blocks, then using the HD Onion PrivKey, each node
+pre-generates 365 (or a smaller batch size) keys. Then, generates an
+independent &quot;onion derivation&quot; key. The OD key then combined with each of
+the
+child onion keys, produces the final child onion key (C_i = final onion key,
+B_i = intermediate child key, A = OD):
+    * C_i = B_i + A
+
+After the precomputation, the OD key (A) should be *destroyed*. If so, even
+if
+an attacker gains access to one of the intermediate child onion keys,
+they're
+unable to derive the final child onion key as the OD key has been destroyed.
+This safeguards the forward secrecy of the scheme in the face of the HD
+root+child exploit. As before, in the case of a root/child compromise the
+original node can simply authenticate a new HD Onion Key.
+
+So perhaps we can combine the two approaches, publishing a blockhash (buried
+under a &quot;safe&quot; re-org depth), along with an authenticated HD root pubkey.
+With
+this new scheme we're able to push key rotation out to the edges in a
+non-interactive manner. Having the blockhash as an anchor will reduce the
+amount of guessing required by a node to fetch the correct onion key.
+
+&gt;<i> I'm also trying to figure out how to enable intermediate nodes to reply
+</I>to a
+&gt;<i> packet, e.g., if capacities are insufficient or the next node is
+</I>unreachable,
+&gt;<i> by recycling the routing info.
+</I>
+Yeah I've also attempted to tackle this issue a bit myself. The inclusion of
+onion routing certainly makes certain classes of failures harder to
+reconcile.
+There has been a bit of discussion of this in the past, at the time called
+&quot;unrolling the onion&quot;. In a similar vein it's also more difficult to
+ascribe blame node's which directly cause a payment to fail.
+
+One of my naive ideas was to include a &quot;backwards&quot; mix-header within each
+node's per-hop payload (though I hadn't included the per-hop payload in my
+mental model at the time), however this would result in a quadratic blow up
+space complexity parametrized by our max-hop limit. Essentially, we'd
+include
+a SURB within the mix-header for each hop in the route.
+
+&gt;<i> Maybe we could continue blinding the ephemeral key on the return path, and
+</I>&gt;<i> have a mechanism to tell the node the total blinding factor along the
+</I>path so
+&gt;<i> that it can encrypt something in the routing info for the return path?
+</I>That
+&gt;<i> would neatly combine Hornet and Sphinx, eliminating the initial roundtrip
+</I>to
+&gt;<i> setup forwarding segments.
+</I>
+Could you elaborate on this a bit more? It seems that this alone is
+insufficient to allow &quot;backwards&quot; replies to the source w/o revealing the
+source's identity.
+
+It seems the primary question is: how can we re-use the information present
+at
+a hop, post-processing to reply to the sender without an additional round
+trip?
+If we can solve this, then we can greatly increase the robustness of onion
+routing within the network. I think they may be worth spinning some cycles
+on,
+although I don't consider it blocking w.r.t the initial specification.
+
+-- Laolu
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160804/30f33520/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160804/30f33520/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000561.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+	<LI>Next message: <A HREF="000563.html">[Lightning-dev] [BOLT Draft] Onion Routing Spec
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#559">[ date ]</a>
+              <a href="thread.html#559">[ thread ]</a>
+              <a href="subject.html#559">[ subject ]</a>
+              <a href="author.html#559">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

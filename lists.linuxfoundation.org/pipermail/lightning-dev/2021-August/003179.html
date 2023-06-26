@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] #zerobasefee
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3C8c14f528-03e8-495a-bf0f-27c15fe1e6b0%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003178.html">
+   <LINK REL="Next"  HREF="003180.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] #zerobasefee</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23zerobasefee&In-Reply-To=%3C8c14f528-03e8-495a-bf0f-27c15fe1e6b0%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] #zerobasefee">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Mon Aug 16 00:04:52 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003178.html">[Lightning-dev] #zerobasefee
+</A></li>
+        <LI>Next message: <A HREF="003180.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3179">[ date ]</a>
+              <a href="thread.html#3179">[ thread ]</a>
+              <a href="subject.html#3179">[ subject ]</a>
+              <a href="author.html#3179">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks, AJ, for kicking off the thread.
+
+I'm frankly still very confused why we're having these conversations now. In one particular class of applicable routing 
+algorithms you could use for lightning routing having a base fee makes the algorithm intractably slow, but:
+
+a) to my knowledge, no one has (yet) done any follow-on work to investigate pulling many of the same heuristics Rene et 
+al use in a Dijkstras/A* algorithm with multiple passes or generating multiple routes in the same pass to see whether 
+you can emulate the results in a faster algorithm without the drawbacks here,
+
+b) to my knowledge, no one has (yet) done any follow-on work to investigate mapping the base fee to other, more 
+flow-based-routing-compatible numbers, eg you could convert the base fee to a minimum fee by increasing the &quot;effective&quot; 
+proportional fees. From what others have commented, this may largely &quot;solve&quot; the issue.
+
+c) to my knowledge, no one has (yet) done any follow-on work to analyze where the proposed algorithm may be most optimal 
+in the HTLC-value&lt;-&gt;channel liquidity ratio ranges. We may find that the proposed algorithm only provides materially 
+better routing when the HTLC value approaches X% of common network channel liquidity, allowing us to only use it for 
+large-value payments where we can almost ignore the base fees entirely.
+
+There's real cost to distorting the fee structures on the network away from the costs of node operators, especially as 
+we move towards requiring and using Real (tm) amounts of capital on routing nodes. If we're relying purely on hobbyists 
+forever who are operating out of goodwill, we should just remove all fees. If we think Lightning is going to involve 
+capital with real opportunity cost, matching fees to the costs is important, or at least important enough that we 
+shouldn't throw it away after one (pretty great) paper and limited further analysis.
+
+Imagine we find some great way to address HTLC slot flooding/DoS attacks (or just chose to do it in a not-great way) by 
+charging for HTLC slot usage, now we can't fix a critical DoS issue because the routing algorithms we deployed can't 
+handle the new costing. Instead, we should investigate how we can apply the ideas here with the more complicated fee 
+structures we have.
+
+Color me an optimist, but I'm quite confident with sufficient elbow grease and heuristics we can get 95% of the way 
+there. We can and should revisit these conversations if such exploration is done and we find that its not possible, but 
+until then this all feels incredibly premature.
+
+Matt
+
+On 8/14/21 21:00, Anthony Towns wrote:
+&gt;<i> Hey *,
+</I>&gt;<i> 
+</I>&gt;<i> There's been discussions on twitter and elsewhere advocating for
+</I>&gt;<i> setting the BOLT#7 fee_base_msat value [0] to zero. I'm just writing
+</I>&gt;<i> this to summarise my understanding in a place that's able to easily be
+</I>&gt;<i> referenced later.
+</I>&gt;<i> 
+</I>&gt;<i> Setting the base fee to zero has a couple of benefits:
+</I>&gt;<i> 
+</I>&gt;<i>   - it means you only have one value to optimise when trying to collect
+</I>&gt;<i>     the most fees, and one-dimensional optimisation problems are
+</I>&gt;<i>     obviously easier to write code for than two-dimensional optimisation
+</I>&gt;<i>     problems
+</I>&gt;<i> 
+</I>&gt;<i>   - when finding a route, if all the fees on all the channels are
+</I>&gt;<i>     proportional only, you'll never have to worry about paying more fees
+</I>&gt;<i>     just as a result of splitting a payment; that makes routing easier
+</I>&gt;<i>     (see [1])
+</I>&gt;<i> 
+</I>&gt;<i> So what's the cost? The cost is that there's no longer a fixed minimum
+</I>&gt;<i> fee -- so if you try sending a 1sat payment you'll pay 0.1% of the fee
+</I>&gt;<i> to send a 1000sat payment, and there may be fixed costs that you have
+</I>&gt;<i> in routing payments that you'd like to be compensated for (eg, the
+</I>&gt;<i> computational work to update channel state, the bandwith to forward the
+</I>&gt;<i> tx, or the opportunity cost for not being able to accept another htlc if
+</I>&gt;<i> you've hit your max htlcs per channel limit).
+</I>&gt;<i> 
+</I>&gt;<i> But there's no need to explicitly separate those costs the way we do
+</I>&gt;<i> now; instead of charging 1sat base fee and 0.02% proportional fee,
+</I>&gt;<i> you can instead just set the 0.02% proportional fee and have a minimum
+</I>&gt;<i> payment size of 5000 sats (htlc_minimum_msat=5e6, ~$2), since 0.02%
+</I>&gt;<i> of that is 1sat. Nobody will be asking you to route without offering a
+</I>&gt;<i> fee of at least 1sat, but all the optimisation steps are easier.
+</I>&gt;<i> 
+</I>&gt;<i> You could go a step further, and have the node side accept smaller
+</I>&gt;<i> payments despite the htlc minimum setting: eg, accept a 3000 sat payment
+</I>&gt;<i> provided it pays the same fee that a 5000 sat payment would have. That is,
+</I>&gt;<i> treat the setting as minimum_fee=1sat, rather than minimum_amount=5000sat;
+</I>&gt;<i> so the advertised value is just calculated from the real settings,
+</I>&gt;<i> and that nodes that want to send very small values despite having to
+</I>&gt;<i> pay high rates can just invert the calculation.
+</I>&gt;<i> 
+</I>&gt;<i> I think something like this approach also makes sense when your channel
+</I>&gt;<i> becomes overloaded; eg if you have x HTLC slots available, and y channel
+</I>&gt;<i> capacity available, setting a minimum payment size of something like
+</I>&gt;<i> y/2/x**2 allows you to accept small payments (good for the network)
+</I>&gt;<i> when you're channel is not busy, but reserves the last slots for larger
+</I>&gt;<i> payments so that you don't end up missing out on profits because you
+</I>&gt;<i> ran out of capacity due to low value spam.
+</I>&gt;<i> 
+</I>&gt;<i> Two other aspects related to this:
+</I>&gt;<i> 
+</I>&gt;<i> At present, I think all the fixed costs are also incurred even when
+</I>&gt;<i> a htlc fails, so until we have some way of charging failing txs for
+</I>&gt;<i> incurring those costs, it seems a bit backwards to penalise successful
+</I>&gt;<i> txs who at least pay a proportional fee for the same thing. Until we've
+</I>&gt;<i> got a way of handling that, having zero base fee seems at least fair.
+</I>&gt;<i> 
+</I>&gt;<i> Lower value HTLCs don't need to be included in the commitment transaction
+</I>&gt;<i> (if they're below the dust level, they definitely shouldn't be included,
+</I>&gt;<i> and if they're less than 1sat they can't be included), and as such don't
+</I>&gt;<i> incur all the same fixed costs that HTLCs that are committed too do.
+</I>&gt;<i> Having different base fees for microtransactions that incur fewer costs
+</I>&gt;<i> would be annoying; so having that be &quot;amortised&quot; into the proportional
+</I>&gt;<i> fee might help there too.
+</I>&gt;<i> 
+</I>&gt;<i> I think eltoo can help in two ways by reducing the fixed costs: you no
+</I>&gt;<i> longer need to keep HTLC information around permanently, and if you do
+</I>&gt;<i> a multilevel channel factory setup, you can probably remove the ~400
+</I>&gt;<i> HTLCs per channel at any one time limit. But there's still other fixed
+</I>&gt;<i> costs, so I think that would just lower the fixed costs, not remove them
+</I>&gt;<i> altogether and isn't a fundamental change.
+</I>&gt;<i> 
+</I>&gt;<i> I think the fixed costs for forwarding a HTLC are very small; something
+</I>&gt;<i> like:
+</I>&gt;<i> 
+</I>&gt;<i>     0.02sats -- cost of permanently storing the HTLC info
+</I>&gt;<i>                 (100 bytes, $500/TB/year, 1% discount rate)
+</I>&gt;<i>     0.04sats -- compute and bandwidth cost for updating an HTLC ($40/month
+</I>&gt;<i>                 at linode, 1 second of compute)
+</I>&gt;<i> 
+</I>&gt;<i> The opportunity cost of having HTLC slots or Bitcoin locked up until
+</I>&gt;<i> the HTLC succeeds/fails could be much more significant, though.
+</I>&gt;<i> 
+</I>&gt;<i> Cheers,
+</I>&gt;<i> aj
+</I>&gt;<i> 
+</I>&gt;<i> [0] <A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md#the-channel_update-message">https://github.com/lightningnetwork/lightning-rfc/blob/master/07-routing-gossip.md#the-channel_update-message</A>
+</I>&gt;<i> [1] <A HREF="https://basefee.ln.rene-pickhardt.de/">https://basefee.ln.rene-pickhardt.de/</A>
+</I>&gt;<i> 
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> 
+</I></PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003178.html">[Lightning-dev] #zerobasefee
+</A></li>
+	<LI>Next message: <A HREF="003180.html">[Lightning-dev] #zerobasefee
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3179">[ date ]</a>
+              <a href="thread.html#3179">[ thread ]</a>
+              <a href="subject.html#3179">[ subject ]</a>
+              <a href="author.html#3179">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,652 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Ionization Protocol: Flood Routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3C20150928103719.GA6341%40navy%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000228.html">
+   <LINK REL="Next"  HREF="000241.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Ionization Protocol: Flood Routing</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Ionization%20Protocol%3A%20Flood%20Routing&In-Reply-To=%3C20150928103719.GA6341%40navy%3E"
+       TITLE="[Lightning-dev] Ionization Protocol: Flood Routing">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Sep 28 10:37:19 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000228.html">[Lightning-dev] &quot;Locktime&quot; featurepack review
+</A></li>
+        <LI>Next message: <A HREF="000241.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#240">[ date ]</a>
+              <a href="thread.html#240">[ thread ]</a>
+              <a href="subject.html#240">[ subject ]</a>
+              <a href="author.html#240">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Batch-replying.
+
+On Sun, Sep 27, 2015 at 01:54:45PM +0930, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On Fri, Sep 25, 2015 at 09:56:02AM +0930, Rusty Russell wrote:
+</I>&gt;<i> &gt;&gt; [ Pieter Wuille Cc'd for pubkey recovery, search for &quot;recovered&quot; ]
+</I>&gt;<i> &gt;&gt; Mats Jerratsch &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">matsjj at gmail.com</A>&gt; writes:
+</I>&gt;<i> &gt;&gt; &gt;&gt; Indeed.  Random selection helps, here, but analysis will be interesting.
+</I>&gt;<i> &gt;&gt; &gt; How have you ended up with a number of beacons you need? 12 seems so
+</I>&gt;<i> &gt;&gt; &gt; low, I can&#8217;t imagine so few nodes to support all transacting for even
+</I>&gt;<i> &gt;&gt; &gt; 10 minutes..
+</I>&gt;<i> &gt;&gt; As we keep the last 100 sets of beacons, the load is spread a little.
+</I>&gt;<i> &gt; Does that actually work? Old beacons don't do any good if the payee
+</I>&gt;<i> &gt; doesn't use them when advertising a route; but old beacons also don't
+</I>&gt;<i> &gt; get their fee updates propogated, and aren't known by people who only
+</I>&gt;<i> &gt; just joined the network. I don't think you could usefully keep more than
+</I>&gt;<i> &gt; the last 2 or 3 sets of beacons?
+</I>&gt;<i> I was thinking they all count as active.  No point turning over all the
+</I>&gt;<i> beacons every block.
+</I>
+Okay, in that case I was misled by your original description. You're
+actually talking about n*k beacons at any point in time, of which the
+oldest k are replaced every d days. If k=12 and n=8, that gives 96 beacons
+at any point in time. Any given beacon is operation for n*d days, for n=8,
+then d=1 gives 8 days, while d=7 gives 2 months.
+
+The &quot;d&quot; parameter would be &quot;consensus-critical&quot;; I don't think it's
+possible to agree on any beacons without agreeing on d. You could vary k
+or n as the network scales though, but in that case I think it'd generally
+be easier to vary n than k?
+
+If you identify a given beacon by its cohort (from 1..n), its rank
+(1..k), its visibility (how long ago you first heard about it in
+seconds) and its currency (how recently the last route update to that
+beacon was), then I think the odds of a random other node also knowing
+about that beacon works out as:
+
+ - worse for the most recent cohort (older cohorts should have more fully
+   propogated)
+
+ - potentially worse for the very oldest cohorts
+    + if being a beacon wears you out (channels may have been used
+      up; they may have been hacked; they may have cashed out their
+      profits and bought an island)
+    + if nodes have varying settings for n, so older cohorts don't have
+      as effective route propagation
+
+ - worse for recent visibility (newly advertising beacon, that hadn't
+   fully propagated, same deal as for a new cohort)
+
+ - worse for non-recent currency (beacon might be offline, or routes to
+   that beacon might have failed)
+
+ - worse for low rank in recent cohorts (new beacons shouldn't show up
+   for old cohorts; if new beacons show up in recent cohorts, its the
+   low rank beacons that will be offloaded)
+
+ - worse for low rank in any cohort if other nodes have lower values for
+   k
+
+When picking beacons to advertise for accepting a payment, I think you'd
+want to take most of the above into account, to avoid only suggesting
+coincidently unreachable beacons, and having the payment fail.
+
+I don't think you could really take route price into account, since the
+real price is &quot;consumer to beacon&quot; plus &quot;beacon to merchant&quot;; and those
+could trivially be inversely related. Having 10%-30% of your suggestions
+be selected by cheapness would still be useful though.
+
+Choosing, say, two of the cheapest beacons, and three beacons from
+cohorts 3-n with recent currency and long term visibility would probably
+work okay though.
+
+If nodes are identified by a 160b address, and it takes around 4 hops
+to get to/from a random beacon, then a route is 4*160b=80B and five
+routes as above is 400B. That's ~550 bytes with base58
+encoding by my count, or about 7 lines of 76 column text. Kinda lame:
+
+&quot;please pay to 1ajaj31PWNVZEzd68S8PqAPof4EFbeZaf via lightning route:
+5PSGzi9R6k6G2mdFPx2ZsfyVdiz9gSaA7EegpTvzbxLb13yMEuNuK7m1DhJuJvwkMe4BrfdU2V5q
+cKf825oYmikQMzpfAvVkavA3AyXZEgGWx9j3j5gUxMUE8LhawnfTWWSQMc2gChzKEz1puFcyveMa
+QHVdhbcJY73M4Aev7KDWqnrAYNid2keGRzDtUDfZarSsABR4RWjshCtBctekjvxYQpsBqD4NrzvV
+DCGQNNWbKibSawkt18xdPGxR3rwMwkEqU5rE8EfXmFrFaj7t2nB8DWQa1oe4QhvPe9BYsyAumJtG
+SZFmRknJ2E5feDCzYfqAu8tVcaW6yhKUgxdrxqBVfzdTBFVtt2p5PPrz4C9d3MQsrerfSHSbbX7Q
+VcUqhotinoMHX2UyfbRYX4BJgNjLqaXE33EthhF7BBmBRkP6V7EyZYrc53XtEi1ocuKNiejWcEQe
+neajEMR9rFpHHSnzSX8AXXn13TYsGirHiFG7KYu7tzg6EFEifLeAz2wxaaaMs2K6J488kxWpDy1s
+GtG3zX3v5msToo&quot;
+
+(I 100% approve of urandom generating bytes that encoded to &quot;aj&quot; twice
+in the length I estimated for a route... Sure, it probably means my RNG
+is compromised and identifying me, but how sweetly personalised!)
+
+&gt;<i> &gt;&gt; To start, I was thinking you establish channels with 5 random nodes.
+</I>&gt;<i> &gt; I think Barabasi-Albert graphs are probably pretty reasonable here --
+</I>&gt;<i> &gt; you start by establishing channels to N nodes, selected randomly but
+</I>&gt;<i> &gt; favouring nodes in proportion to how connected they already are.
+</I>&gt;<i> &gt; <A HREF="https://en.wikipedia.org/wiki/Barab%C3%A1si%E2%80%93Albert_model">https://en.wikipedia.org/wiki/Barab%C3%A1si%E2%80%93Albert_model</A>
+</I>&gt;<i> Interesting.  If we assume growth only (as I suggested) we end up with a
+</I>&gt;<i> geometric distribution (as backed by Section 5 of
+</I>&gt;<i> <A HREF="http://www.e-publications.org/ims/submission/index.php/BEJ/user/submissionFile/10315?confirm=c40442a0">http://www.e-publications.org/ims/submission/index.php/BEJ/user/submissionFile/10315?confirm=c40442a0</A>
+</I>&gt;<i> ).
+</I>&gt;<i> It's not clear that we want a power law: do we?
+</I>
+I was more thinking that it's what we'll get without any particular
+effort. The more connected a node is:
+
+ - the more likely you'll hear about it (via p2p), so the more likely
+   you'll connect to it, versus a node you don't know exists
+
+ - the more it will earn from fees, so the more funds it will have to
+   connect to you out of the blue
+
+ - the cheaper its routes to other nodes (beacons, consumers, merchants)
+   will be at least by path length, so the more attractive it will be
+   for connecting to (at least, I think?)
+
+so the more likely you'll connect to it by happenstance, and the more
+happy you'll be that you did.
+
+On Sun, Sep 27, 2015 at 02:56:29PM +0930, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On Fri, Sep 25, 2015 at 06:26:55AM +0930, Rusty Russell wrote:
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; There are some twisty details here:
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt; 1) How many beacon nodes?
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;    12, and increase on a log scale with network size.  That size can
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt;&gt;    be derived from previous beacons.
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt; I think it's also something you could set per-node, like the
+</I>&gt;<i> &gt;&gt; &gt;&gt; &gt; minrelaytxfee.
+</I>&gt;<i> &gt;&gt; &gt;&gt; That doesn't make sense, since we need to agree on who is a beacon.
+</I>&gt;<i> &gt;&gt; &gt; If you have the top 10 beacons and I have the top 14 beacons, we have
+</I>&gt;<i> &gt;&gt; &gt; the top 10 beacons in common. During the gossip phase, if either of us
+</I>&gt;<i> &gt;&gt; &gt; see someone in the top 10, we pass it along; I pass along a few more as
+</I>&gt;<i> &gt;&gt; &gt; well.
+</I>&gt;<i> &gt;&gt; If I want to pay you, and you give me those 4 beacons I don't accept, we
+</I>&gt;<i> &gt;&gt; break down.
+</I>&gt;<i> &gt; I have 14 beacons, and I know the order in which you're most likely
+</I>&gt;<i> &gt; to have them. If I know you can choose how many beacons you track,
+</I>&gt;<i> &gt; why would I give you the four you're least likely to have (because you
+</I>&gt;<i> &gt; have a lower limit, or because you've heard of four better beacons that
+</I>&gt;<i> &gt; haven't made it to me yet)?
+</I>&gt;<i> Ergo, there are only 10 beacons, since that's all you'll ever use?  So,
+</I>&gt;<i> you *don't* get to choose your number of beacons.
+</I>
+Or I choose 3 from the top 10 and 1 from the bottom 4, and have the top
+10 used 90% of the time and the bottom 4 10% of the time?
+
+&gt;<i> Anyway, I won't propagate fee broadcasts which don't alter my proximity
+</I>&gt;<i> to a beacon.  So if I'm between you and something only you consider a
+</I>&gt;<i> &quot;beacon&quot;, you'll never know about it.
+</I>
+If 25% of the network uses 14, and 75% uses 10, but the 25% is a strongly
+connected subgraph, I'll know about the routes to the next four. Maybe
+they won't be the optimal routes to those beacons, and thus won't often
+be the cheapest routes, and thus won't often get used, but it still all
+works fine. As other people switch and it gets to a higher percentage,
+you get a smooth transition from k=10 to k=14.
+
+I think bumping n=8 to n=9 or n=10 would work similarly.
+
+If you're going to have parameters that need to be changed as things
+scale, seems useful to have them accept changes gracefully, rather than
+relying on flag days. I'm still pretty sure that k (and/or n) here work
+that way, as described.
+
+&gt;<i> &gt; Since I have to update my beacon-to-me routes regularly because of fee
+</I>&gt;<i> &gt; changes, I could regularly select different groups of beacons so you
+</I>&gt;<i> &gt; could just ask again.
+</I>&gt;<i> Yech... you really want this to be single pass &quot;pay me $5, and here are
+</I>&gt;<i> three routes from beacons near me&quot;.
+</I>
+Well, so far a &quot;route&quot; consists of a path with fees; symbolically:
+
+ pay [MY ADDRESS] $5 via:
+   [BEACON 1] 1c [N1A] 1c [N1B] 2c [N1C] 2c [N1D] 4c [ME]
+   [BEACON 2] 2c [N2A] 1c [N1C] 2c [N1D] 4c [ME]
+   [BEACON 3] 1c [N3A] 3c [N3B] 1c [N3C] 1c [N3D] 1c [ME]
+
+So even if you keep the same set of beacons, you have to regularly
+update the route info as fees/routes change, eg:
+
+ pay [MY ADDRESS] $5 via:
+   [BEACON 1] 1c [N1A] 1c [N1B] 2c [N1C] 2c [N1D] 4c [ME]
+   [BEACON 2] 2c [N2A] 2c [N2B] 1c [ME]
+   [BEACON 3] 1c [N3A] 3c [N3B] 1c [N3C] 1c [N3D] 1c [ME]
+
+ (N2A to N2B dropped it's previously uncompetitive fee from 10c to 2c in
+  this example, nothing else changed. N1C-&gt;N2A costs 8c)
+
+Even just sitting on the &quot;checkout&quot; page for a minute might be long
+enough to require a new route suggestion, eg.
+
+If you're doing that anyway, might as well select a different set of
+beacons each time as well.
+
+(The only way to not have to do that (afaics) is to just say &quot;pay [MY
+ADDRESS $5&quot; and query the network for the route; which either means
+keeping the entire graph available for path finding, or having DHTs to
+lookup routes from beacons and fees)
+
+&gt;<i> But you're right makes more sense to have two-phases: an immediate one
+</I>&gt;<i> after the block is broadcast where you compete (via SPV proof of some
+</I>&gt;<i> tx) to be a beacon, then another closer to activation where you
+</I>&gt;<i> broadcast routes.  Between those two you can expect an influx of channel
+</I>&gt;<i> offers.
+</I>
+If you've got n cohorts of beacons anyway, it seems like you'd just
+always have the newest cohort be &quot;in setup phase&quot;. ie, they'd announce
+and compete fairly quickly (minutes or hours), and then spend some time
+getting fully setup (new channels, rebalancing), and obviously still
+forwarding any transactions that find their way to them, but everyone
+would still tend to use the more established cohorts. Then once the /next/
+cohort gets selected, it's game on.
+
+That'd just require merchants to not select the latest cohort of
+beacons when advertising routes from beacons. As far as everyone else
+is concerned, brand new beacons are fine to use as normal if they turn
+out to be the best route.
+
+&gt;<i> Interestingly, the former idea means you get some leakage of routes,
+</I>&gt;<i> from nearby almost-beacons (until defeated by better beacons).
+</I>&gt;<i> Remembering those might help shortcircuit some routes (if there's some
+</I>&gt;<i> geographical correlation between nodes).
+</I>
+I don't think this works: old route info also means old fee info; and
+you can only shortcircuit if the fees are actually less, which you no
+longer know.
+
+&gt;<i> &gt;&gt; Then by convention you delay 10 blocks before using a beacon.  By that
+</I>&gt;<i> &gt;&gt; time, routes should be sufficient.
+</I>&gt;<i> &gt; I wouldn't have thought 10 blocks was long enough to setup a new channel
+</I>&gt;<i> &gt; especially to a beacon, fwiw. (If you can create a channel to a beacon
+</I>&gt;<i> &gt; with the beacon's side initially 0, spend all that money back to yourself,
+</I>&gt;<i> &gt; then reorg with a doublespend of the anchor inputs so the channel never
+</I>&gt;<i> &gt; existed, you can steal the beacon's pre-existing savings. The routing's
+</I>&gt;<i> &gt; trivial -- it's you to the beacon, and then each of your neighbours will
+</I>&gt;<i> &gt; tell you the cheapest path from a beacon to them as soon as they know it)
+</I>&gt;<i> I guess I was thinking of microtransactions, and expecting the average
+</I>&gt;<i> anchor depth requirement to be ~1.  6 is considered pretty conservative;
+</I>&gt;<i> I only added 4 to allow for propogation and setup time.
+</I>
+I don't think microtransactions help reduce risk here: from one angle,
+if you're spending $10,000/year on hardware and admin time to keep your
+node operating, you want to make that much in revenue to pay for it,
+and if revenue is 20% ROI per year, that's $50,000 investment or more
+on your side of your channels. ie, I'm expecting to see serious money
+locked up in channels.
+
+(If forwarding a txn earns you 0.2%, then $10k/year in fees means
+forwarding $5M/year, so $13k/day, $600/hour, $10/minute, or 15c per
+second on average. If your average transaction is $10, that's one a
+minute; if it's 10c, it's three every two seconds, etc.)
+
+Now, if you're always receiving paired transactions (10c from Alice
+to Carol, then 10c from Carol to Alice, then 10c from Alice to Carol
+again, etc), you don't need more than 10c in your channels to forward
+the payments, and your profit isn't dependent on your investment, and
+life is pretty sweet.
+
+But if there's time discrepencies so that Alice pays multiple rounds
+of 10c to Carol, who then batches it up into a single $10 payment, you
+need $10 in your channel (100x more). Or if Alice and Anna and Amy and
+Abby all pay multiple rounds of 10c, then eventually Carol accumulates
+that into a burst of 50x $10 payments, you need at least $500 in your
+channel with Carol, and a similar amount distributed across the channels
+connecting you to the A-squad.
+
+And if the reason you're connected to the &quot;A-squad' is that you've got a
+cheap connection to a beacon, that's centralised in that one channel. If
+there's multiple Carol's each batching $500 in received funds together at
+the end of the day, your channel balances have to scale accordingly. If
+you don't, you'll miss out on transactions, and hence fee income.
+
+(So, if you need $50k across your channels (making up your $50k investment
+mentioned above), that's $25k on each side, and you're making $10k
+a year in fees, off of $5M/year in transactions (again, as above),
+then that means your channels are able to cover about two days' worth
+of discrepency -- ie if you start balanced with $25k on your side
+of the Alice-you channel, and the same on you-Carol, after 46 hours
+worth of microtransactions at $13k/day, you can't accept payments from
+Alice or to Carol anymore. So I think this directly relates the ROI
+to... fee percentage and standard deviation of payment frequency on a
+channel? Something like that)
+
+*However* this is all probably a moot point: if beacons aren't used
+while they're in the newest cohort, then they don't particularly
+need to use the new channels immediately, and new anchors get
+safely buried anyway. Something like:
+
+ * 1 hour (6 blocks): pretty good global consensus on who the beacons are
+ * 20 hours (120 blocks): plenty of time to setup new channels
+ * 3 hours (18 blocks): plenty of time for the new channels to be buried
+
+And voila, 24 hours later, the new cohort has new channels and is ready
+to go active, and a new newest-cohort can be chosen.
+
+&gt;<i> &gt;&gt; &gt; I'm not sure if it's a realistic attack model, but if you can observe:
+</I>&gt;<i> &gt;&gt; &gt;   Bob -&gt; Alice: pay me $20 to R (routes to current beacons: ...)
+</I>&gt;<i> &gt;&gt; &gt; and have control of the beacon Alice ends up using, then you can both
+</I>&gt;<i> &gt;&gt; &gt; observe that Alice is trying to make the payment (you see an HTLC with
+</I>&gt;<i> &gt;&gt; &gt; $20 and R), and prevent Alice from making the payment (you can just not
+</I>&gt;<i> &gt;&gt; &gt; forward any transactions involving R).
+</I>&gt;<i> &gt;&gt; Sure.  But if you can observe the private conversation between Bob and
+</I>&gt;<i> &gt;&gt; Alice, *and* you control enough nodes that you're likely to be the
+</I>&gt;<i> &gt;&gt; beacon they choose, you don't need to be a beacon to block them :)
+</I>&gt;<i> &gt; You don't have to control the nodes initially, you just have to attack
+</I>&gt;<i> &gt; the beacons once they're announced. If they're accepting new channels,
+</I>&gt;<i> &gt; then they've announced an IP. If you get an exploit on a node that
+</I>&gt;<i> &gt; would have been #15 in the ranking, you just have to DoS three higher
+</I>&gt;<i> &gt; ranked beacons to get it to have traffic.
+</I>&gt;<i> They're still beacons though, they're just useless.  You do need to get
+</I>&gt;<i> a beacon then DoS enough others to force traffic though you.  That may
+</I>&gt;<i> be cheaper than offering the best rates, I guess.
+</I>
+If a beacon stops responding to pings, it won't be able to announce fee
+updates, and would presumably expire. I'm assuming you'd just keep using
+the k best beacons you've seen recently, so that would allow new guys
+in as well.
+
+It feels a lot like doing economic stimulus by randomly selecting
+some people, giving them a million dollars, and announcing their home
+addresses. Sure, it's the first story on the news, but the second is
+how they were found mugged and broke two hours later...
+
+Okay it's not a million dollars, it's mmore transactions. So how's
+beacon profitability compare to regular nodes? Assume 100 beacons,
+100k regular nodes doing forwarding, $20M/day (250k tx/s at
+10c/tx), and aggregate fees of 1%/tx. Shortest path between
+random nodes is ~4 hops, so actual tx path is about seven intermediaries:
+CONSUMER-a-b-c-BEACON-e-f-g-MERCHANT. So every transaction pays 6 nodes
+and 1 beacon. Assuming they break the fees down evenly, beacons get
+1/7th of all transactions fees; remaining nodes get 6/7th of all
+transaction fees. So an average beacon gets:
+
+  1/100 * 1/7 * 1% * 20M = $285.71/day
+  1/(100k-100) * 6/7 * 1% * 20M = $1.72/day
+
+If you're talking about millions of nodes, that's another factor of 10
+or more worse. If you're talking 100k nodes but 1000s of beacons instead
+of 100, maybe it gets better ($15-$30/day vs $2/day?), but then maybe
+we need to revisit the beacon related traffic calculations, because 1000
+is a lot more than 12...
+
+In reality, to me those numbers just say &quot;it's not worth running a node
+if you're not a beacon&quot;, so the best strategy is to commit a few cents in
+pretend channels on the blockchain to buy tickets in the beacon lottery,
+but only start actually routing when you win. So there maybe ends up being
+a few thousand nodes that have direct relationships with customers to
+earn profits based on subscription fees, and a bunch of beacon-specialists
+who play the beacon lottery and run 90% of the beacons at any given time,
+earning profit from investment and routing.
+
+Also, if the only routes you know are to and from beacons, it seems
+a bit difficult to do much in the way of &quot;scenic&quot; routing to make the
+onion routing more obscure. I'm not sure this actually matters if you
+have a total path length of more than six or seven though.
+
+(TBH: at this point beacons are seeming (to me) like a clever idea, that's
+totally implementable, but won't actually work out at all. YMMV obviously)
+
+&gt;<i> &gt;&gt; Yes!  I've been wondering about this kind of &quot;donation address&quot;
+</I>&gt;<i> &gt;&gt; scenario.  Turns out you can encode the R value in the onion routed
+</I>&gt;<i> &gt;&gt; message you send, too.  Only the final recipient can read it anyway.
+</I>&gt;<i> &gt; Yep.
+</I>&gt;<i> &gt;&gt; That doesn't help with routing to the donation address; maybe we will
+</I>&gt;<i> &gt;&gt; need a best-effort DHT for that?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If you've got a route, but no fee information; you could probe the
+</I>&gt;<i> &gt; route with nanopayments. ie, to move $10 along me-&gt;A-&gt;B-&gt;C-&gt;D, first
+</I>&gt;<i> &gt; try sending 0.01c to B with a 0.1% then a 0.2% fee, etc. Once you know
+</I>&gt;<i> &gt; A's fee, repeat with B, then C. If the fees end up as 1%, 2% and 0.2%
+</I>&gt;<i> &gt; your successful transactions are:
+</I>&gt;<i> &gt;   0.01c to B plus 0.0001c to A
+</I>&gt;<i> &gt;   0.01c to C plus 0.0001c to A plus 0.0002c to B
+</I>&gt;<i> &gt;   0.01c to D plus 0.0001c to A plus 0.0002c to B plus 0.00002c to C
+</I>&gt;<i> &gt;   $10 to D plus 10c to A plus 20c to B plus 2c to C
+</I>&gt;<i> &gt; and the txs that had smaller fees just bounce back to you.
+</I>&gt;<i> I was assuming the &quot;insufficient fees&quot; message would include the latest
+</I>&gt;<i> route info, so it's even easier.
+</I>
+I was figuring it would just be a &quot;couldn't route&quot; message with no
+additional info (could be no channel, not enough fees, bad R, mistake
+in crypto...) -- otherwise you're kind-of unwrapping the onion (ie, C
+tells B, &quot;C's fee is 1%&quot;; B tells A &quot;C's fee is 1%&quot;; A says &quot;oh, trying
+to send money to C, huh? how interesting!&quot;. C could encrypt the info to the
+symmetric key A sent C, but... seems like a lot of hassle at that point)
+
+&gt;<i> I was more concerned about the &quot;there's no channel from B-&gt;C any more&quot;.
+</I>
+Sure. In that case you can't make the payment until they tell you new
+routes, or you use some other protocol for route finding. The beacons
+are going to change soon enough anyway, so no suggested route will
+work for all that long, even ignoring fee changes.
+
+&gt;<i> &gt; (If probing was the main use for nanotransactions, nodes might set higher
+</I>&gt;<i> &gt; fees on them though, if they assume you've already chosen a route, and
+</I>&gt;<i> &gt; they therefore don't need to compete on price with other possible routes)
+</I>&gt;<i> Maybe nodes will offer some kind of routing service in future.  Seems
+</I>&gt;<i> like it'd be a layer up though.
+</I>
+I kind-of think routing is actually already a layer up, and effectively
+sort-of pluggable. ie, you've got:
+
+ 0: direct connection to someone, can establish a channe, update HTLCs
+
+ 1: onion-routed packets, can be forwarded on level 0
+
+ 2: route-finding
+
+If you've got a bunch of beacon routes, that's one way of implementing
+level 2. If you know a whole bunch of channels, then you can do it that
+way. If you have an oracle you can query, that's another way. If you've
+got multiple different systems (some nodes don't participate in the
+main routing network because of persecution fears eg), with some nodes
+in common, you can join them up.
+
+&gt;<i> &gt; There's a corresponding thread
+</I>&gt;<i> &gt; (same title) on BitcoinXT, if you really want to feel trolled.
+</I>&gt;<i> &gt; There's also:
+</I>&gt;<i> &gt;   /r/lightningnetwork: The Bitcoin Lightning Network
+</I>&gt;<i> &gt;   This sub-reddit is dedicated to corporate interests trying to take over
+</I>&gt;<i> &gt;   the decentralized world-wide ledger.
+</I>&gt;<i> &gt; No posts unfortunately...
+</I>&gt;<i> Damn, let me fix that...
+</I>
+Still no posts; caught in moderation I guess?
+
+&gt;<i> &gt; ...
+</I>&gt;<i> OK, if we have a real offline mode for standard wallets, the distinction
+</I>&gt;<i> becomes real.
+</I>
+Without it, I guess I'm thinking of balances like:
+
+ - $10-$20 on my phone (coffee, busfare, wifi access)
+ - $100-$200 on my desktop/laptop (which I can turn off, and have more
+   control over)
+
+(Ideally, I'd rather have $200 on my phone though, replacing cash/credit for
+everyday purchases)
+
+Things that can't go offline don't change of course:
+
+ - $1-$10 for IoT devices doing micropayments
+ - $10-$100 for routers/cloud computers paying for their own internet
+ - $1000-$5000 for merchants doing reasonable volume
+ - $1000-$100,000 for nodes operating as revenue generating investments
+
+&gt;<i> &gt; As far as privacy goes I think you could tell which of your neighbours
+</I>&gt;<i> &gt; is using lightning primarily as a wallet versus trying to be a
+</I>&gt;<i> &gt; profit-generating node fairly easily: wallets will have smaller channels,
+</I>&gt;<i> &gt; there'll be fewer transactions over them, and they'll disconnect more
+</I>&gt;<i> &gt; often. That doesn't guarantee they're not forwarding things; but if they
+</I>&gt;<i> &gt; are they're almost certainly arranging it out of band anyway (even if
+</I>&gt;<i> &gt; only to know when they'll be online and thus able to forward).
+</I>&gt;<i> I think deniability is important.  Thus I would want my wallet to
+</I>&gt;<i> forward payments when offered.
+</I>
+Sure, but I think in practice that only works if you actually forward
+payments; otherwise &quot;you claim that payment was forwarded; but in the
+five months we've monitored you, you have not forwarded a single payment,
+why should the jury believe this one was special?&quot;
+
+If you had $1000 on your phone, and were *actually* acting like a node,
+and willing to be a beacon, then *that* would be totally deniable, and
+pretty awesome. But I think in practice technology will mean you've
+got some nodes acting as an investment trying to earn a ROI/profit,
+and other nodes acting as wallets, spending money or receiving money
+based on goods/services outside of lightning itself.
+
+&gt;<i> &gt; (I actually think arguing the other way might make a bit of sense; if
+</I>&gt;<i> &gt; you're running a node, you should pay profits and expenses to/from an
+</I>&gt;<i> &gt; entirely separate lightning wallet)
+</I>
+So pulling in the other mail here:
+
+On Sun, Sep 27, 2015 at 03:12:56PM +0930, Rusty Russell wrote:
+&gt;<i> Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; On Fri, Sep 25, 2015 at 11:23:42AM +0930, Rusty Russell wrote:
+</I>&gt;<i> &gt;&gt; Beacons are going to get slammed, but it's not clear how bad it is.
+</I>&gt;<i> &gt;&gt; Getting slammed from all directions doesn't use up channels; it's only
+</I>&gt;<i> &gt;&gt; computational and bandwidth limits.
+</I>&gt;<i> &gt; It does actually use up channels -- if you've got 5 channels with 100 BTC
+</I>&gt;<i> &gt; in them collectively in total, and you own 20 BTC of that, and collect
+</I>&gt;<i> &gt; a 0.1% fee on each transaction, you'll gain 80 BTC after 80,000 BTC are
+</I>&gt;<i> &gt; forwarded through you, and nobody will be able to send you funds any more.
+</I>&gt;<i> That's a great insight!  Fees *do* erode channels.  I had totally missed
+</I>&gt;<i> that.
+</I>
+What I'm thinking is you'd do something like:
+
+ - node has $10,000 in channels, earns 20% a year, so around $150 a month
+ - once a month, roughly, node owner has the node pay $150 from the node
+   to a personal lightning wallet
+ - payments for node's running costs can be made from wallet (avoiding
+   hitting the blockchain)
+ - the personal wallet can get pushed to the blockchain providing anchor
+   transactions for new channels for the node (to reinvest the profits)
+
+Benefits:
+
+ - you can lock the profits in an offline wallet if you want (you only
+   need to be active long enough to receive the HTLCs, and you can
+   decide when to send them)
+ - if you have the node, you can't trace the money to the hosting
+   environment
+ - node's channels are refreshed and can stay open indefinitely
+ - if you hit a lucky channel that's makes $1000/month with only $100
+   channel balance, you can keep that channel active forever
+   (you'd have to empty profits out once a day or so though)
+ - you can kind-of lock the node down, so that it will only sign
+   incoming/forwarded transactions, and outgoing transactions to
+   a particular wallet (probably have to limit to set of known R values
+   though). you could come close to having this be just a trusted crypto
+   module, and have any exploit in the rest of the system be unable to
+   steal your money.
+
+Hmm, I think that actually explains the lightning/bitcoin fee nexus a
+bit: lightning nodes earn x% of lightning transactions; then to reinvest
+this profit in lightning, they spend on the blockchain generating $f
+in fees for miners. It's not /spending/ the profits from lightning fees
+that generates fees for miners (because that could be done withing the
+lightning network in theory), it's /reinvesting/ them in the lightning
+network. (And also buying into lightning in the first place, or cashing
+out eventually, or rebalancing your investment)
+
+&gt;<i> &gt; (In the event that someone suggests a route beacon_X -&gt; X -&gt; Y -&gt; Z to
+</I>&gt;<i> &gt; get to them, and you have a path A -&gt; C -&gt; X -&gt; beacon_X, you can cut out
+</I>&gt;<i> &gt; the middleman and not route through a beacon at all. I don't think this
+</I>&gt;<i> &gt; gives much of an improvement though. A beacon could potentially avoid
+</I>&gt;<i> &gt; this from being possible by partitioning its neighbours into two sets
+</I>&gt;<i> &gt; and setting incoming fees for one set prohibitively high, and outgoing
+</I>&gt;<i> &gt; fees to the other set as prohibitively high; managing that dynamically
+</I>&gt;<i> &gt; would be difficult but I think possible)
+</I>&gt;<i> But you'd risk not being used as a beacon if your fees are too high.
+</I>
+That's not a problem here. Say every other beacon costs 1% to route
+through, give or take. You have neighbours A, B, C and D. You set the
+following prices:
+
+   A -&gt; Me: 0.45%
+   B -&gt; Me: 0.45%
+   Me -&gt; A: 5.1%
+   Me -&gt; B: 5.1%
+
+   C -&gt; Me: 5.1%
+   D -&gt; Me: 5.1%
+   Me -&gt; C: 0.45%
+   Me -&gt; D: 0.45%
+
+A route that goes X -&gt; A -&gt; Me -&gt; C -&gt; Y will still only pay you 0.9%
+so is completely competitive for transactions; but hardly anyone will
+ever see a route like Z -&gt; D -&gt; C -&gt; Me, because Z -&gt; W -&gt; V -&gt; U -&gt; A -&gt;
+Me will be cheaper despite the extra hops. That in turn means means no
+one will figure out that Z -&gt; D -&gt; C -&gt; Y is a valid path, missing out
+going through me.
+
+To make it work dynamically, you'd need to swap the channels you apply
+the ~5% penalty so the transaction flows balance out, but I think the
+general principle works.
+
+&gt;<i> It
+</I>&gt;<i> seems to me that a beacon wants many connections, to avoid the
+</I>&gt;<i> &quot;short-circuit&quot; case.  At 100 connections, it's only 1%, though
+</I>&gt;<i> that's the best case which assumes they're all equally likely.
+</I>
+Maybe... Establishing an extra 100 connections per beacon per cohort is a
+fair chunk of blockchain transactions; and presumably they'll expire once
+the beacon stops being a beacon, rather than lasting for months/years.
+500kB per cohort, maybe? At 1MB/block and a cohort per day, that's 0.3%
+of the blockchain already.
+
+(Is 100 realistic, or would every node want a direct channel to a beacon,
+so that it would be more like 1000/beacon (100k nodes, 100 beacons)
+or more?)
+
+&gt;<i> Good points.  If we reject all routes less than (say) 3 hops by default
+</I>&gt;<i> it might mean that local payments are *less* efficient.  Oops.
+</I>
+I was thinking, at least at this stage, that there wasn't any point
+differentiating local vs global payments; I'm hoping global payments are
+quick enough for buying a coffee anyway, and online microtransactions
+will probably be global anyway. And as above, I think route finding is
+separate enough that you can always improve it while leaving the lower
+layers (HTLCs and onion-forwarding) the same.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000228.html">[Lightning-dev] &quot;Locktime&quot; featurepack review
+</A></li>
+	<LI>Next message: <A HREF="000241.html">[Lightning-dev] Ionization Protocol: Flood Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#240">[ date ]</a>
+              <a href="thread.html#240">[ thread ]</a>
+              <a href="subject.html#240">[ subject ]</a>
+              <a href="author.html#240">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

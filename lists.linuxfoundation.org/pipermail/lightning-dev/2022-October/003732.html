@@ -1,0 +1,242 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Lightning Channels With Tunable Penalties
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20Channels%20With%20Tunable%20Penalties&In-Reply-To=%3CGxmaBQOtWI1IKvKPZLKV5SUbCbPDJ5iYGF9FEdqj5OlObUWPce2oS5H7QhJHsgnGzTsvCT9_E04KyFq_Hc8Wu4AEqprciVPrmEmkfBDfeao%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003729.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Lightning Channels With Tunable Penalties</H1>
+    <B>jlspc</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Lightning%20Channels%20With%20Tunable%20Penalties&In-Reply-To=%3CGxmaBQOtWI1IKvKPZLKV5SUbCbPDJ5iYGF9FEdqj5OlObUWPce2oS5H7QhJHsgnGzTsvCT9_E04KyFq_Hc8Wu4AEqprciVPrmEmkfBDfeao%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Lightning Channels With Tunable Penalties">jlspc at protonmail.com
+       </A><BR>
+    <I>Sun Oct 30 17:45:45 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003729.html">[Lightning-dev] A pragmatic, unsatisfying work-around for anchor outputs fee-bumping reserve requirements
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3732">[ date ]</a>
+              <a href="thread.html#3732">[ thread ]</a>
+              <a href="subject.html#3732">[ subject ]</a>
+              <a href="author.html#3732">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>TL:DR
+
+=====
+* It's possible to modify the Lightning channel protocol to impose tunable penalties for putting old transactions on-chain.
+* The key idea is the use of separate value transactions and control transactions.
+* The Tunable-Penalty (TP) protocol also allows a watchtower to use storage that is logarithmic (vs. linear) in the number of channel states.
+* The TP protocol is not suitable for casual users, as it can require that users perform actions at specific times weeks or months after the expiry of an HTLC.
+
+Overview
+========
+
+In the current Lightning channel protocol [1][2], if a party accidentally puts an old transaction on-chain (for example, due to loss of state caused by a crash or loss of a cell phone), they risk losing all their funds in the channel (this has been called the &quot;toxic-waste&quot; problem) [7]. This post presents a new channel protocol, the Tunable-Penalty (TP) protocol, that supports a tunable penalty for putting old transactions on-chain, thus discouraging the use of old transactions while avoiding the risk of losing all channel funds [9][11]. In addition, the TP protocol allows watchtowers to use storage that is logarithmic, rather than linear, in the number of channel states supported. No change to the underlying Bitcoin protocol is required.
+
+A paper with a more complete description of the protocol, including figures, is available [6].
+
+The Challenge
+=============
+
+In order to motivate the TP protocol, first consider a straightforward approach to tuning penalties in a Lightning channel by charging the errant party the desired penalty and then dividing the remaining funds according to the channel's current state. Consider the case where Alice put an old state i Commitment transaction on-chain, where the current channel state is j &gt; i. In order to assess the penalty and correctly divide the remaining funds, Bob must be able to spend that transaction's to_self output (which pays to Alice) with a Penalty_Bij transaction that splits its input value into the correct state j values (after assessing the penalty). Alice must approve of this division of funds when she agrees to make state j the current state. Therefore, Alice must sign a separate Penalty_Bij transaction for each pair of states i and j, where i &lt; j, so she must sign a total of O(S^2) penalty transactions and Bob must store O(S) signatures for the current state, where S is the number of channel states [3]. The current Lightning protocol only requires O(S) signatures and O(log S) storage for each party [10], so this approach would be quite expensive.
+
+The Solution
+============
+
+The TP protocol avoids this problem by using separate value and control transactions. In addition to an on-chain Funding transaction that provides the channel's funds, each party in the TP protocol has an on-chain Individual transaction that they use to control how the channel's funds are distributed. Each Individual transaction has a single output with a value slightly larger than the desired penalty amount. Before either party can put their Commitment transaction on-chain, they must first put their State transaction on-chain that spends the output of their Individual transaction. The State transaction encodes the channel's state number in its nLocktime and nSequence fields, just like the Commitment transaction encodes the state number in the Lightning protocol. The first output of the State transaction has a value equal to the desired penalty amount.  After a relative delay equal to the maximum of the parties' to_self_delay parameters, this output can be spent by the same party's Commitment transaction for the same state. However, if the State transaction is for an old state, it can be revoked by the other party (thus taking the penalty amount) before it can be used as an input to the Commitment transaction. If one party's State transaction is revoked, the other party can still put their correct State transaction on-chain, as the two parties' State transactions spend outputs from different Individual transactions, and thus don't conflict. Because old State transactions are revoked before they can affect the distribution of the channel's funds, the problem with O(S^2) penalty transactions and signatures described above is avoided.
+
+The Protocol
+============
+
+The TP protocol is shown below:
+
++-+ AB                           +----+ A
+|<i>F|----+-------------------------| CC |----
+</I>+-+    |                         |    |
+       .                         |    | B
+       .                         |    |----
+       .                         +----+
+       |                         +----+ A
+       +-------------------------|C_Ai|----
+       |                         |    |
+       |                         |    | B
+       |                         |    |----
+       |                         |    |
+       |               tsdAB &amp; A |    | AB               +-----+ A
+       |             +-----------|    |-----+------------|Hr_Ai|----
+       |             |           +----+     |  +---------|     |
+       |             |                      |  |         +-----+
+       |             |                      |  |         +-----+ B
+       |             |                      +------------|Hp_Bi|----
+       |             |                         | +-------|     |
+       |             |                         | |       +-----+
+       |             |           +----+ A      | |
+       +-------------------------|C_Bi|----    | |
+       |             |           |    |        | |
+       .             |           |    | B      | |
+       .             |           |    |----    | |
+       .             |           |    |        | |
+       |             | tsdAB &amp; B |    | AB     | |       +-----+ A
+       V           +-------------|    |-----+------------|Hr_Ai|----
+                   | |           +----+     |  | |  +----|     |
+                   | |                      |  | |  |    +-----+
+                   | |                      |  | |  |    +-----+ B
++----+ A  +-----+  | | pckeyAi              +------------|Hp_Bi|----
+|<i>In_A|----|St_Ai|----+-----------              | |  | +--|     |
+</I>+----+    |     |  |                           | |  | |  +-----+
+          |     |  |   eAB &amp; A   +-----+ A     | |  | |
+          |     |----+-----------|Ht_Ai|-------+ |  | |
+          +-----+  | |           +-----+         |  | |
+                   | | hp(X) &amp; A +-----+ B       |  | |
+                   | +-----------|Hs_Bi|---------+  | |
+                   |             +-----+            | |
++----+ B  +-----+  |   pckeyBi                      | |
+|<i>In_B|----|St_Bi|--+-------------                   | |
+</I>+----+    |     |                                   | |
+          |     |      eAB &amp; A   +-----+ A          | |
+          |     |--+-------------|Ht_Ai|------------+ |
+          +-----+  |             +-----+              |
+                   |   hp(X) &amp; A +-----+ B            |
+                   +-------------|Hs_Bi|--------------+
+                                 +-----+
+
+where:
+F is the Funding transaction,
+CC is the Cooperative Close transaction,
+In_{A|B} is {Alice's|Bob's} Individual transaction,
+St_{A|B}i is {Alice's|Bob's} State transaction for state i,
+C_{A|B}i is {Alice's|Bob's} Commitment transaction for state i,
+Ht_Ai is Alice's HTLC-timeout transaction for state i,
+Hs_Bi is Bob's HTLC-success transaction for state i,
+Hr_Ai is Alice's HTLC-refund transaction for state i, and
+Hp_Bi is Bob's HTLC-payment transaction for state i.
+
+The F, In_A and In_B transactions are on-chain, while the remaining transactions are off-chain during normal protocol operation. The output of the Ht_Ai and Hs_Bi transactions, and the second output of the St_Ai and St_Bi transactions, have the minimal allowed value, as they are used for control.
+
+Requirements for output cases are as follows:
+A: Alice's signature,
+B: Bob's signature,
+AB: Alice's and Bob's signatures,
+pckey{A|B}i: a signature using a per-commitment key for revoking {Alice's|Bob's} state i transaction,
+hp(X): the hash preimage of X,
+tsdAB: a relative delay equal to the maximum of Alice's and Bob's to_self_delay parameters, and
+eAB: an absolute timelock equal to the expiry of the HTLC in this hop.
+
+In order to establish a new channel state, both parties:
+* calculate the State, Commitment, HTLC-timeout, HTLC-success, HTLC-refund and HTLC-payment transactions for the new state,
+* exchange partial signatures for the new state's HTLC-refund, HTLC-payment and Commitment transactions (in that order), and
+* exchange per-commitment pubkeys for the old state, thus revoking it.
+
+Consider the case of an HTLC offered by Alice to Bob (as shown in the figure above). When Bob receives the secret for the HTLC, he shares it with Alice and attempts to update the channel state off-chain. If he's unable to update the state off-chain before his fulfillment_deadline prior to the HTLC's expiry, he puts his State and associated HTLC-success transactions on-chain. If Alice hasn't received the HTLC's secret by her timeout_deadline *prior* to the HTLC's expiry, she puts her State and associated HTLC-timeout transactions on-chain.
+
+Both parties constantly look for an old (revoked) State transaction put on-chain by their partner, and if they find such a transaction they use the corresponding per-commitment key to spend its first output, thus obtaining the penalty funds and revoking the old state. Whenever a current State transaction is put on-chain, both parties attempt to resolve its HTLC control output(s) by putting their HTLC-timeout and HTLC-success transactions on-chain. If the first output of a State transaction has not been spent within tsdAB, the party that put the State transaction on-chain attempts to put their corresponding Commitment transaction on-chain. Once a Commitment transaction is on-chain, each party puts its HTLC-refund and HTLC-payment transactions that spend its HTLC outputs on-chain (as determined by whether the corresponding HTLC-timeout or HTLC-success transaction is on-chain).
+
+Two-Input Transactions
+======================
+
+All transactions in the current Lightning protocol have a single input, while the Commitment, HTLC-refund and HTLC-payment transactions in the TP protocol each have two inputs. The first input is a value input that carries channel funds and requires both parties' signatures (using the SIGHASH_ALL flag). The second input is a control input that only requires one party's signature. These two-input transactions are quite different from the Lightning protocol's one-input transactions, so it's worth examining them in detail.
+
+First, because the first input requires both parties' signatures, only two-input transactions that have been signed by both parties can be used.  Second, because signatures for the first input use the SIGHASH_ALL flag, they force the source of the second input to have the specified transaction ID. Third, because each transaction's ID is a function of the transaction IDs of all of its parents (and indirectly, of all of its ancestors), all of the ancestors of the two-input transactions must have the specified transaction IDs. For example, Alice's partial signature on the first input of Bob's Commitment transaction forces its second input to spend the first output of Bob's State transaction for the same state, and indirectly requires Bob's State transaction for the same state to spend the output of his Individual transaction. Therefore, while Bob could spend the output of his Individual transaction in any way he chooses, spending it with anything other than the correct State transaction will prevent him from ever putting his correct Commitment transaction on-chain.  Similarly, if the first output of Bob's State transaction is spent by anything other than his corresponding Commitment transaction, that Commitment transaction can never be put on-chain.
+
+Per-Commitment Keys
+===================
+
+In this way, Bob's Commitment transaction for state i, and the HTLC-refund and HTLC-payment transactions that spend the HTLC outputs from his Commitment transaction for state i, all require that the first output of Bob's State transaction for state i be spent by his Commitment transaction for state i. Therefore, revoking an old State transaction by spending its first output also revokes all of the same party's Commitment transactions (for all states) and their associated HTLC-refund and HTLC-payment transactions. This is why there's no need to separately revoke any of the outputs from the Commitment, HTLC-refund, HTLC-payment, HTLC-timeout or HTLC-success transactions.
+
+These dependent revocations also allow the TP protocol to use a different type of key for revoking old states. In the Lightning protocol the party that puts an old transaction on-chain cannot know the key for revoking that transaction. This is necessary in Lightning because if that party did know the revocation key, they could intentionally put an old Commitment transaction on-chain and then &quot;revoke&quot; the outputs of that transaction, thus taking the value for themselves. In contrast, in the TP protocol, if a party puts an old State transaction on-chain and then revokes it by spending its first output with a transaction other than its associated Commitment transaction, that party is actually blocking its ability to ever put a Commitment transaction on-chain. Furthermore, the funds that party obtains by spending the State transaction's first output are the same penalty funds that they provided from their Individual transaction. As a result, it's safe in the TP protocol to allow a party to revoke its own State transaction. This allows the TP protocol to use per-commitment keys (which are exactly the private keys of the per-commitment points used by the Lightning protocol [10]) to revoke transactions.
+
+Watchtowers
+===========
+
+Because these per-commitment keys are known to the party putting the revocable transactions on-chain, they can also be shared with an untrusted watchtower. The watchtower can use the Lightning protocol's compact storage technique for revocation keys to consume only O(log S) storage to revoke a maximum of S old transactions [10]. Conveniently, the watchtower can also take the penalty amount as payment for the service it provided.  The watchtower must be given the UTXO of the partner's Individual transaction's output in order to detect a revoked transaction, but the watchtower will see no association between that UTXO and the Funding transaction or any other channel state.
+
+Correctness
+===========
+
+Each party is prevented from putting an old Commitment transaction for state i on-chain by the other party spending the first output of the corresponding State transaction for state i. Therefore, only the correct Commitment transaction can appear on-chain.
+
+While having separate, non-conflicting State transactions enables tunable penalties, it makes HTLC resolution more complex. As can be seen in the figure above, the parties' Commitment transactions conflict and the party whose Commitment transaction appears on-chain (called the winning party) also put on-chain the State transaction with the HTLC control outputs that determine whether HTLCs succeed or time out.
+
+For example, consider an HTLC offered by Alice to Bob. Bob could fulfill the HTLC by putting his State and associated HTLC-success transactions on-chain before its expiry, but if Alice is the winning party and she puts her State and associated HTLC-timeout transactions on-chain far after its expiry, Bob will not be paid by the HTLC depite having met its terms.  Similary, Alice could time out the HTLC by putting her State and HTLC-timeout transactions on-chain after its expiry, but if Bob is the winning party and he puts his State and associated HTLC-success transactions on-chain far later, Bob will be paid by the HTLC despite having failed to meet its terms.
+
+Note that both problems require the second party to put their State transaction on-chain late relative to the HTLC's expiry, and yet be the winning party. These problems can't occur in the TP protocol because both parties race to put their Commitment transactions on-chain and the relative delays from State transactions to Commitment transactions match.  Therefore, the winning party's State transaction can't be put on-chain much later than the other party's State transaction. In the TP protocol, each party guarantees that the winning party's State transaction is on-chain early enough relative to the HTLC's expiry by putting their own State transaction on-chain early. Then, even if the other party is the winning party, the other party's transaction must still be on-chain early enough relative to the HTLC's expiry, thus guaranteeing its correct resolution.
+
+This argument is formalized in the paper [6].
+
+Related Work
+============
+
+The protocol presented here makes extensive use of previously-published work, namely the Poon-Dryja Lightning channel protocol [1] and the BOLT specifications [2]. The compact storage technique for per-commitment keys comes from the compact storage technique for revocation keys created by Russell [10].
+
+Riard, ZmnSCPxj and Decker examined the idea of adding penalties to the eltoo protocol [7], but the techniques used there were different, as they did not use separate value and control transactions.
+
+Rubin (who also credited nullc and sipa) [8] showed how a two-input transaction with separate value and control inputs can be used to delegate the control of a UTXO (the value input) to another UTXO (the control input). This two-input transaction is similar to the TP protocol's Commitment, HTLC-refund and HTLC-payment transactions, but differs in that its value input does not require a multi-sig, so the delegation can be revoked by the delegator via a double-spend.
+
+The idea of using separate value and control transactions was presented by Law in the update-forest and challenge-and-response protocols [4], but those protocols were for channel factories as opposed to channels, and they assumed a change to the underlying Bitcoin protocol.
+
+Conclusions
+===========
+
+This paper presents a new channel protocol that allows one to select the penalty for putting an old transaction on-chain. In addition, it reduces the storage costs for untrusted watchtowers from O(S) to O(log S), where S is the number of channel states supported. A recent paper presented a channel protocol that is watchtower-free for casual users [5] and similar techniques could be used to make the TP protocol watchtower-free for such users. However, the TP protocol is not suitable for them as it can require that users submit their Commitment transaction at a specific time weeks or months after the expiry of an HTLC.
+
+The TP protocol achieves tunable penalties and logarithmic storage for watchtowers by using separate value and control transactions. As will be shown in the next posts, protocols that use separate value and control transaction and have a structure similar to the TP protocol can also be used to create factory-optimized channels and efficient channel factories.
+
+Regards,
+John
+
+References
+==========
+
+[1] Poon and Dryja, &quot;The Bitcoin Lightning Network&quot;, available at <A HREF="https://lightning.network/lightning-network-paper.pdf.">https://lightning.network/lightning-network-paper.pdf.</A>
+[2] BOLT specifications, available at <A HREF="https://github.com/lightningnetwork/lightning-rfc.">https://github.com/lightningnetwork/lightning-rfc.</A>
+[3] Decker, &quot;Re: Simulating Eltoo Factories using SCU Escrows (aka SCUE'd Eltoo), available at <A HREF="https://www.mail-archive.com/lightning-dev@lists.linuxfoundation.org/msg02046.html.">https://www.mail-archive.com/lightning-dev@lists.linuxfoundation.org/msg02046.html.</A>
+[4] Law, &quot;Scaling Bitcoin With Inherited IDs&quot;, available at <A HREF="https://github.com/JohnLaw2/btc-iids.">https://github.com/JohnLaw2/btc-iids.</A>
+[5] Law, &quot;Watchtower-Free Lightning Channels For Casual Users&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-watchtower-free.">https://github.com/JohnLaw2/ln-watchtower-free.</A>
+[6] Law, &quot;Lightning Channels With Tunable Penalties&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-tunable-penalties.">https://github.com/JohnLaw2/ln-tunable-penalties.</A>
+[7] Riard, &quot;Using Per-Update Credential to enable Eltoo-Penalty&quot; and subsequent posts in the thread starting at: <A HREF="../2019-July/002064.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-July/002064.html</A>
+[8] Rubin, &quot;Delegated signatures in Bitcoin within existing rules, no fork required&quot; available at <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-March/018615.html.">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-March/018615.html.</A>
+[9] Rubin, &quot;Re: 'OP_EVICT': An Alternative to 'OP_TAPLEAFUPDATEVERIFY'&quot;, available at <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-February/019945.html.">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-February/019945.html.</A>
+[10]Russell, &quot;Efficient Per-Commitment Secret Storage&quot;, available at <A HREF="https://github.com/lightning/bolts/blob/master/03-transactions.md#efficient-per-commitment-secret-storage">https://github.com/lightning/bolts/blob/master/03-transactions.md#efficient-per-commitment-secret-storage</A>
+[11]Sanders, &quot;Re: 'OP_EVICT': An Alternative to 'OP_TAPLEAFUPDATEVERIFY'&quot;, available at <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-February/019947.">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-February/019947.</A>
+
+Sent with [Proton Mail](<A HREF="https://proton.me/">https://proton.me/</A>) secure email.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221030/b97aa76e/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221030/b97aa76e/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003729.html">[Lightning-dev] A pragmatic, unsatisfying work-around for anchor outputs fee-bumping reserve requirements
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3732">[ date ]</a>
+              <a href="thread.html#3732">[ thread ]</a>
+              <a href="subject.html#3732">[ subject ]</a>
+              <a href="author.html#3732">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

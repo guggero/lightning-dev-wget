@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Making (some) channel limits dynamic
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Making%20%28some%29%20channel%20limits%20dynamic&In-Reply-To=%3CCACdvm3O_uEb8D4aOOLbbp18OZxv8JhU%3DwH0gJMkc%3Dc4dVxfiEg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002824.html">
+   <LINK REL="Next"  HREF="002830.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Making (some) channel limits dynamic</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Making%20%28some%29%20channel%20limits%20dynamic&In-Reply-To=%3CCACdvm3O_uEb8D4aOOLbbp18OZxv8JhU%3DwH0gJMkc%3Dc4dVxfiEg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Making (some) channel limits dynamic">bastien at acinq.fr
+       </A><BR>
+    <I>Mon Oct 12 07:43:25 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002824.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+        <LI>Next message: <A HREF="002830.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2825">[ date ]</a>
+              <a href="thread.html#2825">[ thread ]</a>
+              <a href="subject.html#2825">[ subject ]</a>
+              <a href="author.html#2825">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning,
+
+For instance, Tor is basically two-layer: there is a lower-level TCP/IP
+&gt;<i> layer where packets are sent out to specific nodes on the network and this
+</I>&gt;<i> layer is completely open about where the packet should go, but there is a
+</I>&gt;<i> higher layer where onion routing between nodes is used.
+</I>&gt;<i> We could imitate this, with HTLC packets that openly show the next
+</I>&gt;<i> destination node, but once all parts reach the destination node, it decodes
+</I>&gt;<i> and turns out to be an onion to be sent to the next destination node, and
+</I>&gt;<i> the current destination node is just another forwarder.
+</I>
+
+That's an interesting comment, it may be worth exploring.
+IIUC you're suggesting that payments may look like this:
+
+* Alice wants to reach Dave by going through Bob and Carol
+* An onion encodes the route Alice -&gt; Bob -&gt; Carol -&gt; Dave
+* When Bob receives that onion and discovers that Carol is the next node,
+he finds a route to Carol
+and sends it along that route, but it's not an onion, it's &quot;clear-text&quot;
+routing
+* When Carol receives that message, she unwraps the Alice -&gt; Bob -&gt; Carol
+-&gt; Dave onion to discover
+that Dave is the next hop and applies the same steps as Bob
+
+It looks a lot like Trampoline, but Trampoline does onion routing between
+intermediate nodes.
+Your proposal would replace that with a potentially more efficient but less
+private routing scheme.
+As long as the Trampoline route does use onion routing, it could make
+sense...
+
+For your proposal, how sure is the receiver that the input end of the
+&gt;<i> trampoline node is &quot;nearer&quot; to the payer than itself?
+</I>
+
+Invoices to the rescue!
+Since lightning payments are invoice-based, recipients would add to the
+invoice a few nodes that
+are close to them (or a partial route, which would probably be better for
+privacy).
+
+Thanks,
+Bastien
+
+Le dim. 11 oct. 2020 &#224; 10:50, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning t-bast,
+</I>&gt;<i>
+</I>&gt;<i> &gt; Hey Zman,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; raising the minimum payment size is another headache
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; It's true that it may (depending on the algorithm) lower the success
+</I>&gt;<i> rate of MPP-split.
+</I>&gt;<i> &gt; But it's already a parameter that node operators can configure at will
+</I>&gt;<i> (at channel creation time),
+</I>&gt;<i> &gt; so IMO it's a complexity we have to deal with anyway. Making it dynamic
+</I>&gt;<i> shouldn't have a high
+</I>&gt;<i> &gt; impact on MPP algorithms (apart from failures while `channel_update`s
+</I>&gt;<i> are propagating).
+</I>&gt;<i>
+</I>&gt;<i> Right, it should not have much impact.
+</I>&gt;<i>
+</I>&gt;<i> For the most part, when considering the possibility of splicing in the
+</I>&gt;<i> future, we should consider that such parameters must be made changeable
+</I>&gt;<i> largely.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; To be fully honest, my (maybe unpopular) opinion about MPP is that it's
+</I>&gt;<i> not necessary on the
+</I>&gt;<i> &gt; network's backbone, only at its edges. Once the network matures, I
+</I>&gt;<i> expect channels between
+</I>&gt;<i> &gt; &quot;serious&quot; routing nodes to be way bigger than the size of individual
+</I>&gt;<i> payments. The only places
+</I>&gt;<i> &gt; where there may be small or almost-empty channels are between end-users
+</I>&gt;<i> (wallets) and
+</I>&gt;<i> &gt; routing nodes.
+</I>&gt;<i> &gt; If something like Trampoline were to be implemented, MPP would only be
+</I>&gt;<i> needed to reach a
+</I>&gt;<i> &gt; first routing node (short route), that routing node would aggregate the
+</I>&gt;<i> parts and forward as a
+</I>&gt;<i> &gt; single HTLC to the next routing node. It would be split again once it
+</I>&gt;<i> reaches the other edge
+</I>&gt;<i> &gt; of the network (for a short route as well). In a network like this, the
+</I>&gt;<i> MPP routes would only have
+</I>&gt;<i> &gt; to be computed on a small subset of the network, which makes brute-force
+</I>&gt;<i> algorithms completely
+</I>&gt;<i> &gt; reasonable and the success rate higher.
+</I>&gt;<i>
+</I>&gt;<i> This makes me wonder if we really need the onions-per-channel model we
+</I>&gt;<i> currently use.
+</I>&gt;<i>
+</I>&gt;<i> For instance, Tor is basically two-layer: there is a lower-level TCP/IP
+</I>&gt;<i> layer where packets are sent out to specific nodes on the network and this
+</I>&gt;<i> layer is completely open about where the packet should go, but there is a
+</I>&gt;<i> higher layer where onion routing between nodes is used.
+</I>&gt;<i>
+</I>&gt;<i> We could imitate this, with HTLC packets that openly show the next
+</I>&gt;<i> destination node, but once all parts reach the destination node, it decodes
+</I>&gt;<i> and turns out to be an onion to be sent to the next destination node, and
+</I>&gt;<i> the current destination node is just another forwarder.
+</I>&gt;<i>
+</I>&gt;<i> HTLC packets could be split arbitrarily, and later nodes could potentially
+</I>&gt;<i> merge with the lower CLTV used in subsequent hops.
+</I>&gt;<i>
+</I>&gt;<i> Or not, *shrug*.
+</I>&gt;<i> It has the bad problem of being more expensive on average than purely
+</I>&gt;<i> source-based routing, and probably having worse payment latency.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> For your proposal, how sure is the receiver that the input end of the
+</I>&gt;<i> trampoline node is &quot;nearer&quot; to the payer than itself?
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201012/8dcb280a/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201012/8dcb280a/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002824.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+	<LI>Next message: <A HREF="002830.html">[Lightning-dev] Making (some) channel limits dynamic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2825">[ date ]</a>
+              <a href="thread.html#2825">[ thread ]</a>
+              <a href="subject.html#2825">[ subject ]</a>
+              <a href="author.html#2825">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,340 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to Onion Messages
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Proposal%20for%20Adding%20Bandwidth%20Metered%20Payment%0A%20to%20Onion%20Messages&In-Reply-To=%3CCAO3Pvs8F4MAKePgmngkwchEBsVOKUv%2BeiMqUCJcaW6gpJVq%3DOw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003520.html">
+   <LINK REL="Next"  HREF="003526.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to Onion Messages</H1>
+    <B>Olaoluwa Osuntokun</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20Proposal%20for%20Adding%20Bandwidth%20Metered%20Payment%0A%20to%20Onion%20Messages&In-Reply-To=%3CCAO3Pvs8F4MAKePgmngkwchEBsVOKUv%2BeiMqUCJcaW6gpJVq%3DOw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A Proposal for Adding Bandwidth Metered Payment to Onion Messages">laolu32 at gmail.com
+       </A><BR>
+    <I>Wed Mar 23 00:25:40 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003520.html">[Lightning-dev] Transcript: Lightning Network in 2022 panel
+</A></li>
+        <LI>Next message: <A HREF="003526.html">[Lightning-dev] Taproot-aware Channel Announcements + Proof	Verification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3525">[ date ]</a>
+              <a href="thread.html#3525">[ thread ]</a>
+              <a href="subject.html#3525">[ subject ]</a>
+              <a href="author.html#3525">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Rusty,
+
+&gt;<i> AMP seems to be a Lightning Labs proprietary extension.  You mean keysend,
+</I>&gt;<i> which at least has a draft spec?
+</I>
+I'm confused: the keyspend specification lives today as a very succinct bLIP
+[1] (use this record that contains the preimage settle the payment), and the
+AMP spec has had an open PR [2] (which admittedly needs to be mega-rebased)
+for sometime now and is amongst the oldest PRs in the BOLT tracker. Your
+definition of a &quot;proprietary extension&quot; here would seem to cover just about
+every open BOLT pull request that hasn't yet been widely adopted by multiple
+implementations.
+
+With that aside, AMP is used here instead of keysend as each payment split
+uses a different payment hash, which makes it harder to correlate payment
+splits as both the amount and hash will differ. Also given that the e2e
+payment needs to drop off additional fees (to pay for the forwarding pass)
+to each hop, the receiver doesn't actually know how much to expect as total
+payment (no invoice exists in this scenario). With keysend, it's possible
+the receiver accidentally pulls early, with the funds irrevocably sent,
+while no true onion messaging session has been constructed. With AMP the
+sender is the one that controls _when_ all the funds can be pulled, which
+eliminates such edge cases.
+
+&gt;<i> Sure, let's keep encouraging people to use HTLCs for free to send data?  I
+</I>&gt;<i> can certainly implement that if you prefer!
+</I>
+I think the difference here is that HTLCs aren't that great for sending
+data: any space you allocate to arbitrary data takes away from the total
+route length. Also given the existence of the max_htlc parameters in channel
+updates, nodes can increase this value which allows them to discourage
+certain classes of behavior, as the HTLC that transmits the data serves
+effectively as an ephemeral bond, meaning that HTLC data transfer attempts
+incur an opportunity cost w.r.t the capital locked up.
+
+As a result, what's deployed in the wild today that uses HTLCs to send data
+(importantly at no additional marginal cost, since you sling 1.3KB across
+the wire anyway for normal payments), imo is mostly cases that only need a
+smaller amount of data, or use it mainly as a signalling layer. In contrast,
+onion messaging would allow users to send 32 KB (and beyond?), which makes
+certain classes of applications more feasible.
+
+&gt;<i> I suggest naively limiting to 10/sec for peers with channels, and 1/sec
+</I>&gt;<i> for peers without for now.
+</I>
+Curious to see what a fleshed out version of this would look like. IMO if
+this rate limiting event doesn't somehow make it back to the sender, then it
+isn't clear exactly why they're unable to even fetch an invoice to _attempt_
+a payment. I think one issue with defaulting to always fetching invoices in
+a multi-hop manner is that a node failure may mean that a user can't even
+obtain an invoice, compared to just hitting an API or scanning a QR code
+that encodes one (pretty much 99% chance of success).
+
+(I think there's also a side discussion here w.r.t if tightly coupling an
+invoice/offer to a single node is compatible with the multi-node receive
+architectures that some services are beginning to develop/deploy, but we can
+make another thread for that.)
+
+&gt;<i> You mean:
+</I>&gt;<i> 1. Don't use an even TLV field.
+</I>
+I don't see why one _wouldn't_ use an even field here: if the node doesn't
+know what this means, then I want them to reject the payment, as otherwise
+they aren't able to properly do the bandwidth metering. Even assuming a
+feature bit, I think an even field would make sense, but ofc I'm open to
+further reasoning.
+
+&gt;<i> I think it's a premature optimization?  Make standard duration 2016
+</I>&gt;<i> blocks; then they can request multiples if they want?  Reduces
+</I>&gt;<i> node_announcement size.
+</I>
+Hmm, potentially but if I just need this to ask a node about their latest
+ephemeral onion service, do I really need the session to persist for 2016
+blocks? At just 8 bytes here, it's smaller than a tor v3 onion address and
+even most feature bit distributions. Also there's nothing stopping someone
+from advertising optional feature bit 12,324 which means that nodes need to
+lug around and store all those extra bytes.
+
+&gt;<i> I'd be tempted to use 16 bytes?  Collisions here are not really a thing
+</I>&gt;<i> since you'd need a network packet per probe, and you're time limited.
+</I>
+Yeah if the 32 bytes for each hop ends up eating too much into the total
+route length, then most use cases can get by with 16 bytes.
+
+&gt;<i> AFAICT this is easy to implement on top of onion_messages as they stand
+</I>&gt;<i> today (if you don't want to fwd free onion messages at all, don't set
+</I>&gt;<i> that bit?).
+</I>
+Correct! The idea is to give nodes that don't want to forward for free an
+option to charge for forwarding and supplement their existing routing node
+revenue.
+
+On Twitter, Lisa brought up that as the data forwarding and payment aren't
+&quot;atomic&quot;, you're reliant on the nodes to actually &quot;do the thing&quot; once the
+payment has been completed. This is correct, and imo can be mitigated mainly
+via a &quot;tit for tat approach&quot;, so paying for a smol session and seeing if
+they actually cooperate. Incentive wise, if the node continues to operate as
+expected, then they can expect more messaging sessions to be created, which
+means mo sats as revenue. I think we're seeing a similar dynamic play out to
+day in the network, as path finding algorithms continue to evolve to factor
+in &quot;reliability&quot; information (usually some derived probability of success),
+which can tend to favor well managed and responsive nodes.
+
+[1]: <A HREF="https://github.com/lightning/blips/blob/master/blip-0003.md">https://github.com/lightning/blips/blob/master/blip-0003.md</A>
+[2]: <A HREF="https://github.com/lightning/bolts/pull/658">https://github.com/lightning/bolts/pull/658</A>
+
+-- Laolu
+
+
+On Wed, Feb 23, 2022 at 8:37 PM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> Olaoluwa Osuntokun &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">laolu32 at gmail.com</A>&gt; writes:
+</I>&gt;<i> &gt; Hi y'all,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; (TL;DR: a way to nodes to get paid to forward onion messages by adding an
+</I>&gt;<i> &gt; upfront session creation phase that uses AMP tender a messaging session
+</I>&gt;<i> to a
+</I>&gt;<i> &gt; receiver, with nodes being paid upfront for purchase of forwarding
+</I>&gt;<i> &gt; bandwidth, and a session identifier being transmitted alongside onion
+</I>&gt;<i> &gt; messages to identify paid sessions)
+</I>&gt;<i>
+</I>&gt;<i> AMP seems to be a Lightning Labs proprietary extension.  You mean
+</I>&gt;<i> keysend, which at least has a draft spec?
+</I>&gt;<i>
+</I>&gt;<i> &gt; Onion messaging has been proposed as a way to do things like fetch
+</I>&gt;<i> invoices
+</I>&gt;<i> &gt; directly from a potential receiver _directly_ over the existing LN. The
+</I>&gt;<i> &gt; current proposal (packaged under the BOLT 12 umbrella) uses a new message
+</I>&gt;<i> &gt; (`onion_message`) that inherits the design of the existing Sphinx-based
+</I>&gt;<i> &gt; onion blob included in htlc_add messages as a way to propagate arbitrary
+</I>&gt;<i> &gt; messages across the network. Blinded paths which are effectively an
+</I>&gt;<i> unrolled
+</I>&gt;<i> &gt; Sphinx SURB (single use reply block), are used to support reply messages
+</I>&gt;<i> in
+</I>&gt;<i> &gt; a more private manner. Compared to SURBs, blinded paths are more
+</I>&gt;<i> flexible as
+</I>&gt;<i> &gt; they don't lock in things like fees or CLTV values.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; A direct outcome of widespread adoption of the proposal is that the
+</I>&gt;<i> scope of
+</I>&gt;<i> &gt; LN is expanded beyond &quot;just&quot; a decentralized p2p payment system, with the
+</I>&gt;<i>
+</I>&gt;<i> Sure, let's keep encouraging people to use HTLCs for free to send data?
+</I>&gt;<i> I can certainly implement that if you prefer!
+</I>&gt;<i>
+</I>&gt;<i> &gt;  1. As there's no explicit session creation/acceptance, a node can be
+</I>&gt;<i> &gt;  spammed with unsolicited messages with no way to deny unwanted messages
+</I>&gt;<i> nor
+</I>&gt;<i> &gt;  explicitly allow messages from certain senders.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;  2. Nodes that forward these messages (up to 32 KB per message) receive
+</I>&gt;<i> no
+</I>&gt;<i> &gt;  compensation for the network bandwidth their expend, effectively
+</I>&gt;<i> shuffling
+</I>&gt;<i> &gt;  around messages for free.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;  3. Rate limiting isn't concretely addressed, which may result in
+</I>&gt;<i> &gt;  heterogeneous rate limiting policies enforced around the network, which
+</I>&gt;<i> can
+</I>&gt;<i> &gt;  degrade the developer/user experience (why are my packets being randomly
+</I>&gt;<i> &gt;  dropped?).
+</I>&gt;<i>
+</I>&gt;<i> Sure, this is a fun one!  I can post separately on ratelimiting; I
+</I>&gt;<i> suggest naively limiting to 10/sec for peers with channels, and 1/sec
+</I>&gt;<i> for peers without for now.
+</I>&gt;<i>
+</I>&gt;<i> (In practice, spamming with HTLCs is infinitely more satisfying...)
+</I>&gt;<i>
+</I>&gt;<i> &gt; In this email I propose a way to address the issues mentioned above by
+</I>&gt;<i> &gt; adding explicit onion messaging session creation as well as a way for
+</I>&gt;<i> nodes
+</I>&gt;<i> &gt; to be (optionally) paid for any onion messages they forward. In short, an
+</I>&gt;<i> &gt; explicit session creation phase is introduced, with the receiver being
+</I>&gt;<i> able
+</I>&gt;<i> &gt; to accept/deny the session. If the session is accepted, then all nodes
+</I>&gt;<i> that
+</I>&gt;<i> &gt; comprise the session route are compensated for allotting a certain
+</I>&gt;<i> amount of
+</I>&gt;<i> &gt; bandwidth to the session (which is ephemeral by nature).
+</I>&gt;<i>
+</I>&gt;<i> It's an interesting layer on top (esp if you want to stream movies), but
+</I>&gt;<i> I never proposed this because it seems to add a source-identifying
+</I>&gt;<i> session id, which is a huge privacy step backwards.
+</I>&gt;<i>
+</I>&gt;<i> You really *do not want* to use this for independent transmissions.
+</I>&gt;<i>
+</I>&gt;<i> I flirted with using blinded tokens, but it gets complex fast; ideas
+</I>&gt;<i> welcome!
+</I>&gt;<i>
+</I>&gt;<i> &gt; ## Node Announcement TLV Extension
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; In order to allow nodes to signal that they want to be paid to forward
+</I>&gt;<i> onion
+</I>&gt;<i> &gt; messages and also specify their pricing, we add two new TLV to the
+</I>&gt;<i> node_ann
+</I>&gt;<i> &gt; message:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   * type: 1 (`sats_per_byte`)
+</I>&gt;<i> &gt;    * data:
+</I>&gt;<i> &gt;       * [`uint64`:`forwarding_rate`]
+</I>&gt;<i> &gt;   * type: 2 (`sats_per_block`)
+</I>&gt;<i> &gt;    * data:
+</I>&gt;<i> &gt;       * [`uint64`:`per_block_rate`]
+</I>&gt;<i>
+</I>&gt;<i> You mean:
+</I>&gt;<i>
+</I>&gt;<i>    * type: 1 (`sats_per_byte`)
+</I>&gt;<i>    * data:
+</I>&gt;<i>        * [`tu64`:`forwarding_rate`]
+</I>&gt;<i>    * type: 3 (`sats_per_block`)
+</I>&gt;<i>    * data:
+</I>&gt;<i>        * [`tu64`:`per_block_rate`]
+</I>&gt;<i>
+</I>&gt;<i> 1. Don't use an even TLV field.
+</I>&gt;<i> 2. Might as well use truncated u64.
+</I>&gt;<i>
+</I>&gt;<i> &gt; The `sats_per_byte` field allows nodes to price their bandwidth, ensuring
+</I>&gt;<i> &gt; that they get paid for each chunk of allocated bandwidth. As sessions
+</I>&gt;<i> have a
+</I>&gt;<i> &gt; fixed time frame and nodes need to store additional data within that time
+</I>&gt;<i> &gt; frame, the `sats_per_block` allows nodes to price this cost, as they'll
+</I>&gt;<i> hold
+</I>&gt;<i> &gt; onto the session identifier information until the specified block height
+</I>&gt;<i> &gt; (detailed below).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; As onion messages will _typically_ be fixed sized we may want to use
+</I>&gt;<i> &gt; coursers
+</I>&gt;<i> &gt; metering here instead of bytes, possibly paying for 1.3KB or 32 KB chunks
+</I>&gt;<i> &gt; instead.
+</I>&gt;<i>
+</I>&gt;<i> I think it's a premature optimization?  Make standard duration 2016
+</I>&gt;<i> blocks; then they can request multiples if they want?  Reduces
+</I>&gt;<i> node_announcement size.
+</I>&gt;<i>
+</I>&gt;<i> &gt; With the above nodes are able to express that they're willing to forward
+</I>&gt;<i> &gt; messages for sats, and how much they charge per byte as well as per
+</I>&gt;<i> block.
+</I>&gt;<i> &gt; Next we add a new TLV in the _existing_ HTLC onion blob that allows a
+</I>&gt;<i> &gt; sending node to tender paid onion message session creation. A sketch of
+</I>&gt;<i> this
+</I>&gt;<i> &gt; type would look something like:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   * type: 14 (`onion_session_id`)
+</I>&gt;<i> &gt;     * data:
+</I>&gt;<i> &gt;       * [`32*byte`:`session_id`]
+</I>&gt;<i>
+</I>&gt;<i> I'd be tempted to use 16 bytes?  Collisions here are not really a thing
+</I>&gt;<i> since you'd need a network packet per probe, and you're time limited.
+</I>&gt;<i>
+</I>&gt;<i> &gt; After session creation succeeds, nodes will forward onion messages that
+</I>&gt;<i> &gt; include that `onion_session_id`. The set of `encrypted_data_tlv` for
+</I>&gt;<i> onion
+</I>&gt;<i> &gt; messages is extended to also specify a new type that stores the session
+</I>&gt;<i> ID:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   * type: 10 (`onion_session_id`)
+</I>&gt;<i> &gt;     * data:
+</I>&gt;<i> &gt;       * [`32*byte`:`session_id`]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; When forwarding an onion message that includes an `onion_session_id` (a
+</I>&gt;<i> node
+</I>&gt;<i> &gt; may only forward messages that contain such an ID), nodes do the
+</I>&gt;<i> necessary
+</I>&gt;<i> &gt; bookkeeping to tally how much bandwidth if left in this session, and also
+</I>&gt;<i> &gt; check that the session hasn't expired before forwarding.
+</I>&gt;<i>
+</I>&gt;<i> This is good because it doesn't require a db write (if you crash and
+</I>&gt;<i> forget to charge, it's OK).
+</I>&gt;<i>
+</I>&gt;<i> AFAICT this is easy to implement on top of onion_messages as they stand
+</I>&gt;<i> today (if you don't want to fwd free onion messages at all, don't set
+</I>&gt;<i> that bit?).
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Rusty.
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220322/fc6fcf6b/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220322/fc6fcf6b/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003520.html">[Lightning-dev] Transcript: Lightning Network in 2022 panel
+</A></li>
+	<LI>Next message: <A HREF="003526.html">[Lightning-dev] Taproot-aware Channel Announcements + Proof	Verification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3525">[ date ]</a>
+              <a href="thread.html#3525">[ thread ]</a>
+              <a href="subject.html#3525">[ subject ]</a>
+              <a href="author.html#3525">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

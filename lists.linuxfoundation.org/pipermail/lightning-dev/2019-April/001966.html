@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Outsourcing route computation with trampoline	payments
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Outsourcing%20route%20computation%20with%20trampoline%0A%09payments&In-Reply-To=%3C87wokakqb2.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001965.html">
+   <LINK REL="Next"  HREF="001967.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Outsourcing route computation with trampoline	payments</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Outsourcing%20route%20computation%20with%20trampoline%0A%09payments&In-Reply-To=%3C87wokakqb2.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Outsourcing route computation with trampoline	payments">decker.christian at gmail.com
+       </A><BR>
+    <I>Thu Apr  4 10:39:13 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001965.html">[Lightning-dev] Outsourcing route computation with trampoline	payments
+</A></li>
+        <LI>Next message: <A HREF="001967.html">[Lightning-dev] Outsourcing route computation with trampoline	payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1966">[ date ]</a>
+              <a href="thread.html#1966">[ thread ]</a>
+              <a href="subject.html#1966">[ subject ]</a>
+              <a href="author.html#1966">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPzj,
+
+I think we should not try to recover from a node not finding the next
+hop in the trampoline, and rather expect trampolines to have reasonable
+uptime (required anyway) and have an up to date routing table (that's
+what we're paying them for after all).
+
+So I'd rather propose reusing the existing onion construction as is and
+expect the trampolines to fail a payment if they can't find the next
+hop.
+
+Let's take the following route for example (upper case letters represent
+trampolines):
+
+```
+a -&gt; b -&gt; c -&gt; D -&gt; e -&gt; f -&gt; G -&gt; h -&gt; i -&gt; j
+```
+
+With `a` being the sender, and `j` being the recipient. `D` and `G` are
+trampolines. The sender `a` selects trampolines `D` and `G` at random
+from their partial (possibly outdated) routing table. It creates the
+inner onion using those two trampolines. It then computes a route to `D`
+(`a -&gt; b -&gt; c -&gt; D`). The `hop_payload` for `D` is a TLV payload that
+has a single key `t` (assuming `t` is assigned in the TLV spec) that
+contains the inner onion. It then initiates the payment using this
+nested onion (`a -&gt; b -&gt; c -&gt; D` + trampoline payload for `D`).
+
+Upon receiving the onion `D` decrypts the outer onion to find the TLV
+payload containing the `t` entry, which indicates that it should act as
+a trampoline. It then decodes the inner trampoline onion and finds the
+`node_id` of `G`. `D` then computes the outer onion to the next
+trampoline `D -&gt; e -&gt; f -&gt; G`, and adds the trampoline payload for `G`
+(the inner trampoline onion we just decoded).
+
+Upon receiving the onion `G` processes the onion like normal, finding
+again an inner trampoline onion and decrypting it. Since `j` did not
+indicate that it understands the trampoline protocol, `G` is instructed
+to downgrade the onion into a normal non-trampoline onion (don't include
+a trampoline, rather include the raw payload for `j`). It then computes
+the route to `j`, and it creates a normal outer base routing onion `G -&gt;
+h -&gt; i -&gt; j`, which completes the protocol.
+
+Like mentioned above the entire job of trampolines is to provide base
+routing capability, and we should not make special provisions for myopic
+trampoline nodes, since routing is their entire reason for existence :-)
+
+Cheers,
+Christian
+
+&gt;&gt;<i> Could this be implemented by replacing only the front of the trampoline-level onion?
+</I>&gt;&gt;<i> (presumably with some adjustment of how the HMAC is computed for the new trampoline layer)
+</I>&gt;<i>
+</I>&gt;<i> I am trying to design a trampoline-level onion that would allow replacement of the first hop of the onion.
+</I>&gt;<i>
+</I>&gt;<i> Below is what I came up with.
+</I>&gt;<i> As I am neither a cryptographer nor a mathematician, I am unable to consider, whether this may have some problem in security.
+</I>&gt;<i>
+</I>&gt;<i> Now the &quot;normal&quot; onion, the first hop is encrypted to the recipient.
+</I>&gt;<i>
+</I>&gt;<i> I propose that for the &quot;inner&quot; trampoline-level onion, the first hop be sent &quot;in the clear&quot;.
+</I>&gt;<i> I think this is still secure, as the &quot;inner&quot; trampoline-level onion will still be wrapped by the outer link-level onion, which would still encrypt it.
+</I>&gt;<i>
+</I>&gt;<i> When a node receives a trampoline-level onion, it checks if it is the first hop.
+</I>&gt;<i> If it is, then it decrypts the rest of the onion and tries to route to the next trampoline-level node.
+</I>&gt;<i> If not, then it is being delegated to, to find the trampoline.
+</I>&gt;<i>
+</I>&gt;<i> If the node cannot find the front of the trampoline-level onion, then it can route it to another node that it suspects is more likely to know the destination (such as the mechanisms in discussion in the &quot;Routemap Scaling&quot; thread).
+</I>&gt;<i>
+</I>&gt;<i> Let me provide a concrete example.
+</I>&gt;<i>
+</I>&gt;<i> Payer Z creates a trampoline-level onion C-&gt;D-&gt;E:
+</I>&gt;<i>
+</I>&gt;<i> C | Z | encrypt(Z * C, D | encrypt(Z * D, E))
+</I>&gt;<i>
+</I>&gt;<i> Then Z routes to link-level onion A-&gt;B-&gt;C, with the payload to C being the above trampoline-level onion:
+</I>&gt;<i>
+</I>&gt;<i> encrypt(Z * A, &quot;link level&quot; | B | encrypt(Z * B, &quot;link level&quot; | C | encrypt(Z * C, &quot;trampoline level&quot; | C | Z | encrypt(Z * C, D | encrypt(Z * D, E)))))
+</I>&gt;<i>
+</I>&gt;<i> Upon reaching C, it sees it is given a trampoline-level onion, and if C is unable to find D in its local map, it can delegate it to some other node.
+</I>&gt;<i>
+</I>&gt;<i> For example, if C thinks its neighbor M knows D, it can create:
+</I>&gt;<i>
+</I>&gt;<i> encrypt(C * M, &quot;link level&quot; | M | encrypt(C * M, &quot;trampoline level&quot; | D | Z | encrypt(Z * D, E)))
+</I>&gt;<i>
+</I>&gt;<i> M finds that it is not the first hop in the trampoline-level onion.
+</I>&gt;<i> So M finds a route to D, for example via M-&gt;N-&gt;D, and gives:
+</I>&gt;<i>
+</I>&gt;<i> encrypt(M * N, &quot;link level&quot; | D | encrypt(M * D, &quot;trampoline level&quot; | D | Z | encrypt(Z * D, E)))
+</I>&gt;<i>
+</I>&gt;<i> Is this workable?
+</I>&gt;<i> Note that it seems to encounter the same problem as Rendezvous Routing.
+</I>&gt;<i> I assume it is possible to do this somehow (else how would hidden services in Tor work?), but the details, I am uncertain of.
+</I>&gt;<i> I only play a cryptographer on Internet.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I></PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001965.html">[Lightning-dev] Outsourcing route computation with trampoline	payments
+</A></li>
+	<LI>Next message: <A HREF="001967.html">[Lightning-dev] Outsourcing route computation with trampoline	payments
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1966">[ date ]</a>
+              <a href="thread.html#1966">[ thread ]</a>
+              <a href="subject.html#1966">[ subject ]</a>
+              <a href="author.html#1966">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

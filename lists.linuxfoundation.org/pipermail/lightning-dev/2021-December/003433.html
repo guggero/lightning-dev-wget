@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] PTLCs early draft specification
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3MDL0XLmt_aeDkpn0ONH8hxDPfSKuVhXYo9u5-by9_cUQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003429.html">
+   <LINK REL="Next"  HREF="003434.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] PTLCs early draft specification</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20PTLCs%20early%20draft%20specification&In-Reply-To=%3CCACdvm3MDL0XLmt_aeDkpn0ONH8hxDPfSKuVhXYo9u5-by9_cUQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] PTLCs early draft specification">bastien at acinq.fr
+       </A><BR>
+    <I>Tue Dec 21 15:25:41 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003429.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+        <LI>Next message: <A HREF="003434.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3433">[ date ]</a>
+              <a href="thread.html#3433">[ thread ]</a>
+              <a href="subject.html#3433">[ subject ]</a>
+              <a href="author.html#3433">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hey AJ and list,
+
+That's a very good point, it's really worth highlighting!
+
+The reason we have &quot;toxic waste&quot; with HTLCs is because we commit to the
+payment_hash directly inside the transaction scripts, so we need to
+remember all the payment_hash we've seen to be able to recreate the
+scripts (and spend the outputs, even if they are revoked).
+
+But with PTLCs, we commit to a payment_point outside of the scripts (in
+the adaptor signature that is exchanged), so we're able to recreate the
+scripts independently of the payment details! This also means that the
+payment_point never appears on-chain (which is good for privacy) whereas
+the payment_hash does appear on-chain for HTLCs.
+
+*_anchor: dust, who cares -- might be better if local_anchor used key =
+&gt;<i> revkey
+</I>
+
+I don't think we can use revkey, this would prevent us from bumping the
+current remote commitment if it appears on-chain (because we don't know
+the private revkey yet if this is the latest commitment). Usually the
+remote peer should bump it, but if they don't, we may want to bump it
+ourselves instead of publishing our own commitment (where our main
+output has a long CSV).
+
+But as you already mentioned, who cares, it's dust and we don't even need
+it to CPFP the revoked commitment, we can use any other output since the
+revocation path isn't encumbered with a CSV 1.
+
+Cheers,
+Bastien
+
+Le dim. 19 d&#233;c. 2021 &#224; 23:23, Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; a &#233;crit :
+
+&gt;<i> On Wed, Dec 08, 2021 at 04:02:02PM +0100, Bastien TEINTURIER wrote:
+</I>&gt;<i> &gt; I updated my article [0], people jumping on the thread now may find it
+</I>&gt;<i> &gt; helpful to better understand this discussion.
+</I>&gt;<i> &gt; [0] <A HREF="https://github.com/t-bast/lightning-docs/pull/16">https://github.com/t-bast/lightning-docs/pull/16</A>
+</I>&gt;<i>
+</I>&gt;<i> Since merged, so
+</I>&gt;<i> <A HREF="https://github.com/t-bast/lightning-docs/blob/master/taproot-updates.md">https://github.com/t-bast/lightning-docs/blob/master/taproot-updates.md</A>
+</I>&gt;<i>
+</I>&gt;<i> So imagine that this proposal is finished and widely adopted/deployed
+</I>&gt;<i> and someone adds an additional feature bit that allows a channel to
+</I>&gt;<i> forward PTLCs only, no HTLCs.
+</I>&gt;<i>
+</I>&gt;<i> Then suppose that you forget every old PTLC, because you don't like
+</I>&gt;<i> having your channel state grow without bound. What happens if your
+</I>&gt;<i> counterparty broadcasts an old state?
+</I>&gt;<i>
+</I>&gt;<i>  * the musig2 channel funding is irrelevant -- the funding tx has been
+</I>&gt;<i>    spend at this point
+</I>&gt;<i>
+</I>&gt;<i>  * the unspent commitment outputs pay to:
+</I>&gt;<i>      to_local: ipk = musig(revkey, mykey) -- known ; scripts also known
+</I>&gt;<i>      to_remote: claimable in 1 block, would be better if ipk was also musig
+</I>&gt;<i>      *_anchor: dust, who cares -- might be better if local_anchor used
+</I>&gt;<i>         key = revkey
+</I>&gt;<i>      *_htlc: irrelevant by definition
+</I>&gt;<i>      local_ptlc: ipk = musig(revkey, mykey) -- known; scripts also known
+</I>&gt;<i>
+</I>&gt;<i>  * commitment outputs may be immediately spent via layered txs. if so,
+</I>&gt;<i>    their outputs are: ipk = musig(revkey, mykey); with fixed scripts,
+</I>&gt;<i>    that include a relative timelock
+</I>&gt;<i>
+</I>&gt;<i> So provided you know the revocation key (which you do, because it's an
+</I>&gt;<i> old transaction and that only requires log(states) data to reconstruct)
+</I>&gt;<i> and your own private key, you can reconstruct all the scripts and use
+</I>&gt;<i> key path spends for every output immediately (excepting the local_anchor,
+</I>&gt;<i> and to_remote is delayed by a block).
+</I>&gt;<i>
+</I>&gt;<i> So while this doesn't achieve eltoo's goal of &quot;no toxic waste&quot;, I believe
+</I>&gt;<i> it does achieve the goal of &quot;state information is bounded no matter
+</I>&gt;<i> how long you leave the channel open / how many transactions travel over
+</I>&gt;<i> the channel&quot;.
+</I>&gt;<i>
+</I>&gt;<i> (Provided you're willing to wait for the other party to attempt to claim
+</I>&gt;<i> a htlc via their layered transaction, you can use this strategy for
+</I>&gt;<i> htlcs as well as ptlcs -- however this leaves you the risk that they
+</I>&gt;<i> never attempt to claim the funds, which may leave you out of pocket,
+</I>&gt;<i> and may give them the opportunity to do an attack along the lines of
+</I>&gt;<i> &quot;you don't get access to the $10,000 locked in old HTLCs unless you pay
+</I>&gt;<i> me $1,000&quot;.  So I don't think that's really a smart thing to do)
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> aj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211221/471cbd0d/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20211221/471cbd0d/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003429.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+	<LI>Next message: <A HREF="003434.html">[Lightning-dev] PTLCs early draft specification
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3433">[ date ]</a>
+              <a href="thread.html#3433">[ thread ]</a>
+              <a href="subject.html#3433">[ subject ]</a>
+              <a href="author.html#3433">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

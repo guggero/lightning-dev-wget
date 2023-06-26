@@ -1,0 +1,181 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Comments on BOLT#11
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Comments%20on%20BOLT%2311&In-Reply-To=%3C87zi6ou4kt.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000822.html">
+   <LINK REL="Next"  HREF="000828.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Comments on BOLT#11</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Comments%20on%20BOLT%2311&In-Reply-To=%3C87zi6ou4kt.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Comments on BOLT#11">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Dec 12 01:18:10 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000822.html">[Lightning-dev] Comments on BOLT#11
+</A></li>
+        <LI>Next message: <A HREF="000828.html">[Lightning-dev] Comments on BOLT#11
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#826">[ date ]</a>
+              <a href="thread.html#826">[ thread ]</a>
+              <a href="subject.html#826">[ subject ]</a>
+              <a href="author.html#826">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Jonathan Underwood &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">junderwood at bitcoinbank.co.jp</A>&gt; writes:
+&gt;<i> Hello all,
+</I>&gt;<i>
+</I>&gt;<i> Recently I have implemented BOLT11 in node JS. You can find it on github at
+</I>&gt;<i> bitcoinjs/bolt11 (check the wip branch, I am still working on tests and
+</I>&gt;<i> looking at maybe splitting encode up into two functions, encode and sign,
+</I>&gt;<i> if anyone wants to help)
+</I>
+Hi, this is great!
+
+&gt;<i> Here are some comments:
+</I>&gt;<i>
+</I>&gt;<i> 1. There should be a tags_length integer before the first tag. This will
+</I>&gt;<i> get rid of the awkward dance of parsing from the front and end at the same
+</I>&gt;<i> time and make it easier to detect poorly encoded data quickly.
+</I>
+I'm not sure what you're referring to?  I've written two decoders, and
+both pull off the header and fixed fields, then iterate
+while (data_len &gt; 520 / 5).
+
+&gt;<i> 2. Why is a description or description commit hash a MUST include tag... it
+</I>&gt;<i> should be SHOULD.
+</I>
+I disagree.  Obviously we can't force people to be descriptive (that's a
+SHOULD), but not including a description of the purpose of the payment
+is a mistake.
+
+The invoice and the preimage provides a cryptographic proof of
+purchase.  But that's undermined if the description is missing.
+
+&gt;<i> 3. Descriptions say they can encode ASCII only. Sorry, but this is
+</I>&gt;<i> nonsense. Full unicode support via UTF8 should be supported.
+</I>
+&gt;<i>From the ML welcome: &quot;Be excellent to each other please!&quot;
+</I>
+I understand this mistake upset you, but &quot;Sorry, but this is nonsense&quot;
+makes me want to find spurious justifications for it.  I prefer &quot;This
+seems unfairly limiting&quot;, &quot;This is a mistake&quot; or &quot;Woah, time to go 8
+bits, granddad!&quot;.
+
+The problem is the spec describes the 'd' field like so:
+
+        short description of purpose of payment (ASCII),  e.g. '1 cup of coffee'
+
+There's nothing in the *requirements* section, at all.
+
+So, I think we should:
+
+1.  s/ASCII/UTF-8/
+    - It seems everyone handles this fine anyway.
+2.  Add another example, here, which is in UTF-8, say &quot;or '&#12490;&#12531;&#12475;&#12531;&#12473;&#12398;&#12459;&#12483;&#12503;'&quot; :)
+3.  Add a requirement that the writer MUST use valid UTF-8.
+4.  Modify one of the examples to use a UTF-8 description.
+
+&gt;<i> 4. There should be a maximum length (in bytes) for description. (Otherwise
+</I>&gt;<i> why have a commit hash tag at all?)
+</I>
+There is; no field can be greater than 640 bytes (1023 5-bit values).
+Also, the transport might have practical limits, so you might need to
+consider that in total.  (Maybe not though, if you're going for QR
+codes, as they go pretty large).
+
+&gt;<i> 5. There should be a recommendation for ways for the parsing client to
+</I>&gt;<i> fetch the commited purpose description data. (Maybe encode a URL after the
+</I>&gt;<i> 32 byte commit hash?)
+</I>
+Yes there should, but we left it open for the moment because there's no
+good solution here, and someone needs to come up with one.  This makes
+description hash fairly useless for now, IMHO.
+
+A URL is the obvious solution, but has the terrible property that it
+de-anonymizes the wallet :( (even before the person has decided whether
+they want to pay).
+
+FWIW, there are a range of possible solutions, depending on the scenario:
+1. If you have some container format, eg. HTML, include the description as a
+   separate tag.
+2. Roasbeef wants to implement HORNET over our network, and that could
+   be used to retrieve the full description.
+
+Meanwhile, 640 bytes should be enough for anyone!
+
+&gt;<i> 6. Lightning payment requests can get pretty long, but perhaps there should
+</I>&gt;<i> be a limit. Apparently bech32 with the given parameters can only handle one
+</I>&gt;<i> error correction once it is longer than 1023 words.
+</I>
+Actually I think bech32 loses all guarantees at 1023 words, but it's no
+worse than a 30-bit checksum.  We mainly use it because it's simple and
+available, and of course any fixed-length code will have some limit.
+
+What actually happens if we decode badly is that we derive the wrong
+public key for the node (50% chance, other 50% we get a signature
+failure) and we can't route to it or pay to it.  So no funds are
+actually lost.
+
+&gt;<i> Now for some things on the BOLT document itself:
+</I>&gt;<i>
+</I>&gt;<i> 1. I made a pull request for adding signature preimage hex data etc. to the
+</I>&gt;<i> examples to help people writing decoders. Some of the language was unclear
+</I>&gt;<i> to me and lead to some goof ups.
+</I>
+Yes, this was *awesome*; I double-checked the values by hacking my
+python encoder, and adjusted for the recent r-encoding change.  It's
+merged, thanks!
+
+        <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/312">https://github.com/lightningnetwork/lightning-rfc/pull/312</A>
+
+&gt;<i> 2. Would be nice to have a fuller set of test cases on the RFC. I will work
+</I>&gt;<i> on some cases to increase coverage on the bitcoinjs repo. Would be happy
+</I>&gt;<i> for any help.
+</I>
+That would be fantastic!  We've talked about changing the test vectors
+(for all the BOLTs) into a more machine-friendly JSON encoding, so if
+you're feeling ambitious you could start with BOLT 11 :)
+
+Thanks!
+Rusty.
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000822.html">[Lightning-dev] Comments on BOLT#11
+</A></li>
+	<LI>Next message: <A HREF="000828.html">[Lightning-dev] Comments on BOLT#11
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#826">[ date ]</a>
+              <a href="thread.html#826">[ thread ]</a>
+              <a href="subject.html#826">[ subject ]</a>
+              <a href="author.html#826">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

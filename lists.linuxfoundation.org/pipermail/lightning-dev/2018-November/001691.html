@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BDRAFT%5D%20Multi-cell-hop%20onion%20with%20TLV%20%28and%0A%09example%20for%20multi-part-payment%29&In-Reply-To=%3C874lc0ieal.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001683.html">
+   <LINK REL="Next"  HREF="001692.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BDRAFT%5D%20Multi-cell-hop%20onion%20with%20TLV%20%28and%0A%09example%20for%20multi-part-payment%29&In-Reply-To=%3C874lc0ieal.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Thu Nov 29 06:33:06 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001683.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+        <LI>Next message: <A HREF="001692.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1691">[ date ]</a>
+              <a href="thread.html#1691">[ thread ]</a>
+              <a href="subject.html#1691">[ subject ]</a>
+              <a href="author.html#1691">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; writes:
+&gt;<i> Good morning Rusty,
+</I>&gt;<i>
+</I>&gt;&gt;<i> There's a kinda-neat intersection between the &quot;use TLV&quot; proposal and the
+</I>&gt;&gt;<i> &quot;multi-cell-onion&quot; idea, so I want to make a concrete proposal (wording
+</I>&gt;&gt;<i> needs formalization):
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Multi-cell structure:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 1.  `realm` (or `per_hop_type` if you prefer) meaning expanded.
+</I>&gt;&gt;<i> 2.  Lower 4 bits is `num_extra_cells` to use (ie. total 1-17 cells).
+</I>&gt;&gt;<i> 3.  Upper 4 bits reserved: if set, drop.
+</I>&gt;<i>
+</I>&gt;<i> What does drop mean exactly?
+</I>&gt;<i> Or an error with `BADONION` bit set? (&quot;drop the HTLC as a failure&quot;)
+</I>&gt;<i> Or should we try to consume the next 65 bytes? (&quot;drop this cell and process the next cell&quot;)
+</I>
+`invalid_realm` is the current error for this; ie. fail the HTLC, tell
+them we didn't understand.
+
+&gt;&gt;<i> 4.  HMAC on end covers that many per-hops.
+</I>&gt;&gt;<i> 5.  Padding is thus 12 bytes + 64 * `num_extra_cells`.
+</I>&gt;<i>
+</I>&gt;<i> Is it not multiple of 65?
+</I>
+Yes, you're right.
+
+&gt;<i> Also, it seems to me that the existing `per_hop_type`/`realm`/`packet_type` of 0 implies that only a single 65-byte section is used (as is current behavior).  Then a byte of 1 indicates two 65-byte sections are used, and so on.
+</I>&gt;<i> I broadly approve of this design.
+</I>&gt;<i>
+</I>&gt;<i> However with only 4 bits it seems to me:
+</I>&gt;<i>
+</I>&gt;&gt;<i>(ie. total 1-17 cells).
+</I>&gt;<i>
+</I>&gt;<i> is inaccurate? Only 1-&gt;16 cells?
+</I>
+Yes, you're right again.
+
+&gt;&gt;<i>     Structure of padding changes:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> 6.  We make the onion `padding` contain TLV, rename to `tlv`.
+</I>&gt;&gt;<i> 7.  TLVs (as always!) are in lexicographical order (with shortest-wins on
+</I>&gt;&gt;<i>     tiebreak).
+</I>&gt;<i>
+</I>&gt;<i> If types are unique, then &quot;shortest-wins&quot; would not matter.
+</I>&gt;<i> I believe there was a vague agreement that types would have to be unique in a TLV sequence, and that if a type could be variadic, it would be variadic within its own value-blob.
+</I>
+Agreed, but this seemed more general.  It's impossible to know whether
+multiples would make sense in future, and ruling them out now forces us
+to do strange things later (like nested TLV) if we want it later.
+
+Since it's a writer rule, (readers should simply ignore TLVs they don't
+understand, ignoring order), it doesn't matter until/if we allow some
+type to be multipled.
+
+&gt;&gt;<i> Use with multi-part payment (&quot;base AMP&quot;):
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> -   type 4: `total_payment`
+</I>&gt;&gt;<i>     length: variable, &lt;= 8
+</I>&gt;&gt;<i>     value: amount of total payment, in msat (big-endian of course).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     Writer must only use for final hop, and only if bolt11 flagged it as
+</I>&gt;&gt;<i>     available (bolt11-multi_part_available). May use even if this payment
+</I>&gt;&gt;<i>     meets the total_payment requirement.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>     Reader MUST reject if not final hop, MAY reject if invoice was not
+</I>&gt;&gt;<i>     `bolt11-multi_part_available`. Reader SHOULD wait until total parts
+</I>&gt;&gt;<i>     meet or exceed `total_payment` (exceed may be due to fuzzing) [rest
+</I>&gt;&gt;<i>     as per previous posts].
+</I>&gt;<i>
+</I>&gt;<i> Can we use the existence of this tlv to signal use of base AMP, instead of a separate flags byte?
+</I>
+Exactly :)
+
+&gt;<i> On another topic, how about:
+</I>&gt;<i>
+</I>&gt;<i> - type 6: `application_data`
+</I>&gt;<i>   length: variable
+</I>&gt;<i>   value: unknown
+</I>&gt;<i>
+</I>&gt;<i> Writer MUST only use for final hop, and only if it knows that the final hop has a specific application that it is compatible with.
+</I>&gt;<i>
+</I>&gt;<i> Reader MUST pass this application data to higher layers.
+</I>&gt;<i> The application is responsible for identifying the correctness and validity of the attached value.
+</I>&gt;<i>
+</I>&gt;<i> (It seems to me that this would work for spontaneous payments to identify who the sender is, e.g. exchanges might provide a userkey and authorization that will be wrapped in this TLV; a corresponding new field in BOLT11 invoices (or multi-use offers) can specify the `application_data` to use for the payment, for example)
+</I>
+I don't think that the BOLT11 invoice should specify it; the invoice is
+uniquely tied to the payment already, and having another one just adds
+confusion and seems like it might tempt people to do dumb things.
+
+I can imagine using this for (non-provable) games of chance
+(LightningDice anyone?); the user picks a random number and puts it in
+here.  Some new lightning RPC API allows them to provide this as well as
+the bolt11 invoice: the merchant pays out if the random number matches
+the preimage.
+
+&gt;<i> - type 8: `spontaneous_payment`
+</I>&gt;<i>   length: 32
+</I>&gt;<i>   value: preimage
+</I>&gt;<i>
+</I>&gt;<i> Writer MUST only use for final hop, and sacrifices proof-of-payment.
+</I>&gt;<i>
+</I>&gt;<i> Reader MUST claim the HTLC using the given preimage.
+</I>
+s/MUST/MAY/?  Reader can reject spontaneous payments.
+
+&gt;&gt;<i>     PS. I prefer 'multi-part-payment' to 'base AMP' in the spec. It's more
+</I>&gt;&gt;<i>     explicit, and leaves the namespace clear for more atomicy AMPs.
+</I>&gt;<i>
+</I>&gt;<i> I would argue that &quot;base&quot; AMP is sufficiently atomic to merit the full name of &quot;atomic multipath payment&quot;.
+</I>&gt;<i> Indeed, even if we switch to points and their generation scalars (pubkey/privkey), the same &quot;base AMP&quot; can be used as-is, with the added security of decorrelation within paths and between paths by taking advantage of homomorphisms.
+</I>&gt;<i>
+</I>&gt;<i> However, this is getting to color-of-the-bikeshed territory and I will just call it by whatever name sticks to my mind, preferring Base AMP just as I prefer sipa.
+</I>
+Adding nomenclature must be done carefully; it should only be done where
+real nuance is required.  I think &quot;multi-part-payment&quot; is descriptive
+and also currently unused, even if it's pronounced &quot;bass AMP&quot;.
+
+Thanks!
+Rusty.
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001683.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+	<LI>Next message: <A HREF="001692.html">[Lightning-dev] [DRAFT] Multi-cell-hop onion with TLV (and	example for multi-part-payment)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1691">[ date ]</a>
+              <a href="thread.html#1691">[ thread ]</a>
+              <a href="subject.html#1691">[ subject ]</a>
+              <a href="author.html#1691">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

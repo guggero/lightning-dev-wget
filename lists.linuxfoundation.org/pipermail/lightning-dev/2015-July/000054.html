@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%20OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3CCAJS_LCXQFZB9Gwr_2d32cmbB--uqNh1Swo5GJpzpDxGB1n8zkw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000027.html">
+   <LINK REL="Next"  HREF="000056.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20HTLCs%20using%0A%20OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY%20and%20revocation%20hashes.&In-Reply-To=%3CCAJS_LCXQFZB9Gwr_2d32cmbB--uqNh1Swo5GJpzpDxGB1n8zkw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] HTLCs using OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.">aj at erisian.com.au
+       </A><BR>
+    <I>Thu Jul 23 05:07:33 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000027.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+        <LI>Next message: <A HREF="000056.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#54">[ date ]</a>
+              <a href="thread.html#54">[ thread ]</a>
+              <a href="subject.html#54">[ subject ]</a>
+              <a href="author.html#54">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 6 July 2015 at 16:41, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i>         To recap: each side maintains a commitment transaction with two
+</I>&gt;<i> outputs: one paying to self (with some delay), and the second paying to
+</I>&gt;<i> the other side.
+</I>&gt;<i>         To generate hash time-locked contracts (required for lightning
+</I>&gt;<i> to be a network), both commitment transactions get an additional output.
+</I>&gt;<i>
+</I>
+&#8203;That is, an additional output per HTLC, no?&#8203;
+
+This output is spendable under four conditions:
+
+1) Recipient knows the R value (funds go to recipient), OR
+&gt;<i> 2) The HTLC has timed out (funds return to initiator), OR
+</I>&gt;<i> 3) The HTLC has been revoked (funds to go &quot;non-cheating&quot; side), OR
+</I>&gt;<i> 4) The Commit transaction has been revoked (funds to go &quot;non-cheating&quot;
+</I>&gt;<i> side)
+</I>&gt;<i>
+</I>
+
+&gt;<i> The last two failure modes are separate from each other, because HTLCs
+</I>&gt;<i> have different lifetimes from commit transactions.
+</I>&gt;<i>
+</I>
+&#8203;I'm not sure that makes sense? It seems to me there's two options:
+
+ a) HTLC resolved off-chain
+ b) HTLC resolved on-chain
+&#8203;
+If (a) then both parties (nominally) agree which way the funds should go,
+and both the commitment and HTLC are expired simultaneously.
+
+If (b) then either party decides to go to the blockchain, publishing tSheir
+side of the commitment, so both the commitment and HTLC are executed
+simultaneously.
+
+So afaics the commit transaction might as well always revoked before or
+simultaneously with the HTLC.
+
+In that case the conditions are just:
+
+ - Recipient knows R value
+ - Sender sees HTLC has timed out
+ - Commit transaction has been revoked
+
+Scripts for whatever it's worth:
+
+HTLC from US to THEM:
+&gt;<i>
+</I>---------------------
+&gt;<i>
+</I>
+(R | Us_Commit_Revoke) Them | TIMEOUT Us DELAY
+&#8203;===&gt;&#8203;
+
+&#8203;OP_HASH160 OP_DUP
+   rhash OP_EQUAL OP_SWAP&#8203;
+   revhash OP_EQUAL
+OP_ADD
+OP_IF
+   OP_DUP OP_HASH160   thempubkeyhash   OP_EQUALVERIFY OP_CHECKSIG
+OP_ELSE
+   timeout  OP_CHECKTIMELOCKVERIFY OP_DROP
+   OP_DUP OP_HASH160   mypubkeyhash     OP_EQUALVERIFY OP_CHECKSIG
+&#8203;OP_ENDIF&#8203;
+
+&#8203;Spend:
+ R TheirHash TheirSig
+ Revoke TheirHash TheirSig&#8203;
+ 0 OurHash OurSig
+
+HTLC from THEM to US:
+&gt;<i> ---------------------
+</I>&gt;<i>
+</I>
+&#8203;R Us&#8203; DELAY | (Us_Commit_Revoke | TIMEOUT) Them
+
+OP_HASH160 OP_DUP
+rhash OP_EQUAL
+OP_IF
+    OP_DROP
+    delay OP_CHECKSEQUENCEVERIFY
+    OP_DUP OP_HASH160  mypubkeyhash  OP_EQUALVERIFY OP_CHECKSIG
+OP_ELSE
+    revhash OP_EQUAL
+    OP_IF OP_ELSE
+      timeout OP_CHECKTIMELOCKVERIFY OP_DROP
+    OP_ENDIF
+    OP_DUP OP_HASH160  theirpubkeyhash OP_EQUALVERIFY OP_CHECKSIG
+OP_ENDIF
+
+Cheers,
+aj
+
+-- 
+Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150723/867dcc96/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150723/867dcc96/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000027.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+	<LI>Next message: <A HREF="000056.html">[Lightning-dev] HTLCs using	OP_CHECKSEQUENCEVERIFY/OP_LOCKTIMEVERIFY and revocation hashes.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#54">[ date ]</a>
+              <a href="thread.html#54">[ thread ]</a>
+              <a href="subject.html#54">[ subject ]</a>
+              <a href="author.html#54">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

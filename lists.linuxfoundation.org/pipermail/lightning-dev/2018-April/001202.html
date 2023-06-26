@@ -1,0 +1,111 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Trustless WatchTowers?
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Trustless%20WatchTowers%3F&In-Reply-To=%3C-2mxK-uFnJ5rs5EWY1ZRY5NNoHRjqvAyOaqNWNvdLl4arVQY7GKdRpR1GVE2QRB4PeK-k2nfOfH7--oFwHFUv5U2sn4l4zrfUbT8rQGCN-A%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001201.html">
+   <LINK REL="Next"  HREF="001203.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Trustless WatchTowers?</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Trustless%20WatchTowers%3F&In-Reply-To=%3C-2mxK-uFnJ5rs5EWY1ZRY5NNoHRjqvAyOaqNWNvdLl4arVQY7GKdRpR1GVE2QRB4PeK-k2nfOfH7--oFwHFUv5U2sn4l4zrfUbT8rQGCN-A%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Trustless WatchTowers?">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Tue Apr 17 09:44:50 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001201.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+        <LI>Next message: <A HREF="001203.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1202">[ date ]</a>
+              <a href="thread.html#1202">[ thread ]</a>
+              <a href="subject.html#1202">[ subject ]</a>
+              <a href="author.html#1202">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Conner,
+
+I have an insane idea.
+
+&gt;<i> One minimal solution could be to send signatures for independent sweep
+</I>&gt;<i> transactions, allowing the watchtower to sweep each HTLC output individually.
+</I>&gt;<i> This is nice because it permits the watchtower to sweep exactly the subset ofHTLCs that ever transition into the second stage, and under any permutationwrt. ordering of confirmed second stage transactions.
+</I>&gt;<i>
+</I>&gt;<i> With the single transaction per HTLC approach, the total number of signatures that
+</I>&gt;<i> are sent to the watchtower remains linear in the number HTLCs on the commitmenttransaction. This approach does have the downside of consuming slightly more
+</I>&gt;<i> fees, since each output is swept with a distinct transaction.
+</I>
+I consider the idea, to take this even further.  Why have one blob contain data for multiple justice transactions?  Since the WatchTower will make multiple justice transactions for each outpoint of the revoked commitment transaction, why not make it one-blob-one-justice?
+
+Currently our basic idea is that a single blob is keyed to the revoked commitment txid, and contains how to claim the main outputs, and all the second-stage HTLCs from that commitment txid.
+
+But I observe, that on the revoked commitment txid, there is exactly one output that needs to be claimed in a timely manner, and that is the output that goes to the stealing node.  The output that goes to the protected node is safe, and if the second stage of the HTLC outputs are not yet claimed, those outputs are also safe.
+
+And on the second-stage HTLC (HTLC-success or HTLC-timeout), there is also exactly one output that needs to be claimed in a timely manner.
+
+So I consider the idea, that we create (txid[:16], blob) pairs for the commitment transaction, and separate (txid[:16], blob) pairs for each second-stage HTLC transaction, and upload all this to the WatchTower.
+
+Each blob then only contains, encrypted:
+
+1.  The outnum on the tx being watched for.
+2.  The witness stack (signature plus witness script).
+3.  The scriptpubkey to pay out to.
+
+We could pad this so that the witness stack size does not leak whether the tx being watched is a revoked commitment transaction or a revoked HTLC-success or HTLC-timeout transaction, and also some extra padding so that if we add more possible transactions to watch (or Bitcoin makes some excessively long standard scriptpubkey), we have some space to expand into.
+
+This greatly simplifies WatchTower construction, as justice transactions it has to synthesize are simple one-input, one-output transactions (or possibly two-output, with the other output being the WatchTower bounty; perhaps the revoking signature on the witness stack could be SIGHASH_SINGLE (is that safe???) and the first output goes to the protected node, with the rest of the value split between the WatchTower and the mining fee, and the justice transaction opt-in RBF, so that the WatchTower can balance between remaining CSV timelock available and mining fees; this would also allow the same blob to be given to different WatchTowers, for even more insurance).
+
+We could possibly move the outnum outside the blob, and have (txid[:16], outnum, blob), with the key for lookup being (txid[:16], outnum), so that a single monitored transaction can trigger multiple justice transactions for each outnum given.  This has the advantage that even if we completely change channel commitment structure, and the contracts we transport over channels (e.g. to support discreet log contracts), there will be no need to change existing WatchTowers: we always specify the entire witness stack of the justice transaction and the output of the justice transaction, and can freely change it.  Whether this is a big enough advantage, I do not know.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180417/35e0c44f/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180417/35e0c44f/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001201.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+	<LI>Next message: <A HREF="001203.html">[Lightning-dev] Trustless WatchTowers?
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1202">[ date ]</a>
+              <a href="thread.html#1202">[ thread ]</a>
+              <a href="subject.html#1202">[ subject ]</a>
+              <a href="author.html#1202">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

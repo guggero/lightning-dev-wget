@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Eltoo, anyprevout and chaperone signatures
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%2C%20anyprevout%20and%20chaperone%20signatures&In-Reply-To=%3C87woirsbe7.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001992.html">
+   <LINK REL="Next"  HREF="001994.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Eltoo, anyprevout and chaperone signatures</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%2C%20anyprevout%20and%20chaperone%20signatures&In-Reply-To=%3C87woirsbe7.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Eltoo, anyprevout and chaperone signatures">decker.christian at gmail.com
+       </A><BR>
+    <I>Wed May 15 20:36:32 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001992.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+        <LI>Next message: <A HREF="001994.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1993">[ date ]</a>
+              <a href="thread.html#1993">[ thread ]</a>
+              <a href="subject.html#1993">[ subject ]</a>
+              <a href="author.html#1993">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Bastien,
+
+thanks for investigating.
+
+&gt;<i> I have been digging into Anthony Towns' anyprevout BIP
+</I>&gt;<i> &lt;<A HREF="https://github.com/ajtowns/bips/blob/bip-anyprevout/bip-anyprevout.mediawiki">https://github.com/ajtowns/bips/blob/bip-anyprevout/bip-anyprevout.mediawiki</A>&gt;
+</I>&gt;<i> proposal
+</I>&gt;<i> to verify that it has everything we need for Eltoo
+</I>&gt;<i> &lt;<A HREF="https://blockstream.com/eltoo.pdf">https://blockstream.com/eltoo.pdf</A>&gt;.
+</I>&gt;<i>
+</I>&gt;<i> The separation between anyprevout and anyprevoutanyscript is very handy
+</I>&gt;<i> (compared to the previous noinput proposal).
+</I>&gt;<i> Unless I'm missing something, it would simplify the funding tx (to a simple
+</I>&gt;<i> multisig without cltv/csv) and remove the need for the trigger tx.
+</I>
+I think it makes sense for us to consider both variants, one committing
+to the script and the other not committing to the script, but I think it
+applies rather to the `update_tx` &lt;-&gt; `settlement_tx` link and less to
+the `funding_tx` &lt;-&gt; `update_tx` link and `update_tx` &lt;-&gt; `update_tx`
+link. The reason is that the `settlement_tx` needs to be limited to be
+bindable only to the matching `update_tx` (`anyprevout`), while
+`update_tx` need to be bindable to the `funding_tx` as well as any prior
+`update_tx` which differ in the script by at least the state number
+(hence `anyprevoutanyscript`).
+
+Like AJ pointed out in another thread, the use of an explicit trigger
+transaction is not really needed since any `update_tx` can act as a
+trigger transaction (i.e., start the relative timeouts to tick). This
+was an oversight of mine, which may have contributed more confusion than
+necessary :-)
+
+The `funding_tx` itself doesn't need any form of timeout, in fact
+collaborative spending/closing without a timeout should always be
+possible. The `settlement_tx`s can have a BIP68-style relative timelock,
+which also saves us a few bytes.
+
+&gt;<i> The more tricky part to integrate is the chaperone signature.
+</I>&gt;<i> If I understand it correctly (which I'm not guaranteeing), we would need to
+</I>&gt;<i> modify the update transactions to something like:
+</I>&gt;<i>
+</I>&gt;<i> OP_IF
+</I>&gt;<i>
+</I>&gt;<i>     10 OP_CSV
+</I>&gt;<i>
+</I>&gt;<i>     1 A(s,i) B(s,i) 2 OP_CHECKMULTISIGVERIFY          &lt;- public keys' first
+</I>&gt;&gt;<i> byte in this line is 0x02 or 0x03
+</I>&gt;<i>
+</I>&gt;<i>     2 A(s,i) B(s,i) 2 OP_CHECKMULTISIGVERIFY          &lt;- public keys' first
+</I>&gt;&gt;<i> byte in this line is 0x00 or 0x01
+</I>&gt;<i>
+</I>&gt;<i> OP_ELSE
+</I>&gt;<i>
+</I>&gt;<i>     &lt;S(i) + 1&gt; OP_CLTV
+</I>&gt;<i>
+</I>&gt;<i>     1 A(u) B(u) 2  OP_CHECKMULTISIGVERIFY          &lt;- public keys' first
+</I>&gt;&gt;<i> byte in this line is 0x02 or 0x03
+</I>&gt;<i>
+</I>&gt;<i>     2 A(u) B(u) 2  OP_CHECKMULTISIGVERIFY          &lt;- public keys' first
+</I>&gt;&gt;<i> byte in this line is 0x00 or 0x01
+</I>&gt;<i>
+</I>&gt;<i> OP_END
+</I>
+We could collapse those 1-of-2 multisigs into a single-sig if we just
+collaboratively create a shared private key that is specific to the
+instance of the protocol upon setup. That minimizes the extra space
+needed.
+
+Something that I notived talking to Jonas Nick is that we might have
+some interaction between the taproot and noinput (or any of its aliases
+:<i>D). Specifically we can't make make use of the collaborative path where
+</I>we override an `update_tx` with a newer one in taproot as far as I can
+see, since the `update_tx` needs to be signed with noinput (for
+rebindability) but there is no way for us to specify the chaperone key
+since we're not revealing the committed script.
+
+&gt;<i> (I ommitted the tapscript changes, ie moving to OP_CHECKSIGADD, to
+</I>&gt;<i> highlight only the chaperone changes)
+</I>&gt;<i>
+</I>&gt;<i> When updating the channel, Alice and Bob would exchange their
+</I>&gt;<i> anyprevoutanyscript signatures (for the 2-of-2 multisig).
+</I>&gt;<i> The chaperone signature can be provided by either Alice or Bob at
+</I>&gt;<i> transaction broadcast time (so that it commits to a specific input
+</I>&gt;<i> transaction).
+</I>&gt;<i>
+</I>&gt;<i> It seems to me that using the same key for both signatures (the chaperone
+</I>&gt;<i> one and the anyprevoutanyscript one) is safe here, but if someone knows
+</I>&gt;<i> better I'm interested.
+</I>&gt;<i> If that's unsafe, we simply need to introduce another key-pair (chaperone
+</I>&gt;<i> key).
+</I>&gt;<i>
+</I>&gt;<i> Is that how you guys understand it too? Do you have other ideas on how to
+</I>&gt;<i> comply with the need for a chaperone signature?
+</I>&gt;<i>
+</I>&gt;<i> Note that as Anthony said himself, the BIP isn't final and we don't know
+</I>&gt;<i> yet if chaperone signatures will eventually be needed, but I think it's
+</I>&gt;<i> useful to make sure that Eltoo could support it.
+</I>
+I quite like the chaperone idea, however it doesn't really play nice
+with taproot collaborative spends that require anyprevout /
+anyprevoutanyscript / noinput, which would make our transactions stand
+out quite a bit. Then again this is only the case for the unhappy,
+unilateral close, path of the protocol, which (hopfully) should happen
+rarely.
+
+Cheers,
+Christian
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001992.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+	<LI>Next message: <A HREF="001994.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1993">[ date ]</a>
+              <a href="thread.html#1993">[ thread ]</a>
+              <a href="subject.html#1993">[ subject ]</a>
+              <a href="author.html#1993">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

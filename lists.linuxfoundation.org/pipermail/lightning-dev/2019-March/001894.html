@@ -1,0 +1,124 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] More thoughts on NOINPUT safety
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3Cgs0Aizmvb8U11-Uz4RUqrEwgu00deU3JRhwHWbPjn8g1lZV3iaydqoYP3tldfrflHRC2HHJEZtAOVeYdaOW-chMcRdPVSiNYmqT6jSPnL1c%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001893.html">
+   <LINK REL="Next"  HREF="001895.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] More thoughts on NOINPUT safety</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3Cgs0Aizmvb8U11-Uz4RUqrEwgu00deU3JRhwHWbPjn8g1lZV3iaydqoYP3tldfrflHRC2HHJEZtAOVeYdaOW-chMcRdPVSiNYmqT6jSPnL1c%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] More thoughts on NOINPUT safety">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Wed Mar 13 06:41:47 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001893.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+        <LI>Next message: <A HREF="001895.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1894">[ date ]</a>
+              <a href="thread.html#1894">[ thread ]</a>
+              <a href="subject.html#1894">[ subject ]</a>
+              <a href="author.html#1894">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning aj,
+
+First off, I have little to no idea of the issues at the lower-level Bitcoin.
+
+In any case ---
+
+&gt;<i> -   alternatively, we could require every script to have a valid signature
+</I>&gt;<i>     that commits to the input. In that case, you could do eltoo with a
+</I>&gt;<i>     script like either:
+</I>&gt;<i>
+</I>&gt;<i>     &lt;A&gt; CHECKSIGVERIFY &lt;B&gt; CHECKSIG
+</I>&gt;<i>     or &lt;P&gt; CHECKSIGVERIFY &lt;Q&gt; CHECKSIG
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> where A is Alice's key and B is Bob's key, P is muSig(A,B) and Q is
+</I>&gt;<i> a key they both know the private key for. In the first case, Alice
+</I>&gt;<i> would give Bob a NOINPUT sig for the tx, and when Bob wanted to publish
+</I>&gt;<i> Bob would just do a SIGHASH_ALL sig with his own key. In the second,
+</I>&gt;<i> Alice and Bob would share partial NOINPUT sigs of the tx with P, and
+</I>&gt;<i> finish that when they wanted to publish.
+</I>&gt;<i>
+</I>&gt;<i> This is a bit more costly than a key path spend: you have to reveal
+</I>&gt;<i> the taproot point to do a script (+33B) and you have two signatures
+</I>&gt;<i> instead of one (+65B) and you have to reveal two keys as well
+</I>&gt;<i> (+66B), plus some script overhead. If we did the &lt;P,Q&gt; variant,
+</I>&gt;<i> we could provide a &quot;PUSH_TAPROOT_KEY&quot; opcode that would just push
+</I>&gt;<i> the taproot key to stack, saving 33B from pushing P as a literal,
+</I>&gt;<i> but you can't do much better than that. All in all, it'd be about 25%
+</I>&gt;<i> overhead in order to prevent cheating. [0]
+</I>&gt;<i>
+</I>&gt;<i> I think that output tagging doesn't provide a workable defense against the
+</I>&gt;<i> third party malleability via a deeper-than-the-CSV-delay reorg mentioned
+</I>&gt;<i> earlier; but requiring a non-NOINPUT sig does: you'd have to replace
+</I>&gt;<i> the non-NOINPUT sig to make state 5 spend state 3 instead of state 4,
+</I>&gt;<i> and only the holders of the appropriate private key can do that.
+</I>
+At my point of view, if a NONINPUT sig is restricted and cannot be used to spend an &quot;ordinary&quot; 2-of-2, this is output tagging regardless of exact mechanism.
+So the restriction to add a non-NOINPUT sig in addition to a NOINPUT sig is still output tagging, as a cooperative close would still reveal that the output is not a 2-of-2.
+
+Ideally, historical data of whether onchain coin was used in Lightning or not should be revealed as little as possible.
+So in a cooperative close (which we hope, to be a common case), ideally the spend should look no different from an ordinary 2-of-2 spend.
+Of course if the channel is published on Lightning, those who participated in Lightning at the time will learn of it, but at least the effort to remember this information is on those who want to remember this fact.
+
+Now, this can be worked around by adding a &quot;kickoff&quot; transaction that spends the eltoo setup transaction.
+The eltoo setup transaction outputs to an ordinary 2-of-2.
+The kickoff outputs to an output that allows NOINPUT.
+Then the rest of the protocol anchors on top of the kickoff.
+
+The kickoff is kept offchain, until a non-cooperative close is needed.
+Of course, as it is not a NOINPUT itself, it must need onchain fees attached to it.
+This of course complicates fees, as we know.
+Alternately maybe the kickoff can be signed with `SIGHASH_SINGLE | SIGHASH_ANYONECANPAY` so that it is possible to add a fee-paying UTXO to it.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001893.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+	<LI>Next message: <A HREF="001895.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1894">[ date ]</a>
+              <a href="thread.html#1894">[ thread ]</a>
+              <a href="subject.html#1894">[ subject ]</a>
+              <a href="author.html#1894">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

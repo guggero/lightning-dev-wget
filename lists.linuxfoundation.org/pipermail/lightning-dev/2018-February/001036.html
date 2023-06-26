@@ -1,0 +1,136 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAL3Hpbde2eF5W6wZJE3cdepBjSxsSQWbjwCu4ds%3DMa8JNfUuPQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001033.html">
+   <LINK REL="Next"  HREF="001043.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Fabrice Drouin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAL3Hpbde2eF5W6wZJE3cdepBjSxsSQWbjwCu4ds%3DMa8JNfUuPQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">fabrice.drouin at acinq.fr
+       </A><BR>
+    <I>Wed Feb 21 18:02:57 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001033.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+        <LI>Next message: <A HREF="001043.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1036">[ date ]</a>
+              <a href="thread.html#1036">[ thread ]</a>
+              <a href="subject.html#1036">[ subject ]</a>
+              <a href="author.html#1036">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On 20 February 2018 at 02:08, Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i>         This consumed much of our lightning dev interop call today!  But
+</I>&gt;<i> I think we have a way forward, which is in three parts, gated by a new
+</I>&gt;<i> feature bitpair:
+</I>
+We've built a prototype with a new feature bit `channel_range_queries`
+and the following logic:
+When you receive their init message and check their local features
+- if they set `initial_routing_sync` and `channel_range_queries` then
+do nothing (they will send you a `query_channel_range`)
+- if they set `initial_routing_sync` and not `channel_range_queries`
+then send your routing table (as before)
+- if you support `channel_range_queries` then send a
+`query_channel_range` message
+
+This way new and old nodes should be able to understand each other
+
+&gt;<i> 1. query_short_channel_id
+</I>&gt;<i> =========================
+</I>&gt;<i>
+</I>&gt;<i> 1. type: 260 (`query_short_channel_id`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`32`:`chain_hash`]
+</I>&gt;<i>    * [`8`:`short_channel_id`]
+</I>
+We could add a `data` field which contains zipped ids like in
+`reply_channel_range` so we can query several items with a single
+message ?
+
+&gt;<i> 1. type: 262 (`reply_channel_range`)
+</I>&gt;<i> 2. data:
+</I>&gt;<i>    * [`32`:`chain_hash`]
+</I>&gt;<i>    * [`4`:`first_blocknum`]
+</I>&gt;<i>    * [`4`:`number_of_blocks`]
+</I>&gt;<i>    * [`2`:`len`]
+</I>&gt;<i>    * [`len`:`data`]
+</I>
+We could add an additional `encoding_type` field before `data` (or it
+could be the first byte of `data`)
+
+&gt;<i> Appendix A: Encoding Sizes
+</I>&gt;<i> ==========================
+</I>&gt;<i>
+</I>&gt;<i> I tried various obvious compression schemes, in increasing complexity
+</I>&gt;<i> order (see source below, which takes stdin and spits out stdout):
+</I>&gt;<i>
+</I>&gt;<i>         Raw = raw 8-byte stream of ordered channels.
+</I>&gt;<i>         gzip -9: gzip -9 of raw.
+</I>&gt;<i>         splitgz: all blocknums first, then all txnums, then all outnums, then gzip -9
+</I>&gt;<i>         delta: CVarInt encoding: blocknum_delta,num,num*txnum_delta,num*outnum.
+</I>&gt;<i>         deltagz: delta, with gzip -9
+</I>&gt;<i>
+</I>&gt;<i> Corpus 1: LN mainnet dump, 1830 channels.[1]
+</I>&gt;<i>
+</I>&gt;<i>         Raw: 14640 bytes
+</I>&gt;<i>         gzip -9: 6717 bytes
+</I>&gt;<i>         splitgz: 6464 bytes
+</I>&gt;<i>         delta: 6624 bytes
+</I>&gt;<i>         deltagz: 4171 bytes
+</I>&gt;<i>
+</I>&gt;<i> Corpus 2: All P2SH outputs between blocks 508000-508999 incl, 790844 channels.[2]
+</I>&gt;<i>
+</I>&gt;<i>         Raw: 6326752 bytes
+</I>&gt;<i>         gzip -9: 1861710 bytes
+</I>&gt;<i>         splitgz: 964332 bytes
+</I>&gt;<i>         delta: 1655255 bytes
+</I>&gt;<i>         deltagz: 595469 bytes
+</I>&gt;<i>
+</I>&gt;<i> [1] <A HREF="http://ozlabs.org/~rusty/short_channels-mainnet.xz">http://ozlabs.org/~rusty/short_channels-mainnet.xz</A>
+</I>&gt;<i> [2] <A HREF="http://ozlabs.org/~rusty/short_channels-all-p2sh-508000-509000.xz">http://ozlabs.org/~rusty/short_channels-all-p2sh-508000-509000.xz</A>
+</I>&gt;<i>
+</I>
+Impressive!
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001033.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+	<LI>Next message: <A HREF="001043.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1036">[ date ]</a>
+              <a href="thread.html#1036">[ thread ]</a>
+              <a href="subject.html#1036">[ subject ]</a>
+              <a href="author.html#1036">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

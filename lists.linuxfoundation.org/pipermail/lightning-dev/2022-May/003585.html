@@ -1,0 +1,298 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] #PickhardtPayments implemented in lnd-manageJ
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23PickhardtPayments%20implemented%20in%20lnd-manageJ&In-Reply-To=%3CCACdvm3PnvyJ%3D6gmc6iTysd%3D1iBCcj8C_g4DVB5%3DMFgEep63fPw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003584.html">
+   <LINK REL="Next"  HREF="003587.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] #PickhardtPayments implemented in lnd-manageJ</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%23PickhardtPayments%20implemented%20in%20lnd-manageJ&In-Reply-To=%3CCACdvm3PnvyJ%3D6gmc6iTysd%3D1iBCcj8C_g4DVB5%3DMFgEep63fPw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] #PickhardtPayments implemented in lnd-manageJ">bastien at acinq.fr
+       </A><BR>
+    <I>Tue May 17 07:23:07 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003584.html">[Lightning-dev] #PickhardtPayments implemented in lnd-manageJ
+</A></li>
+        <LI>Next message: <A HREF="003587.html">[Lightning-dev] #PickhardtPayments implemented in lnd-manageJ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3585">[ date ]</a>
+              <a href="thread.html#3585">[ thread ]</a>
+              <a href="subject.html#3585">[ subject ]</a>
+              <a href="author.html#3585">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I completely agree with Matt, these two components are completely
+independent
+and too often conflated. Scoring channels and estimating liquidity is
+something
+that has been regularly discussed by implementations for the last few years,
+where every implementation did its own experiments over time.
+
+Eclair has quite a large, configurable set of heuristics around channel
+scoring,
+along with an A/B testing system that we've been using for a while on
+mainnet
+(see [1] for details). We've also been toying with channel liquidity
+estimation for
+more than half a year, which you can follow in [2] and [3].
+
+These are heuristics, and it's impossible to judge whether they work or not
+until
+you've tried them on mainnet with real payments, so I strongly encourage
+people
+to run such experiments. But when you do, you should have enough volume for
+the result data to be statistically meaningful and you should do A/B
+testing,
+otherwise you can make the data say pretty much everything you want. What
+I believe is mostly missing is the volume, the network doesn't have enough
+real
+payments yet IMHO for this data to accurately say that one heuristic is
+better
+than another.
+
+Using an MCF algorithm instead of dijkstra is useful when relaying large
+payments
+that will need to be split aggressively to reach the destination. It does
+make a lot
+of sense in that scenario. However, it's important to also take a step back
+and
+look at whether it is economical to make such payments on lightning.
+
+For a route with an aggregated proportional fee of 1000ppm, here is a rough
+comparison of the fees between on-chain and lightning:
+
+* At 1 sat/byte on-chain, payments above 2mBTC cost less on-chain than
+off-chain
+* At 10 sat/byte on-chain, payments above 20mBTC cost less on-chain than
+off-chain
+* At 25 sat/byte on-chain, payments above 50mBTC cost less on-chain than
+off-chain
+* And so on (just keep multiplying)
+
+Of course, making payments on lightning has more benefits than just fees,
+they
+also confirm faster than on-chain payments, but I think it's important to
+keep these
+figures in mind.
+
+It would be also useful to think about the shape of the network. Using an
+MCF
+algorithm makes sense when payments are saturating channels. But if channels
+are much bigger than your payment size, this is probably overkill. If
+channels are
+small &quot;at the edges of the network&quot; and bigger than payments at the &quot;core
+of the
+network&quot;, and we're using trampoline routing [4], it makes sense to run
+different
+path-finding algorithms depending on where we are (e.g. MCF at the edges on
+a small subset of the graph and dijkstra inside the core).
+
+I'm very happy that all this research is happening and helping lightning
+payments
+become more reliable, thanks for everyone involved! I think the design
+space is
+still quite large when we take everything into account, so I expect that
+we'll see
+even more innovation in the coming years.
+
+Cheers,
+Bastien
+
+[1]
+<A HREF="https://github.com/ACINQ/eclair/blob/10eb9e932f9c0de06cc8926230d8ad4e2d1d9e2c/eclair-core/src/main/resources/reference.conf#L237">https://github.com/ACINQ/eclair/blob/10eb9e932f9c0de06cc8926230d8ad4e2d1d9e2c/eclair-core/src/main/resources/reference.conf#L237</A>
+[2] <A HREF="https://github.com/ACINQ/eclair/pull/2263">https://github.com/ACINQ/eclair/pull/2263</A>
+[3] <A HREF="https://github.com/ACINQ/eclair/pull/2071">https://github.com/ACINQ/eclair/pull/2071</A>
+[4] <A HREF="https://github.com/lightning/bolts/pull/829">https://github.com/lightning/bolts/pull/829</A>
+
+
+Le lun. 16 mai 2022 &#224; 22:59, Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; a
+&#233;crit :
+
+&gt;<i> Its probably worth somewhat disentangling the concept of switching to a
+</I>&gt;<i> minimum-cost flow routing
+</I>&gt;<i> algorithm from the concept of &quot;scoring based on channel value and
+</I>&gt;<i> estimated available liquidity&quot;.
+</I>&gt;<i>
+</I>&gt;<i> These are two largely-unrelated concepts that are being mashed into one in
+</I>&gt;<i> this description - the
+</I>&gt;<i> first concept needs zero-base-fee to be exact, though its not clear to me
+</I>&gt;<i> that a heuristics-based
+</I>&gt;<i> approach won't give equivalent results in practice, given the noise in
+</I>&gt;<i> success rate compared to
+</I>&gt;<i> theory here.
+</I>&gt;<i>
+</I>&gt;<i> The second concept is something that LDK (and I believe CLN and maybe even
+</I>&gt;<i> eclair now) do already,
+</I>&gt;<i> though lnd does not last I checked. For payments where MPP does not add
+</I>&gt;<i> much to success rate (i.e.
+</I>&gt;<i> payments where the amount is relatively &quot;low&quot; compared to available
+</I>&gt;<i> network liquidity) dijkstra's
+</I>&gt;<i> with a liquidity/channel-size based scoring will give you the exact same
+</I>&gt;<i> result.
+</I>&gt;<i>
+</I>&gt;<i> For cases where you're sending an amount which is &quot;high&quot; compared to
+</I>&gt;<i> available network liquidity,
+</I>&gt;<i> taking a minimum-cost-flow algorithm becomes important, as you point out.
+</I>&gt;<i> Of course you're always
+</I>&gt;<i> going to suffer really slow payment and many retires in this case anyway.
+</I>&gt;<i>
+</I>&gt;<i> Matt
+</I>&gt;<i>
+</I>&gt;<i> On 5/15/22 1:01 PM, Carsten Otto via Lightning-dev wrote:
+</I>&gt;<i> &gt; Dear all,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; the most recent version of lnd-manageJ [1] now includes basic, but
+</I>&gt;<i> usable,
+</I>&gt;<i> &gt; support for #PickhardtPayments. I kindly invite you to check out the
+</I>&gt;<i> code, give
+</I>&gt;<i> &gt; it a try, and use this work for upcoming experiments.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Teaser with video:
+</I>&gt;<i> <A HREF="https://twitter.com/c_otto83/status/1525879972786749453">https://twitter.com/c_otto83/status/1525879972786749453</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The problem, heavily summarized:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; - Sending payments in the LN often fails, especially with larger amounts.
+</I>&gt;<i> &gt; - Splitting a large payment into smaller shards (using MPP) is helpful,
+</I>&gt;<i> &gt;    as in general the smaller shards don't fail as often as a single large
+</I>&gt;<i> &gt;    payment would. However, the success probability also drops
+</I>&gt;<i> &gt;    exponentially with the number of channels included [2].
+</I>&gt;<i> &gt; - Finding routes through the LN is tricky, as the channels' liquidity is
+</I>&gt;<i> &gt;    uncertain at the time of computing the routes and a simple &quot;trial and
+</I>&gt;<i> &gt;    error&quot; approach might take too long.
+</I>&gt;<i> &gt; - There are several implementations using various heuristics, taking
+</I>&gt;<i> &gt;    aspects like fees, previous failures, HTLC deltas, channel age, ...
+</I>&gt;<i> &gt;    into account. Comparing these approaches is very hard.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The gist of #PickhardtPayments:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; - The issue of finding MPP routes in the LN corresponds to the
+</I>&gt;<i> &gt;    well-known minimum-cost flow problem in computer science (graph
+</I>&gt;<i> &gt;    theory) with lots of related research, results, algorithms, ...
+</I>&gt;<i> &gt; - As shown in the paper [3] the results are optimal, no matter which
+</I>&gt;<i> &gt;    &quot;cost&quot; function is used to reason about routing costs (fees) and/or
+</I>&gt;<i> &gt;    reliability. However, depending on the characteristics of the
+</I>&gt;<i> &gt;    function, actually finding optimal results can be extremely hard
+</I>&gt;<i> &gt;    (NP-complete in some cases). By imposing the zero base fee limitation
+</I>&gt;<i> &gt;    and assuming a uniform distribution of funds, fast implementations
+</I>&gt;<i> &gt;    (polynomial time with sub-second runtimes) can be used.
+</I>&gt;<i> &gt; - Assuming (!) a uniform distribution of funds in each channel and zero
+</I>&gt;<i> &gt;    base fee only, #PickhardtPayments offers an approach that is optimal,
+</I>&gt;<i> &gt;    i.e. proven perfect and computationally feasible.
+</I>&gt;<i> &gt; - The most basic version only considers uncertainty costs for
+</I>&gt;<i> &gt;    reliability, but it is possible (and implemented in lnd-manageJ) to
+</I>&gt;<i> &gt;    also consider routing costs (fee rates) and optimize for both features
+</I>&gt;<i> &gt;    to come up with reliable and cheap-ish MPPs.
+</I>&gt;<i> &gt; - The implementation of #PickhardtPayments in lnd-manageJ needs to
+</I>&gt;<i> &gt;    ignore non-zero base fee channels to avoid extremely slow
+</I>&gt;<i> &gt;    (NP-complete) computations. Furthermore, certain aspects are
+</I>&gt;<i> &gt;    approximated [4]. As such, optimality claims are limited to the zero
+</I>&gt;<i> &gt;    base fee subset of the LN, and real-world experiments might be tricky
+</I>&gt;<i> &gt;    to interpret. However, as also shown in the testnet videos [5][6],
+</I>&gt;<i> &gt;    first results are very promising!
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The real strength of #PickhardtPayments:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; - Liquidity information, for example obtained by previous failures, is
+</I>&gt;<i> &gt;    taken into account. For each attempt, the relevant bits of information
+</I>&gt;<i> &gt;    are obtained and will be used to guide the following attempts.
+</I>&gt;<i> &gt; - As the underlying algorithm is proven to be optimal, we do not need to
+</I>&gt;<i> &gt;    rely on heuristics. Instead, the algorithm happily finds routes that
+</I>&gt;<i> &gt;    may be very long (but very probable/cheap, for whatever reason), have
+</I>&gt;<i> &gt;    a surprising number of shards, or rather odd amounts.
+</I>&gt;<i> &gt; - The underlying algorithm also deals with shared segments, i.e.
+</I>&gt;<i> &gt;    individual channels that are used for more than one shard of the MPP,
+</I>&gt;<i> &gt;    without oversaturating it.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The code in lnd-manageJ:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; - Highly experimental, but it's a start!
+</I>&gt;<i> &gt; - lnd + gRPC middleware + Java/Spring + PostgreSQL is a bit more complex
+</I>&gt;<i> &gt;    than necessary.
+</I>&gt;<i> &gt; - Only works with lnd.
+</I>&gt;<i> &gt; - Doesn't really work with lnd until issue #5746 [7] is fixed. I'd be
+</I>&gt;<i> &gt;    very happy for someone to have a look at my proposal (PR #6543 [8])!
+</I>&gt;<i> &gt; - The code doesn't handle all corner cases, especially the
+</I>&gt;<i> &gt;    less-than-usual failure codes. For example, if a node decides to raise
+</I>&gt;<i> &gt;    the fee rate, the corresponding channel will be ignored for a while as
+</I>&gt;<i> &gt;    I'm too lazy to think about how to update the information in the data
+</I>&gt;<i> &gt;    structure used to compute the MPP.
+</I>&gt;<i> &gt; - Pending shards (neither failed nor settled) just cause the whole MPP
+</I>&gt;<i> &gt;    to hang until something times out. Most likely this can't be fixed
+</I>&gt;<i> &gt;    without stuckless payments?
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I'd be very happy to discuss implementation details (not on this list, I
+</I>&gt;<i> &gt; guess?) and help with upcoming (mainnet?) benchmarks and experiments
+</I>&gt;<i> &gt; (Ren&#233; Pickhardt is also interested in helping with this). Given a fix
+</I>&gt;<i> &gt; for the blocking lnd issue, I'd be happy to let my node c-otto.de take
+</I>&gt;<i> &gt; part in some experiments.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Last but not least, a huge thank you to Ren&#233; Pickhardt for lots of
+</I>&gt;<i> &gt; insightful discussions, proof reading, and of course (together with
+</I>&gt;<i> &gt; Stefan Richter) the actual work of coming up with #PickhardtPayments!
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Best regards,
+</I>&gt;<i> &gt; Carsten
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 1: <A HREF="https://github.com/C-Otto/lnd-manageJ/blob/main/PickhardtPayments.md">https://github.com/C-Otto/lnd-manageJ/blob/main/PickhardtPayments.md</A>
+</I>&gt;<i> &gt; 2: <A HREF="https://arxiv.org/abs/2103.08576">https://arxiv.org/abs/2103.08576</A>
+</I>&gt;<i> &gt; 3: <A HREF="https://arxiv.org/abs/2107.05322">https://arxiv.org/abs/2107.05322</A>
+</I>&gt;<i> &gt; 4:
+</I>&gt;<i> <A HREF="../2022-March/003510.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/003510.html</A>
+</I>&gt;<i> &gt; 5: <A HREF="https://c-otto.de/pp/pp.mp4">https://c-otto.de/pp/pp.mp4</A>
+</I>&gt;<i> &gt; 6: <A HREF="https://c-otto.de/pp/lnd.mp4">https://c-otto.de/pp/lnd.mp4</A>
+</I>&gt;<i> &gt; 7: <A HREF="https://github.com/lightningnetwork/lnd/issues/5746">https://github.com/lightningnetwork/lnd/issues/5746</A>
+</I>&gt;<i> &gt; 8: <A HREF="https://github.com/lightningnetwork/lnd/pull/6543">https://github.com/lightningnetwork/lnd/pull/6543</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220517/0a3105b6/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220517/0a3105b6/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003584.html">[Lightning-dev] #PickhardtPayments implemented in lnd-manageJ
+</A></li>
+	<LI>Next message: <A HREF="003587.html">[Lightning-dev] #PickhardtPayments implemented in lnd-manageJ
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3585">[ date ]</a>
+              <a href="thread.html#3585">[ thread ]</a>
+              <a href="subject.html#3585">[ subject ]</a>
+              <a href="author.html#3585">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

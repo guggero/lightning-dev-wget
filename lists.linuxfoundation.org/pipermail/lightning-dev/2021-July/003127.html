@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Impact of eltoo loss of state
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Impact%20of%20eltoo%20loss%20of%20state&In-Reply-To=%3C20210712081749.GB6250%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003125.html">
+   <LINK REL="Next"  HREF="003130.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Impact of eltoo loss of state</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Impact%20of%20eltoo%20loss%20of%20state&In-Reply-To=%3C20210712081749.GB6250%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Impact of eltoo loss of state">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Jul 12 08:17:49 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003125.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+        <LI>Next message: <A HREF="003130.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3127">[ date ]</a>
+              <a href="thread.html#3127">[ thread ]</a>
+              <a href="subject.html#3127">[ subject ]</a>
+              <a href="author.html#3127">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello world,
+
+Suppose you have some payments going from Alice to Bob to Carol with
+eltoo channels. Bob's lightning node crashes, and he recovers from an
+old backup, and Alice and Carol end up dropping newer channel states
+onto the blockchain.
+
+Suppose the timeout for the payments is a few hours away, while the
+channels have specified a week long CSV delay to rectify any problems
+on-chain.
+
+Then I think that that means that:
+
+ 1) Carol will reveal the point preimages on-chain via adaptor
+    signatures, but Bob won't be able to decode those adaptor signatures
+    because those signatures will need to change for each state
+
+ 2) Even if Bob knows the point preimages, he won't be able to
+    claim the PTLC payments on-chain, for the same reason: he needs
+    newer adaptor signatures that he'll have lost with the state update
+
+ 3) For any payments that timeout, Carol doesn't have any particular
+    incentive to make it easy for Bob to claim the refund, and Bob won't
+    have the adaptor signatures for the latest state to do so
+
+ 4) But Alice will be able to claim refunds easily. This is working how
+    it's meant to, at least!
+
+I think you could fix (3) by giving Carol (who does have all the adaptor
+signatures for the latest state) the ability to steal funds that are
+meant to have been refunded, provided she gives Bob the option of claiming
+them first.
+
+However fixing (1) and (2) aren't really going against Alice or Carol's
+interests, so maybe you can just ask: Carol loses nothing by allowing
+Bob to claim funds from Alice; and Alice has already indicated that
+knowing P is worth more to her than the PTLC's funds -- otherwise she
+wouldn't have forwarded the PTLC to Bob in the first place.
+
+Likewise, everyone's probably incentivised to negotiate cooperative
+closes instead of going on-chain -- better privacy, less fees, and less
+delay before the funds can be used elsewhere.
+
+FWIW, I think a similar flaw exists even in the original eltoo spec --
+Alice could simply decline to publish the settlement transaction until
+the timeout has been reached, preventing Bob from revealing the HTLC
+preimage before Alice can claim the refund.
+
+So I think that adds up to:
+
+ a) Nodes should share state on reconnection; if you find a node that
+    doesn't do this, close the channel and put the node on your enemies
+    list. If you disagree on what the current state is, share your most
+    recent state, and if the other guy's state is more recent, and all
+    the signatures verify, update your state to match theirs.
+
+ b) Always negotiate a mutual/cooperative close if possible, to avoid
+    actually using the eltoo protocol on-chain.
+
+ c) If you want to allow continuing the channel after restoring an old
+    state from backup, set the channel state index based on the real time,
+    eg (real_time-start_time)*(max_updates_per_second). That way your
+    first update after a restore from backup will ensure that any old
+    states that your channel partner may not have told you about are
+    invalidated.
+
+ d) Accept that if you lose connectivity to a channel partner, you will
+    have to pay any PTLCs that were going to them, and won't be able
+    to claim the PTLCs that were funding them. Perhaps limit the total
+    value of inbound PTLCs for forwarding that you're willing to accept
+    at any one itme?
+
+Also, layered commitments seem like they make channel factories
+complicated too. Nobody came up with a way to avoid layered commitments
+while I wasn't watching did they?
+
+Cheers,
+aj
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003125.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+	<LI>Next message: <A HREF="003130.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3127">[ date ]</a>
+              <a href="thread.html#3127">[ thread ]</a>
+              <a href="subject.html#3127">[ subject ]</a>
+              <a href="author.html#3127">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

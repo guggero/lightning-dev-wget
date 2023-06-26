@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C87d1snvhyf.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000406.html">
+   <LINK REL="Next"  HREF="000409.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C87d1snvhyf.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Jan 27 03:07:04 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000406.html">[Lightning-dev] Lightning C prototype v0.2: &quot;Butterfly Labs' Timely	Delivery&quot;
+</A></li>
+        <LI>Next message: <A HREF="000409.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#408">[ date ]</a>
+              <a href="thread.html#408">[ thread ]</a>
+              <a href="subject.html#408">[ subject ]</a>
+              <a href="author.html#408">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all!
+
+        As more code emerges, I'd like to try to nail down a &quot;1.0&quot;
+version of the inter-node protocol as much as possible.  Since I'm most
+familiar with my own code (c-lightning[1]), I'll use that as a basis and
+discuss differences (esp. vs lnd[2]).
+
+For this email I'll simply list the changes or proposals I'm aware of,
+then we can dissect and comment on each one: defer, accept or close.
+
+Direct wire format stuff
+------------------------
+
+- Protobufs vs open-coded structures
+  - lnd open-coded their own protocol; I haven't finished reading their
+    code though.
+  - protobufs are easy to extend with new fields; with an open-coded
+    proto we simply need a rule that too-long packets are valid.
+  - protobufs are annoying for fixed-length blobs which we use a lot
+    (keys, signatures, hashes).
+  - The protocol is currently simple with very few variable-length fields.
+
+- Length prefix for initial key exchange
+  - Both lnd and c-lightning begin by exchanging a 33-byte EC key for DH.
+  - We should prefix with a length word, so we can extend this later
+    (eg. for new crypto)
+
+- Length prefix for other packets
+  - lightning-c sends an 8 byte prefix indicating the offset of the end of
+    the current packet: this effectively encodes both length and ordering.
+  - lnd uses a 4 byte network ID, 4 byte type, 4 byte length.
+
+- HTLC pipelining
+  - lnd's protocol supports multiple in-flight HTLC negotiations; this
+    would allow much greater throughput, with some complexity.
+  - lightning-c uses a simple one-at-a-time scheme, with alternating
+    priority in case of simultaneous sends.
+
+- HTLC abort stage
+  - Setting up a new HTLC involves both sides accepting, then revocation
+    message exchange.  Currently there's no way to abort this process.
+  - Allow the initator to abort any time before the revocation exchange,
+    for weird corner cases such as timeouts.
+
+- Version bits
+  - If we use an open-coded protocol, initial handshake after key setup
+    should exchange two sets of version bits: one for compulsory
+    features, one for optional features.  You hang up if there's a
+    compulsory feature you don't grok.
+
+Wire protocol crypto
+--------------------
+- Crypto AES/HMAC-SHA256 or Chacha20/Poly1305
+  - AES has the word Standard in the name, but chacha20 is faster w/o
+    accel (ie. ARM) and almost as widely supported.
+   
+- Use separate encoding stream for packet lengths
+  - Laolu's suggestion; encode the packet lengths as well which makes
+    traffic analysis a bit harder.
+  - Makes it a bit harder to detect re-transmissions (required on node
+    restart), but probably not enough to kill the idea?
+
+Misc
+----
+- shachain vs elkrem
+  - We use this to generate the revocation secrets, to minimize storage
+    and computation for a huge number of old commitment txs.
+  - They're actually very similar, but elkrem is much easier to grok.[6]
+
+- Anchor tx renegotiation
+  - We should allow re-anchoring of channels, to add or remove funds.
+      - This would allow easy payment from lightning channel to normal
+        bitcoin addresses, for example.
+  - During transition, signatures for both commit txs must be exchanged.
+
+- R value vs keypair
+  - Using a simple secret &quot;redeemhash&quot; allows easy tracing of
+    transactions through the network.
+  - Mats Jeratsch proposed a keypair scheme which decorrelates them[3],
+    Greg Maxwell optimized it slightly, and Anthony Towns[4] and Andrew
+    Poelstra independently came up with a way to do it without any
+    bitcoin mods.
+
+- Multi-sig txs
+  - Joseph pointed out that by simply allowing more than one signature on
+    commit txs[5], we can enable escrow-style services (including things
+    like GreenAddress.it which does this for normal wallets).
+
+I'm sure I've missed things; what are they?
+
+Thanks!
+Rusty.
+
+[1] <A HREF="https://github.com/ElementsProject/lightning">https://github.com/ElementsProject/lightning</A>
+[2] <A HREF="https://github.com/LightningNetwork/lnd">https://github.com/LightningNetwork/lnd</A>
+[3] <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000314.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000314.html</A>
+[4] <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000344.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000344.html</A>
+[5] <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/000403.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/000403.html</A>
+[6] <A HREF="https://github.com/LightningNetwork/lnd/blob/master/elkrem/elkrem.go">https://github.com/LightningNetwork/lnd/blob/master/elkrem/elkrem.go</A>
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000406.html">[Lightning-dev] Lightning C prototype v0.2: &quot;Butterfly Labs' Timely	Delivery&quot;
+</A></li>
+	<LI>Next message: <A HREF="000409.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#408">[ date ]</a>
+              <a href="thread.html#408">[ thread ]</a>
+              <a href="subject.html#408">[ subject ]</a>
+              <a href="author.html#408">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

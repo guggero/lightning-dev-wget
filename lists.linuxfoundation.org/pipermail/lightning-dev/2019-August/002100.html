@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Trampoline Routing
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Trampoline%20Routing&In-Reply-To=%3CCACdvm3OCbD15B%2BdhvV9MudvLn5aheVk4Pk4P5wwnTVLx6ScKBg%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002114.html">
+   <LINK REL="Next"  HREF="002102.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Trampoline Routing</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Trampoline%20Routing&In-Reply-To=%3CCACdvm3OCbD15B%2BdhvV9MudvLn5aheVk4Pk4P5wwnTVLx6ScKBg%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Trampoline Routing">bastien at acinq.fr
+       </A><BR>
+    <I>Fri Aug  2 09:29:25 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002114.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+        <LI>Next message: <A HREF="002102.html">[Lightning-dev] Trampoline Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2100">[ date ]</a>
+              <a href="thread.html#2100">[ thread ]</a>
+              <a href="subject.html#2100">[ subject ]</a>
+              <a href="author.html#2100">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I realized that trampoline routing has only been briefly described to this
+list (credits to cdecker and pm47 for laying
+out the foundations). I just published an updated PR [1] and want to take
+this opportunity to present the high level
+view here and the parts that need a concept ACK and more feedback.
+
+Trampoline routing is conceptually quite simple. Alice wants to send a
+payment to Bob, but she doesn't know a
+route to get there because Alice only keeps a small area of the routing
+table locally (Alice has a crappy phone,
+damn it Alice sell some satoshis and buy a real phone). However, Alice has
+a few trampoline nodes in her
+friends-of-friends and knows some trampoline nodes outside of her local
+area (but she doesn't know how to reach
+them). Alice would like to send a payment to a trampoline node she can
+reach and defer calculation of the rest of
+the route to that node.
+
+The onion routing part is very simple now that we have variable-length
+onion payloads (thanks again cdecker!).
+Just like russian dolls, we simply put a small onion inside a big onion.
+And the HTLC management forwards very
+naturally.
+
+It's always simpler with an example. Let's imagine that Alice can reach
+three trampoline nodes: T1, T2 and T3.
+She also knows the details of many remote trampoline nodes that she cannot
+reach: RT1, RT2, RT3 and RT4.
+Alice selects T1 and RT2 to use as trampoline hops. She builds a small
+onion that describes the following route:
+
+*Alice -&gt; T1 -&gt; RT2 -&gt; Bob*
+
+She finds a route to T1 and builds a normal onion to send a payment to T1:
+
+*Alice -&gt; N1 -&gt; N2 -&gt; T1*
+
+In the payload for T1, Alice puts the small trampoline onion.
+When T1 receives the payment, he is able to peel one layer of the
+trampoline onion and discover that he must
+forward the payment to RT2. T1 finds a route to RT2 and builds a normal
+onion to send a payment to RT2:
+
+*T1 -&gt; N3 -&gt; RT2*
+
+In the payload for RT2, T1 puts the peeled small trampoline onion.
+When RT2 receives the payment, he is able to peel one layer of the
+trampoline onion and discover that he must
+forward the payment to Bob. RT2 finds a route to Bob and builds a normal
+onion to send a payment:
+
+*RT2 -&gt; N4 -&gt; N5 -&gt; Bob*
+
+In the payload for Bob, RT2 puts the peeled small trampoline onion.
+When Bob receives the payment, he is able to peel the last layer of the
+trampoline onion and discover that he is
+the final recipient, and fulfills the payment.
+
+Alice has successfully sent a payment to Bob deferring route calculation to
+some chosen trampoline nodes.
+That part was simple and (hopefully) not controversial, but it left out
+some important details:
+
+   1. How do trampoline nodes specify their fees and cltv requirements?
+   2. How does Alice sync the fees and cltv requirements for her remote
+   trampoline nodes?
+
+To answer 1., trampoline nodes needs to estimate a fee and cltv that allows
+them to route to (almost) any other
+trampoline node. This is likely going to increase the fees paid by
+end-users, but they can't eat their cake and
+have it too: by not syncing the whole network, users are trading fees for
+ease of use and payment reliability.
+
+To answer 2., we can re-use the existing gossip infrastructure to exchange
+a new *node_update *message that
+contains the trampoline fees and cltv. However Alice doesn't want to
+receive every network update because she
+doesn't have the bandwidth to support it (damn it again Alice, upgrade your
+mobile plan). My suggestion is to
+create a filter system (similiar to BIP37) where Alice sends gossip filters
+to her peers, and peers only forward to
+Alice updates that match these filters. This doesn't have the issues BIP37
+has for Bitcoin because it has a cost
+for Alice: she has to open a channel (and thus lock funds) to get a
+connection to a peer. Peers can refuse to serve
+filters if they are too expensive to compute, but the filters I propose in
+the PR are very cheap (a simple xor or a
+node distance comparison).
+
+If you're interested in the technical details, head over to [1].
+I would really like to get feedback from this list on the concept itself,
+and especially on the gossip and fee estimation
+parts. If you made it that far, I'm sure you have many questions and
+suggestions ;).
+
+Cheers,
+Bastien
+
+[1] <A HREF="https://github.com/lightningnetwork/lightning-rfc/pull/654">https://github.com/lightningnetwork/lightning-rfc/pull/654</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190802/c9e8fa12/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190802/c9e8fa12/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002114.html">[Lightning-dev] Improving Lightning Network Pathfinding Latency	by Path Splicing and Other Real-Time Strategy Game Techniques
+</A></li>
+	<LI>Next message: <A HREF="002102.html">[Lightning-dev] Trampoline Routing
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2100">[ date ]</a>
+              <a href="thread.html#2100">[ thread ]</a>
+              <a href="subject.html#2100">[ subject ]</a>
+              <a href="author.html#2100">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

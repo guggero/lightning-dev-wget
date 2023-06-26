@@ -1,0 +1,216 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Committing to dust
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Committing%20to%20dust&In-Reply-To=%3C20151127085202.GA7151%40sapphire.erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000351.html">
+   <LINK REL="Next"  HREF="000352.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Committing to dust</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Committing%20to%20dust&In-Reply-To=%3C20151127085202.GA7151%40sapphire.erisian.com.au%3E"
+       TITLE="[Lightning-dev] Committing to dust">aj at erisian.com.au
+       </A><BR>
+    <I>Fri Nov 27 08:52:02 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000351.html">[Lightning-dev] Committing to dust
+</A></li>
+        <LI>Next message: <A HREF="000352.html">[Lightning-dev] Committing to dust
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#354">[ date ]</a>
+              <a href="thread.html#354">[ thread ]</a>
+              <a href="subject.html#354">[ subject ]</a>
+              <a href="author.html#354">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Nov 27, 2015 at 07:14:54AM +0100, Mats Jerratsch wrote:
+&gt;<i> Another way to deal with it is to add two HTLCs to the commit, basically
+</I>&gt;<i> 'I pay you 1.00000001 BTC and you pay me 1 BTC, so effectively I paid
+</I>&gt;<i> you 1 satoshi'.
+</I>
+True! Doubles the cost of the HTLC if it gets published to the
+blockchain though...
+
+&gt;<i> One issue with this is that it increases the fees by a lot, as the
+</I>&gt;<i> locked up capital increases by quite a lot. It might also not
+</I>&gt;<i> translate that well over many hops, when fees are different in each
+</I>&gt;<i> direction.
+</I>
+I don't think number of hops matters; it only affects each channel
+directly (so hop1 pays a+b one way, and b the other way; hop2 pays
+a-f+c one way, c the other way; etc), a as the transaction amount,
+f as b's fee, b and c arbitrary channel parameters for a/b and b/c
+channels respectively.
+
+You only have to lock up a little more than the dust amount, so call that
+1c per HTLC, assume a locktime of 20 days, and a time cost of bitcoin
+of 20% pa, then that's an extra cost of 0.01 of a cent per transaction.
+If you're aiming for a 1% per-hop fee, you can still handle transactions
+worth about a cent with that approach. If you've got a time cost of
+bitcoin at about 5% pa and a lock time of 10 days, you can do a 2c
+transaction with a per-hop fee of about 0.1%.
+
+&gt;<i> We might want to have some special protocol for these
+</I>&gt;<i> payments?
+</I>
+I don't think that helps?
+
+&gt;<i> By the way, as far as I know the dust value got increased to 5430? So
+</I>&gt;<i> even more of a problem for us now... (wow, that's already 2ct, don't
+</I>&gt;<i> think we can just disallow these, given that we promised the holy
+</I>&gt;<i> grail of micro payments ;) )
+</I>
+I don't think so? minrelayfee got increased to .05 mBTC, but that's for
+1000 bytes while the dust threshold is for 546 bytes, so that's 2730
+satoshi (a little under 1c at $351 USD/BTC).
+
+According to Visa, anything less than $20 is a micropayment though, so
+there's still plenty of leeway ;)
+
+<A HREF="http://www.techworld.com.au/article/351015/visa_payclick_takes_paypal_micropayments/">http://www.techworld.com.au/article/351015/visa_payclick_takes_paypal_micropayments/</A>
+
+&gt;<i> I also don't think just adding these to the change amount is
+</I>&gt;<i> sustainable. That's a thing I realized some time ago, as soon as there
+</I>&gt;<i> is some loop hole somewhere, there will be one guy who will move
+</I>&gt;<i> heaven and earth to make a profit off of it.
+</I>
+Yeah, and with onion routing and so on, I could be that guy!!
+
+If you anonymously setup two channels with another node, and route a whole
+bunch of dust payments to yourself, ie me1 -&gt; them -&gt; me2, then:
+
+ - if the HTLCs are in both txns, you can't do anything
+
+ - if the second channel's commitment unconditionally pays you for a
+   bunch of transactions, close the channel, and never reveal any of
+   the secrets.  you eventually get all your money back in me1, and made
+   a profit in me2.
+
+ - if the first channel's commitment doesn't debit you for a bunch
+   of transactions, reveal the corresponding secrets in the second
+   channel, updating its commitment, but refuse to follow protocol to
+   update the transactions in the first channel, closing it, but keeping
+   your money.
+
+ - if txns in the second channel are credited to fees, but have HTLCs
+   in the first channel; close the second channel, and the txns timeout,
+   refunding your money, but costing the other node the sum of those
+   HTLCs.
+
+Yay, more problems!
+
+Maybe you could tweak the dual HTLC approach to make attacks unattractive:
+
+  42 satoshi from A -&gt; B
+
+  10042 satoshi for (B &amp;&amp; R || A &amp;&amp; 20days CLTV)
+  10000 satoshi for (A &amp;&amp; R &amp;&amp; 15 days CLTV || B &amp;&amp; 20days CLTV)
+
+If it resolves on channel, fine; but if it hits the blockchain, A has to
+wait 15 days even if R gets revealed to get her 3.5c back.
+
+Not actually sure if that does any real good though...
+
+Cheers,
+aj
+
+&gt;<i> 2015-11-27 4:58 GMT+01:00 Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;:
+</I>&gt;<i> &gt; Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+</I>&gt;<i> &gt;&gt; Hey,
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; Suppose you have a lightning channel, with balances of exactly 2 BTC
+</I>&gt;<i> &gt;&gt; on your side, and 1 BTC on the other (and 1mBTC for fees). You send a
+</I>&gt;<i> &gt;&gt; micropayment of 42 satoshi across the channel, resulting in an updated
+</I>&gt;<i> &gt;&gt; commitment that looks like:
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;   in:
+</I>&gt;<i> &gt;&gt;     anchor (3.001 BTC): [yoursig theirsig redeemscript]
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;   out:
+</I>&gt;<i> &gt;&gt;     1 BTC: [pay2pubkey(theirs)]
+</I>&gt;<i> &gt;&gt;     1.99999958 BTC: [pay2pubkey(yours)]
+</I>&gt;<i> &gt;&gt;     0.00000042 BTC: [pay2scripthash(htlc to them with R or you after
+</I>&gt;<i> &gt;&gt;                      timeout)]
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; But the third output will hit the IsDust() test (less than 546 satoshi
+</I>&gt;<i> &gt;&gt; for a min relay fee of 0.01 mBTC) and the entire transaction will be
+</I>&gt;<i> &gt;&gt; rejected, so the channel can't be closed at all!
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; This is a similar problem to sub 1-satoshi payments, but it's different
+</I>&gt;<i> &gt;&gt; in that while you can't represent them as an HTLC output, you can
+</I>&gt;<i> &gt;&gt; represent them as soon as they complete -- ie:
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;   out:
+</I>&gt;<i> &gt;&gt;     1.00000042 BTC: [pay2pubkey(theirs)]
+</I>&gt;<i> &gt;&gt;     1.99999958 BTC: [pay2pubkey(yours)]
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; is completely legitimate (whereas an output of 1.0 + 0.042e-8 BTC
+</I>&gt;<i> &gt;&gt; wouldn't be).
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; I assume treating them much the same way is the only real option --
+</I>&gt;<i> &gt;&gt; account for them exactly in the lightning state, but just approximate the
+</I>&gt;<i> &gt;&gt; results in the actual commitments. So long as you're closing channels
+</I>&gt;<i> &gt;&gt; infrequently, losing a few hundred satoshi here and there won't matter
+</I>&gt;<i> &gt;&gt; much.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Yes, unfortunately we'll have to have a rule to avoid producing those
+</I>&gt;<i> &gt; outputs.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I've opened <A HREF="https://github.com/ElementsProject/lightning/issues/14">https://github.com/ElementsProject/lightning/issues/14</A>
+</I>&gt;<i> &gt; so we make sure we track this.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;&gt; Another option might be to weaken the dust protection in the network --
+</I>&gt;<i> &gt;&gt; eg if you made the dust output be
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt;     0.00000042 BTC: [(them &amp;&amp; (R || revoke))
+</I>&gt;<i> &gt;&gt;                      || (you &amp;&amp; d CSV &amp;&amp; t CLTV)
+</I>&gt;<i> &gt;&gt;                      || (3 months CSV)]
+</I>&gt;<i> &gt;&gt;
+</I>&gt;<i> &gt;&gt; then anyone could clear the dust after 3 months if it weren't otherwise
+</I>&gt;<i> &gt;&gt; claimed; maybe having some dust for a finite time is okay. But it'd also
+</I>&gt;<i> &gt;&gt; mean paying to an actual (non-standard) script, rather than a scripthash,
+</I>&gt;<i> &gt;&gt; which would be annoying in its own way... And, really, adding that output
+</I>&gt;<i> &gt;&gt; to the txn would probably cost more in additional fees that it's going
+</I>&gt;<i> &gt;&gt; to pay you in any case.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Agreed, we'll just cull those outputs and let them go to fees.
+</I>
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000351.html">[Lightning-dev] Committing to dust
+</A></li>
+	<LI>Next message: <A HREF="000352.html">[Lightning-dev] Committing to dust
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#354">[ date ]</a>
+              <a href="thread.html#354">[ thread ]</a>
+              <a href="subject.html#354">[ subject ]</a>
+              <a href="author.html#354">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

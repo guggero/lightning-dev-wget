@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Theory: Proofs of Payment are Signatures
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Theory%3A%20Proofs%20of%20Payment%20are%20Signatures&In-Reply-To=%3CaZInccmN_tBzBfF7ECHgwZH8oxAkl-ZlFDb1TaLZXIpFhBJEFr-JLYxZ7HSZuHoVwtkLj3Zp-L7Son8J4nhiNApcdAVl53pimLKmZk8SwDQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003250.html">
+   <LINK REL="Next"  HREF="003256.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Theory: Proofs of Payment are Signatures</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Theory%3A%20Proofs%20of%20Payment%20are%20Signatures&In-Reply-To=%3CaZInccmN_tBzBfF7ECHgwZH8oxAkl-ZlFDb1TaLZXIpFhBJEFr-JLYxZ7HSZuHoVwtkLj3Zp-L7Son8J4nhiNApcdAVl53pimLKmZk8SwDQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Theory: Proofs of Payment are Signatures">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Sep 24 02:10:14 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003250.html">[Lightning-dev] Dropping Tor v2 onion services from	node_announcement
+</A></li>
+        <LI>Next message: <A HREF="003256.html">[Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3254">[ date ]</a>
+              <a href="thread.html#3254">[ thread ]</a>
+              <a href="subject.html#3254">[ subject ]</a>
+              <a href="author.html#3254">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+Lightning provides proof-of-payment for standard forms of payment, but does not provide it for keysend or non-high hash-based AMP.
+
+Let us consider, then, what exactly a proof-of-payment even *is*.
+
+Lamport Signatures
+==================
+
+One of the earliest cryptographic digital signing schemes is the Lamport Signature Scheme.
+
+With Lamport signatures, you need to define:
+
+* A trapdoor/one-way hash function, which has output bits `n`.
+* A number of bits in the message, `m`.
+
+Then, to generate a private key:
+
+* Generate 2 * `m` random `n`-bit numbers, which are preimages.
+
+Then, to derive a public key from the private key:
+
+* Hash the above 2 * `m` preimages.
+
+To sign a message:
+
+* For each bit `b` of the message:
+  * If the bit is clear, send the `b` * 2 + 0 preimage (this is 0-indexed, by the way).
+  * If the bit is set, send the `b` * 2 + 1 preimage.
+
+To validate, simply check that the received preimage hashes to the corresponding hash in the public key.
+
+Hash-based Lightning Payments
+=============================
+
+In current Lightning, a BOLT11 invoice provides a single hash.
+Then the payer creates an outgoing HTLC, which is transported over the network and reaches the payee, who then provides the preimage to that hash.
+
+&gt;<i>From a certain point of view, one can consider that the preimage revelation is a Lamport signature with a 0-bit message.
+</I>Instead of signing a message, it is the *existence* of a signature that matters, and that is what proof-of-payment is.
+In that degenerate case of a 0-bit message, a preimage and its hash can serve as a Lamport signature.
+
+A BOLT11 invoice is signed with ECDSA secp256k1.
+One can consider that the hash embedded in the BOLT11 invoice is a delegated key, and that the BOLT11 mechanism is really a key delegation mechanism.
+The payee signs the BOLT11 invoice using ECDSA secp256k1 using its node id as pubkey, specifying a 0-bit Lamport public key (the hash in the BOLT11), and delegating responsibility for that particular invoice to that key.
+Then, when the payee (or its representative on the network) gets paid, it signs the Lamport signature using the delegated key by revealing the preimage.
+
+&gt;<i>From this point-of-view, as well, keysend and base AMP do provide a proof-of-payment, it is just the proof-of-payment is the &quot;wrong&quot; direction: the payee gets a proof-of-payment that it got paid, as it is provided the public key (the hash) and the preimage (the 0-bit Lamport signature).
+</I>The payee gets proof that it got paid, but typically we expect that people will charge (i.e. demand to get paid) for their autographs, so a payee getting a signature from the payer does not quite fit the expected economics.
+
+A Scheme For Point-based Payments?
+==================================
+
+Given the above idea, would it be useful to consider that a PTLC-based LN should explicitly use Schnorr signatures for proof-of-payment?
+
+Schnorr signatures are `(R, s)`, and once `R` has been established, we do know that we can implement a pay-for-signature to acquire the `s` using PTLCs, which can be transported across the network.
+
+&gt;<i>From this point of view, then, proof-of-payments are signatures `(R, s)`, with `s` being acquired using PTLCs over the network.
+</I>What is needed then is to somehow transport `R`.
+
+For example, a PTLC-based invoice scheme might commit to a specific `R` in the invoice.
+Then the public key is &quot;really&quot; the payee node public key, *and* this specific `R`, which forms a one-time signature scheme (as reuse of `R` is unsafe).
+This is similar to the current BOLT11 scheme in that the hash is &quot;really&quot; a 0-bit Lamport public key, which is similarly one-time-use.
+Then the invoice represents a delegation of the node public key to the augmented node id + `R` public key.
+
+Additionally, we may provide a mechanism to request for an `R` from the payee, together with a message to be signed.
+The payee may then use some determinstic `R` generation scheme to provide `R` to the payer.
+
+*How* these mechanisms might actually be *used*, I am significantly less certain about, but perhaps application developers on top of Lightning may have some ideas that can be shoehorned into this.
+
+At its minimum, even a simple scalar-behind-this-point PTLC payment scheme could still work for proof-of-payment, as the function `f(x) = x * G` is a perfectly fine trapdoor function for the purposes of Lamport signing, so there is no real need to have &quot;full&quot; signatures as the basic mechanism in a PTLC-based Lightning Network.
+
+Forwarding nodes, of course, need not know about this, but we do need to consider whether support for this would be useful at the payer and payee, and in our APIs exposed to applications built on top of Lightning.
+
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003250.html">[Lightning-dev] Dropping Tor v2 onion services from	node_announcement
+</A></li>
+	<LI>Next message: <A HREF="003256.html">[Lightning-dev] Ask First, Shoot (PTLC/HTLC) Later
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3254">[ date ]</a>
+              <a href="thread.html#3254">[ thread ]</a>
+              <a href="subject.html#3254">[ subject ]</a>
+              <a href="author.html#3254">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

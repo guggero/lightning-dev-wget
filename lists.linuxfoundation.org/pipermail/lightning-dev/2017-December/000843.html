@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Peer Selection
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Peer%20Selection&In-Reply-To=%3CEt_CWHdmi0U2RdLo38yi70LfMAUKvcSCdaHROjhPOjVzCbHFTifp600PnzxFCwZrQGRJsJcADxZR--sLFXIL2RTjVGRB2UHsvtGy39gcDo4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000841.html">
+   <LINK REL="Next"  HREF="000844.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Peer Selection</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Peer%20Selection&In-Reply-To=%3CEt_CWHdmi0U2RdLo38yi70LfMAUKvcSCdaHROjhPOjVzCbHFTifp600PnzxFCwZrQGRJsJcADxZR--sLFXIL2RTjVGRB2UHsvtGy39gcDo4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Peer Selection">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu Dec 14 03:11:56 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000841.html">[Lightning-dev] Peer Selection
+</A></li>
+        <LI>Next message: <A HREF="000844.html">[Lightning-dev] Peer Selection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#843">[ date ]</a>
+              <a href="thread.html#843">[ thread ]</a>
+              <a href="subject.html#843">[ subject ]</a>
+              <a href="author.html#843">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning Stan,
+
+Money is safe when network is down only if you only pay out of your node.  Once you receive, it is possible for your counterparty to transmit an invalid old state where it owns more money than you do.  Then you need to monitor the blockchain for invalid closings of channel state, meaning you cannot be offline for more than a few days (this timeout is settable in your node).
+
+Basically, consider the below situation:
+
+You make a channel to me and load it with 3mBTC.  You force the channel to be unidirectional, because you might be offline for months.
+
+Stan: 3mBTC, ZmnSCPxj: 0mBTC Initial state
+Stan: 2mBTC, ZmnSCPxj: 1mBTC after you pay me 1 mBTC
+Stan: 1mBTC, ZmnSCPxj: 2mBTC after you pay me 1 mBTC
+
+Now suppose you decide to accept money via this channel.  So the channel history now becomes:
+
+Stan: 2mBTC, ZmnSCPxj: 1mBTC after I pay you 1 mBTC
+Stan: 3mBTC, ZmnSCPxj: 0mBTC after I pay you 1 mBTC
+
+At this point, I can take back my 2mBTC by replaying the old &quot;Stan: 1mBTC, ZmnSCPxj: 2mBTC&quot; state.  Normally, this is a bad move on my part, since old state is revoked and you can present evidence of fraud on the blockchain layer to take the entire channel value as yours, as damages.  However, you only have a few days where you can present this evidence.  If those few days pass, then the payment is finalized and I get back the 2 mBTC I paid to you.
+
+The upshot is that if you receive money for any reason (whether for routing, or because you are the final payee) you can only be offline for at most a few days.  Otherwise, you force yourself into unidirectional mode only (you can only pay, never receive): unidirectional mode also is bad for you since you cannot offset the fees you pay for spending using fees you receive for routing.
+
+If you are going to receive money anyway, you might as well enable routing also, because that lets you earn some fees (to offset the fees you would pay to spend your money).  The added risk is low: most routes will either successfully reach the destination, or fail outright, within a few seconds, freeing the funds back to you again.
+
+The protocol has two settings &quot;max_htlc_value_in_flight_msat&quot; and &quot;max_accepted_htlcs&quot; to limit your exposure to routing risk.  These limit how much of your channel funds can be spent on routing (max_htlc_value_in_flight_msat) and the number of routes at a time that should be used on that channel (max_accepted_htlcs).  If those limits would be violated by a route attempting to go to you, the route simply fails and the payer will have to find another route.
+
+Regards,
+ZmnSCPxj
+
+Sent with ProtonMail Secure Email.
+
+-------- Original Message --------
+Subject: Re: [Lightning-dev] Peer Selection
+Local Time: December 14, 2017 12:10 AM
+UTC Time: December 13, 2017 4:10 PM
+From: <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">stan.kladko at galacticexchange.io</A>
+To: ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A> &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt;
+
+Thank you - this is lots of information !)
+You would also have to make your outgoing channels private (not sent by node gossip) so that others will not route through you.
+
+If I would have only a single outgoing channel I would not have to
+make it private ? Correct? There is no way to route through a node
+that has one channel.
+
+Another interesting question is what happens if I have lots of
+channels, but in my software block all routing through my node?
+
+Is there a way for me to block all routing through my node by
+modifying node software but still enjoy all benefits of receiving and
+sending deposits?
+
+As you said, blocking all routing has lots of benefit since money is
+safe if the network is down :-)
+
+Sorry for playing devils advocate - I am just trying to understand it )
+
+On Wed, Dec 13, 2017 at 3:13 PM, ZmnSCPxj <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A> wrote:
+Good morning,
+If you have a reason to open a channel to an arbitrary node, then other
+nodes have a reason to open a channel to an arbitrary node, which might be
+you. Even if the
+network grows large, that &gt; also means there are more participants who
+might decide, via whatever heuristic, to channel to your node.
+If I am connected to some nodes, but no one connected to me, then all
+of my deposit is used by me only, and is not used by other nodes.
+If I am routing nodes through my node, then it can potentially
+negatively affect availability of my deposit for my own transactions.
+So it seems to me that the best strategy is to connect but accept no
+incoming connections.
+How much real is this problem?
+You would also have to make your outgoing channels private (not sent by node
+gossip) so that others will not route through you. You will not be able to
+receive money on-Lightning (since your channels are private, people who are
+trying to send money to you on-Lightning will not be able to find a route to
+you). You will not earn any money from routing fees (since you are not
+willing to have others use your channels for routing).
+It has the advantage that you can actually lose Internet connectivity
+indefinitely with no possibility of loss of funds, simply because in this
+mode of operation, channels are effectively unidirectional only from you to
+the rest of the network.
+However, I think in the long run, you would prefer to receive funds by
+Lightning also, and so cannot use this kind of operation. Consider that in
+the future, you may get paid your salary or dividends in bitcoin over
+Lightning: your business/employer receives money from its customer over
+Lightning, it sends part of that money to sub-contractors and suppliers, and
+some to you (employee or shareholder). You then spend the money you receive
+as salary/dividends for food and services and other vices you might have,
+which are provided by other businesses which have their own shareholders,
+employees, sub-contractors, and suppliers.
+In such a world, you would have to make your channels public and accept
+incoming channels, and at minimum accept incoming money (even if you reject
+routing attempts). Since routing can earn you some amount of money as fees,
+you probably want to accept at least a few routing attempts at a time to
+earn some fees (and offset the fees on your own transactions). This also
+leads to a more mesh-like network; the &quot;unidirectional mode&quot; where you keep
+all your channels private and only outgoing effectively makes you a
+second-class member of the network (and has higher onchain fees: if you have
+depleted a channel, there is an incentive to keep it open only if you are
+willing to accept routing attempts through you (every open channel is an
+opportunity to route, and a channel depleted on your end is full on the
+opposite end and you can still at least accept transactions toward you),
+otherwise, you are better off closing channels (and incurring fees) so you
+can recover the channel reserve).
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20171213/4282e3c7/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20171213/4282e3c7/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000841.html">[Lightning-dev] Peer Selection
+</A></li>
+	<LI>Next message: <A HREF="000844.html">[Lightning-dev] Peer Selection
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#843">[ date ]</a>
+              <a href="thread.html#843">[ thread ]</a>
+              <a href="subject.html#843">[ subject ]</a>
+              <a href="author.html#843">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

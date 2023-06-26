@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Eltoo, anyprevout and chaperone signatures
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%2C%20anyprevout%20and%20chaperone%20signatures&In-Reply-To=%3C20190516153748.ongj7qzgqldz4bry%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001995.html">
+   <LINK REL="Next"  HREF="001997.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Eltoo, anyprevout and chaperone signatures</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%2C%20anyprevout%20and%20chaperone%20signatures&In-Reply-To=%3C20190516153748.ongj7qzgqldz4bry%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Eltoo, anyprevout and chaperone signatures">aj at erisian.com.au
+       </A><BR>
+    <I>Thu May 16 15:37:48 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001995.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+        <LI>Next message: <A HREF="001997.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1996">[ date ]</a>
+              <a href="thread.html#1996">[ thread ]</a>
+              <a href="subject.html#1996">[ subject ]</a>
+              <a href="author.html#1996">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Thu, May 16, 2019 at 09:55:57AM +0200, Bastien TEINTURIER wrote:
+&gt;<i> Thanks for your answers and links, the previous discussions probably happened
+</I>&gt;<i> before I joined this list so I'll go dig into the archive ;)
+</I>
+The discussion was on a different list anyway, I think, this might be
+the middle of the thread:
+
+<A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-March/016777.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2019-March/016777.html</A>
+
+&gt;<i> &gt; Specifically we can't make make use of the collaborative path where
+</I>&gt;<i> &gt; we override an `update_tx` with a newer one in taproot as far as I can
+</I>&gt;<i> &gt; see, since the `update_tx` needs to be signed with noinput (for
+</I>&gt;<i> &gt; rebindability) but there is no way for us to specify the chaperone key
+</I>&gt;<i> &gt; since we're not revealing the committed script.
+</I>&gt;<i> Can you expand on that? Why do we need to &quot;make use of the collaborative path&quot;
+</I>&gt;<i> (maybe it's unclear to me what you mean by collaborative path here)?
+</I>
+I think Christian means the &quot;key path&quot; per the terminology in the
+taproot bip. That's the path that just provides a signature, rather than
+providing an internal key, a script, and signatures etc for the script.
+
+&gt;<i> I feel like there will be a few other optimizations that are unlocked by
+</I>&gt;<i> taproot/tapscript, it will be interesting to dig into that.
+</I>
+I had a go at drafting up scripts, and passed them around privately to
+some of the people on this list already. They're more &quot;thought bubble&quot;
+than even &quot;draft&quot; yet, but for the sake of discussion:
+
+---
+FWIW, the eltoo scripts I'm imaginging with this spec are roughly:
+
+UPDATE TX n:
+  nlocktime: 500e6+n
+  nsequence: 0
+  output 0:
+    P = muSig(A,B)
+    scripts = [
+      &quot;OP_1 CHECKSIGVERIFY X CHECKSIGVERIFY 500e6+n+1 CLTV&quot;
+    ]
+ witness:
+    sig(P,hash_type=SINGLE|ANYPREVOUTANYSCRIPT=0xc3)
+    sig(X,hash_type=0)
+
+SETTLEMENT TX n:
+  nlocktime: 500e6+n+1
+  nsequence: [delay]
+  output 0: A
+  output 1: B
+  output n: (HTLC)
+    P = muSig(A,B)
+    scripts = [
+      &quot;OP_1 CHECKSIGVERIFY X CHECKSIG&quot;
+      &quot;A CHECKSIGVERIFY &lt;t&gt; CLTV&quot;
+    ]
+  witness:
+    sig(P,hash_type=ALL|ANYPREVOUT=0x41)
+    sig(X,hash_type=0)
+
+HTLC CLAIM (reveal secp256k1 preimage R):
+  witness:
+    hash-of-alternative-script
+    sig(P,hash_type=SINGLE|ANYPREVOUT,reveal R)
+    sig(X,hash_type=0)
+
+HTLC REFUND (timeout):
+  witness:
+    hash-of-alternative-script
+    sig(A,hash_type=ALL)
+
+Because &quot;n&quot; changes for each UPDATE tx, each ANYPREVOUT signature
+(for the SETTLEMENT tx) commits to a specific UPDATE tx via both the
+scriptPubKey commitment and the tapleaf_hash commitment.
+
+So the witness data for both txs involve revealing:
+
+    33 byte control block
+    43 byte redeem script
+    65 byte anyprevout sig
+    64 byte sighash all sig
+
+Compared to a 65 byte key path spend (if ANYPREVOUT worked for key paths),
+that's an extra 143 WU or 35.75 vbytes, so about 217% more expensive. The
+update tx script proposed in eltoo.pdf is (roughly):
+
+&quot;IF 2 Asi Bsi ELSE &lt;500e6+n+1&gt; CLTV DROP 2 Au Bu ENDIF 2 OP_CHECKMULTISIG&quot;
+
+    148 byte redeem script
+    65 byte anyprevout sig by them
+    64 byte sighash all sig by us
+    &quot;1&quot; or &quot;0&quot; to control the IF
+
+which I think would be about 282 WU total, or an extra 216 WU/54 vbytes
+over a 65 byte key path spend, so about 327% more expensive. So at least
+we're a lot better than where we were with BIP 118, ECDSA and p2wsh.
+
+Depending on if you can afford generating a bunch more signatures you
+could also have a SIGHASH_ALL key path spend for the common unilateral
+case where only a single UPDATE TX is published.
+
+UPDATE TX n (alt):
+  input: FUNDING TX
+  witness: sig(P,hash_type=0)
+  output 0:
+    P = muSig(A,B)
+    scripts = [
+      &quot;OP_1 CHECKSIGVERIFY X CHECKSIGVERIFY 500e6+n+1 CLTV&quot;
+    ]
+
+SETTLEMENT TX n (alt):
+  nsequence: [delay]
+  input: UPDATE TX n (alt)
+  witness: sig(P+H(P||scripts)*G,hash_type=0)
+  outputs: [as above]
+
+(This approach can either use the same ANYPREVOUT sigs for the HTLC
+claims, or could include an additional sig for each active HTLC for each
+channel update to allow HTLC claims via SIGHASH_ALL scriptless scripts...)
+
+Despite using SIGHASH_SINGLE, I don't think you can combine two UPDATE txs
+generally, because the nlocktime won't match (this could possibly be fixed
+in a future soft-fork by using the annex to support per-input absolute
+locktimes). You can't combine SETTLEMENT tx, because the ANYPREVOUT
+signature needs to commit to multiple outputs (one for my balance, one
+for yours, one for each active HTLC). Combining HTLC refunds is kind-of
+easy, but only possible in the first place if you've got a bunch expiring
+at the same time, which might not be that likely. Combining HTLC claims
+should be easy enough since they just need scriptless-script signatures.
+
+For fees, because of ALL|ANYPREVOUT, you can add a new input and new
+change output to bring-your-own-fees for the UPDATE tx; and while you
+can't do that for the SETTLEMENT tx, you can immediately spend your
+channel-balance output to add fees via CPFP.
+
+As far as &quot;X&quot; goes, calculating the private key as a HD key using ECDH
+between the peers to generate the seed, and including the update id &quot;n&quot;
+in the path, to vary it between each update tx might work well. You'd
+need to give this key to watchtowers, but you'll probably have to pay
+watchtowers to monitor your txs (so that they can add fees to the UPDATE
+tx's), so only giving this key to the watchtowers you pay should maintain
+the security assumptions.
+
+Cheers,
+aj
+
+
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001995.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+	<LI>Next message: <A HREF="001997.html">[Lightning-dev] Eltoo, anyprevout and chaperone signatures
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1996">[ date ]</a>
+              <a href="thread.html#1996">[ thread ]</a>
+              <a href="subject.html#1996">[ subject ]</a>
+              <a href="author.html#1996">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

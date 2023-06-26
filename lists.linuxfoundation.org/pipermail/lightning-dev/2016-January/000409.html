@@ -1,0 +1,240 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C56A86B25.8010406%40blockchain.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000408.html">
+   <LINK REL="Next"  HREF="000415.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>Mats Jerratsch</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C56A86B25.8010406%40blockchain.com%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">mats.jerratsch at blockchain.com
+       </A><BR>
+    <I>Wed Jan 27 07:00:53 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000408.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+        <LI>Next message: <A HREF="000415.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#409">[ date ]</a>
+              <a href="thread.html#409">[ thread ]</a>
+              <a href="subject.html#409">[ subject ]</a>
+              <a href="author.html#409">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Great point Rusty, given how many implementations are emerging, we
+should press more for compatibility.
+
+Before making comments, just a quick reminder that everyone is invited
+in cloning
+
+<A HREF="https://github.com/lightning-core/lightning">https://github.com/lightning-core/lightning</A>
+
+and writing up their specifications so others do not have to search
+through code, plus separating code from design is good practice. It
+will also be easier to commit to them once the discussion is done.
+
+
+
+&gt;<i> For this email I'll simply list the changes or proposals I'm aware
+</I>&gt;<i> of, then we can dissect and comment on each one: defer, accept or
+</I>&gt;<i> close.
+</I>I am so free and add changes from TN :)
+
+&gt;<i> 
+</I>&gt;<i> Direct wire format stuff ------------------------
+</I>&gt;<i> 
+</I>&gt;<i> - Protobufs vs open-coded structures - lnd open-coded their own
+</I>&gt;<i> protocol; I haven't finished reading their code though. - protobufs
+</I>&gt;<i> are easy to extend with new fields; with an open-coded proto we
+</I>&gt;<i> simply need a rule that too-long packets are valid. - protobufs are
+</I>&gt;<i> annoying for fixed-length blobs which we use a lot (keys,
+</I>&gt;<i> signatures, hashes). - The protocol is currently simple with very
+</I>&gt;<i> few variable-length
+</I>fields.
+- - TN currently is using JSON encoded objects. It is by no standard
+efficient, but allows for easy integration of other systems and
+it's easy to extend/modify.
+
+Right now I think the open-coded messaging is a bit too much. You
+don't get the efficiency of protobufs, nor the readibility of JSON,
+but still have to manually code each serialisation/deserialisation,
+and each change to the messages has to be carefully inserted into
+these functions.
+
+I still don't think JSON is a bad choice for the beginning. If it
+actually turns out to be a bottleneck it is a very low-hanging fruit.
+
+I would rather adapt something like protobufs if it comes to it. (I
+heard there are other *bufs, maybe some of these serve us better?)
+
+
+&gt;<i> - Length prefix for initial key exchange - Both lnd and c-lightning
+</I>&gt;<i> begin by exchanging a 33-byte EC key
+</I>for DH.
+&gt;<i> - We should prefix with a length word, so we can extend this later 
+</I>&gt;<i> (eg. for new crypto)
+</I>Agree, same on TN.
+
+Won't new crypto be non-compatibily anyways?
+
+&gt;<i> - Length prefix for other packets - lightning-c sends an 8 byte
+</I>&gt;<i> prefix indicating the offset of the
+</I>end of
+&gt;<i> the current packet: this effectively encodes both length and
+</I>ordering.
+&gt;<i> - lnd uses a 4 byte network ID, 4 byte type, 4 byte length.
+</I>- - TN uses 4 byte length, type is JSON encoded (message types are
+completely taken care of of GSON)
+
+I agree that a network ID prefix might make sense. Probably worth
+designing for an equivalent of testnet (and they should not just
+differ by the standard port they run on... )
+
+&gt;<i> 
+</I>&gt;<i> - HTLC pipelining - lnd's protocol supports multiple in-flight HTLC
+</I>&gt;<i> negotiations; this would allow much greater throughput, with some
+</I>&gt;<i> complexity. - lightning-c uses a simple one-at-a-time scheme, with
+</I>&gt;<i> alternating priority in case of simultaneous sends.
+</I>- - TN allows for adding / settling / refunding arbitrary amount of
+HTLCs at the same time.
+
+Agree with lnd here, the complexity is worth it IMO.
+
+&gt;<i> - HTLC abort stage - Setting up a new HTLC involves both sides
+</I>&gt;<i> accepting, then revocation message exchange.  Currently there's no
+</I>&gt;<i> way to abort this process. - Allow the initator to abort any time
+</I>&gt;<i> before the revocation exchange, for weird corner cases such as
+</I>&gt;<i> timeouts.
+</I>- - TN allows for any party to start a new exchange to abort the
+current one. I adapted the dice-rolling from CJP, in case both
+initiate at the same time.
+- - It is important be careful with revocation hashes when aborting.
+You don't want the other party to hold on to an unrevoked tx...
+&gt;<i> 
+</I>&gt;<i> - Version bits - If we use an open-coded protocol, initial
+</I>&gt;<i> handshake after key setup should exchange two sets of version bits:
+</I>&gt;<i> one for compulsory features, one for optional features.  You hang
+</I>&gt;<i> up if there's a compulsory feature you don't grok.
+</I>
+Good point, agree here.
+
+&gt;<i> Wire protocol crypto -------------------- - Crypto AES/HMAC-SHA256
+</I>&gt;<i> or Chacha20/Poly1305 - AES has the word Standard in the name, but
+</I>&gt;<i> chacha20 is faster w/o accel (ie. ARM) and almost as widely
+</I>&gt;<i> supported.
+</I>&gt;<i> 
+</I>&gt;<i> - Use separate encoding stream for packet lengths - Laolu's
+</I>&gt;<i> suggestion; encode the packet lengths as well which makes traffic
+</I>&gt;<i> analysis a bit harder. - Makes it a bit harder to detect
+</I>&gt;<i> re-transmissions (required on node restart), but probably not
+</I>&gt;<i> enough to kill the idea?
+</I>&gt;<i> 
+</I>&gt;<i> Misc ---- - shachain vs elkrem - We use this to generate the
+</I>&gt;<i> revocation secrets, to minimize storage and computation for a huge
+</I>&gt;<i> number of old commitment txs. - They're actually very similar, but
+</I>&gt;<i> elkrem is much easier to grok.[6]
+</I>
+TBD on TN, they both sound solid, I agree with elkrem being easier to
+implement.
+
+&gt;<i> 
+</I>&gt;<i> - Anchor tx renegotiation - We should allow re-anchoring of
+</I>&gt;<i> channels, to add or remove funds. - This would allow easy payment
+</I>&gt;<i> from lightning channel to normal bitcoin addresses, for example. -
+</I>&gt;<i> During transition, signatures for both commit txs must be
+</I>&gt;<i> exchanged.
+</I>
+This sounds like a 1.1 feature. Agree that we should allow it, but
+does not seem urgent right now.
+
+&gt;<i> - R value vs keypair - Using a simple secret &quot;redeemhash&quot; allows
+</I>&gt;<i> easy tracing of transactions through the network. - Mats Jeratsch
+</I>&gt;<i> proposed a keypair scheme which decorrelates them[3], Greg Maxwell
+</I>&gt;<i> optimized it slightly, and Anthony Towns[4] and Andrew Poelstra
+</I>&gt;<i> independently came up with a way to do it without any bitcoin
+</I>&gt;<i> mods.
+</I>
+Currently I am using R value, I am still a bit afraid of the lengthy
+scripts when doing it without bitcoin mods. Might make sense to just
+design the system in a way that it's easy to change later than to
+implement it already.
+
+&gt;<i> - Multi-sig txs - Joseph pointed out that by simply allowing more
+</I>&gt;<i> than one
+</I>signature on
+&gt;<i> commit txs[5], we can enable escrow-style services (including
+</I>&gt;<i> things like GreenAddress.it which does this for normal wallets).
+</I>&gt;<i> 
+</I>&gt;<i> I'm sure I've missed things; what are they?
+</I>
+Would be great to discuss connection/node failures. TN currently does
+not support 'picking up' a lost connection again. I feel like anything
+that MUST be finished on resume should rather be saved on hard disk in
+advance, designing for various node failure modes.
+Restarting a fresh connection seems to be much cleaner for me?
+
+Cheers
+- -- 
+Mats Jerratsch
+Backend Engineer, Blockchain
+e: <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">mats.jerratsch at blockchain.com</A>
+PGP: <A HREF="https://pgp.mit.edu/pks/lookup?op=get&amp;search=0x7F3EC6CA">https://pgp.mit.edu/pks/lookup?op=get&amp;search=0x7F3EC6CA</A>
+-----BEGIN PGP SIGNATURE-----
+Comment: GPGTools - <A HREF="https://gpgtools.org">https://gpgtools.org</A>
+
+iQIcBAEBCgAGBQJWqGslAAoJEAYZmwZ/PsbK5kkP/Rp1tANr8BDVBLRW6VftoEFr
+6loMF49SUDvOoc21chem+y/eimnazRWzu6Kvcz19jHPZlDJLz3O+YLL//8QY+9Rc
+1ufhNzqy4lQ42Kxqo7wxLQbvaJCL0tlFk/fPjO5pCZY60+FmZQ8MxHemBxRWtNc9
+0BpMq5vUlcxC6AcsGtSaFNWVaoP5Y5FLi1InFVDUTfu9Fpko6hczjCu1MRMDk4DO
+N6db6MOGyi4NTb2sdEGW89deBzuK/hne9CGw+OH3Fi/+gTIWjmYO6OcSA8mCfqhp
+GvSS5CIBn5hzBY0IGd4Y3/KrivSRDfqnBOPUv1Sk9RIdqF+1tePB5u0vlsktM2EN
+ZTz/0Ps3pn4PGzKJ76HRE3Qm994rymC9+ulW7f5xLON5ME53owT+GalTJ4oQfhL8
+9k9U0gOKbQFdSj1tQbJPsVhK0MbHdj2FQPv+Ky0dkeuO4n9lsrrNOPEfIayyVtis
+f9yVJ9dhKLU+U9oqE7pBOAVeYX+eqwJlKeqtsTQLGKuG60KjJav/LanPR8u1kkEX
+jZN0hWToMfe9Sgu2dhMXl4L6lMn8KOXQTFNcGr+DDw+OVNc9X4YaaYHzIYLz+uTV
+sVL0VTe5ftALGMSYdhYt/i98REQ2+Kd3fzYFUF4QoeepRKdR0HPPaWmtB0XSN4Qi
+GrsltMsYqc/a3Zk59Hli
+=ODl1
+-----END PGP SIGNATURE-----
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000408.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+	<LI>Next message: <A HREF="000415.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#409">[ date ]</a>
+              <a href="thread.html#409">[ thread ]</a>
+              <a href="subject.html#409">[ subject ]</a>
+              <a href="author.html#409">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

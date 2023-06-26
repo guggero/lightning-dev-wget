@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Mitigations for loop attacks
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3CCADZtCShTk6xM4Bw8TWptHf99pyJzQmZDyPwMSDv9anwaALTmjQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001279.html">
+   <LINK REL="Next"  HREF="001260.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Mitigations for loop attacks</H1>
+    <B>Jim Posen</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Mitigations%20for%20loop%20attacks&In-Reply-To=%3CCADZtCShTk6xM4Bw8TWptHf99pyJzQmZDyPwMSDv9anwaALTmjQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Mitigations for loop attacks">jim.posen at gmail.com
+       </A><BR>
+    <I>Wed May  2 06:59:16 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001279.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+        <LI>Next message: <A HREF="001260.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1232">[ date ]</a>
+              <a href="thread.html#1232">[ thread ]</a>
+              <a href="subject.html#1232">[ subject ]</a>
+              <a href="author.html#1232">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I have been thinking a lot lately about attacks on lightning routing nodes,
+the worst of which is the so-called Loop Attack [1]. See the mailing list
+thread for more details, but the basic idea is that a sender and receiver
+collude to create a long circuit and refuse to settle or fail the HTLC at
+the end until the last possible moment. The attack is particularly
+insidious for a few reasons. Firstly, an attack on a multi-hop route gives
+the attacker leverage, so that their funds locked in one channel cause
+funds to be locked up in every channel on the route. Second, the onion
+routing makes it difficult to attribute blame to a single node and defend
+against a repeated attack.
+
+First, I'll note that the case where a sender and recipient collude is a
+more active variant on an attack that any node in a route can perform. Even
+if a node does not initiate the payment, it can just accept offered HTLCs
+in the route, not forward them, and wait until the offered HTLC almost
+expires before failing. As noted above, the prior node in the route cannot
+determine whether the attacking node is at fault or one downstream from it.
+Even the sender may not be able to determine where in the route the payment
+failed because of the issue where the obfuscated error reason is not MAC'ed
+on every hop.
+
+There are two directions of solutions I have heard: 1) protocol support for
+decrypting the onion route if the HTLC is kept in-flight for too long 2)
+requiring fees even if the payment fails as a cost to the attacker 3) some
+sort of reputation system for nodes.
+
+Option 1 I'm afraid may be quite complex. Say this mechanism kicks in and
+all nodes in the circuit deobfuscate the route and are able to see the
+delays at each hop. The outcome we hope for is that there is one node
+clearly to blame and the prior hop in the route fails all channels with
+them. However, the attacker can of course control multiple successive hops
+in the route, one that looks innocent in front of one that looks guilty,
+then keep the channel alive and try again. So then all nodes need to keep a
+record of the full circuits and iteratively shift blame up the chain if bad
+HTLCs keep going through those channels.
+
+Option 2 is also problematic because it only protects against the case
+where the sender is colluding with the receiver, and not where a routing
+node is opportunistically delaying payments. This would, however, likely be
+successful against nodes being annoying and sending tons of payments with
+randomly generated payment hashes in order to &quot;ping&quot; a circuit.
+
+Option 3 has become my preferred solution. The idea is that that for each
+node that one has channels with, it only forwards payments through them if
+they have a good history, otherwise it fails the payment. Notably, we
+ignore whether the downstream hop is directly responsible for delaying a
+payment or whether they are simply willing to forward to another node that
+is intentionally delaying -- both should be considered bad behavior. In my
+opinion, this type of solution fits best into the Lightning model of
+independent, linked channels where each node has private contracts with its
+direct peers. It also is the simplest in the context of onion routing
+because if you are offered an HTLC to route, the only decision you can make
+is whether to forward it or fail it based on the amount, previous hop, and
+next hop. When I refer to &quot;reputation&quot; hereafter, I do not mean a global
+reputation that is gossiped about -- just a local view of a peer's history.
+
+For a Sybil-resistant reputation system, we can use money as a way of
+measuring reputation. Fees collected through routing payments across
+channels raise the reputation of the channel peer. You lose reputation by
+accepting an HTLC and not failing or fulfilling it quickly, proportional to
+the value of the HTLC and time to respond. What this essentially means is
+that if an attacker wants people to send them HTLCs to delay, they pay a
+certain amount in fees over time. So each node will track for each peer 1)
+total fees collected from forwarding on routes where that peer is the prior
+hop 2) total fees collect from forwarding on routes where that peer is the
+next hop 3) total value times time of money locked in offered HTLCs on
+channels to the peer. To track the third, as soon as an offered HTLC is
+locked in by the peer, the node starts a timer. When the HTLC is settled or
+failed or handled on-chain, the timer stops and the node registers the
+total elapsed time multiplied by the value of the HTLC.
+
+A very simple strategy would be to have two factors, R_inbound and
+R_outbound and calculate reputation per peer as R_inbound * total inbound
+fees + R_outbound * total outbound fees - total Bitcoin-seconds locked in
+an HTLC. When forwarding a payment, you calculate the worst case reputation
+loss, HTLC value * (CLTV - current block height) * 10 min / block, and fail
+the payment if that value is greater than their current score. Effectively,
+reputation scores are the maximum number of Bitcoin-seconds on could waste
+in HTLCs as the downstream node in a channel. If you think, for example,
+having 1 BTC for 1 hour is worth 1 satoshi, you might set R_inbound =
+R_outbound = 10^8. Honest nodes should earn reputation passively by
+forwarding payments and failing/fulfilling quickly, while an attacker would
+lose reputation and have to pay fees to re-earn it. Furthermore, high
+reputation nodes should be able to earn reputation faster since peers will
+be willing to forward higher value HTLCs through them.
+
+We want an additional property from this system though, which is that an
+attacker be limited in their ability to disrupt network connectivity and
+induce throttling on other channels. The above scheme has the problem that
+for every unit of reputation the attacker loses, each upstream hop also
+loses approximately the same amount -- they effectively get leverage on the
+ability to reduce reputation. So instead, consider a modification: each hop
+loses a quantity of reputation units equal to the *total* amount of
+Bitcoin-seconds lost upstream. So say there's a payment A -&gt; B -&gt; C -&gt; D,
+where the CLTV decrements by 12 and the amount decrements by 10 satoshis at
+each hop, with a terminal CLTV of 12 and a terminal amount of 100. So A
+tells B &quot;Here's an HTLC for 120 satoshis, CLTV is in 36 blocks, and you
+will lose reputation at a rate of 120 satoshi-seconds per second of delay&quot;.
+B calculates the maximum he could lose by forwarding to C as 120 * 36
+blocks * 10 min / block. Assuming C has a high enough reputation score, B
+will offer an HTLC of 110 satoshis, CLTV of 24 blocks, reputation rate of
+120 + 110 = 230 satoshi-seconds per second. And finally C requires D to
+stake reputation at a rate of 230 + 100 = 330 satoshi-seconds / second. The
+effect is that if any node withholds the preimage, they lose an amount of
+reputation equal to all of the reputation lost upstream combined, removing
+any attack leverage.
+
+This strategy has some downsides, namely in terms of centralization and
+privacy. Telling the downstream node the rate at which they must stake
+reputation may allow them to determine the number of upstream hops in the
+circuit. To obfuscate this, the sender may require an addition reputation
+stake, but takes a higher risk of the payment failing somewhere downstream.
+The more obvious issue is centralization -- if payments are getting
+throttled by reputation, there is even more of an incentive to route
+through a small number of channels and decrease the length of payment
+circuits. While this is a concern, the degree to while throttling happens
+in controlled by the R parameters (the ratio at which fees contribute to
+reputation). If R is high and reputation is abundant, then there will be
+little throttling. But if a node finds itself under attack, it can raise
+its R parameters and start throttling bad peers.
+
+In summary, I think a simple local reputation mechanism of this form could
+be implemented with only minor changes to the BOLT spec and could provide
+decent resistance against DOS/loop attacks. Sorry for the excessively long
+email.
+
+[1] <A HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/">https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/</A>
+000135.html
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180501/35997f70/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180501/35997f70/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001279.html">[Lightning-dev] eltoo: A Simplified update Mechanism for	Lightning and Off-Chain Contracts
+</A></li>
+	<LI>Next message: <A HREF="001260.html">[Lightning-dev] Mitigations for loop attacks
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1232">[ date ]</a>
+              <a href="thread.html#1232">[ thread ]</a>
+              <a href="subject.html#1232">[ subject ]</a>
+              <a href="author.html#1232">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

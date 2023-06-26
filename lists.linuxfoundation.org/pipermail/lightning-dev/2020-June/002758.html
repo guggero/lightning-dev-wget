@@ -1,0 +1,329 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Pinning : The Good, The Bad, The Ugly
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pinning%20%3A%20The%20Good%2C%20The%20Bad%2C%20The%20Ugly&In-Reply-To=%3CCALZpt%2BEa%3DGyzEAfJBZzdFvus4_U%3Dx73eA%2B%3DJ%3DsN2LONq9_V5dw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002757.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Pinning : The Good, The Bad, The Ugly</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pinning%20%3A%20The%20Good%2C%20The%20Bad%2C%20The%20Ugly&In-Reply-To=%3CCALZpt%2BEa%3DGyzEAfJBZzdFvus4_U%3Dx73eA%2B%3DJ%3DsN2LONq9_V5dw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Pinning : The Good, The Bad, The Ugly">antoine.riard at gmail.com
+       </A><BR>
+    <I>Mon Jun 29 00:13:03 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002757.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2758">[ date ]</a>
+              <a href="thread.html#2758">[ thread ]</a>
+              <a href="subject.html#2758">[ subject ]</a>
+              <a href="author.html#2758">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>(tl;dr Ideally network mempools should be an efficient marketplace leading
+to discovery of best-feerate blockspace demand by miners. It's not due to
+current anti-DoS rules assumptions and it's quite harmful for shared-utxo
+protocols like LN)
+
+Hello all,
+
+Lightning security model relies on the unilateral capability for a channel
+participant to confirm transactions, like timing out an outgoing HTLC,
+claiming an incoming HTLC or punishing a revoked commitment transaction and
+thus enforcing onchain a balance negotiated offchain. This security model
+is actually turning back the double-spend problem to a private matter,
+making the duty of each channel participant to timely enforce its balance
+against the competing interest of its counterparties. Or laid out
+otherwise, contrary to a miner violating a consensus rules, base layer
+peers don't care about your LN node failing to broadcast a justice
+transaction before the corresponding timelock expiration (CSV delay).
+
+Ensuring effective propagation and timely confirmation of LN transactions
+is so a critical-safety operation.  Its efficiency should be always
+evaluated with regards to base layer network topology, tx-relay propagation
+rules, mempools behaviors, consistent policy applied by majority of nodes
+and ongoing blockspace demand. All these components are direct parameters
+of LN security. Due to the network being public, a malicious channel
+counterparty do have an incentive to tweak them to steal from you.
+
+The pinning attacks which have been discussed since a few months are a
+direct illustration of this model. Before digging into each pinning
+scenario, few properties of the base layer components should be evocated
+[0].
+
+Network mempools aren't guaranteed to be convergent, the local order of
+events determines the next events accepted. I.e Alice may observe tx X, tx
+Y, tx Z and Bob may observe tx Z, tx X, tx Y. If tx Z disable-RBF and tx X
+try to replace Z, Alice accepts X and Bob rejects it. This divergence may
+persevere until a new block.
+
+Tx-relay topology can be observed by spying nodes [1]. An attacker can
+exploit this fact to partition network mempools in different subset and
+hamper propagation across them of same-spending output concurrent
+transactions. If subset X observes Alice commitment transaction and subset
+Y observes Bob commitment transaction, Alice's HTLC-timeout spending her
+commitment won't propagate beyond the X-Y set boundaries. An attacker can
+always win the propagation race through massive connections or bypassing
+tx-relay privacy timers.
+
+Miners mempools are likely identifiable, you could announce a series of
+conflicting transactions to different subsets of the network and observe
+&quot;tainted&quot; block composition to assign to each subset a miner mempool. I'm
+not aware of any research on this, but it sounds plausible to identify all
+power-miner mempool, i.e the ones likely to mine a block during the block
+delay of the timelock you're looking to exploit. If you can't bid a
+transaction in such miner mempools your channel state will stale and your
+funds may be in danger.
+
+### Scenario 1) HTLC-Preimage Pinning
+
+As Matt previously explained in his original mail on RBF-pinning, a
+malicious counterparty has an interest to pin a low-feerate HTLC-preimage
+transaction in some network mempools and thus preventing a honest
+HTLC-timeout to confirm. For details, refer to Optech newsletter [2].
+
+This scenario doesn't bear any risk to the attacker, is easy to execute and
+has double-digit rate of success. You don't assume network topologies
+manipulation, mempools partitions or LN-node-to-full-node mapping [3] That
+said this should be solved by implementing and deploying anchor outputs,
+which effectively allows a party to unilaterally bump feerate of its
+HTLC-timeout transactions.
+
+### The Anchor Output Proposal
+
+Anchor Output proposal is a current spec object implemented by the LN dev
+community, it introduces the ability to _unilaterally_ and _dynamically_
+bump feerate of any commitment transaction. It also opened the way to bump
+local 2nd-stage transactions.
+
+Beyond solving scenario 1), it makes LN node safe with regards to
+unexpected mempool congestion. If your commitment transaction is stucking
+in network mempools you can bump its feerate by attaching a CPFP on the new
+`to_local` anchor. If the remote commitment gets stuck in network mempools,
+you're able to bump it by attaching a CPFP on the `to_remote` anchor. This
+should keep your safe against an unresponsive or lazy counterparty in case
+of onchain funds to claim.
+
+IMO, it comes with a trade-off as it introduces a mapping oracle, i.e a
+linking vector between a LN node and its full-node. In this case, a spying
+node may establish a dummy, low-value channel with a probed LN node, break
+it by broadcasting thousands of different versions of the (revoked)
+commitment and observes which one broadcast a CPFP first on the p2p layer.
+Obviously, you can mitigate it by not chasing after low-value HTLC, but
+that is a small risk of money loss. As of today,  this oracle can be seen
+as acceptable as we have other ones and we may get rid of it in the future.
+
+### Scenario 2a) Revoked Commitment Transaction Pinning
+
+Digging further, we found that there are more concerning scenarios of
+pinning, at the commitment-tx level. At a period of low-feerate, a
+malicious party incessantly updates a channel until to obtain ~10k revoked
+commitment transactions.
+
+At a period of mempool-congestion, by having setup a fine-grained
+`dust_limit_satoshis` and at same-time circulary routing HTLCs, our
+malicious party can inflate absolute fee of its own commitment bounded
+while breaking channel in the middle of an update sequence, ensuring it has
+a higher-fee than the commitment of the honest counterparty. As channel
+opener, the attacker has the amplitude of malleating the victim's
+commitment such to keep it equal or under revoked feerate.
+
+Then our malicious party broadcast to each base layer public peer one of
+the revoked commitment transactions, that way partitioning the network
+mempools in 10k subset. Even assuming anchor output a honest LN node won't
+be able to confirm the remote commitment through a CPFP, this one failing
+to cross subset boundaries, the parent txid being different at each.
+
+Broadcasting the honest commitment transaction will fail, its feerate being
+known and malleable it won't RBF already-in-mempool remote commitment
+transactions. This prevents an honest party to timely timeout an outgoing
+HTLC or an incoming HTLC.
+
+This scenario does bear a low-risk to the attacker, is easy to execute and
+has a likely double-digit rate of success once you tune feerate
+malleability. You assume mempools partitions but not any network topologies
+discovery. We underscore there is no current p2p/mempool mechanism to learn
+about conflicting transactions, even learning about near-topology conflicts
+don't guarantee you that a propagation path is uniform to make your CPFP
+successful.
+
+### Scenario 2b) Previous-Latest Commitment Transaction Pinning
+
+A variant of commitment-tx pinning is to rely only on valid commitment
+transactions. Channel update sequence not being atomic, you can legally own
+2 valid commitment transactions. An attacker can successfully map a
+LN-node's full-node and such, announce one of them and the other one to the
+rest of the network. A honest peer will fail to leverage the `to_remote`
+anchor output as its CPFP won't propagate again over network mempools
+partitions.
+
+This scenario doesn't bear a risk to the attacker, is medium to execute and
+has a likely double-digit rate of success. You assume mempools partitions
+and inter-layer mapping. How hard is it to map a LN-node to a full-node ?
+Actually you can use the fact that a LN-node's full-node is monitoring the
+mempool for a preimage of interest and observe the announcement of such
+preimage on the offchain layer. As post-anchor HTLC-Success transactions
+are malleable you can once again create mass-conflicts to isolate the
+full-node and improve the probe with high certainty.
+
+### Where Package Relay helps
+
+Solving scenario 2a) and 2b) in the most efficient way is likely to require
+package relay support on the Core side. Package relay would extend the
+notion of a mempool package (topologically ordered bundles of transactions)
+to introduce a new class of p2p traffic. So far its implementation has been
+delayed due to refactoring mempool internals, ensuring a DoS-robust design
+and a p2p PR pipeline already congested.
+
+Once deployed, a LN node would be able to join a commitment transaction and
+a CPFP together and make them evaluated atomically by network mempools such
+to evict any malicious remote commitment assuming a higher feerate.
+
+### Scenario 3) Network-Topology-Aware Pinning for Propagation Obstruction
+
+Let's assume the following base layer tx-relay topology:
+
+                Alice ---&gt; Bob ---&gt; Caroll
+
+Alice wants to send her package relay to Caroll the miner to get her
+commitment transaction confirmed. A malicious counterparty could throw
+remote commitment W in Bob mempool and remote commitment X in Caroll
+mempool. Transaction W would be attached to a high-fee CPFP Y. Transaction
+X would be attached to a low-fee CPFP Z such that X pins in Caroll mempool.
+CPFP Y and CPFP Z would be crafted such as both incorporating a conflicting
+parent to prevent Bob and Caroll mempool convergence. It looks like the
+following:
+
+Bob's mempool:
+tx W ---&gt; tx Y
+parent 1 ---&gt; tx Y
+
+Caroll's mempool:
+tx X ---&gt; tx Z
+parent 2 ---&gt; tx Z
+
+Bob's mempool would announce and send package &quot;tx W + tx Y + parent 1&quot; to
+Caroll's one and due to parent 1 and parent 2 spending the same output
+package would be rejected. High-fee package W will prevent Alice to
+successfully broadcast her package to Caroll. This fee can be higher than
+the maximum one that Alice would pay to confirm her transaction, as due to
+conflicts, it won't be _effectively_ paid by the malicious counterparty.
+
+This scenario does bear a risk to the attacker only if miner mempools
+haven't been well-mapped and high-fee package leak into them, is hard to
+execute but has a likely double-digit rate of success. It assumes mempool
+partitions, network topology knowledge and inter-layer mapping.
+
+### Current Mempool Design Flaws in the lights of Contracting Applications
+with Competing Interests
+
+Scenario 3) does illustrate a current flaw of mempool with regards to
+contracting applications with competing interests. A counterparty can
+leverage network propagation rules to prevent miners' mempools to discover
+the best feerate package and thus not having to pay the real fee price to
+successfully obstrucate broadcast of honest package relay spending the same
+output.
+
+These network propagation rules, namely RBF opt-in, have been designed to
+protect network mempools against any DoS but don't protect a single-party
+against its shared-utxo co-owners. Amending these rules to enable
+mempool-convergence based on feerate will enable a honest bid market for
+contracting applications and ensure network-wise higher feerate. Getting
+this right will require significant study as you may allow total mempool
+fees to decrease when the transactions are near the bottom of the mempool.
+At first sight, it sounds incentives-compatible, as miner a) gets the
+highest fee bid b) an attacker does have to compete on feerate to attempt
+stealing.
+
+Assuming a basic package relay to evict low-feerate malicious commitment,
+an alternative proposal could be to introduce outbound tx-relay peers
+rotation to sweep and reach ~80% of the network in less than HTLC
+timelocks.  Your LN node's full node will _probabilistically_ connect to a
+miner mempool and announce to it the best feerate package. Making the
+tx-relay topology more dynamic would make it harder for an attacker to make
+package obstruction effective. IMHO, it sounds easier on the
+engineering-side, but likely worse for privacy due to the aggressive
+broadcast pattern.
+
+Another alternative could be to have more ad hoc privacy-preserving
+redundant tx-broadcast.
+
+A fourth proposal, Matt's one, is to design some blind-CPFP package relay
+with a pointer to original funding outpoint to rebind on-the-flight but it
+does assume noinput.
+
+### Conclusion
+
+To the best of my knowledge, assuming mempools congestion levels we have
+seen in the past months, currently deployed LN peers aren't secure against
+scenario 2a) and 2b) to any motivated attackers with a decent knowledge of
+both layers. Further, ensuring scenario 3) security requires heavy,
+long-term work at the base layer.
+
+IMO, we should a) go forward with anchor proposal implementation, it comes
+with trade-off but enables mempool-congestion safety, b) work on package
+relay to solve commitment-level pinning, c) study best base layer mechanism
+to ensure best feerate package discovery by any miner's mempools and d) in
+the meanwhile increase delta and deadline timelocks.
+
+Thoughts ?
+
+Thanks to Matt and t-bast for conversations.
+
+Cheers,
+
+Antoine
+
+[0] For newcomers, see also t-bast's great piece on LN's transactions :
+<A HREF="https://github.com/t-bast/lightning-docs/blob/master/lightning-txs.md">https://github.com/t-bast/lightning-docs/blob/master/lightning-txs.md</A>
+
+[1] And current state of opinions is obfuscating tx-relay topology is a
+hard problem
+<A HREF="https://github.com/bitcoin/bitcoin/pull/15759#issuecomment-480398802">https://github.com/bitcoin/bitcoin/pull/15759#issuecomment-480398802</A>
+
+[2]
+<A HREF="https://bitcoinops.org/en/newsletters/2020/04/29/#new-attack-against-ln-payment-atomicity">https://bitcoinops.org/en/newsletters/2020/04/29/#new-attack-against-ln-payment-atomicity</A>
+
+[3] Obviously all these scenarios do have a setup cost scoping channel
+opening onchain fees and
+rebalancing but it's order(s) of magnitude lower if you can steal from
+meaningful channels.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200628/42630142/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200628/42630142/attachment-0001.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002757.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2758">[ date ]</a>
+              <a href="thread.html#2758">[ thread ]</a>
+              <a href="subject.html#2758">[ subject ]</a>
+              <a href="author.html#2758">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

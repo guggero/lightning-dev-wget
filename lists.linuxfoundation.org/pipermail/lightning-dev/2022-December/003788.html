@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Two-party eltoo w/ punishment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Two-party%20eltoo%20w/%20punishment&In-Reply-To=%3CY5AmP3tJLtDY1SMf%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003796.html">
+   <LINK REL="Next"  HREF="003791.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Two-party eltoo w/ punishment</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Two-party%20eltoo%20w/%20punishment&In-Reply-To=%3CY5AmP3tJLtDY1SMf%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Two-party eltoo w/ punishment">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Dec  7 05:35:59 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003796.html">[Lightning-dev] Unjamming lightning (new research paper)
+</A></li>
+        <LI>Next message: <A HREF="003791.html">[Lightning-dev] Two-party eltoo w/ punishment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3788">[ date ]</a>
+              <a href="thread.html#3788">[ thread ]</a>
+              <a href="subject.html#3788">[ subject ]</a>
+              <a href="author.html#3788">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+On the eltoo irc channel we discussed optimising eltoo for the 2-party
+scenario; figured it was probably worth repeating that here.
+
+This is similar to:
+
+ - 2018-07-18, simplified eltoo: <A HREF="../2018-July/001363.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-July/001363.html</A>
+ - 2021-09-17, IID 2Stage, <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-September/019470.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-September/019470.html</A>
+ - 2022-09-29, Daric: <A HREF="https://eprint.iacr.org/2022/1295">https://eprint.iacr.org/2022/1295</A>
+ - 2022-10-21, eltoo/chia: <A HREF="https://twitter.com/bramcohen/status/1583122833932099585">https://twitter.com/bramcohen/status/1583122833932099585</A>
+
+The basic idea is &quot;if it's a two party channel with just Alice and Bob,
+then if Alice starts a unilateral close, then she's already had her say,
+so it's only Bob's opinion that matters from now on, and he should be
+able to act immediately&quot;, and once it's only Bob's opinion that matters,
+you can simplify a bunch of things.
+
+A &quot;gist&quot; for this idea is <A HREF="https://gist.github.com/ajtowns/53e0f735f4d5c06a681429d937200aa5">https://gist.github.com/ajtowns/53e0f735f4d5c06a681429d937200aa5</A> (it goes into a little more detail in places, though doesn't cover trustless watchtowers at all).
+
+
+
+In particular, there are a few practical constraints that we might like
+to consider for 2-party channels with eltoo:
+
+ - fast forwards: we might want to allow our channel partner
+   to immediately rely on a new state we propose without needing a
+   round-trip delay -- this potentially makes forwarding payments much
+   faster (though with some risk of locking the funds up, if you do a
+   fast forward to someone who's gone offline)
+
+ - doubled delays: once we publish the latest state we can, we want to
+   be able to claim the funds immediately after to_self_delay expires;
+   however if our counterparty has signatures for a newer state than we
+   do (which will happen if it was fast forwarded), they could post that
+   state shortly before to_self_delay expires, potentially increasing
+   the total delay to 2*to_self_delay.
+
+ - penalties: when you do a unilateral close, attempting to cheat comes
+   with no cost to you and a possible benefit if you succeed, but
+   potentially does cost your channel partner (either in forcing them
+   to spend on-chain fees to update to the correct state, or in the risk
+   of loss if their node malfunctions occassionally) -- a penalty could
+   reduce this incentive to cheat
+
+ - trustless watchtowers: we may want to consider the possibility of a
+   watchtower holding onto obsolete states and colluding with an
+   attacker to attempt to cheat us
+
+What follows is a rough approach for dealing with all those issues for
+two-party channels. It's spelled out in a little more detail in the gist.
+
+(I think for initial eltoo experimentation it doesn't make sense to try to
+deal with all (or perhaps any) of those constraints; simple and working
+is better than complex and theoretical. But having them written down so
+the ideas can be thought about and looked up later still seems useful)
+
+In more detail: unilateral closes are handled by each channel participant
+maintaining five transactions, which we'll call:
+
+ * UA.n, UB.n : unilaterally propose closing at state n
+   - this is for Alice or Bob to spend the funding tx for a unilater
+     close to state n. Spends the funding transaction.
+
+ * WA.n, WB.n : watchtower update to state n
+   - this is for an untrusted watchtower to correct attempted cheating
+     by Bob on behalf of Alice (or vice-versa). Spends UB.k or WA.k
+     (or UA.k/WB.k) respectively, provided k &lt; n.
+
+ * CA.n, CB.n : cooperatively claim funds according to state n
+   - this is for Alice to confirm Bob's unilateral close (or vice-versa).
+     Spends UB.k, WA.k (or UA.k/WB.k respectively), provided k &lt;= n
+
+ * SA.n, SB.n : slowly claim funds according to state n
+   - this is for Alice to claim her funds if Bob is completely offline
+     (or vice-versa). Spends UA.n, UB.n, WA.n or WB.n with relative
+     timelock of to_self_delay.
+
+ * RA.n, RB.n : claim funds with penalty after unilateral close to
+   revoked state
+   - this is for Alice to update the state if Bob attempted to cheat
+     (or vice-versa). Spends UB.k or WA.k (or UA.k/WB.k respectively)
+     conditional on k &lt; n - 1; outputs are adjusted to transfer a fixed
+     penalty of penalty_msat from Bob's balance to Alice's (or vice-versa)
+
+Each of these &quot;transactions&quot; requires a pre-signed signature; however
+the actual transaction/txid will vary in cases where a transaction has
+the possibility of spending different inputs (eg &quot;Spends UB.k or WA.k&quot;).
+In particular UA.n/UB.n can be constructed with known txids and non-APO
+signatures but WA.n/WB.n/CA.n/CB.n/SA.n/SB.n/RA.n/RB.n all require
+APO signatures.
+
+They're named such that Alice can immediately broadcast all the *A.n
+transactions (provided a tx that it can spend has been broadcast) and
+Bob can likewise immediately broadcast all the *B.n transactions.
+
+Scenarios where Alice decides to unilaterally close the channel might
+look like:
+
+ * if Alice/Bob can't communicate directly, but both are online:
+
+     F -&gt; UA.n -&gt; CB.n -&gt; money
+
+   (balances and htlcs claimed, no delay)
+
+ * if Bob has gone offline entirely:
+
+     F -&gt; UA.n -&gt; (to_self_delay) -&gt; SA.n -&gt; money
+
+ * Alice cheats, Bob punishes:
+
+     F -&gt; UA.k -&gt; RB.n -&gt; money[Alice pays Bob penalty]
+
+ * Bob is offline, Alice cheats, but Bob has a watchtower:
+
+     F -&gt; UA.k -&gt; WB.n -&gt; (to_self_delay) -&gt; SA.n -&gt; money
+
+ * Alice and Bob's watchtower collude, but Bob's not offline:
+
+     F -&gt; UA.k1 -&gt; WB.k2 -&gt; RB.n -&gt; money[Alice pays Bob penalty]
+
+ * Alice and Bob's watchtower collude, but Bob has many watchtowers:
+
+     F -&gt; UA.k1 -&gt; WB.k2 -&gt; WB.n -&gt; (to_self_delay) -&gt; SA.n -&gt; money
+
+For Alice to successfully cheat, she needs Bob to be offline for at least
+to_self_delay, and for all Bob's watchtowers to either also be offline,
+or colluding.
+
+This can be simplified somewhat, if you don't care about all the features:
+
+ * If you don't care about trustless watchtowers you can drop WA.n/WB.n
+   (and simplify SA.n/SB.n to not require an APO signature)
+
+ * If you don't care about penalties you can set penalty_msat to 0 and
+   allow RA.n/RB.n to spend k&lt;=n. In this case, you can either drop
+   CA.n/CB.n entirely, or you can have CA.n/CB.n only be used for directly
+   spending of UB.n/UA.n and thus not require APO signatures
+
+In order to allow fast-forwards, when Alice proposes a new state,
+she needs to send her partial signatures to allow Bob to unilaterally
+accept the new state, ie sigs for: UB.n, CB.n, SB.n, RB.n. But she
+also needs to be able to claim the funds if Bob proposes the new state
+and broadcasts UB.n, she needs to be able broadcast CA.n. This can be
+achieved with an adaptor signature approach (spelt out a bit more fully
+in the gist) or a CTV-like approach, provided that UB.n reveals the
+state needed to calculate the the CTV commitment (see &quot;EXPR_SETTLE&quot; in
+<A HREF="https://github.com/instagibbs/bolts/blob/29fe6d36cbad4101d5ec76c2b19c83c1494ac2fc/XX-eltoo-transactions.md">https://github.com/instagibbs/bolts/blob/29fe6d36cbad4101d5ec76c2b19c83c1494ac2fc/XX-eltoo-transactions.md</A>).
+
+Note that in this scenario Alice doesn't provide WB.n to Bob
+immediately. This is okay, as if Alice proposes UA.(n-1) (her most
+recent state), Bob can still immediately claim via CA.n. If Bob did have
+WB.n; then if Alice proposed UA.(n-1) Bob could wait for an initial
+to_self_delay period and broadcast WB.n, forcing Alice to wait for an
+additional to_self_delay before being able to claim her funds via SA.n.
+
+Note also that this is why RA.n/RB.n require &quot;k &lt; n - 1&quot; -- otherwise
+Alice would only be able to broadcast UA.(n-1) and Bob would immediately
+be able to penalise by broadcasting RB.n.
+
+Note that if you're using a watchtower and wish to punish your
+counterparty if it attempts to cheat, you should only pass WA.(n-2)
+to your watchtowers, not WA.(n-1) or WA.n.
+
+
+
+This doesn't address any potential issues from:
+
+ * how to add fees -- the U/W transactions are 1-in/1-out transactions
+   that can't be trivially CPFPed by the proposer and need to have
+   fees added (either SINGLE/ANYONECANPAY signatures or having a 0-sat
+   ephemeral output and package relay might be workable); the C/S/R
+   transactions are 1-in/many-out transactions, but have balance outputs
+   that can be immediately spent to pay for fees via CPFP if package
+   relay is available.
+
+ * how to pay watchtowers -- when a watchtower broadcasts a W
+   transaction, it needs to add fees, and it's not clear (to me) how it
+   could fairly and reliably ensure it's compensated for those costs,
+   particularly if multiple W transactions are broadcast for a single
+   unilateral close attempt, due to one or more watchtowers colluding
+   with an attacker, or simply having out of date information.
+
+ * lack of layered transactions -- while this prevents you having to
+   wait longer than to_self_delay before you can claim channel funds,
+   it still means that any htlc that is going to timeout sooner than that
+   may not be claimable on-chain, meaning you need to set
+   cltv_expiry_delta &gt;= to_self_delay.
+
+ * extending to multiparty channels -- penalising is hard if there's
+   more than two parties, fast forwards are probably impossible since
+   you need multiple round-trips to coordinate signatures anyway, and if
+   you're doing channels-within-channels to reduce your n-party channel
+   to an easier to update 2-party channel you're probably forced to have
+   to_self_delay for each layer of channels. Also, just figuring out how
+   to coordinate multiparty state updates and even keeping everyone in
+   a multiparty channel online consistently to generate new signatures
+   seems potentially hard?
+
+Cheers,
+aj
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003796.html">[Lightning-dev] Unjamming lightning (new research paper)
+</A></li>
+	<LI>Next message: <A HREF="003791.html">[Lightning-dev] Two-party eltoo w/ punishment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3788">[ date ]</a>
+              <a href="thread.html#3788">[ thread ]</a>
+              <a href="subject.html#3788">[ subject ]</a>
+              <a href="author.html#3788">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

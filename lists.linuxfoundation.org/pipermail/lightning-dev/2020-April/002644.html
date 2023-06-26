@@ -1,0 +1,421 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%20and%20Competing%20Interest&In-Reply-To=%3CCALZpt%2BHFyh3X9nBvMnQ8C8T_ijahDrNsCsz0Qk_ogS5zM_BPBA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002643.html">
+   <LINK REL="Next"  HREF="002645.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%20and%20Competing%20Interest&In-Reply-To=%3CCALZpt%2BHFyh3X9nBvMnQ8C8T_ijahDrNsCsz0Qk_ogS5zM_BPBA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest">antoine.riard at gmail.com
+       </A><BR>
+    <I>Wed Apr 22 08:01:23 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002643.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+        <LI>Next message: <A HREF="002645.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2644">[ date ]</a>
+              <a href="thread.html#2644">[ thread ]</a>
+              <a href="subject.html#2644">[ subject ]</a>
+              <a href="author.html#2644">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Personally, I would have wait a bit before to go public on this, like
+letting some implementations
+increasing their CLTV deltas, but anyway, it's here now.
+
+Mempool-pinning attacks were already discussed on this list [0], but what
+we found is you
+can _reverse_ the scenario, where it's not the malicious party delaying
+confirmation of honest
+party transactions but malicious deliberately stucking its own transactions
+in the mempool to avoid
+confirmation of timeout. And therefore gaming inter-link timelock to
+provoke an unbalanced
+settlement for the victim (&quot;aka you pay forward, but don't get pay
+backward&quot;).
+
+How much attacks are practical is based on how you can leverage mempool
+rules to pin your own
+transaction. What you're looking for is a  _mempool-obstruction_ trick, i.e
+a way to get honest party
+transaction being bounce off due to your transaction being already there.
+
+Beyond disabling RBF on your transaction (with current protocol, not anchor
+proposal), there is
+two likely candidates:
+* BIP 125 rule 3: &quot;The replacement transaction pays an absolute fee of at
+least the sum paid by the original transactions.&quot;
+* BIP 125 rule 5: &quot;The number of original transactions to be replaced and
+their descendant transactions which will be evicted from the mempool must
+not exceed a total of 100 transactions.&quot;
+
+Let's go through whole scenario:
+* Mallory and Eve are colluding
+* Eve and Mallory are opening channels with Alice, Mallory do a bit of
+rebalancing
+to get full incoming capacity, like receiving funds on an onchain address
+through another Alice
+link
+* Eve send a HTLC #1 to Mallory through Alice expirying at block 100
+* Eve send a second HTLC #2 to Mallory through Alice, expirying at block
+110 on outgoing link
+(A&lt;-&gt;M), 120 on incoming link (E&lt;-&gt;A)
+* Before block 100, without cancellation from Mallory, Alice will
+force-close channel and broadcast
+her local commitment and HTLC-timeout to get back HTLC #1
+* Alice can't broadcast HTLC-timeout for HTLC #2 as it's only expires at 110
+* Mallory can broadcast its Pinning Preimage Tx on offered HTLC #2 output
+on Alice's transaction,
+feerate is maliciously chosen to get in network mempools but never to
+confirm. Absolute fee must
+be higher than HTLC-timeout #2, a fact known to Mallory. There is no p2p
+race.
+* As Alice doesn't watch the mempool, she is never going to learn the
+preimage to redeeem incoming
+HTLC #2
+* At block 110, Alice is going to broadcast HTLC-timeout #2, feerate may be
+higher but as absolute
+fee is lower, it's going to be rejected from network mempools as
+replacement for Pinning Preimage
+Tx (BIP 125 rule 3)
+* At block 120, Eve closes channel and HTLC-timeout HTLC #2
+* Mallory can RBF its Pinning Preimage Tx by a high-feerate one and get it
+confirmed
+
+New anchor_output proposal, by disabling RBF, forces attacker to bid on the
+absolute fee. It may
+be now a risk to loose the fee if Pinning Tx is confirming. You may extend
+your &quot;pinning
+lease&quot; by ejecting your malicious tx, like conflicting or trimming out of
+the mempool one of its
+parents. And then reannounce your preimage tx with a
+lower-feerate-but-still-high-fee before a
+new block and a honest HTLC-timeout rebroadcast.
+
+AFAICT, even with anchor_output deployed, even assuming empty mempools,
+success rate and economic
+rationality of attacks is finding such cheap, reliable &quot;pinning lease
+extension&quot; trick.
+
+I think any mempool watching mitigation is at best a cat-and-mouse hack.
+Contrary to node
+advancing towards a global blockchain view thanks to PoW, network mempools
+don't have a convergence
+guarantee. This means,  in a distributed system like bitcoin, node don't
+see events in the same
+order, Alice may observe tx X, tx Y, tx Z and Bob may observe tx Z, tx X,
+tx Y. And order of events
+affects if a future event is going to be rejected or not, like if tx Z
+disable-RBF and tx X try to
+replace Z, Alice accepts X and Bob rejects it. And this divergence may
+perserve until a new block.
+
+Practically, it means an attacker can provoke a local conflict to bounce
+off HTLC preimage tx out
+of your mempool while broadcasting preimage tx without conflict to the rest
+of the network by
+tweaking tx-relay protocol and so easily manipulating order of events for
+every node. A local
+conflict is easy to provoke, just make tx A double-spent by both
+HTLC-preimage-tx and non-RBF-tx-B.
+Announce txA+txB to mempool victim and txA+HTLC-preimage-tx to rest of
+network. When rest of
+network announce HTLC-preimage-tx, it's going to rejected by your mempool.
+
+Provoking local conflict assumes of course _interlayer_ mapping by an
+attacker, i.e mapping your LN
+node to your full-node(s). Last time, we check, there was 982 match by IP
+for 4,500 LN/52,000
+full-node. Mapping heuristics is an ongoing research subject and sadly
+seems affordable.
+
+Yes a) you can enable full-RBF on your local node but blinding conflicting
+may still be with higher
+feerate as everything is attacker malleable b) you may want to catch tx and
+extract preimage
+on the p2p wire, but processing raw transaction would be such a DoS
+vector...
+
+Overall, I think we all agree on the long term direction to get a
+Contracting-Protocols-Enhanced
+mempool with a multiparty-safe-API, bundled with package relay deployment.
+Even if there is current
+move toward this direction, this may take longer than expected as with any
+critical-safety
+component in Core.
+
+A temporary fix could be to resuscitate old work to ensure peering through
+a full-RBF propagation path,
+but p2p implications are hard to gauge, like wouldn't guarantee p2p
+censorship resistance of this...
+
+It's quite a tangled issue, with a good deal of both bitcoin and lightning
+knowledge so feel free
+to verify and double-check more than usual
+
+Cheers
+
+[0]
+<A HREF="../2019-October/002240.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/002240.html</A>
+
+Le mer. 22 avr. 2020 &#224; 02:08, ZmnSCPxj via bitcoin-dev &lt;
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>&gt; a &#233;crit :
+
+&gt;<i> Good morning Laolu, Matt, and list,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt;  * With `SIGHASH_NOINPUT` we can make the C-side signature
+</I>&gt;<i> &gt; &gt;  `SIGHASH_NOINPUT|SIGHASH_SINGLE` and allow B to re-sign the B-side
+</I>&gt;<i> &gt; &gt;  signature for a higher-fee version of HTLC-Timeout (assuming my cached
+</I>&gt;<i> &gt; &gt;  understanding of `SIGHASH_NOINPUT` still holds).
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; no_input isn't needed. With simply single+anyone can pay, then B can
+</I>&gt;<i> attach
+</I>&gt;<i> &gt; a new input+output pair to increase the fees on their HTLC redemption
+</I>&gt;<i> &gt; transaction. As you mention, they now enter into a race against this
+</I>&gt;<i> &gt; malicious ndoe to bump up their fees in order to win over the other
+</I>&gt;<i> party.
+</I>&gt;<i>
+</I>&gt;<i> Right, right, that works as well.
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If the malicious node uses a non-RBF signalled transaction to sweep their
+</I>&gt;<i> &gt; HTLC, then we enter into another level of race, but this time on the
+</I>&gt;<i> mempool
+</I>&gt;<i> &gt; propagation level. However, if there exists a relay path to a miner
+</I>&gt;<i> running
+</I>&gt;<i> &gt; full RBF, then B's higher fee rate spend will win over.
+</I>&gt;<i>
+</I>&gt;<i> Hmm.
+</I>&gt;<i>
+</I>&gt;<i> So basically:
+</I>&gt;<i>
+</I>&gt;<i> * B has no mempool, because it wants to reduce its costs and etc.
+</I>&gt;<i> * C broadcasts a non-RBF claim tx with low fee before A-&gt;B locktime (L+1).
+</I>&gt;<i> * B does not notice this tx because:
+</I>&gt;<i>   1.  The tx is too low fee to be put in a block.
+</I>&gt;<i>   2.  B has no mempool so it cannot see the tx being propagated over the
+</I>&gt;<i> P2P network.
+</I>&gt;<i> * B tries to broadcast higher-fee HTLC-timeout, but fails because it
+</I>&gt;<i> cannot replace a non-RBF tx.
+</I>&gt;<i> * After L+1, C contacts the miners off-band and offers fee payment by
+</I>&gt;<i> other means.
+</I>&gt;<i>
+</I>&gt;<i> It seems to me that, if my cached understanding that `&lt;0&gt;
+</I>&gt;<i> OP_CHECKSEQUENCEVERIFY` is sufficient to require RBF-flagging, then adding
+</I>&gt;<i> that to the hashlock branch (2 witness bytes, 0.5 weight) would be a pretty
+</I>&gt;<i> low-weight mitigation against this attack.
+</I>&gt;<i>
+</I>&gt;<i> So I think the combination below gives us good size:
+</I>&gt;<i>
+</I>&gt;<i> * The HTLC-Timeout signature from C is flagged with
+</I>&gt;<i> `OP_SINGLE|OP_ANYONECANPAY`.
+</I>&gt;<i>   * Normally, the HTLC-Timeout still deducts the fee from the value of the
+</I>&gt;<i> UTXO being spent.
+</I>&gt;<i>   * However, if B notices that the L+1 timeout is approaching, it can
+</I>&gt;<i> fee-bump HTLC-Timeout with some onchain funds, recreating its own signature
+</I>&gt;<i> but reusing the (still valid) C signature.
+</I>&gt;<i> * The hashlock branch in this case includes `&lt;0&gt; OP_CHECKSEQUENCEVERIFY`,
+</I>&gt;<i> preventing C from broadcasting a low-fee claim tx.
+</I>&gt;<i>
+</I>&gt;<i> This has the advantages:
+</I>&gt;<i>
+</I>&gt;<i> * B does not need a mempool still and can run in `blocksonly`.
+</I>&gt;<i> * The normal path is still the same as current behavior, we &quot;only&quot; add a
+</I>&gt;<i> new path where if the L+1 timeout is approaching we fee-bump the
+</I>&gt;<i> HTLC-Timeout.
+</I>&gt;<i> * Costs are pretty low:
+</I>&gt;<i>   * No need for extra RBF carve-out txo.
+</I>&gt;<i>   * Just two additional witness bytes in the hashlock branch.
+</I>&gt;<i> * No mempool rule changes needed, can be done with the P2P network of
+</I>&gt;<i> today.
+</I>&gt;<i>   * Probably still resilient even with future changes in mempool rules, as
+</I>&gt;<i> long as typical RBF behaviors still remain.
+</I>&gt;<i>
+</I>&gt;<i> Is my understanding correct?
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; -- Laolu
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On Tue, Apr 21, 2020 at 9:13 PM ZmnSCPxj via bitcoin-dev &lt;
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Good morning Matt, and list,
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;     RBF Pinning HTLC Transactions (aka &quot;Oh, wait, I can steal funds,
+</I>&gt;<i> how, now?&quot;)
+</I>&gt;<i> &gt; &gt; &gt;     =============================
+</I>&gt;<i> &gt; &gt; &gt;
+</I>&gt;<i> &gt; &gt; &gt;     You'll note that in the discussion of RBF pinning we were pretty
+</I>&gt;<i> broad, and that that discussion seems to in fact cover
+</I>&gt;<i> &gt; &gt; &gt;     our HTLC outputs, at least when spent via (3) or (4). It does,
+</I>&gt;<i> and in fact this is a pretty severe issue in today's
+</I>&gt;<i> &gt; &gt; &gt;     lightning protocol [2]. A lightning counterparty (C, who
+</I>&gt;<i> received the HTLC from B, who received it from A) today could,
+</I>&gt;<i> &gt; &gt; &gt;     if B broadcasts the commitment transaction, spend an HTLC using
+</I>&gt;<i> the preimage with a low-fee, RBF-disabled transaction.
+</I>&gt;<i> &gt; &gt; &gt;     After a few blocks, A could claim the HTLC from B via the
+</I>&gt;<i> timeout mechanism, and then after a few days, C could get the
+</I>&gt;<i> &gt; &gt; &gt;     HTLC-claiming transaction mined via some out-of-band agreement
+</I>&gt;<i> with a small miner. This leaves B short the HTLC value.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; My (cached) understanding is that, since RBF is signalled using
+</I>&gt;<i> `nSequence`, any `OP_CHECKSEQUENCEVERIFY` also automatically imposes the
+</I>&gt;<i> requirement &quot;must be RBF-enabled&quot;, including `&lt;0&gt; OP_CHECKSEQUENCEVERIFY`.
+</I>&gt;<i> &gt; &gt; Adding that clause (2 bytes in witness if my math is correct) to the
+</I>&gt;<i> hashlock branch may be sufficient to prevent C from making an RBF-disabled
+</I>&gt;<i> transaction.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; But then you mention out-of-band agreements with miners, which
+</I>&gt;<i> basically means the transaction might not be in the mempool at all, in
+</I>&gt;<i> which case the vulnerability is not really about RBF or relay, but sheer
+</I>&gt;<i> economics.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; The payment is A-&gt;B-&gt;C, and the HTLC A-&gt;B must have a larger timeout
+</I>&gt;<i> (L + 1) than the HTLC B-&gt;C (L), in abstract non-block units.
+</I>&gt;<i> &gt; &gt; The vulnerability you are describing means that the current time must
+</I>&gt;<i> now be L + 1 or greater (&quot;A could claim the HTLC from B via the timeout
+</I>&gt;<i> mechanism&quot;, meaning the A-&gt;B HTLC has timed out already).
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; If so, then the B-&gt;C transaction has already timed out in the past and
+</I>&gt;<i> can be claimed in two ways, either via B timeout branch or C hashlock
+</I>&gt;<i> branch.
+</I>&gt;<i> &gt; &gt; This sets up a game where B and C bid to miners to get their version
+</I>&gt;<i> of reality committed onchain.
+</I>&gt;<i> &gt; &gt; (We can neglect out-of-band agreements here; miners have the incentive
+</I>&gt;<i> to publicly leak such agreements so that other potential bidders can offer
+</I>&gt;<i> even higher fees for their versions of that transaction.)
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Before L+1, C has no incentive to bid, since placing any bid at all
+</I>&gt;<i> will leak the preimage, which B can then turn around and use to spend from
+</I>&gt;<i> A, and A and C cannot steal from B.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Thus, B should ensure that *before* L+1, the HTLC-Timeout has been
+</I>&gt;<i> committed onchain, which outright prevents this bidding war from even
+</I>&gt;<i> starting.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; The issue then is that B is using a pre-signed HTLC-timeout, which is
+</I>&gt;<i> needed since it is its commitment tx that was broadcast.
+</I>&gt;<i> &gt; &gt; This prevents B from RBF-ing the HTLC-Timeout transaction.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; So what is needed is to allow B to add fees to HTLC-Timeout:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; * We can add an RBF carve-out output to HTLC-Timeout, at the cost of
+</I>&gt;<i> more blockspace.
+</I>&gt;<i> &gt; &gt; * With `SIGHASH_NOINPUT` we can make the C-side signature
+</I>&gt;<i> `SIGHASH_NOINPUT|SIGHASH_SINGLE` and allow B to re-sign the B-side
+</I>&gt;<i> signature for a higher-fee version of HTLC-Timeout (assuming my cached
+</I>&gt;<i> understanding of `SIGHASH_NOINPUT` still holds).
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; With this, B can exponentially increase the fee as L+1 approaches.
+</I>&gt;<i> &gt; &gt; If B can get HTLC-Timeout confirmed before L+1, then C cannot steal
+</I>&gt;<i> the HTLC value at all, since the UTXO it could steal from has already been
+</I>&gt;<i> spent.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; In particular, it does not seem to me that it is necessary to change
+</I>&gt;<i> the hashlock-branch transaction of C at all, since this mechanism is enough
+</I>&gt;<i> to sidestep the issue (as I understand it).
+</I>&gt;<i> &gt; &gt; But it does point to a need to make HTLC-Timeout (and possibly
+</I>&gt;<i> symmetrically, HTLC-Success) also fee-bumpable.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Note as well that this does not require a mempool: B can run in
+</I>&gt;<i> `blocksonly` mode and as each block comes in from L to L+1, if HTLC-Timeout
+</I>&gt;<i> is not confirmed, feebump HTLC-Timeout.
+</I>&gt;<i> &gt; &gt; In particular, HTLC-Timeout comes into play only if B broadcast its
+</I>&gt;<i> own commitment transaction, and B *should* be aware that it did so ---
+</I>&gt;<i> there is still no need for mempool monitoring here.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Now, of course this only delays the war.
+</I>&gt;<i> &gt; &gt; Let us now consider what C can do to ensure that the bidding war will
+</I>&gt;<i> happen eventually.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; * C can bribe a miner to prevent HTLC-Timeout from confirming between
+</I>&gt;<i> L and L+1.
+</I>&gt;<i> &gt; &gt;   * Or in other words, this is a censorship attack.
+</I>&gt;<i> &gt; &gt;     * The Bitcoin censorship-resistance model is that censored
+</I>&gt;<i> transactions can be fee-bumped, which attracts non-censoring miners to try
+</I>&gt;<i> their luck at mining and evict the censoring miner.
+</I>&gt;<i> &gt; &gt;       * Thus, letting B bump the fee on HTLC-Timeout is precisely the
+</I>&gt;<i> mechanism we need.
+</I>&gt;<i> &gt; &gt;       * This sets up a bidding war between C requesting miners to
+</I>&gt;<i> censor, vs. B requesting miners to confirm, but that only sets the stage
+</I>&gt;<i> for a second bidding war later between C and B, thus C is at a
+</I>&gt;<i> disadvantage: it has to bribe miners to censor continuously from L to L+1
+</I>&gt;<i> *and* additional bribe miners to confirm its transaction after L+1, whereas
+</I>&gt;<i> B can offer its bribe as being something that miners can claim now without
+</I>&gt;<i> waiting after L+1.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; The issue of course is the additional output that bloats the UTXO set
+</I>&gt;<i> and requires another transaction to claim later.
+</I>&gt;<i> &gt; &gt; And if we have `SIGHASH_NOINPUT`, it seems to me that
+</I>&gt;<i> Decker-Russell-Osuntokun sidesteps this issue as well, as any timed-out
+</I>&gt;<i> HTLC can be claimed with a fee-bumpable transaction directly without
+</I>&gt;<i> RBF-carve-out.
+</I>&gt;<i> &gt; &gt; (As well, it seems to me that, if both nodes support doing so, a
+</I>&gt;<i> Poon-Dryja channel can be upgraded, without onchain activity, to a
+</I>&gt;<i> Decker-Russell-Osuntokun channel: sign a transaction spending the funding
+</I>&gt;<i> tx to a txo that has been set up as Decker-Russell-Osuntokun, do not
+</I>&gt;<i> broadcast that transaction, then revoke the latest Poon-Dryja commitment
+</I>&gt;<i> transactions, then switch the mechanism over to Decker-Russell-Osuntokun;
+</I>&gt;<i> you still need to monitor for previous Poon-Dryja commitment transactions,
+</I>&gt;<i> but HTLCs now sidestep the issue under discussion here.)
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; bitcoin-dev mailing list
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev">https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> bitcoin-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev">https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200422/951291f7/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200422/951291f7/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002643.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+	<LI>Next message: <A HREF="002645.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2644">[ date ]</a>
+              <a href="thread.html#2644">[ thread ]</a>
+              <a href="subject.html#2644">[ subject ]</a>
+              <a href="author.html#2644">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

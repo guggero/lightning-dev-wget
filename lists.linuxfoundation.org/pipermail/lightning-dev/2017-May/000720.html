@@ -1,0 +1,125 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Spontaneous transfers
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Spontaneous%20transfers&In-Reply-To=%3C87pofhz7m2.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000718.html">
+   <LINK REL="Next"  HREF="000715.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Spontaneous transfers</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Spontaneous%20transfers&In-Reply-To=%3C87pofhz7m2.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Spontaneous transfers">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed May 10 03:57:41 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000718.html">[Lightning-dev] Spontaneous transfers
+</A></li>
+        <LI>Next message: <A HREF="000715.html">[Lightning-dev] Spontaneous transfers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#720">[ date ]</a>
+              <a href="thread.html#720">[ thread ]</a>
+              <a href="subject.html#720">[ subject ]</a>
+              <a href="author.html#720">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Christian Decker &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt; writes:
+&gt;<i> On Tue, May 09, 2017 at 10:52:42AM +0930, Rusty Russell wrote:
+</I>&gt;&gt;<i> Anti-probing requires the amount and cltv fields.  We can use the 16
+</I>&gt;&gt;<i> bytes in the onion to communicate a 128-bit R value, however, which
+</I>&gt;&gt;<i> suffices AFAICT.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> (If we ever want to support larger amounts we'll need a new onion
+</I>&gt;&gt;<i> version but we can probably avoid enlarging it: steal two bytes from
+</I>&gt;&gt;<i> `outgoing_cltv_value` and have a new max of 720k bitcoins).
+</I>&gt;<i>
+</I>&gt;<i> Right, we can't use those fields, and 16 bytes is not sufficient to
+</I>&gt;<i> identify the sender. But we could probably use it for a prefix lookup
+</I>&gt;<i> in our routing table and then derive the payment preimage from
+</I>&gt;<i> that. If this is the last hop the `channel_id` is also empty, and we
+</I>&gt;<i> can use that as well. By defining a new realm we can also reorder the
+</I>&gt;<i> fields to have 24 contiguous bytes.
+</I>
+Hmm, good point.  I was wrong about stealing 2 bytes from
+outgoing_cltv_value, BTW: it needs to be a block height :(
+
+&gt;&gt;<i> 1. LD provides a payment hash as usual.
+</I>&gt;&gt;<i> 2. You pick a payment preimage for your winnings.
+</I>&gt;&gt;<i> 3. Construct route through the two LD nodes and back to you, except
+</I>&gt;&gt;<i>    1. the payment hash is encoded into the two padding fields for the LD nodes.
+</I>&gt;&gt;<i>    2. the onion switches to commit to your own payment hash for the return
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> Then if you lose (using your payment hash XOR preimage), LD takes the
+</I>&gt;&gt;<i> money and you can see you lost by receiving the preimage.  If you win,
+</I>&gt;&gt;<i> it simply continues forwarding the onion with the new payment hash and
+</I>&gt;&gt;<i> (increased) amount.
+</I>&gt;&gt;<i> 
+</I>&gt;&gt;<i> The cool thing about this is that you can pay someone probabalistically
+</I>&gt;&gt;<i> via the LD server (as long as you trust them not to collude on payment
+</I>&gt;&gt;<i> hashes).
+</I>&gt;<i>
+</I>&gt;<i> Ah I see, I had a bit of trouble seeing how we could create a route
+</I>&gt;<i> that commits to the 2 possible outcomes, since the HMAC commits to the
+</I>&gt;<i> `amt_to_forward`, so there'd be no way of forwarding either wins or
+</I>&gt;<i> losses. You're saying that the route simply stops at LD if we lose.
+</I>
+Yes.  LD knows the preimage, so can take the funds (if it wins).  The
+rest of the onion commits to the *new* rhash and amount, so if it loses
+LD launches a new HTLC using the rest of the onion.
+
+&gt;<i> The XORing is quite interesting though I can't really see how it'd
+</I>&gt;<i> work yet. LD would commit to a secret by sending you the hash, you
+</I>&gt;<i> construct a route using that hash and your own pick (payment hash for
+</I>&gt;<i> the second half) on the first half and then send the winnings back to
+</I>&gt;<i> me using my own pick? How are you combining the LD hash and your own
+</I>&gt;<i> hash to make it provably fair and giving LD the ability to pull the
+</I>&gt;<i> payment in say 50% of the cases?
+</I>
+Well, you can tell if it cheats, since it provides the preimage, you
+know you should have won.  You can't prove it to a third party, however.
+
+XOR rules might look like:
+
+        bottom 7 bits = 0000000 -&gt; LD wins (house edge)
+        otherwise bottom bit = 1 : LD wins
+        otherwise bottom bit = 0 : player wins
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000718.html">[Lightning-dev] Spontaneous transfers
+</A></li>
+	<LI>Next message: <A HREF="000715.html">[Lightning-dev] Spontaneous transfers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#720">[ date ]</a>
+              <a href="thread.html#720">[ thread ]</a>
+              <a href="subject.html#720">[ subject ]</a>
+              <a href="author.html#720">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Analysis: alternative DoS prevention concept
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Analysis%3A%20alternative%20DoS%20prevention%20concept&In-Reply-To=%3C20161111121907.GA1860%40fedora-23-dvm%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000648.html">
+   <LINK REL="Next"  HREF="000650.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Analysis: alternative DoS prevention concept</H1>
+    <B>David A. Harding</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Analysis%3A%20alternative%20DoS%20prevention%20concept&In-Reply-To=%3C20161111121907.GA1860%40fedora-23-dvm%3E"
+       TITLE="[Lightning-dev] Analysis: alternative DoS prevention concept">dave at dtrt.org
+       </A><BR>
+    <I>Fri Nov 11 12:19:07 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000648.html">[Lightning-dev] Analysis: alternative DoS prevention concept
+</A></li>
+        <LI>Next message: <A HREF="000650.html">[Lightning-dev] Analysis: alternative DoS prevention concept
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#649">[ date ]</a>
+              <a href="thread.html#649">[ thread ]</a>
+              <a href="subject.html#649">[ subject ]</a>
+              <a href="author.html#649">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Nov 11, 2016 at 12:11:54AM +0100, CJP wrote:
+&gt;<i> [...] possible for the attacker by sending many large transactions to
+</I>&gt;<i> himself, over a long route, and letting them time out [...] a lot of
+</I>&gt;<i> funds get locked up, and the total cost of lost opportunity to
+</I>&gt;<i> innocent nodes is a lot higher than that of the attacker.
+</I>&gt;<i>
+</I>&gt;<i> [...] a solution for this DoS mode [is] where nodes require either a
+</I>&gt;<i> fast commit or roll-back within a short amount of time (say 30
+</I>&gt;<i> seconds), or a proof that another channel was closed
+</I>&gt;<i>
+</I>&gt;<i> [...] This basically limits the freedom in channel design to a design
+</I>&gt;<i> space that can be understood by all nodes in the network.
+</I>
+&gt;<i> Instead of being an individual decision between two peers, channel
+</I>&gt;<i> design now becomes a collective network decision.  This interferes
+</I>&gt;<i> with my vision, presented in Montreal, of a heterogeneous network. 
+</I>
+I'm trying to reason about this, and I may have made a mistake, but I
+don't think this DoS mitigation proposal requires a homogeneous network
+because the only person from which you need to receive a (1) commit, (2)
+roll-back, or (3) channel close proof is your direct peer---so as long
+as your direct peer knows how to read the channel close proofs you
+provide them, you can use any style channel close proofs you want.
+
+So if we have Alice routing through Bob,
+
+    Alice -&gt; Bob -&gt; ?
+
+Alice has to understand whatever proofs Bob gives her.  But if Zed
+routes through Alice (who routes through Bob),
+
+    Zed -&gt; Alice -&gt; Bob -&gt; ?
+
+Then Zed doesn't need to understand Bob's proofs; he only needs to
+understand Alice's proofs, which could be for a different network or
+network protocol than what Bob's using.
+
+To be more specific, I'll work your examples below.
+
+&gt;<i> Some examples of things that will become impossible, or very difficult
+</I>&gt;<i> to accomplish:
+</I>&gt;<i> * Transparent routing between side chains: nodes that don't know about a
+</I>&gt;<i> certain side chain can't verify a channel close on that side chain.
+</I>&gt;<i> * Trust-free de-centralized exchange between different block chains:
+</I>&gt;<i> different block chains, so same story.
+</I>
+Let's imagine the following route:
+
+    [......bitcoin....] | [FooChain]
+                        |
+    Zed -&gt; Alice -&gt; Bob | Bob -&gt; ?
+
+1. Zed tells Alice that he only knows about Bitcoin, and routes the
+   payment through her.
+
+2. Alice tells Bob that she knows about Bitcoin as well as FooChain, and
+   routes the payment through him.
+
+3. Bob has channels open both on Bitcoin and FooChain, and he routes the
+   payment to one of his peers on FooChain.
+
+If,
+
+  a: Bob's peer tarpits the payment, Bob can close his FooChain channel
+     and show the proof to Alice (who knows about FooChain and can
+     understand the transaction).
+
+  Or,
+
+  b: Bob tarpits the the payment, Alice can close her Bitcoin channel to
+     Bob and show the proof to Zed (who doesn't need to know anything about
+     FooChain).
+
+  Or,
+
+  c: If Alice tarpits the payment, Zed can close his channel to Alice.
+
+So, in this case, we have individual negotiation between peers about what
+blockchains they support, providing for heterogeneity among client
+implementations.
+
+&gt;<i> * Trust-free de-centralized exchange of different assets on the same
+</I>&gt;<i> block chain (e.g. colored coins): other nodes might reject this if they
+</I>&gt;<i> don't understand the amount locked in the HTLC.
+</I>
+I think this is the same story as above except instead of having assets
+on both Bitcoin and FooChain, Bob has both satoshis and another
+blockchain asset (&quot;footoshis&quot;).
+
+    [.....satoshis....] | [footoshis]
+                        |
+    Zed -&gt; Alice -&gt; Bob | Bob -&gt; ?
+
+&gt;<i> * Channel design upgrade: we're probably first going to deploy Rusty's
+</I>&gt;<i> channel design; I suppose some variation of the Poon/Dryja design will
+</I>&gt;<i> have benefits over Rusty's design, once Bitcoin is ready for it. I
+</I>&gt;<i> expect there will probably be other channel design upgrades in the
+</I>&gt;<i> future.
+</I>
+Peers can declare what protocol designs/versions they support, with any
+peer needing to match the version only among its peers, not among the
+whole route (provided compatible hashlock mechanisms are used, which
+would be a constraint on upgrading in any case).
+
+    Zed -&gt;  Alice  -&gt; Bob -&gt; ?
+    [v1]   [v1,v2]    [v2]
+
+For example, Zed may only understand protocol version 1 (v1), while
+Alice understand both v1 and v2, and Bob only understands v2.
+
+-Dave
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000648.html">[Lightning-dev] Analysis: alternative DoS prevention concept
+</A></li>
+	<LI>Next message: <A HREF="000650.html">[Lightning-dev] Analysis: alternative DoS prevention concept
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#649">[ date ]</a>
+              <a href="thread.html#649">[ thread ]</a>
+              <a href="subject.html#649">[ subject ]</a>
+              <a href="author.html#649">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

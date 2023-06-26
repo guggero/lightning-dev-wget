@@ -1,0 +1,130 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3C7853c89e-32ee-657d-be56-d2b5ab4ff5d5%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003568.html">
+   <LINK REL="Next"  HREF="003571.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%20and%20Set%20Reconciliation&In-Reply-To=%3C7853c89e-32ee-657d-be56-d2b5ab4ff5d5%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Thu Apr 28 03:21:48 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003568.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003571.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3569">[ date ]</a>
+              <a href="thread.html#3569">[ thread ]</a>
+              <a href="subject.html#3569">[ subject ]</a>
+              <a href="author.html#3569">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+On 4/26/22 11:53 PM, Rusty Russell wrote:
+&gt;<i> Matt Corallo &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A>&gt; writes:
+</I>&gt;&gt;&gt;<i> This same problem will occur if *anyone* does ratelimiting, unless
+</I>&gt;&gt;&gt;<i> *everyone* does.  And with minisketch, there's a good reason to do so.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> None of this seems like a good argument for *not* taking the &quot;send updates since the last sync in
+</I>&gt;&gt;<i> the minisketch&quot; approach to reduce the damage inconsistent policies
+</I>&gt;&gt;<i> cause, though?
+</I>&gt;<i> 
+</I>&gt;<i> You can't do this, with minisketch.  You end up having to keep all the
+</I>&gt;<i> ratelimited differences you're ignoring *per peer*, and then cancelling
+</I>&gt;<i> them out of the minisketch on every receive or send.
+</I>
+Hmm? I'm a bit confused, let me attempt to restate to make sure we're on the same page. What I 
+*think* you said here is: &quot;If you have a node which is rejecting a large percentage *channel*'s 
+updates (on a per-channel, not per-update basis), and it tries to sync, you'll end up having to keep 
+some huge set of 'I dont want any more updates for that channel' on a per-peer basis&quot;? Or maybe you 
+might have said &quot;When you rate-limit, you have to tell your peer that you rate-limited a channel 
+update and that it shouldn't add that update to its next sketch&quot;?
+
+Either way, I don't think its all that interesting an issue. The first case is definitely an issue, 
+but is an issue in both a new-data-only sketch and all-data sketch world, and is not completely 
+solved with identical rate-limits in any case. It can be largely addressed by sane software defaults 
+and roughly-similar rate-limits, though, and because its a per-channel, not per-update issue I'm 
+much less concerned.
+
+The second potential thing I think you might have meant here I don't see as an issue at all? You can 
+simply...let the sketch include one channel update that you ignored? See above discussion of similar 
+rate-limits.
+
+&gt;<i> So you end up doing that LND and core-lightning do, which is &quot;pick 3
+</I>&gt;<i> peers to gossip with&quot; and tell everyone else to shut up.
+</I>&gt;<i> 
+</I>&gt;<i> Yet the point of minisketch is robustness; you can (at cost of 1 message
+</I>&gt;<i> per minute) keep in sync with an arbitrary number of peers.
+</I>&gt;<i> 
+</I>&gt;<i> So, we might as well define a preferred ratelimit, so nodes know that
+</I>&gt;<i> spamming past a certain point is not going to propagate.  At the moment,
+</I>&gt;<i> LND has no effective ratelimit at all, so it's a race to the bottom.
+</I>
+I agree there should be *some* rough consensus, but rate-limits are a locally-enforced thing, not a 
+global one. There will always be races and updates you reject that your peers dont, no matter the 
+rate-limit, and while I agree we should have guidelines, we can't &quot;just make them the same&quot; - it 
+both doesn't solve the problem and means we can't change them in the future.
+
+Ultimately, a updates-based sync is more robust in such a case - if there's some race and your peer 
+accepts something you don't it may mean one more entry in the sketch one time, but it won't hang 
+around forever.
+
+&gt;<i> We need that limit eventually, this just makes it more of a priority.
+</I>&gt;<i> 
+</I>&gt;&gt;<i> I'm not really
+</I>&gt;&gt;<i> sure in a world where you do &quot;update-based-sketch&quot; gossip sync you're any worse off than today even
+</I>&gt;&gt;<i> with different rate-limit policies, though I obviously agree there are substantial issues with the
+</I>&gt;&gt;<i> massively inconsistent rate-limit policies we see today.
+</I>&gt;<i> 
+</I>&gt;<i> You can't really do it, since rate-limited junk overwhelms the sketch
+</I>&gt;<i> really fast :(
+</I>
+How is this any better in a non-update-based-sketch? The only way to address it is to have a bigger 
+sketch, which you can do no matter the thing you're building the sketch over.
+
+Maybe lets schedule a call to get on the same page, throwing text at each other will likely not move 
+very quickly.
+
+Matt
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003568.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003571.html">[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3569">[ date ]</a>
+              <a href="thread.html#3569">[ thread ]</a>
+              <a href="subject.html#3569">[ subject ]</a>
+              <a href="author.html#3569">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

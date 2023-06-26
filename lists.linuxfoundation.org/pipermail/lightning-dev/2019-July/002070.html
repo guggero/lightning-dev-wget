@@ -1,0 +1,208 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%0A%09Eltoo-Penalty&In-Reply-To=%3CLY9xlomiC1y7E0bB-lq5pGjaFbdbTamoiPsdbEX9qO_OeuNuE4OyY0pLZIO03Mns-uCyhgEamMhvXsMPGoLNmsq-YJLwqDsye3Tvzsjk-6M%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002069.html">
+   <LINK REL="Next"  HREF="002075.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Using%20Per-Update%20Credential%20to%20enable%0A%09Eltoo-Penalty&In-Reply-To=%3CLY9xlomiC1y7E0bB-lq5pGjaFbdbTamoiPsdbEX9qO_OeuNuE4OyY0pLZIO03Mns-uCyhgEamMhvXsMPGoLNmsq-YJLwqDsye3Tvzsjk-6M%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Mon Jul 15 09:58:12 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002069.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+        <LI>Next message: <A HREF="002075.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2070">[ date ]</a>
+              <a href="thread.html#2070">[ thread ]</a>
+              <a href="subject.html#2070">[ subject ]</a>
+              <a href="author.html#2070">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+As usual, I am spamming the list for my amusement.
+
+Thus, I would like to thank you for your tolerance and continued attention.
+
+----
+
+We have identified two requirements:
+
+1.  We must identify which participant initiated the unilateral close onchain.
+    We do so that if later, we find that the unilateral close was to an older state, we can punish the participant that initiated the unilateral close.
+2.  We must identify that a unilateral close was, in fact, to an older state.
+
+Thus, I will counterpropose a construction similar to that originally proposed here, but with the weaknesses fixed and key details filled in.
+(while part of it is similar to the Decker-Russell-Osuntokun &quot;eltoo&quot;, it is different enough that I would not suggest calling it &quot;eltoo-penalty&quot;)
+
+----
+
+On initiation, Alice, Bob, and Charlie indicate:
+
+* Alice/Bob/Charlie &quot;fingerprint&quot; hash/preimage.
+  Alice/Bob/Charlie publish the fingerprint hashes, but keep the fingerprint preimages secret.
+* Alice/Bob/Charlie &quot;normal&quot; pubkey.
+* Alice/Bob/Charlie &quot;lawyer&quot; pubkey.
+* All participants indicate a `delay`, a number of blocks.
+  Funds may be locked, in worst case, up to `2 * delay`.
+
+We also introduce a &quot;common&quot; key whose private key is known to all participants.
+For example, we can use a key whose private key is `SHA256(&quot;ZmnSCPxj is a human being and not any kind of AI&quot;)` as a consensus-accepted fact.
+
+We have the below transactions:
+
+* Funding transaction
+  * inputs: unspecified
+  * outputs:
+    * change output(s): unspecified
+    * funding output:
+      * Internal Taproot Key: `P = MuSig(Alice normal pubkey, Bob normal pubkey, Charlie normal pubkey)`
+      * Scripts:
+        * `OP_1 OP_CHECKSIGVERIFY OP_HASH160 &lt;Alice fingerprint hash&gt; OP_EQUALVERIFY`
+        * `OP_1 OP_CHECKSIGVERIFY OP_HASH160 &lt;Bob fingerprint hash&gt; OP_EQUALVERIFY`
+        * `OP_1 OP_CHECKSIGVERIFY OP_HASH160 &lt;Charlie fingerprint&gt; OP_EQUALVERIFY`
+
+* Update Transaction
+  * comment: this transaction initiates a unilateral close attempt.
+  * comment: Updates have a &quot;hidden&quot; `n`, which is an &quot;update&quot; number incrementing from 0.
+    This number could be encoded as `nLockTime` by using `500e6 + n`, but in principle does not need to be encoded there (we could use the current encoding in Poon-Dryja, which is encrypted so that normal unilateral closes do not reveal how many updates occurred).
+  * Update transaction might have other inputs/outputs used to pay for onchain fees.
+  * input:
+    * Funding transaction output
+    * witness: one of the following, depending on which participant initiated the unilateral close:
+      * `&lt;Alice fingerprint preimage&gt; sign(MuSig(A normal, B normal, C normal), SIGHASH_ANYPREVOUTANYSCRIPT | SIGHASH_SINGLE)`
+      * `&lt;Bob fingerprint preimage&gt; sign(MuSig(A normal, B normal, C normal), SIGHASH_ANYPREVOUTANYSCRIPT | SIGHASH_SINGLE)`
+      * `&lt;Charlie fingerprint preimage&gt; sign(MuSig(A normal, B normal, C normal), SIGHASH_ANYPREVOUTANYSCRIPT | SIGHASH_SINGLE)`
+    * comment: which witness script appears onchain depends on which participant initiated the unilateral close.
+  * output:
+    * Internal Taproot Key: `MuSig(A normal, B normal, C normal)`
+    * Scripts:
+      * `&lt;delay&gt; OP_CHECKSEQUENCEVERIFY OP_DROP &lt;MuSig(A normal, B normal, C normal)&gt; OP_CHECKSIG`
+        * This is the &quot;normal&quot; unilateral path where the participant did not steal any funds.
+      * `&lt;500e6 + n + 1&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP &lt;MuSig(A lawyer, B lawyer, C lawyer)&gt; OP_CHECKSIG`
+        * This is the &quot;litigation&quot; path where the participant is proven to have stolen funds by showing a litigation transaction with later `n` than the update transaction.
+
+* Friendly Settlement Transaction
+  * comment: This transaction completes a unilateral close attempt and publishes all contracts transported in the channel without revocability branches.
+  * `nSequence`: `&lt;delay&gt;`
+  * input:
+    * Update transaction output
+    * witness: `sign(MuSig(A normal, B normal, C normal), SIGHASH_ANYPREVOUTANYSCRIPT)`
+  * outputs: unencumbered outputs for this state.
+
+* Litigation Transaction
+  * comment: The appearance of this transaction onchain is taken as proof that the unilateral close attempt is definitely a theft attempt.
+    It can only be broadcast and confirmed if and only if the unilateral close Update Transaction has an `n` that is less than the latest agreed `n`.
+  * comment: A Litigation Transaction can be spent by another Litigation Transaction with higher `n`.
+    The intent is to force the current state onchain, in order to punish the thief using the *latest* state instead of punishing from old state.
+  * `nLockTime`: `500e6 + n`, where `n` is the update index for this Litigation Transaction.
+    * comment: a Litigation Transaction with `n` cannot spend an Update Transaction of same `n`, only `n - 1` or less.
+  * input:
+    * Update transaction output *OR* another Litigation Transaction output; Update/Litigation tx has `n` less than this Litigation transaction.
+    * witness: `sign(MuSig(A lawyer, B lawyer, C lawyer), SIGHASH_ANYPREVOUTANYSCRIPT | SIGHASH_SINGLE)`
+  * output:
+    * Internal Taproot Key: `MuSig(A lawyer, B lawyer, C lawyer)`
+    * scripts:
+      * `&lt;500e6 + n + 1&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP OP_1 OP_CHECKSIG`
+        * comment: This allows a Litigation Transaction with later `nLockTime` to spend this Litigation Transaction.
+      * `&lt;delay&gt; OP_CHECKSEQUENCEVERIFY OP_DROP &lt;500e6 + n&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP OP_1 OP_CHECKSIG`
+        * comment: This is the &quot;Hostile Settlement&quot; path that allows revocation of outputs owned by the participant that initiated the unilateral close.
+
+* Hostile Settlement Transaction
+  * `nLockTime`: `500e6 + n`
+  * input:
+    * Litigation Transaction output
+    * witness: `sign(MuSig(A lawyer, B lawyer, C lawyer), SIGHASH_ANYPREVOUTANYSCRIPT)`
+  * outputs:
+    * Depending on type of contract, outputs are revocable:
+      * Single-ownership contract (example below is Alice-owned)
+        * Taproot Internal Key: `P = NUMS point` (cannot be spent via non-Taproot path)
+        * scripts:
+          * `&lt;delay&gt; OP_CHECKSEQUENCEVERIFY OP_DROP &lt;A lawyer&gt; OP_CHECKSIG`
+            * comment: This lets Alice recover its funds if it is not the thief.
+          * `OP_0 OP_CHECKSEQUENCEVERIFY OP_DROP OP_HASH160 &lt;Alice fingerprint hash&gt; OP_EQUALVERIFY &lt;common key&gt; OP_CHECKSIG`
+            * comment: Alice fingerprint preimage is published if Alice is the one who published the old Update Transaction.
+              Any participant can take that preimage and re-publish it here.
+            * comment: the `0 OP_CHECKSEQUENCEVERIFY` ensures the spending script has RBF enabled.
+            * comment: we use the common key, and the requirement to provide the Alice fingerprint preimage, *and* the requirement to enable RBF, to force the output to be revoked to miners as fees: when the entire output is given as fee, no higher RBF is possible.
+              * comment: outputs may become too tiny to care about if we split up a tiny reserve between dozens of honest participants.
+                But the important point is to punish the thief, not award the honest participants.
+              * comment: further, since the Litigation Transaction *should* make valid the latest Hostile Settlement, the outputs of the honest participants are at the latest state, already, so they cannot lose funds by having the thief-owned outputs be revoked in favor of miners.
+      * Dual-ownership contract (example below is an HTLC from Bob to Charlie)
+        * Taproot Internal Key: `P = NUMS point`
+        * scripts:
+          * `&lt;delay&gt; OP_CHECKSEQUENCEVERIFY OP_DROP &lt;locktime&gt; OP_CHECKLOCKTIMEVERIFY OP_DROP &lt;B lawyer&gt; OP_CHECKSIG`
+            * comment: Timelock branch, Bob reclaims money.
+          * `&lt;delay&gt; OP_CHECKSEQUENCEVERIFY OP_DROP OP_HASH160 &lt;hash&gt; OP_EQUALVERIFY &lt;C lawyer&gt; OP_CHECKSIG`
+            * comment: Hashlock branch, Charlie claims funds in exchange for publishing payment preimage.
+          * `OP_HASH160 &lt;Bob fingerprint hash&gt; OP_EQUALVERIFY &lt;C lawyer&gt; OP_CHECKSIG`
+            * comment: Revocation branch, Bob attempted to steal, so Charlie gets the money outright.
+          * `OP_HASH160 &lt;Charlie fingerprint hash&gt; OP_EQUALVERIFY &lt;B lawyer&gt; OP_CHECKSIG`
+            * comment: Revocation branch, Charlie attempted to steal, so Bob gets the money outright.
+        * Any two-participant contract can be made revocable by the same pattern:
+          * Use a NUMS point for taproot internal key.
+          * Give every branch explicitly as a branch in the Taproot MAST; prepend an additional `&lt;delay&gt; OP_CHECKSEQUENCEVERIFY OP_DROP`.
+          * Add branches for revocation, where proof that one side attempted to steal allows the other side to control the coin immediately.
+        * Sub-channels will need to use `SIGHASH_ANYPREVOUTANYSCRIPT`, so that signatures that can spend from an output of the Friendly Settlement can also spend from an output of the Hostile Settlement (once the additional encumberance has been passed).
+
+So, here are some changes to the original proposal:
+
+* We use a hash/preimage challenge to identify *who* attempted to steal.
+  * The &quot;revocation key&quot; is the same as the &quot;fingerprint&quot;.
+    It is safe to publish the revocation key if you publish only the latest Update Transaction, as the latest Update Transaction cannot enable any Litigation Transaction.
+* Single-ownership outputs of the current state are encumbered by a revocability clause that revokes in favor of miners.
+* Dual-ownership outputs of the current state are encumbered by a revocability clause that revokes in favor of the non-thief participant if one of the participants is the thief.
+* Outputs with more than two owners are not supported by this construction.
+
+It was not very clear from the original proposal, but the Litigation Transaction path ensures we can go to the latest state, and the Hostile Settlement transaction represents the latest state, plus allowing revocability of outputs in that state.
+This behavior allows us to perform our punishments based on the latest state, compared to Poon-Dryja which punishes based on the old published state (which is simpler since it always just rewards the entire channel funds to the honest party).
+
+The Friendly Settlement transaction does not allow any revocability, but can only be published if no Litigation Transaction has been published.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002069.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+	<LI>Next message: <A HREF="002075.html">[Lightning-dev] Using Per-Update Credential to enable	Eltoo-Penalty
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2070">[ date ]</a>
+              <a href="thread.html#2070">[ thread ]</a>
+              <a href="subject.html#2070">[ subject ]</a>
+              <a href="author.html#2070">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20200223090801.vb7ra2mefymvhjtk%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002558.html">
+   <LINK REL="Next"  HREF="002563.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C20200223090801.vb7ra2mefymvhjtk%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">aj at erisian.com.au
+       </A><BR>
+    <I>Sun Feb 23 09:08:01 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002558.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002563.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2561">[ date ]</a>
+              <a href="thread.html#2561">[ thread ]</a>
+              <a href="subject.html#2561">[ subject ]</a>
+              <a href="author.html#2561">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Fri, Feb 21, 2020 at 12:35:20PM +1030, Rusty Russell wrote:
+&gt;<i> &gt; I think the way it would end up working
+</I>&gt;<i> &gt; is that the further the route extends, the greater the payments are, so:
+</I>&gt;<i> &gt;   A -&gt; B   : B sends A 1msat per minute
+</I>&gt;<i> &gt;   A -&gt; B -&gt; C : C sends B 2msat per minute, B forwards 1msat/min to A
+</I>&gt;<i> &gt;   A -&gt; B -&gt; C -&gt; D : D sends C 3 msat, etc
+</I>&gt;<i> &gt;   A -&gt; B -&gt; C -&gt; D -&gt; E : E sends D 4 msat, etc
+</I>&gt;<i> &gt; so each node is receiving +1 msat/minute, except for the last one, who's
+</I>&gt;<i> &gt; paying n msat/minute, where n is the number of hops to have gotten up to
+</I>&gt;<i> &gt; the last one. There's the obvious privacy issue there, with fairly
+</I>&gt;<i> &gt; obvious ways to fudge around it, I think.
+</I>&gt;<i> Yes, it needs to scale with distance to work at all.  However, it has
+</I>&gt;<i> the same problems with other upfront schemes: how does E know to send
+</I>&gt;<i> 4msat per minute?
+</I>
+D tells it &quot;if you want this HTLC, you'll need to pay 4msat/minute after
+the grace period of 65 seconds&quot;. Which also means A as the originator can
+also choose whatever fees they like. The only consequence of choosing too
+high a fee is that it's more likely one of the intermediate nodes will
+say &quot;screw that!&quot; and abort the HTLC before it gets to the destination.
+
+&gt;<i> &gt; I think it might make sense for the payments to have a grace period --
+</I>&gt;<i> &gt; ie, &quot;if you keep this payment open longer than 20 seconds, you have to
+</I>&gt;<i> &gt; start paying me x msat/minute, but if it fulfills or cancels before
+</I>&gt;<i> &gt; then, it's all good&quot;.
+</I>&gt;<i> But whatever the grace period, I can just rely on knowing that B is in
+</I>&gt;<i> Australia (with a 1 second HTLC commit time) to make that node bleed
+</I>&gt;<i> satoshis.  I can send A-&gt;B-&gt;C, and have C fail the htlc after 19
+</I>&gt;<i> seconds for free.  But B has to send 1msat to A.  B can't blame A or C,
+</I>&gt;<i> since this attack could come from further away, too.
+</I>
+So A gives B a grace period of 35 seconds, B deducts 5 seconds
+processing time and 10 seconds for latency, so gives C a grace period of
+20 seconds; C rejects after 19 seconds, and B still has 15 seconds to
+notify A before he has to start paying fees. Same setup as decreasing
+timelocks when forwarding HTLCs.
+
+&gt;<i> And if there is a grace period, I can just gum up the network with lots
+</I>&gt;<i> of slow-but-not-slow-enough HTLCs.
+</I>
+Well, it reduces the &quot;gum up the network for &lt;timeout&gt; blocks&quot; to &quot;gum
+up the network for &lt;grace period&gt; seconds&quot;, which seems like a pretty
+big win. I think if you had 20 hops each with a 1 minute grace period,
+and each channel had a max_accepted_htlcs of 30, you'd need 25 HTLCs per
+second to block 1000 channels (so 2.7% of the 36k channels 1ml reports),
+so at the very least, successfully performing this attack would be
+demonstrating lightning's solved bitcoin's transactions-per-second
+limitation?
+
+I think you could do better by having the acceptable grace period be
+dynamic: both (a) requiring a shorter grace period the more funds a HTLC
+locks up, which stops a single HTLC from gumming up the channel, and (b) 
+requiring a shorter grace period the more active HTLCs you have (or, the
+more active HTLCs you have that are in the grace period, perhaps). That
+way if the network is loaded, you're prioritising more efficient routes
+(or at least ones that are willing to pay their way), and if it's under
+attack, you're dynamically increasing the resources needed to maintain
+the attack.
+
+Anyway, that's my hot take; not claiming it's a perfect solution or
+final answer, rather that this still seems worth brainstorming out.
+
+My feeling is that this might interact nicely with the sender-initiated
+upfront fee. Like, you could replace a grace period of 30 seconds at
+2msat/minute by always charging 2msat/minute but doing a forward payment
+of 1msat. But at this point I can't keep it all in my head at once to
+figure out something that really makes sense.
+
+&gt;<i> &gt; Maybe this also implies a different protocol for HTLC forwarding,
+</I>&gt;<i> &gt; something like:
+</I>&gt;<i> &gt;   1. A sends the HTLC onion packet to B
+</I>&gt;<i> &gt;   2. B decrypts it, makes sure it makes sense
+</I>&gt;<i> &gt;   3. B sends a half-signed updated channel state back to A
+</I>&gt;<i> &gt;   4. A accepts it, and forwards the other half-signed channel update to B
+</I>&gt;<i> &gt; so that at any point before (4) Alice can say &quot;this is taking too long,
+</I>&gt;<i> &gt; I'll start losing money&quot; and safely abort the HTLC she was forwarding to
+</I>&gt;<i> &gt; Bob to avoid paying fees; while only after (4) can she start the time on
+</I>&gt;<i> &gt; expecting Bob to start paying fees that she'll forward back. That means
+</I>&gt;<i> &gt; 1.5 round-trips before Bob can really forward the HTLC on to Carol;
+</I>&gt;<i> &gt; but maybe it's parallelisable, so Bob/Carol could start at (1) as soon
+</I>&gt;<i> &gt; as Alice/Bob has finished (2).
+</I>&gt;<i> We added a ping-before-commit[1] to avoid the case where B has disconnected
+</I>&gt;<i> and we don't know yet; we have to assume an HTLC is stuck once we send
+</I>&gt;<i> commitment_signed.  This would be a formalization of that, but I don't
+</I>&gt;<i> think it's any better?
+</I>
+I don't think it's any better as things stand, but with the &quot;B pays A
+holding fees&quot; I think it becomes necessary. If you've got a route
+A-&gt;B-&gt;C then from B's perspective I think it currently looks like:
+
+  A-&gt;B: here's a HTLC, locked in
+
+  B-&gt;C: ping
+  C-&gt;B: pong!
+  B-&gt;C: updated commitment with HTLC locked in
+
+  C-&gt;B: *silence*
+
+at which point the best B can do is unilaterally close the B/C channel
+with their pre-HTLC commitment, but they still have to wait for that to
+confirm before they can safely cancel the HTLC with A, and that will
+likely take more than whatever the grace period is, so B will be losing
+money on holding fees.
+
+Whereas:
+
+  A-&gt;B: here's a HTLC, locked in
+
+  B-&gt;C: HTLC proposal
+  C-&gt;B: sure: updated commitment with HTLC locked in
+  B-&gt;C: great, corresponding updated commitment, plus revocation
+  C-&gt;B: revocation
+
+means that if C goes silent before B receives a new commitment, B can
+cancel the HTLC with A with no risk (B can publish the old commitment
+still even if the new arrives later, and C can only publish the pre-HTLC
+commitment), and if C goes silent after B receives the new commitment, B
+can drop the new commitment to the blockchain and pay A's fees out of it.
+
+&gt;<i> There's an old proposal to fast-fail HTLCs: Bob sends an new message &quot;I
+</I>&gt;<i> would fail this HTLC once it's committed, here's the error&quot; 
+</I>
+Yeah, you could do &quot;B-&gt;C: proposal, C-&gt;B: no way!&quot; instead of &quot;sure&quot; to
+fast fail the above too. 
+
+And I think something like that's necessary (at least with my view of how
+this &quot;keep the HTLC open&quot; payment would work), otherwise B could send C a
+&quot;1 microsecond grace period, rate of 3e11 msat/minute, HTLC for 100 sat,
+timeout of 2016 blocks&quot; and if C couldn't reject it immediately would
+owe B 50c per millisecond it took to cancel.
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002558.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002563.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2561">[ date ]</a>
+              <a href="thread.html#2561">[ thread ]</a>
+              <a href="subject.html#2561">[ subject ]</a>
+              <a href="author.html#2561">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

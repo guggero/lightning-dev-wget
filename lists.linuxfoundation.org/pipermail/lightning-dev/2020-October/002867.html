@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CDDj0fd7jgp9EM3gNS7CHZZ6RROxBABdixA80AkuP3QA-tWaK9OOzeaRm4OMr1ONozBrw7kxmQbKPRfYNtBys9jV0x5e0sZCht2wIuOxfW1Y%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002866.html">
+   <LINK REL="Next"  HREF="002868.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Hold%20fees%3A%20402%20Payment%20Required%20for%20Lightning%0A%09itself&In-Reply-To=%3CDDj0fd7jgp9EM3gNS7CHZZ6RROxBABdixA80AkuP3QA-tWaK9OOzeaRm4OMr1ONozBrw7kxmQbKPRfYNtBys9jV0x5e0sZCht2wIuOxfW1Y%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Oct 23 10:50:12 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002866.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+        <LI>Next message: <A HREF="002868.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2867">[ date ]</a>
+              <a href="thread.html#2867">[ thread ]</a>
+              <a href="subject.html#2867">[ subject ]</a>
+              <a href="author.html#2867">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning t-bast,
+
+
+&gt;<i> &gt; And in this case C earns.
+</I>&gt;<i>
+</I>&gt;<i> &gt; Can C delay the refund to D to after the grace period even if D settled the HTLC quickly?
+</I>&gt;<i>
+</I>&gt;<i> Yes C earns, but D has misbehaved. As a final recipient, D isn't dependent on anyone downstream.
+</I>&gt;<i> An honest D should settle the HTLC before the `grace_period` ends. If D chooses to hold the HTLC
+</I>&gt;<i> for a while, then it's fair that he pays C for this.
+</I>
+
+Okay, now let us consider the case where the supposedly-delaying party is not the final destination.
+
+So, suppose D indicates to C that it should fail the HTLC.
+In this case, C cannot immediately propagate the `update_fail_htlc` upstream, since the latest commitment transaction for the C&lt;-&gt;D channel still contains the HTLC.
+
+In addition, our state machine is hand-over-hand, i.e. there is a small window where there are two valid commitment transactions.
+What happens is we sign the next commitment transaction and *then* revoke the previous one.
+
+So I think C can only safely propagate its own upstream `update_fail_htlc` once it receives the `revoke_and_ack` from D.
+
+So the time measured for the grace period between C and D should be from C sending `update_add_htlc` to C receiving `revoke_and_ack` from D, in case the HTLC fails.
+This is the time period that D is allowed to consume, and if it exceeds the grace period, it is penalized.
+
+(In this situation, it is immaterial if D is the destination: C cannot know this fact.)
+
+So let us diagram this better:
+
+     C                       D
+     |----update_add_htlc---&gt;| ---
+     |---commitment_signed--&gt;|  ^
+     |&lt;----revoke_and_ack----|  |
+     |&lt;--commitment_signed---|  |
+     |-----revoke_and_ack---&gt;|  |
+     |                       | grace period
+     |&lt;--update_fail_htlc----|  |
+     |&lt;--commitment_signed---|  |
+     |-----revoke_and_ack---&gt;|  |
+     |---commitment_signed--&gt;|  v  &lt;--- grief point!
+     |&lt;----revoke_and_ack----| ---
+
+(somebody *else* better make sure my understanding of the state machine is correct!)
+
+C can trivially grief D here, making it look like D is delaying, by delaying its own `commitment_signed` containing the *removal* of the HTLC.
+D cannot send its own `revoke_and_ack` until it receives the signature for its own next commitment, as if it did so, it would lose the ability to close the channel unilaterally; it has to wait for C to send the `commitment_signed`.
+
+Thus, it seems to me that C can grief D here.
+
+The question is: does the above C-can-grief-D matter?
+
+I think D does have a defense against C griefing in the above case:
+
+* If the time between D-&gt;`update_fail_htlc`-&gt;C and the corresponding C-&gt;`commitment_signed`-&gt;D becomes too long:
+  * D drops the channel onchain.
+    * The dropped commitment tx still contains the HTLC, since it is the &quot;previous&quot; commitment that D happens to hold that has not yet had the `update_fail_htlc` committed.
+
+If D performs the above, then C is forced to wait *even longer* (it has to wait out the HTLC timelock) before it can safely propagate the `update_fail_htlc`: D could be fooling with it and actually knows the preimage and claim it onchain, so C for its own safety *must* wait out the onchain timelock.
+
+Does that make sense?
+Does it sensibly protect against this griefing?
+Is it too much of a punishment and could potentially hurt D more than it hurts C if C is a heavily-connected node that will not miss the channel while D has fewer channels and opened the C&lt;-&gt;D channel in the first place?
+
+--
+
+For success case `update_fulfill_htlc`, I believe C can immediately propagate this back to its upstream since it can now.
+Thus, in that case, we can stop the timer at the `update_fulfill_htlc`.
+
+So at least for the *end point* of the grace period, I think the end point should be:
+
+* If the HTLC failed:
+  * When both participants have sent `revoke_and_ack`.
+* If the HTLC succeeded:
+  * When the downstream participant has sent `update_fulfill_htlc`.
+
+For the *start point*, it seems the C-&gt;`commitment_signed`-&gt;D containing the HTLC would work as the start point.
+In particular, it seems to me that C can also deliberately defer its own C-&gt;`revoke_and_ack`-&gt;D:
+
+     C                       D
+     |----update_add_htlc---&gt;|
+     |---commitment_signed--&gt;| ---
+     |&lt;----revoke_and_ack----|  ^
+     |&lt;--commitment_signed---|  |
+     |-----revoke_and_ack---&gt;|  |  &lt;--- grief point!
+     |                       | grace period
+     |&lt;--update_fail_htlc----|  |
+     |&lt;--commitment_signed---|  |
+     |-----revoke_and_ack---&gt;|  |
+     |---commitment_signed--&gt;|  v
+     |&lt;----revoke_and_ack----| ---
+
+(If D deliberately delays, then it is penalized, so we should consider the case where C attempts to trigger the reverse case).
+D cannot safely fulfill the HTLC until after the previous commitment transactions of *both* sides have been revoked (&quot;irrevocably committed&quot; state).
+So D can use the same defense, I think: if C is taking too long to send the `revoke_and_ack` pointed at above, it drops the channel onchain with the HTLC instantiated (which is why the *start time* has to be the C-&gt;`commitment_signed`-&gt;D that contains the new HTLC).
+
+Thus the D grace period has two smaller grace periods that D imposes on C, using the threat of channel drop to protect against the C-side griefing.
+
+
+
+Sorry for dropping into details already but so far this is the only griefing attack I can think of right now.
+
+
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002866.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+	<LI>Next message: <A HREF="002868.html">[Lightning-dev] Hold fees: 402 Payment Required for Lightning	itself
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2867">[ date ]</a>
+              <a href="thread.html#2867">[ thread ]</a>
+              <a href="subject.html#2867">[ subject ]</a>
+              <a href="author.html#2867">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

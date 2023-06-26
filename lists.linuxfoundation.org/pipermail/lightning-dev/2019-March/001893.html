@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] More thoughts on NOINPUT safety
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3C20190313014143.ifffshwdux2jt7w5%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001938.html">
+   <LINK REL="Next"  HREF="001894.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] More thoughts on NOINPUT safety</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20More%20thoughts%20on%20NOINPUT%20safety&In-Reply-To=%3C20190313014143.ifffshwdux2jt7w5%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] More thoughts on NOINPUT safety">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Mar 13 01:41:43 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001938.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+        <LI>Next message: <A HREF="001894.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1893">[ date ]</a>
+              <a href="thread.html#1893">[ thread ]</a>
+              <a href="subject.html#1893">[ subject ]</a>
+              <a href="author.html#1893">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+The following has some more thoughts on trying to make a NOINPUT
+implementation as safe as possible for the Bitcoin ecosystem.
+
+One interesting property of NOINPUT usage like in eltoo is that it
+actually reintroduces the possibility of third-party malleability to
+transactions -- ie, you publish transactions to the blockchain (tx A,
+which is spent by tx B, which is spent by tx C), and someone can come
+along and change A or B so that C is no longer valid). The way this works
+is due to eltoo's use of NOINPUT to &quot;skip intermediate states&quot;. If you
+publish to the blockchain:
+
+      funding tx -&gt; state 3 -&gt; state 4[NOINPUT] -&gt; state 5[NOINPUT] -&gt; finish
+
+then in the event of a reorg, state 4 could be dropped, state 5's
+inputs adjusted to refer to state 3 instead (the sig remains valid
+due to NOINPUT, so this can be done by anyone not just holders of some
+private key), and finish would no longer be a valid tx (because the new
+&quot;state 5&quot; tx has different inputs so a different txid, and finish uses
+SIGHASH_ALL for the signature so committed to state 5's original txid).
+
+There is a safety measure here though: if the &quot;finish&quot; transaction is
+itself a NOINPUT tx, and has a a CSV delay (this is the case in eltoo;
+the CSV delay is there to give time for a hypothetical state 6 to be
+published), then the only way to have a problem is for some SIGHASH_ALL tx
+that spends finish, and a reorg deeper than the CSV delay (so that state
+4 can be dropped, state 5 and finish can be altered). Since the CSV delay
+is chosen by the participants, the above is still a possible scenario
+in eltoo, though, and it means there's some risk for someone accepting
+bitcoins that result from a non-cooperative close of an eltoo channel.
+
+
+Beyond that, I think NOINPUT has two fundamental ways to cause problems
+for the people doing NOINPUT sigs:
+
+ 1) your signature gets applied to a unexpectedly different
+    script, perhaps making it look like you've being dealing
+    with some blacklisted entity. OP_MASK and similar solves
+    this.
+
+ 2) your signature is applied to some transaction and works
+    perfectly; but then someone else sends money to the same address
+    and reuses your prior signature to forward it on to the same
+    destination, without your consent
+
+I still like OP_MASK as a solution to (1), but I can't convince myself that
+the problem it solves is particularly realistic; it doesn't apply to
+address blacklists, because for OP_MASK to make the signature invalid
+the address has to be different, and you could just short circuit the
+whole thing by sending money from a blacklisted address to the target's
+personal address directly. Further, if the sig's been seen on chain
+before, that's probably good evidence that someone's messing with you;
+and if it hasn't been seen on chain before, how is anyone going to tell
+it's your sig to blame you for it?
+
+I still wonder if there isn't a real problem hiding somewhere here,
+but if so, I'm not seeing it.
+
+For the second case, that seems a little more concerning. The nightmare
+scenario is maybe something like:
+
+ * naive users do silly things with NOINPUT signatures, and end up
+   losing funds due to replays like the above
+
+ * initial source of funds was some major exchange, who decide it's
+   cheaper to refund the lost funds than deal with the customer complaints
+
+ * the lost funds end up costing enough that major exchanges just outright
+   ban sending funds to any address capable of NOINPUT, which also bans
+   all taproot/schnorr addresses
+
+That's not super likely to happen by chance: NOINPUT sigs will commit
+to the value being spent, so to lose money, you (Alice) have to have
+done a NOINPUT sig spending a coin sent to your address X, to someone
+(Bob) and then have to have a coin with the exact same value sent from
+someone else again (Carol) to your address X (or if you did a script
+path NOINPUT spend, to some related address Y with a script that uses the same
+key). But because it involves losing money to others, bad actors might
+trick people into having it happen more often than chance (or well
+written software) would normally allow.
+
+That &quot;nightmare&quot; could be stopped at either the first step or the
+last step:
+
+ * if we &quot;tag&quot; addresses that can be spent via NOINPUT then having an
+   exchange ban those addresses doesn't also impact regular
+   taproot/schnorr addresses, though it does mean you can tell when
+   someone is using a protocol like eltoo that might need to make use
+   of NOINPUT signatures.  This way exchanges and wallets could simply
+   not provide NOINPUT capable addresses in the first place normally,
+   and issue very large warnings when asked to send money to one. That's
+   not a problem for eltoo, because all the NOINPUT-capable address eltoo
+   needs are internal parts of the protocol, and are spent automatically.
+
+ * or we could make it so NOINPUT signatures aren't replayable on
+   different transactions, at least by third parties. one way of doing
+   this might be to require NOINPUT signatures always be accompanied by a
+   non-NOINPUT signature (presumably for a different public key, or there
+   would be no point). This would prevent NOINPUT key-path spends, you'd
+   always have to use the taproot script-path for a NOINPUT signature so
+   that you could specify both public keys, and would also increase the
+   witness size due to needing two signatures and specifying an additional
+   public key -- this would increase the cost in fees by about 25% compared
+   to a plain key-path spend.
+
+Conversely, this &quot;nightmare&quot; scenario *can't* be stopped if we allow
+key-path spending of (untagged) taproot addresses with NOINPUT signatures:
+exchanges could not distinguish such addresses from regular addresses, and
+the only way to prevent the signature from applying to two tx's with the
+same value and address would be for the sig to commit to info from the tx.
+
+It seems like there's one big choice then:
+
+ - just ignore this concern
+
+ - drop NOINPUT from normal taproot key path spending
+
+If we drop NOINPUT from taproot key path spending, then we can do NOINPUT
+as a logically separate upgrade to taproot, rather than it needing to
+be done at the same time.  There's two ways we could do proceed:
+
+ - introduce a new NOINPUT-capable scriptPubKey format (ie, &quot;tag&quot;
+   NOINPUT spendable addresses); either a different length segwit v1
+   output, or a different segwit version entirely. Using version &quot;16&quot; in
+   this scenario might be appealing: we could reserve all v16 addresses
+   for &quot;not intended to be used by humans directly&quot; and update BIP 173
+   to say these aren't even something you should use bech32 to represent.
+
+ - alternatively, we could require every script to have a valid signature
+   that commits to the input. In that case, you could do eltoo with a
+   script like either:
+
+        &lt;A&gt; CHECKSIGVERIFY &lt;B&gt; CHECKSIG
+     or &lt;P&gt; CHECKSIGVERIFY &lt;Q&gt; CHECKSIG
+
+   where A is Alice's key and B is Bob's key, P is muSig(A,B) and Q is
+   a key they both know the private key for. In the first case, Alice
+   would give Bob a NOINPUT sig for the tx, and when Bob wanted to publish
+   Bob would just do a SIGHASH_ALL sig with his own key. In the second,
+   Alice and Bob would share partial NOINPUT sigs of the tx with P, and
+   finish that when they wanted to publish.
+
+   This is a bit more costly than a key path spend: you have to reveal
+   the taproot point to do a script (+33B) and you have two signatures
+   instead of one (+65B) and you have to reveal two keys as well
+   (+66B), plus some script overhead. If we did the &lt;P,Q&gt; variant,
+   we could provide a &quot;PUSH_TAPROOT_KEY&quot; opcode that would just push
+   the taproot key to stack, saving 33B from pushing P as a literal,
+   but you can't do much better than that. All in all, it'd be about 25%
+   overhead in order to prevent cheating. [0]
+
+I think that output tagging doesn't provide a workable defense against the
+third party malleability via a deeper-than-the-CSV-delay reorg mentioned
+earlier; but requiring a non-NOINPUT sig does: you'd have to replace
+the non-NOINPUT sig to make state 5 spend state 3 instead of state 4,
+and only the holders of the appropriate private key can do that.
+
+
+In any event, if we get some experience with NOINPUT in practice, we can
+reconsider whether NOINPUT key path spends are a good idea when we do
+the next segwit version -- both cross-input signature aggregation and
+graftroot will need an upgrade anyway.
+
+(Also, note that, at least for eltoo, all of the above only applies to
+non-cooperative closes: the funding tx's txid is known from the start,
+so you can always arrange to spend it via SIGHASH_ALL, so it doesn't
+need to be tagged, and a cooperative/mutual close of the channel will
+still just be a simple key path spend)
+
+
+Anyway, presented for your consideration.
+
+
+FWIW, I don't have a strong opinion here yet, but:
+
+ - I'm still inclined to err on the side of putting more safety
+   measures in for NOINPUT, rather than fewer
+
+ - the &quot;must have a sig that commits to the input tx&quot; seems like it
+   should be pretty safe, not too expensive, and keeps taproot's privacy
+   benefits in the cases where you end up needing to use NOINPUT
+
+Cheers,
+aj
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001938.html">[Lightning-dev] Just in Time Routing (JIT-Routing) and a	channel rebalancing heuristic as an add on for improved	routing success in BOLT 1.0
+</A></li>
+	<LI>Next message: <A HREF="001894.html">[Lightning-dev] More thoughts on NOINPUT safety
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1893">[ date ]</a>
+              <a href="thread.html#1893">[ thread ]</a>
+              <a href="subject.html#1893">[ subject ]</a>
+              <a href="author.html#1893">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

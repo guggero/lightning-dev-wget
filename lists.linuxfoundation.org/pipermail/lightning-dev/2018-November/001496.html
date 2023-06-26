@@ -1,0 +1,279 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] BOLT11 In the World of Scriptless Scripts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181104042613.tbuhxkhxdtgzwtjw%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001495.html">
+   <LINK REL="Next"  HREF="001499.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] BOLT11 In the World of Scriptless Scripts</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20BOLT11%20In%20the%20World%20of%20Scriptless%20Scripts&In-Reply-To=%3C20181104042613.tbuhxkhxdtgzwtjw%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] BOLT11 In the World of Scriptless Scripts">aj at erisian.com.au
+       </A><BR>
+    <I>Sun Nov  4 04:26:13 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001495.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+        <LI>Next message: <A HREF="001499.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1496">[ date ]</a>
+              <a href="thread.html#1496">[ thread ]</a>
+              <a href="subject.html#1496">[ subject ]</a>
+              <a href="author.html#1496">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Nov 04, 2018 at 01:30:48PM +1030, Rusty Russell wrote:
+&gt;<i> I'm not sure.  Jonas Nick proposed a scheme, which very much assumes
+</I>&gt;<i> Schnorr AFAICT:
+</I>&gt;<i> Jonas Nick wrote:
+</I>&gt;<i> &gt; How I thought it would work is that the invoice would contain a
+</I>&gt;<i> &gt; Schnorr nonce R.
+</I>
+(Note this means the &quot;invoice&quot; must be unique for each payment)
+
+&gt;<i> &gt; Then the payer would construct s*G = R +
+</I>&gt;<i> &gt; H(payee_pubkey,R,&quot;I've bought 5 shirts shipped to Germany&quot;)*G. Then
+</I>&gt;<i> &gt; the payer builds the scriptless script payment path such that when the
+</I>&gt;<i> &gt; payee claims, the payer learns s and thus has a complete
+</I>&gt;<i> &gt; signature. However, that doesn&#8217;t work with recurrent payments because
+</I>&gt;<i> &gt; the payee can use the nonce only once.
+</I>
+So that's totally fine to do however you receive the &quot;s&quot; value -- the
+message that's getting the Schnorr signature isn't a valid bitcoin
+transaction, so it's something that only needs to be validated by
+BOLT-aware courts.
+
+
+I also think you can get recurrent payments easily by extending the
+verification algorithm. Basically instead of Verify(m,P,sig) have
+Verify(m,P,n,sig) to verify you've made n payments of the invoice &quot;m&quot;.
+
+Construct &quot;m&quot; to include the postimage X = H(pre,1000) which indicates
+&quot;pre&quot; has been hashed 1000 times, so X = H(H(pre,1000-n),n).
+
+Calculate the original signature as:
+
+   s = r + H(P,R,m+X)*p
+
+and verify that n payments have been made by checking:
+
+   Verify(m,P,n,(s,R,rcpt)) :: s*G = R + H(P,R,m+H(rcpt,n))*P
+
+You'd provide s,R,X when setting up the subscription, then reveal the
+preimage to X, the preimage to the preimage of X etc on each payment.
+(Maybe shachain would work here?)
+
+I think that approach is independent of using sha256/secp256k1 for
+preimages over lightning too.
+
+&gt;<i> I would probably enhance this to include a nonce, which allows for AMP
+</I>&gt;<i> (you have to xor the AMP payments to get the nonce):
+</I>&gt;<i> R + H(payee_pubkey,R,&quot;I've bought 5 shirts shipped to Germany&quot;,NONCE)*G
+</I>
+R is already a unique nonce under the hash here, so I don't think a
+second one adds any value fwiw.
+
+&gt;<i> &gt; I think it makes sense to think of proof-of-payment in terms of a
+</I>&gt;<i> &gt; verification algorithm (that a third party court could use), that takes:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   m - the invoice details, eg
+</I>&gt;<i> &gt;       &quot;aj paid $11 for stickers to be delivered to Australia&quot;
+</I>&gt;<i> &gt;   P - the pubkey of the vendor
+</I>&gt;<i> &gt;   sig - some signature
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; With the current SHA256 preimages, you can make sig=(R,s,pre)
+</I>&gt;<i> &gt; where the sig is valid if:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;   s*G = R + H(P,R,m+SHA256(pre))*P
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; If you share R,s,SHA256(pre) beforehand, the payer can tell they'll have
+</I>&gt;<i> &gt; a valid signature if they pay to SHA256(pre). That's a 96B signature,
+</I>&gt;<i> &gt; and it requires &quot;pre&quot; be different for each sale, and needs pre-payment
+</I>&gt;<i> &gt; interactivity to agree on m and communicate R,s back to the payer.
+</I>&gt;<i> For current-style invoices (no payer-supplied data), the payee knows
+</I>&gt;<i> 'm', so no interactivity needed, which is nice.
+</I>
+I'm looking at it as needing interactivity to determine m prior to
+the payment going through -- the payer needs to send through &quot;aj&quot; and
+&quot;Australia&quot; in the example above, before the payee can generate s,R to
+send back, at which point the payer can make the payment knowing they'll
+either get a cryptographic proof of payment or a refund.
+
+&gt;<i> In the payer-supplied data case, I think 'm' should include a signature
+</I>&gt;<i> for a key only the payer knows: this lets them prove *they* made the
+</I>&gt;<i> payment.
+</I>
+I don't object to that, but I think it's unnecessary; as long as there
+was a payment for delivery of the widget to &quot;aj&quot; in &quot;Australia&quot; does it
+matter if the payment was technically made by &quot;aj&quot; by &quot;Visa on behalf
+of aj&quot; or by &quot;Bank of America on behalf of Mastercard on behalf of aj's
+friend who owed him some money&quot; ?
+
+&gt;<i> How does this interact with AMP, however?
+</I>
+The way I see it is they're separate: you have a way of getting the
+preimage back over lightning (which is affected by AMP), and you have a
+way of turning a preimage into a third-party-verifiable PoP (with
+Schnorr or whatever).
+
+(That might not be true if there's a clever way of safely feeding the
+nonce R back, so that you can go straight from a generic offer to an
+accepted payment with proof of payment)
+
+&gt;<i> &gt; With seckp256k1 preimages, it's easy to reduce that to sig=(R,s),
+</I>&gt;<i> &gt; and needing to communicate an R to the payer initially, who can then
+</I>&gt;<i> &gt; calculate S and send &quot;m&quot; along with the payment.
+</I>&gt;<i> OK, I buy that.
+</I>
+Crap, do I need to give you proof of payment for it now? :)
+
+&gt;<i> &gt; Maybe it makes sense to disambiguate the term &quot;invoice&quot; -- when you don't
+</I>&gt;<i> &gt; know who you might be giving the goods/service to, call it an &quot;offer&quot;,
+</I>&gt;<i> &gt; which can be a write-once/accept-by-anyone deal that you just leave on
+</I>&gt;<i> &gt; a webpage or your email signature; but an &quot;invoice&quot; should be specific
+</I>&gt;<i> &gt; to each individual payment, with a &quot;receipt&quot; provided once an invoice
+</I>&gt;<i> &gt; is paid.
+</I>&gt;<i> &quot;offer&quot; is a good name, since I landed on the same one while thinking
+</I>&gt;<i> about this too :)
+</I>
+Yay!
+
+&gt;<i> &gt; It seems to me like there are three levels that could be implemented:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;  - laolu/conner: (&quot;low AMP&quot; ?)
+</I>&gt;<i> &gt;     works with sha256
+</I>&gt;<i> &gt;     some privacy improvement
+</I>&gt;<i> &gt;     loses proof-of-payment
+</I>&gt;<i> &gt;     can't claim unless all payments arrive
+</I>&gt;<i> 
+</I>&gt;<i> Yep.
+</I>&gt;<i> 
+</I>&gt;<i> &gt;  - just send multiple payments with the same hash:
+</I>&gt;<i> &gt;     works with sha256
+</I>&gt;<i> &gt;     privacy not improved much (some intermediary nodes no longer know
+</I>&gt;<i> &gt;       full invoice value)
+</I>&gt;<i> &gt;     can claim partial payments as soon as they arrive
+</I>&gt;<i> &gt;     accepting any partial payment provides proof-of-payment
+</I>&gt;<i> 
+</I>&gt;<i> Interestingly, if vendor takes part payment, rest can be stolen by
+</I>&gt;<i> intermediaries.
+</I>
+Or you could just see a $5 bill, send $0.50 through, and wait to see
+if the take the partial payment immediately before even trying the
+remaining $4.50.
+
+&gt;<i> &gt;  - secp256k1: (&quot;high AMP&quot; ?)
+</I>&gt;<i> &gt;     needs secp256k1 preimages
+</I>&gt;<i> &gt;     works fine with decorrelation improving privacy at every step
+</I>&gt;<i> &gt;     can set it up so can only claim once all partial payments arrive
+</I>&gt;<i> &gt;     accepting partial payment provides proof-of-payment
+</I>&gt;<i> Yes.  Though I'm not sure exactly how this works with your scheme
+</I>&gt;<i> above...
+</I>
+ Vendor -&gt; *:        &quot;I sell widgets for 0.01 BTC, my pubkey is P&quot;
+ Customer -&gt; Vendor: &quot;I want to buy a widget&quot;
+ Vendor -&gt; Customer: &quot;Here's an R value&quot;
+ Customer: calculates S = R + H(P,R,&quot;send $me a widget at $address&quot;)*P
+ Customer -&gt; Vendor: &quot;here's 0.01 BTC for s corresponding to S, my
+                      details are R, $me, $address&quot;
+ Vendor: looks up r for R=r*G, calculates s = r + H(P,R,&quot;send $me a
+         widget at $address&quot;)*p, checks S=s*G
+ Vendor -&gt; Customer: &lt;accepts payment, revealing s&gt;
+
+ Customer -&gt; Court: reveals the invoice (&quot;send $me a widget...&quot;) and the
+                    signature by Vendor's pubkey P, (s,R)
+
+I think the way to do secp256k1 AMP with that is that when sending
+through the payment is for the customer to send three payments to the
+Vendor conditional on preimages for A,B,C calculated as:
+
+   A = S + H(1,secret)*G
+   B = S + H(2,secret)*G
+   C = S + H(3,secret)*G
+
+where &quot;secret&quot; is your xor of info from each of the three message hashes.
+
+&gt;<i> &gt; In theory, both &quot;just send multiple payments&quot; and &quot;secp256k1&quot; could have
+</I>&gt;<i> &gt; splitting and joining at any hop, if we could encode the instructions
+</I>&gt;<i> &gt; on how to do that in the onion message; joining is probably easy, but
+</I>&gt;<i> &gt; splitting seems like it might be hard?
+</I>&gt;<i> I don't think so.  If you can join two payments, it wasn't private?
+</I>
+Sorry, I mean &quot;source-directed splits and joins&quot;, so rather than
+your source routing being a linear &quot;me -&gt; A -&gt; B -&gt; C -&gt; D -&gt; you&quot;,
+you specify a graph: &quot;me -&gt; A -&gt; B,E ; B -&gt; C ; E -&gt; F -&gt; G ; C,G -&gt;
+D -&gt; you&quot; so you tell &quot;A&quot; how to split the payment into two new routes,
+and tell &quot;D&quot; to join two payments and continue it on. The ECC part works
+fine for that, but the onion routed messages seem difficult and probably
+not worth considering for spec v1.1.
+
+&gt;<i> Note: if we need an interaction message for BOLT11 features we want in
+</I>&gt;<i> future[1], then it has the advantage that it decouples the bolt11
+</I>&gt;<i> features from changing preimages to secp256k1.  That makes this question
+</I>&gt;<i> *critical* for the Summit next week.
+</I>&gt;<i> 
+</I>&gt;<i> Thanks!
+</I>&gt;<i> Rusty.
+</I>&gt;<i> 
+</I>&gt;<i> [1] If we're not careful we're going to implement HORNET so we can pass
+</I>&gt;<i> arbitrary messages around, which means we want to start charging for
+</I>&gt;<i> them to prevent spam, which means we reopen the pre-payment debate, and
+</I>&gt;<i> need reliable error messages...
+</I>
+Could leave the interactivity to the &quot;web store&quot; layer, eg have a BOLT
+11 v1.1 &quot;offer&quot; include a url for the website where you go an enter your
+name and address and whatever other info they need, and get a personalised
+BOLT 11 v1.1 &quot;invoice&quot; back with payment-hash/nonce/signature/whatever?
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001495.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+	<LI>Next message: <A HREF="001499.html">[Lightning-dev] BOLT11 In the World of Scriptless Scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1496">[ date ]</a>
+              <a href="thread.html#1496">[ thread ]</a>
+              <a href="subject.html#1496">[ subject ]</a>
+              <a href="author.html#1496">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

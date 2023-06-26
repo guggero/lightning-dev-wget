@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C8736b4k84f.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002550.html">
+   <LINK REL="Next"  HREF="002561.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3C8736b4k84f.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Fri Feb 21 02:05:20 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002550.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+        <LI>Next message: <A HREF="002561.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2558">[ date ]</a>
+              <a href="thread.html#2558">[ thread ]</a>
+              <a href="subject.html#2558">[ subject ]</a>
+              <a href="author.html#2558">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> On Tue, Feb 18, 2020 at 10:23:29AM +0100, Joost Jager wrote:
+</I>&gt;&gt;<i> A different way of mitigating this is to reverse the direction in which the
+</I>&gt;&gt;<i> bond is paid. So instead of paying to offer an htlc, nodes need to pay to
+</I>&gt;&gt;<i> receive an htlc. This sounds counterintuitive, but for the described jamming
+</I>&gt;&gt;<i> attack there is also an attacker node at the end of the route. The attacker
+</I>&gt;&gt;<i> still pays.
+</I>&gt;<i>
+</I>&gt;<i> I think this makes a lot of sense. I think the way it would end up working
+</I>&gt;<i> is that the further the route extends, the greater the payments are, so:
+</I>&gt;<i>
+</I>&gt;<i>   A -&gt; B   : B sends A 1msat per minute
+</I>&gt;<i>   A -&gt; B -&gt; C : C sends B 2msat per minute, B forwards 1msat/min to A
+</I>&gt;<i>   A -&gt; B -&gt; C -&gt; D : D sends C 3 msat, etc
+</I>&gt;<i>   A -&gt; B -&gt; C -&gt; D -&gt; E : E sends D 4 msat, etc
+</I>&gt;<i>
+</I>&gt;<i> so each node is receiving +1 msat/minute, except for the last one, who's
+</I>&gt;<i> paying n msat/minute, where n is the number of hops to have gotten up to
+</I>&gt;<i> the last one. There's the obvious privacy issue there, with fairly
+</I>&gt;<i> obvious ways to fudge around it, I think.
+</I>
+Yes, it needs to scale with distance to work at all.  However, it has
+the same problems with other upfront schemes: how does E know to send
+4msat per minute?
+
+&gt;<i> I think it might make sense for the payments to have a grace period --
+</I>&gt;<i> ie, &quot;if you keep this payment open longer than 20 seconds, you have to
+</I>&gt;<i> start paying me x msat/minute, but if it fulfills or cancels before
+</I>&gt;<i> then, it's all good&quot;.
+</I>
+But whatever the grace period, I can just rely on knowing that B is in
+Australia (with a 1 second HTLC commit time) to make that node bleed
+satoshis.  I can send A-&gt;B-&gt;C, and have C fail the htlc after 19
+seconds for free.  But B has to send 1msat to A.  B can't blame A or C,
+since this attack could come from further away, too.
+
+This attack always seems possible.  Are you supposed to pay immediately
+to fail an HTLC?  That makes for a trivial attack, so I guess not.
+
+And if there is a grace period, I can just gum up the network with lots
+of slow-but-not-slow-enough HTLCs.
+
+&gt;<i> Maybe this also implies a different protocol for HTLC forwarding,
+</I>&gt;<i> something like:
+</I>&gt;<i>
+</I>&gt;<i>   1. A sends the HTLC onion packet to B
+</I>&gt;<i>   2. B decrypts it, makes sure it makes sense
+</I>&gt;<i>   3. B sends a half-signed updated channel state back to A
+</I>&gt;<i>   4. A accepts it, and forwards the other half-signed channel update to B
+</I>&gt;<i>
+</I>&gt;<i> so that at any point before (4) Alice can say &quot;this is taking too long,
+</I>&gt;<i> I'll start losing money&quot; and safely abort the HTLC she was forwarding to
+</I>&gt;<i> Bob to avoid paying fees; while only after (4) can she start the time on
+</I>&gt;<i> expecting Bob to start paying fees that she'll forward back. That means
+</I>&gt;<i> 1.5 round-trips before Bob can really forward the HTLC on to Carol;
+</I>&gt;<i> but maybe it's parallelisable, so Bob/Carol could start at (1) as soon
+</I>&gt;<i> as Alice/Bob has finished (2).
+</I>
+We added a ping-before-commit[1] to avoid the case where B has disconnected
+and we don't know yet; we have to assume an HTLC is stuck once we send
+commitment_signed.  This would be a formalization of that, but I don't
+think it's any better?
+
+There's an old proposal to fast-fail HTLCs: Bob sends an new message &quot;I
+would fail this HTLC once it's committed, here's the error&quot; and if Alice
+gets it before she sends the commitment_signed, she sends a new
+&quot;unadd_htlc&quot; message first.  This theoretically allows Bob to do the
+same: optimistically forward it, and unadd it if Alice doesn't commit
+with it in time.[2]
+
+Cheers,
+Rusty.
+
+[1] Technically, if we haven't seen any traffic from the peer in the
+    last 30 seconds, we send a ping and wait.
+
+[2] This seems like a speedup, but it only is if someone fails the HTLC.
+    We still need to send the commitment_signed back and forth (w/
+    revoke and ack) before committing to it in the next hop.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002550.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+	<LI>Next message: <A HREF="002561.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2558">[ date ]</a>
+              <a href="thread.html#2558">[ thread ]</a>
+              <a href="subject.html#2558">[ subject ]</a>
+              <a href="author.html#2558">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

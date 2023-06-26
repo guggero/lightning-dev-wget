@@ -1,0 +1,145 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Simplified%20%28but%20less%20optimal%29%20HTLC%0A%09Negotiation&In-Reply-To=%3C87k0vrn7lc.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002845.html">
+   <LINK REL="Next"  HREF="002860.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Simplified%20%28but%20less%20optimal%29%20HTLC%0A%09Negotiation&In-Reply-To=%3C87k0vrn7lc.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation">decker.christian at gmail.com
+       </A><BR>
+    <I>Thu Oct 15 09:47:59 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002845.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+        <LI>Next message: <A HREF="002860.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2848">[ date ]</a>
+              <a href="thread.html#2848">[ thread ]</a>
+              <a href="subject.html#2848">[ subject ]</a>
+              <a href="author.html#2848">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+&gt;<i> And you don't get the benefit of the turn-taking approach, which is that
+</I>&gt;<i> you can have a known state for fee changes.  Even if you change it to
+</I>&gt;<i> have opener always the leader, it still has to handle the case where
+</I>&gt;<i> incoming changes are not allowed under the new fee regime (and similar
+</I>&gt;<i> issues for other dynamic updates).
+</I>
+Good point, I hadn't considered that a change from one side might become
+invalid due to a change from the other side. I think however this can only
+affect changes that result in other changes no longer being applicable,
+e.g., changing the number of HTLCs you'll allow on a channel making the
+HTLC we just added and whose update_add is still in flight invalid.
+
+I don't think fee changes are impacted here, since the non-leader only
+applies the change to its commitment once it gets back its own change.
+The leader will have inserted your update_add into its stream after the
+fee update, and so you'll first apply the fee update, and then use the
+correct fee to add the HTLC to your commitment, resulting in the same
+state.
+
+The remaining edgecases where changes can become invalid if they are in
+flight, can be addressed by bouncing the change through the non-leader,
+telling him that &quot;hey, I'd like to propose this change, if you're good
+with it send it back to me and I'll add it to my stream&quot;. This can be
+seen as draining the queue of in-flight changes, however the non-leader
+may pipeline its own changes after it and take the updated parameters
+into consideration. Think of it as a two-phase commit, alerting the peer
+with a proposal, before committing it by adding it to the stream. It
+adds latency (about 1/2RTT over the token-passing approach since we can
+emulate it with the token-passing approach) but these synchronization
+points are rare and not on the critical path when forwarding payments.
+
+&gt;&gt;<i> The downside is that we add a constant overhead to one side's
+</I>&gt;&gt;<i> operations, but since we pipeline changes, and are mostly synchronous
+</I>&gt;&gt;<i> during the signing of the commitment tx today anyway, this comes out to
+</I>&gt;&gt;<i> 1 RTT for each commitment.
+</I>&gt;<i>
+</I>&gt;<i> Yeah, it adds 1RTT to every hop on the network, vs my proposal which
+</I>&gt;<i> adds just over 1/2 RTT on average.
+</I>
+Doesn't that assume a change of turns while the HTLC was in-flight?
+Adding and resolving an HTLC requires one change coming from either side
+of the channel, implying that a turn change must have been performed,
+which itself takes 1 RTT. Thus to add an remove an HTLC we add at least
+1RTT for each hop.
+
+With the leader-based approach, we add 1RTT latency to the updates from
+one side, but the other never has to wait for the token, resulting in
+1/2RTT per direction as well, since messages are well-balanced.
+
+&gt;<i> Yes, but it alternates because that's optimal for a non-busy channel
+</I>&gt;<i> (since it's usually &quot;Alice adds htlc, Bob completes the htlc&quot;).
+</I>
+What's bothering me more about the turn-based approach is that while the
+token is in flight, neither endpoint can make any progress, since the
+one reliquishing the token promised not to say anything and the other
+one hasn't gotten the token yet. This might result in rather a lot of
+dead-air if both sides have a constant stream of changes to add. So we'd
+likely have to add a timeout to defer giving up the token, to counter
+dead-air, further adding delay to the changes from the other end, and
+adding yet another parameter.
+
+This is in stark contrast to the leader-based approach, where both
+parties can just keep queuing updates without silent times to
+transferring the token from one end to the other.
+
+Cheers,
+Christian
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002845.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+	<LI>Next message: <A HREF="002860.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2848">[ date ]</a>
+              <a href="thread.html#2848">[ thread ]</a>
+              <a href="subject.html#2848">[ subject ]</a>
+              <a href="author.html#2848">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

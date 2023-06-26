@@ -1,0 +1,350 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Factory-Optimized Protocols For Lightning
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Factory-Optimized%20Protocols%20For%20Lightning&In-Reply-To=%3Cr_CKkI_DC0Nu0xANAgtbInuk4HmYEAvubhWbspvM457dWzHCXwI4wQZ-mWTxqKmz7IQmJ6DxOwZxENlUjkN4vZ7AHm6ScWNakC-lMiCPOP8%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003787.html">
+   <LINK REL="Next"  HREF="003808.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Factory-Optimized Protocols For Lightning</H1>
+    <B>jlspc</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Factory-Optimized%20Protocols%20For%20Lightning&In-Reply-To=%3Cr_CKkI_DC0Nu0xANAgtbInuk4HmYEAvubhWbspvM457dWzHCXwI4wQZ-mWTxqKmz7IQmJ6DxOwZxENlUjkN4vZ7AHm6ScWNakC-lMiCPOP8%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Factory-Optimized Protocols For Lightning">jlspc at protonmail.com
+       </A><BR>
+    <I>Fri Dec  2 20:18:25 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003787.html">[Lightning-dev] Jamming against Channel Jamming
+</A></li>
+        <LI>Next message: <A HREF="003808.html">[Lightning-dev] Factory-Optimized Protocols For Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3782">[ date ]</a>
+              <a href="thread.html#3782">[ thread ]</a>
+              <a href="subject.html#3782">[ subject ]</a>
+              <a href="author.html#3782">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>TL;DR
+=====
+* This post presents a channel protocol that's optimized for use within channel factories.
+* The protocol allows HTLCs to be resolved on-chain:
+* without making the expiry of the HTLC depend on the time to close the factory, and
+* without closing the factory.
+* The key ides is the use of separate value and control transactions like those used in the Tunable Penalties protocol.
+* A version of the protocol that provides watchtower-freedom and one-shot receives for casual users is also given.
+
+Overview
+========
+
+While the Lightning Network greatly improves Bitcoin's scalability, factories that allow multiple two-party channels to be created and closed with a small number of on-chain transactions are essential if Bitcoin is to be widely used in a trust-free manner [2].
+Unfortunately, the existing channel protocols aren't optimized for use within factories, thus limiting the efficiency of both the channels and the factories.
+
+The Lightning Network uses Hash Time-Locked Contracts (HTLCs) to implement payments across multiple channels.
+If one of the parties to an HTLC is unresponsive, the other party must resolve the HTLC on-chain.
+This creates two problems.
+
+First, the HTLC's expiry must be delayed by the time required to close the factory and put the channel containing the HTLC on-chain.
+The most efficient known factory [2] can be closed in O(log S) time using O(log S) on-chain transactions, assuming the factory supports S states.
+If all the hops in a multi-hop payment use channels that are implemented with factories, the sum of the delays for closing all of those factories must be included in the HTLC expiry of the first hop.
+As a result, this delay could become very large, thus leading to inefficient use of the channels' capital and long waits to obtain payment receipts.
+
+Second, the requirement to close a factory due to the need to resolve an HTLC on-chain means that a single unresponsive party can force the closure of an entire factory, thus limiting the factory's ability to scale Bitcoin.
+
+This post presents factory-optimized channel protocols that solve both of these problems.
+The first protocol, called the Partially-Factory-Optimized (PFO) protocol, solves the first problem, while the second protocol, called the Fully-Factory-Optimized (FFO) protocol, solves both problems.
+Both protocols are slight modifications of the Tunable-Penalties (TP) protocol [5] and they share many of its properties, including:
+* tunable penalties for putting old transactions on-chain, and
+* efficient watchtowers with O(log S) storage for supporting O(S) channel states.
+
+In addition, a version of the FFO protocol, called the Fully-Factory-Optimized-Watchtower-Free (FFO-WF) protocol is presented that supports watchtower-freedom and one-shot receives for casual users [4].
+No change to the underlying Bitcoin protocol is required.
+
+A paper with a more complete description of the protocols, including figures, values for the timing parameters, and proofs of correctness, is available [6].
+
+The Partially-Factory-Optimized (PFO) Protocol
+==============================================
+
+The PFO protocol is a slight modification of the TP protocol [5].
+In the TP protocol, each party has their own on-chain Individual transaction, the output of which they spend with their State transaction.
+This State transaction is a control transaction that establishes the channel's state and has an HTLC control output corresponding to each HTLC outstanding in the channel in that state.
+Each HTLC control output is used to resolve an HTLC by spending the output with either an HTLC-success or an HTLC-timeout transaction.
+Critically, the State, HTLC-success and HTLC-timeout transactions can be put on-chain without spending any of the channel's funds.
+Therefore, the TP protocol almost solves the problem of resolving a channel's HTLCs without waiting for the Funding transaction to be put on-chain.
+
+Unfortunately, there's one problem in trying to use the TP protocol to resolve the HTLCs of a factory-created channel before the factory is closed and its Funding transaction is on-chain.
+The correctness of the TP protocol depends on the ability to put the current Commitment transaction (spending the output of the channel's Funding transaction) on-chain as soon as possible once the relative delay between it and its corresponding State transaction has been met.
+This relative delay is set to tsdAB, which is the maximum of the two parties' to_self_delay parameters.
+The problem is that the latency to close the factory and put the channel's Funding transaction on-chain could exceed tsdAB.
+As a result, the TP protocol can't be used in such a factory.
+
+The PFO protocol fixes this by simply setting the relative delay between the State transaction and its associated Commitment transaction to the maximum of the factory-close latency and tsdAB.
+
+The Fully-Factory-Optimized (FFO) Protocol
+==========================================
+
+While the PFO protocol separates the latency to close the factory from the setting of the HTLCs' expiries, it still requires that the factory be closed in order to guarantee that the HTLCs have been resolved correctly.
+
+The FFO protocol makes several changes to the PFO protocol in order to resolve HTLCs without requiring the closure of the factory.
+Consider an HTLC offered by Alice to Bob.
+
+First, in the FFO protocol only Bob's State transaction has an HTLC control output that determines the resolution of this HTLC, regardless of which party's Commitment transaction is put on-chain.
+As a result, there's no race to put one's Commitment transaction on-chain, and thus no need to close the factory in order to resolve HTLCs.
+As another result, it eliminates the possibility of this HTLC being resolved with Alice's State and associated HTLC-timeout transactions being put on-chain late relative to the HTLC's expiry.
+
+Second, because the HTLC is always resolved based on an HTLC control output in Bob's State transaction, Bob has to be incentivized to put his correct State transaction on-chain (or else he could prevent the HTLC from timing out by not putting his State transaction on-chain).
+This is solved by requiring Bob's State and HTLC-success transactions in order to pay the HTLC, and to refund the HTLC to Alice (after a suitable relative delay) if Bob's State and HTLC-success transactions are not on-chain.
+
+Third, Bob is prevented from putting his State transaction on-chain late relative to the HTLC's expiry by adding a relative delay of tsdA (Alice's to_self_delay parameter) before he can put his HTLC-success transaction on-chain.
+This guarantees that Alice will have time to respond with a conflicting transaction that prevents Bob's HTLC-success transaction from being put on-chain late relative to the HTLC's expiry.
+
+Finally, if the HTLC's secret were not revealed until the HTLC-success transaction is put on-chain, the worst-case latency for obtaining a secret from a successful HTLC would depend on tsdA, which would greatly increase Bob's cltv_expiry_delta parameter, in turn increasing the cost of capital reserved for the HTLC and the delay for obtaining a payment receipt.
+This problem is solved by introducing a new transaction, called an HTLC-kickoff transaction, that spends the HTLC control output in Bob's State transaction and reveals the HTLC's secret, with the HTLC-success transaction spending the HTLC-kickoff transaction's output.
+Thus,the revelation of the HTLC's secret is performed first, followed by the resolution of the HTLC approximately tsdA later.
+
+The FFO protocol is shown below:
+
++-+ AB +----+ A
+|<i>F|----+-----------------------------| CC |----
+</I>+-+ | | |
+. | | B
+. | |----
+. +----+
+|<i> +----+ A
+</I>+-----------------------------|C_Ai|----
+|<i> | |
+</I>|<i> | | B
+</I>|<i> | |----
+</I>|<i> tsdB &amp; A | | tsdAB &amp; A
+</I>|<i> +---------------| |-----+------------
+</I>|<i> | +----+ |
+</I>|<i> | | AB +-----+ B
+</I>|<i> | +--------------|Hp_Bi|----
+</I>|<i> | | |
+</I>|<i> | +--| |
+</I>|<i> | | +-----+
+</I>|<i> | +----+ A |
+</I>+-----------------------------|C_Bi|---- |
+|<i> | | | |
+</I>. | | | B |
+. | | |---- |
+. | tsdA &amp; B | | tsdAB &amp; A |
+|<i> +-----------------| |-----+--------------
+</I>V | | +----+ | |
+|<i> | | AB | +-----+ B
+</I>+----+ A +-----+ | | pckeyAi +--------------|Hp_Bi|----
+|<i>In_A|----|St_Ai|----+---------- | | |
+</I>+----+ | | | +--| |
+|<i> | | | +-----+
+</I>|<i> | | |
+</I>+-----+ | |
+|<i> (eAB+tsdA) &amp; A |
+</I>+----+ B +-----+ | pckeyBi +----------------- |
+|<i>In_B|----|St_Bi|--+------------ | |
+</I>+----+ | | | |
+|<i> | hp(X) &amp; B +-----+ | tsdA &amp; B +-----+ B |
+</I>|<i> |------------|Hk_Bi|-+-----------|Hs_Bi|----+
+</I>+-----+ +-----+ +-----+
+
+where:
+F is the Funding transaction,
+CC is the Cooperative Close transaction,
+In_{A|B} is {Alice's|Bob's} Individual transaction,
+St_{A|B}i is {Alice's|Bob's} State transaction for state i,
+C_{A|B}i is {Alice's|Bob's} Commitment transaction for state i,
+Hk_Bi is Bob's HTLC-kickoff transaction for state i,
+Hs_Bi is Bob's HTLC-success transaction for state i, and
+Hp_Bi is Bob's HTLC-payment transaction for state i.
+
+Requirements for output cases are as follows:
+A: Alice's signature,
+B: Bob's signature,
+AB: Alice's and Bob's signatures,
+pckey{A|B}i: a signature using a per-commitment key for revoking
+{Alice's|Bob's} state i transaction,
+hp(X): the hash preimage of X,
+tsd{A|B}: a relative delay equal to {Alice's|Bob's} to_self_delay
+parameter,
+tsdAB: a relative delay equal to max(tsdA, tsdB), and
+eAB: an absolute timelock equal to the expiry of the HTLC in this hop.
+
+Extensions
+==========
+
+If a party accidentally puts on old State transaction on-chain, they only lose the penalty amount that is the output of that transaction (and potentially some of the minimal values of that transaction's HTLC control outputs).
+However, once their State transaction has been revoked, they've lost the ability to force a unilateral close of the channel after the Funding transaction is on-chain.
+To address this, it's possible to add a Trigger [2] transaction that spends the output of the Funding transaction.
+After the Trigger transaction has been on-chain for 3tsdAB (in order to allow the other party to put their Commitment transaction on-chain), the Decker-Wattenhofer protocol [3] can be used to settle the channel.
+
+The FFO protocol shows how a channel's HTLCs can be resolved on-chain without putting its Funding transaction on-chain, and thus without closing the channel factory.
+The party that went on-chain can settle the channel and its HTLCs correctly, even if their partner is malicious.
+However, the most likely reason a party goes on-chain is that their partner is unintentionally unavailable, rather than malicious.
+When the unavailable partner becomes available again, the two parties could choose to re-start operating the channel, and that's possible because the channel's funds haven't been distributed.
+In particular, the party that went on-chain can use the unspent first output of their State transaction to play the role of their Individiual transaction's output as they resume operating the channel.
+This output has slightly less value, as it's sized for the penalty amount and doesn't have additional funds for HTLC control outputs, but it seems reasonable to reduce the penalty amount that they will have to pay, given that it was the other party's unavailability that forced them to go on-chain.
+
+Watchtower-Freedom And One-Shot Receives For Casual Users
+=========================================================
+
+The WF protocol modified the current Lightning protocol to allow casual users to operate without watchtowers and to perform one-shot receives.
+A similar approach can be used to modify the FFO protocol to achieve the same goals, resulting in the FFO-WF protocol.
+
+Consider a casual user Alice and her dedicated channel partner Bob.
+Like the WF protocol, the FFO-WF protocol adds a relative delay before Alice can time out an HTLC offered to Bob, allowing Bob to stay off-chain after the HTLC's expiry, thus tolerating Alice's intentional unavailability.
+As in the FFO protocol, in the FFO-WF protocol only one of the two parties' State transactions has an HTLC control output for each HTLC that is outstanding.
+However, unlike the FFO protocol, Alice's State transaction has the HTLC control outputs for all HTLCs, even those offered to Bob.
+The control of the HTLCs offered to Bob is moved to Alice's State transaction in order to allow Alice to force Bob to produce a receipt (or to not receive payment) by putting her State transaction on-chain.
+While this solves the problem of forcing receipts, it creates a risk that Alice will never put her State transaction on-chain, thus preventing Bob from receiving payment for HTLCs offered to him.
+This risk is solved by modifying Bob's Commitment transaction to ignore the HTLC control results and to pay all HTLC amounts (both those offered by him and those offered to him) to Bob, but delaying Bob's State and Commitment transactions enough that Alice can always get her State and Commitment transactions on-chain, thus resolving the HTLCs correctly (as she is incentivized to do, given Bob's Commitment transaction).
+
+In order to support one-shot receives for Alice, she is able to submit her State and HTLC-success transactions as a single package, without any relative delay between them.
+This creates a risk that she will submit them well after the HTLC's expiry, thus allowing her to receive payment without meeting the terms of the HTLC.
+This risk is solved by requiring Alice's HTLC-success transaction to also spend a new control output in Bob's Individual transaction, and allowing Bob to spend that new control output with an HTLC-timeout transaction after the HTLC's expiry (thus blocking Alice's HTLC-success transaction).
+This design creates another issue, namely the possibility of Bob using an old HTLC-timeout transaction (or any other transaction) to spend the new control output and block Alice's HTLC-success transaction before the HTLC's expiry.
+This final issue is solved by having each HTLC output in Alice's Commitment transaction default (after a sufficient relative delay) to paying her for the HTLC offered to her unless Bob's corresponding HTLC-timeout transaction is on-chain.
+
+The FFO-WF protocol, with a single HTLC outstanding from dedicated user Bob to casual user Alice, is shown below:
+
++-+ AB +----+ A
+|<i>F|----+-----------------------------| CC |----
+</I>+-+ | | |
+. | | B
+. | |----
+. +----+
+|<i> tsdB &amp; AB +----+ A
+</I>+-----------------------------|C_Ai|----
+|<i> | |
+</I>|<i> | | B
+</I>|<i> | |----
+</I>|<i> tsdB &amp; A | | tsdAB &amp; A
+</I>|<i> +-----------------| |-----+------------
+</I>|<i> | +----+ |
+</I>|<i> | | AB +-----+ B
+</I>|<i> | +-----------|Hr_Bi|----
+</I>|<i> | | |
+</I>|<i> | B | |
+</I>|<i> | +--| |
+</I>|<i> | | +-----+
+</I>|<i> tA+B &amp; AB | +----+ A |
+</I>+-----------------------------|C_Bi|---- |
+|<i> | | | |
+</I>. | | | B |
+. | | |---- |
+. | tA+B &amp; B | | |
+|<i> | +-------------| | |
+</I>V | | +----+ |
+|<i> | |
+</I>+----+ A +-----+ | | pckeyAi |
+|<i>In_A|----|St_Ai|--+-------------- |
+</I>+----+ | | | |
+|<i> | | hp(X) &amp; A +-----+ A |
+</I>|<i> | ---------------------|Hs_Ai|---- |
+</I>+-----+ | | | |
+|<i> B | | |
+</I>|<i> +--| | |
+</I>|<i> | +-----+ |
+</I>+----+ (Li)&amp;B +-----+ | pckeyBi | |
+|<i>In_B|---------|St_Bi|-+---------- | |
+</I>|<i> | +-----+ | |
+</I>|<i> | | (eAB) &amp; B +-----+ |
+</I>|<i> |------------------------------+------------|Ht_Bi|-+
+</I>+----+ +-----+
+
+where notation matches the figure above, plus:
+Hs_Ai is Alice's HTLC-success transaction for state i,
+Ht_Bi is Bob's HTLC-timeout transaction for state i,
+Hr_Bi is Bob's HTLC-refund transaction for state i,
+tA+B equals tsdA + tsdB, and
+Li is an absolute locktime that is tsdA in the future when state i is
+created.
+
+Related Work
+============
+
+The protocols presented here are designed to make efficient use of channel factories for Lightning.
+The concept of channel factories and the most efficient published protocol for a channel factory were created by Burchert, Decker and Wattenhofer [2].
+
+Towns proposed adding a new opcode to Bitcoin, called TAPLEAF_UPDATE_VERIFY (TLUV), that would support (among other things) the ability to remove one party from a CoinPool without having to close the CoinPool [7], and ZmnSCPxj noted that this opcode could also be used to remove one channel from a factory without closing the factory [8].
+Those proposals differ from the protocols presented here in that they require a change to Bitcoin.
+
+The protocols presented here use HTLC-timeout and HTLC-success transactions to resolve HTLCs before the channel's Funding transaction has been put on-chain, thus reducing the expiry of those HTLCs.
+This idea is analogous to, and inspired by, the Lightning protocol's use of HTLC-timeout and HTLC-success transactions to resolve HTLCs before their associated Commitment transaction has been verified to be unrevoked [1].
+
+The PFO, FFO and FFO-WF protocols are based on the TP protocol presented by Law [5].
+The techniques for supporting watchtower-freedom and one-shot receives in the FFO-WF protocol are based on those presented by Law in [4] and [5].
+
+Conclusions
+===========
+
+This post presents channel protocols that are optimized for use within channel factories.
+The protocols make the resolution of HTLCs in the channels independent of the latency to close the channel factory.
+The FFO and FFO-WF protocols also allows HTLCs to be resolved on-chain without closing the channel factory.
+
+If the FFO protocol is used in channels owned by pairs of dedicated users and the FFO-WF protocol is used in channels with a casual user:
+* casual users do not require watchtowers,
+* casual users can use one-shot receives,
+* dedicated users can use watchtowers with logarithmic storage,
+* all users can have tunable penalties,
+* all channels can have HTLCs with expiries that are independent of the latency of closing the factory that created them, and
+* all channels can resolve their HTLCs without closing the factories that created them.
+
+It's hoped that these factory-optimized protocols will allow channel factories to become commonly-used, thus improving Bitcoin's scalability.
+
+Regards,
+John
+
+References
+==========
+
+[1] BOLT specifications, available at <A HREF="https://github.com/lightningnetwork/lightning-rfc.">https://github.com/lightningnetwork/lightning-rfc.</A>
+[2] Burchert, Decker and Wattenhofer, &quot;Scalable Funding of Bitcoin Micropayment Channel Networks&quot;, available at <A HREF="http://dx.doi.org/10.1098/rsos.180089.">http://dx.doi.org/10.1098/rsos.180089.</A>
+[3] Decker and Wattenhofer, &quot;A Fast and Scalable Payment Network with Bitcoin Duplex Micropayment Channels&quot;, available at <A HREF="https://tik-old.ee.ethz.ch/file/716b955c130e6c703fac336ea17b1670/duplex-micropayment-channels.pdf.">https://tik-old.ee.ethz.ch/file/716b955c130e6c703fac336ea17b1670/duplex-micropayment-channels.pdf.</A>
+[4] Law, &quot;Watchtower-Free Lightning Channels For Casual Users&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-watchtower-free.">https://github.com/JohnLaw2/ln-watchtower-free.</A>
+[5] Law, &quot;Lightning Channels With Tunable Penalties&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-tunable-penalties.">https://github.com/JohnLaw2/ln-tunable-penalties.</A>
+[6] Law, &quot;Factory-Optimized Channel Protocols For Lightning&quot;, available at <A HREF="https://github.com/JohnLaw2/ln-factory-optimized.">https://github.com/JohnLaw2/ln-factory-optimized.</A>
+[7] Towns, &quot;TAPLEAF_UPDATE_VERIFY covenant opcode&quot;, available at <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-September/019419.html.">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2021-September/019419.html.</A>
+[8] ZmnSCPxj, &quot;Channel Eviction From Channel Factories By New Covenant Operations&quot;, available at <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-February/003479.html.">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2022-February/003479.html.</A>
+
+Sent with [Proton Mail](<A HREF="https://proton.me/">https://proton.me/</A>) secure email.
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221202/9a91c6d0/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20221202/9a91c6d0/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003787.html">[Lightning-dev] Jamming against Channel Jamming
+</A></li>
+	<LI>Next message: <A HREF="003808.html">[Lightning-dev] Factory-Optimized Protocols For Lightning
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3782">[ date ]</a>
+              <a href="thread.html#3782">[ thread ]</a>
+              <a href="subject.html#3782">[ subject ]</a>
+              <a href="author.html#3782">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

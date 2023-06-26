@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Better privacy with SNARKs
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Better%20privacy%20with%20SNARKs&In-Reply-To=%3C20151117211436.GA17583%40debian%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="000314.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Better privacy with SNARKs</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Better%20privacy%20with%20SNARKs&In-Reply-To=%3C20151117211436.GA17583%40debian%3E"
+       TITLE="[Lightning-dev] Better privacy with SNARKs">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Nov 17 21:14:36 UTC 2015</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="000314.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#309">[ date ]</a>
+              <a href="thread.html#309">[ thread ]</a>
+              <a href="subject.html#309">[ subject ]</a>
+              <a href="author.html#309">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+An obvious privacy limitation with lightning is that even with onion
+routing, differents hops can be associated as being part of the same
+transaction due to sharing a common R value. So if you see a HTLC from
+Alice to Bob, paying $5 to Bob on receipt of R where SHA(R)=12345..;
+and you see another HTLC from Carol to Dave, paying $4.95 to Bob on
+receipt of R under the same condition, SHA(R)=12345..., then you know
+it's part of the same transaction.
+
+If you could change R at each step in the route, this would go away,
+improving payment anonymity and making it harder to attack the system in
+general.
+
+That's hard, because as a forwarding node, if you receive a HTLC payable
+on R1, then to send a HTLC payable on R2, you need to be able to
+calculate R1 from R2 or you'll be out of pocket. But you also can't be
+able to calculate R1 *without* R2, or you could just rip off whoever's
+making the payment. And, of course you have to know SHA(R2) to forward the
+payment at all. And if you only know SHA(R1) and SHA(R2) it's hard to
+say anything at all about R1 and R2 because cryptographic hash functions
+are designed to make any structural relationships go away.
+
+BUT! I think the magic of SNARKs [0] lets you do this!
+
+With a SNARK, you can &quot;prove&quot; that you have some secrets (ie, R1 and R2)
+that satisfy some programmable condition (ie, SHA(R1)=H1 and SHA(R2)=H2
+and R1=R2 XOR X), based on public inputs (H1, H2 and X), without revealing
+those secrets.
+
+I think that's pretty safe, because if you receive an HTLC asking for a
+preimage for H1, along with instructions in the onion saying ask Bob for
+a preimage for H2, and here's X and a proof, then either:
+
+ - your forwarded HTLC will fail, and everything's fine
+
+ - you'll receive R2, calculate R1=R2 XOR X and see SHA(R1)=H1 as
+   expected, and everything's fine
+
+ - you'll receive R2, calculate R1=R2 XOR X and see SHA(R1) != H1,
+   which is only possible if the cryptography behind SNARKs are broken
+
+ - you'll receive RX, such that H2=SHA(RX) but RX being too
+   long or too short. If SNARKs aren't broken, this means that you know
+   R2alt and someone else knows R2 that are different but hash to the
+   same value, meaning SHA has been broken.
+
+It seems like there are research-level tools out there that actually
+make this practical to try out. I've had a go at implementing this using
+snarkfront [1]. Using it looks like:
+
+1) initial setup of proof/verification keys
+
+ $ ./test_lightning -m keygen &gt; keygen.txt  # global setup
+
+2) generate a proof, using a 32 byte secret, and XOR key (64 hex digits)
+
+ $ SECRET=&quot;the quick brown fox jumps lazily&quot;
+ $ XOR=$(echo &quot;she sells sea shells&quot; | sha256sum | head -c64)
+ $ cat keygen.txt |
+     ./test_lightning -m proof -s &quot;$SECRET&quot; -x &quot;$XOR&quot; &gt; proof.txt
+   m: proof.
+   f: .
+   b: .
+   x: 5677d356ccd6ff29b296a697791d109a1703557ecbbcf52b4f38d4b680858912.
+   F: 74686520717569636b2062726f776e20666f78206a756d7073206c617a696c79
+   B: 221fb676bda3964ad9b6c4e5166a7eba716c2d5ea1c9985b3c18b8d7faece56b
+   #F: ae4d48f71fdb6f74149fab591e88f2cc07d4e696968def1aa7ca1e07096c5b85
+   #B: 166e4f9b8ec5895e870f0f0508327d73ba9ad9af4e9841599bafb1bf55c8a245
+   generate proof
+   (6) ..................................................
+   (5) ..................................................
+   (4) ..................................................
+   (3) ..................................................
+   (2) ..................................................
+   (1) ..................................................
+
+3) Verify the proof:
+
+ $ F=ae4d48f71fdb6f74149fab591e88f2cc07d4e696968def1aa7ca1e07096c5b85
+ $ B=166e4f9b8ec5895e870f0f0508327d73ba9ad9af4e9841599bafb1bf55c8a245
+ $ cat keygen.txt proof.txt |
+     ./test_lightning -m verify -h &quot;$F&quot; -b &quot;$B&quot; -x &quot;$XOR&quot;
+   m: verify.
+   f: ae4d48f71fdb6f74149fab591e88f2cc07d4e696968def1aa7ca1e07096c5b85.
+   b: 166e4f9b8ec5895e870f0f0508327d73ba9ad9af4e9841599bafb1bf55c8a245.
+   x: 5677d356ccd6ff29b296a697791d109a1703557ecbbcf52b4f38d4b680858912.
+   verify proof (6) (5) (4) (3) (2) (1) 
+   proof is verified
+
+4) Verify it doesn't report a valid proof with different inputs:
+
+  $ cat keygen.txt proof.txt |
+     ./test_lightning -m verify -h &quot;$B&quot; -b &quot;$F&quot; -x &quot;$XOR&quot;
+   m: verify.
+   f: 166e4f9b8ec5895e870f0f0508327d73ba9ad9af4e9841599bafb1bf55c8a245.
+   b: ae4d48f71fdb6f74149fab591e88f2cc07d4e696968def1aa7ca1e07096c5b85.
+   x: 5677d356ccd6ff29b296a697791d109a1703557ecbbcf52b4f38d4b680858912.
+   verify proof (6) (5) (4) (3) (2)
+   proof is rejected
+
+Some results:
+
+ * the proof/verification key data take up about 100MB -- in theory
+   one set of this data can be used by everyone; the only catch is
+   that everyone has to trust that nobody has kept the original random
+   numbers used to generate it.
+
+ * proof/verification key data takes about a minute to generate,
+   and about 650MB of RAM.
+
+ * the proof data itself (which would need to be sent to the node that's
+   going to switch R's) is just 864 bytes; so it'd use up about 5 hops
+   worth of onion routing at 192B per hop -- in a 4096 byte packet eg,
+   you could have four hops, changing R each time; or you could have 9
+   hops, changing R only three times.
+
+ * generating the proof data for a given R1,X pair takes about 10
+   seconds, and 260MB of RAM
+
+ * verifying the proof is quick-ish -- it takes 0.5s on my laptop,
+   and uses about 150MB of RAM.
+
+For comparison, that last point makes a SNARK verification 500+ times
+more expensive than an ECDH operation. If I got my maths right, you
+can translate 3c for a linode CPU-hour into 2.5 satoshi for a linode
+CPU-second (at $338/BTC), so you're probably looking at a minimum fee
+of a few satoshi per SNARK verification, but that's still pretty okay
+for transactions of 500 satoshi or more, ie anything more than about a
+fifth of a US cent.
+
+The 10s proof generation time is probably more of a limitation -- though
+you could generate them in advance easily enough and just store them until
+you need to use them, which would avoid lag being a problem at least. But
+even then it's still essentially adding up to 30c of additional costs to
+your transaction (ie 10s cpu time valued at up to 3c/s), which probably
+isn't worthwhile for transactions smaller than a dollar or two.
+
+A drawback is that you'd either (a) have to do all this on the merchant's
+side (not just sending SHA(R) to whoever wants to pay you, but sending
+SHA(R1), SHA(R2), SHA(R3), SHA(R4), X12, X23, X34, and three proofs,
+which would be pretty painful; or (b) you'd have to generate all the
+R secrets as a consumer, and you wouldn't get to use the fact that you
+know R as evidence that you paid the merchant.
+
+Anyway, it's obviously not ready for prime time today: SNARKs are still
+pretty new as a concept; I'm definitely not familiar enough with SNARK
+theory to be sure I'm not misusing the concept somehow; snarkfront may not
+have implemented the theory fully correctly; and I might not have captured
+everything I needed to in order for my &quot;proof&quot; to actually say what I
+want it to. So not a great idea to use this to protect real money today.
+
+But still, this seems like it's not all /that/ far from being practical,
+and if the crypto's not fundamentally broken, seems like it goes a long
+way to filling in the biggest privacy hole in lightning today [3]...
+
+Code is at <A HREF="https://github.com/ajtowns/snarkfront/">https://github.com/ajtowns/snarkfront/</A> or more directly at:
+<A HREF="https://github.com/ajtowns/snarkfront/blob/lightning-sha/test_lightning.cpp">https://github.com/ajtowns/snarkfront/blob/lightning-sha/test_lightning.cpp</A>
+
+Cheers,
+aj
+
+[0] <A HREF="https://tahoe-lafs.org/trac/tahoe-lafs/wiki/SNARKs">https://tahoe-lafs.org/trac/tahoe-lafs/wiki/SNARKs</A>
+
+[1] <A HREF="https://github.com/jancarlsson/snarkfront">https://github.com/jancarlsson/snarkfront</A>
+
+[2] This would also improve privacy/anonymity for other applications of
+    HTLCs, such as atomic swaps across chains:
+
+     1 bitcoin, payable on R1 + Alice's sig or timeout + Bob's sig
+     100 litecoin, payable on R2 + Robert's sig or timeout + Ally's sig
+
+    Alice and Bob communicate privately, agreeing to trade 1 BTC for 100
+    litecoin and revealing their aliases Robert and Ally; Alice generates
+    R1, R2, and reveals SHA(R1), SHA(R2), R1^R2 and the SNARK proof and
+    publishes the litecoin payment. Bob verifies the proof, and publishes
+    the bitcoin payment. Alice claims the bitcoin payment, revealing R1;
+    Bob calculates R2 and claims the litecoin payment. The swap can take
+    place trustlessly because Bob knows the only way Alice can claim his
+    bitcoin is by revealing enough info so he can claim the corresponding
+    litecoin. But there isn't any on-chain information linking the two
+    transactions, because R1 and R2 are independent (and could even be
+    using different hash functions as well as different preimages).
+    After the funds have been claimed, the private communication is
+    also completely deniable, since anyone could generate R1^R2 and a
+    corresponding SNARK proof just using the info on the blockchain.
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="000314.html">[Lightning-dev] Better privacy with SNARKs
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#309">[ date ]</a>
+              <a href="thread.html#309">[ thread ]</a>
+              <a href="subject.html#309">[ subject ]</a>
+              <a href="author.html#309">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

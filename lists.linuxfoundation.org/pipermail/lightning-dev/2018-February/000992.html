@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improving the initial gossip sync
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAL3HpbfXeYN-rWYKNEvKQHdkbh9srB8aYj75pHLWe9Pydhf9tw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000989.html">
+   <LINK REL="Next"  HREF="001000.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improving the initial gossip sync</H1>
+    <B>Fabrice Drouin</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improving%20the%20initial%20gossip%20sync&In-Reply-To=%3CCAL3HpbfXeYN-rWYKNEvKQHdkbh9srB8aYj75pHLWe9Pydhf9tw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improving the initial gossip sync">fabrice.drouin at acinq.fr
+       </A><BR>
+    <I>Mon Feb  5 15:08:22 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000989.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+        <LI>Next message: <A HREF="001000.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#992">[ date ]</a>
+              <a href="thread.html#992">[ thread ]</a>
+              <a href="subject.html#992">[ subject ]</a>
+              <a href="author.html#992">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi,
+
+On 5 February 2018 at 14:02, Christian Decker
+&lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt; wrote:
+&gt;<i> Hi everyone
+</I>&gt;<i>
+</I>&gt;<i> The feature bit is even, meaning that it is required from the peer,
+</I>&gt;<i> since we extend the `init` message itself, and a peer that does not
+</I>&gt;<i> support this feature would be unable to parse any future extensions to
+</I>&gt;<i> the `init` message. Alternatively we could create a new
+</I>&gt;<i> `set_gossip_timestamp` message that is only sent if both endpoints
+</I>&gt;<i> support this proposal, but that could result in duplicate messages being
+</I>&gt;<i> delivered between the `init` and the `set_gossip_timestamp` message and
+</I>&gt;<i> it'd require additional messages.
+</I>
+We chose the other aproach and propose to use an optional feature
+
+&gt;<i> The reason I'm using timestamp and not the blockheight in the short
+</I>&gt;<i> channel ID is that we already use the timestamp for pruning. In the
+</I>&gt;<i> blockheight based timestamp we might ignore channels that were created,
+</I>&gt;<i> then not announced or forgotten, and then later came back and are now
+</I>&gt;<i> stable.
+</I>
+Just to be clear, you propose to use the timestamp of the most recent
+channel updates to filter
+the associated channel announcements ?
+
+&gt;<i> I hope this rather simple proposal is sufficient to fix the short-term
+</I>&gt;<i> issues we are facing with the initial sync, while we wait for a real
+</I>&gt;<i> sync protocol. It is definitely not meant to allow perfect
+</I>&gt;<i> synchronization of the topology between peers, but then again I don't
+</I>&gt;<i> believe that is strictly necessary to make the routing successful.
+</I>&gt;<i>
+</I>&gt;<i> Please let me know what you think, and I'd love to discuss Pierre's
+</I>&gt;<i> proposal as well.
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Christian
+</I>
+Our idea is to group channel announcements by &quot;buckets&quot;, create a
+filter for each bucket, exchange and use them to filter out channel
+announcements.
+
+We would add a new `use_channel_announcement_filters` optional feature
+bit (7 for example), and a new `channel_announcement_filters` message.
+
+When a node that supports channel announcement filters receives an
+`init` message with the `use_channel_announcement_filters` bit set, it
+sends back its channel filters.
+
+When a node that supports channel announcement filters receives
+a`channel_announcement_filters` message, it uses it to filter channel
+announcements (and, implicitly ,channel updates) before sending them.
+
+The filters we have in mind are simple:
+- Sort announcements by short channel id
+- Compute a marker height, which is `144 * ((now - 7 * 144) / 144)`
+(we round to multiples of 144 to make sync easier)
+- Group channel announcements that were created before this marker by
+groups of 144 blocks
+- Group channel announcements that were created after this marker by
+groups of 1 block
+- For each group, sort and concatenate all channel announcements short
+channel ids and hash the result (we could use sha256, or the first 16
+bytes of the sha256 hash)
+
+The new `channel_announcement_filters` would then be a list of
+(height, hash) pairs ordered by increasing heights.
+
+This implies that implementation can easily sort announcements by
+short channel id, which should not be very difficult.
+An additional step could be to send all short channel ids for all
+groups for which the group hash did not match. Alternatively we could
+use smarter filters
+
+The use case we have in mind is mobile nodes, or more generally nodes
+which are often offline and need to resync very often.
+
+Cheers,
+Fabrice
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000989.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+	<LI>Next message: <A HREF="001000.html">[Lightning-dev] Improving the initial gossip sync
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#992">[ date ]</a>
+              <a href="thread.html#992">[ thread ]</a>
+              <a href="subject.html#992">[ subject ]</a>
+              <a href="author.html#992">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

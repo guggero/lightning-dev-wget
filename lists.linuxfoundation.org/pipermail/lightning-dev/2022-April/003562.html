@@ -1,0 +1,114 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3CD-klr3OVEuMSgnN3pQcNIE2eLwQBlVwvLOqVEdFZWuzzSUbZqLaMdL-gTmUK4W9u_l0FsrKTo21Lai-oThQk7ZqC1TUPZuVNkoGm2B-2lBU%3D%40endothermic.dev%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003559.html">
+   <LINK REL="Next"  HREF="003563.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation</H1>
+    <B>Alex Myers</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Gossip%20Propagation%2C%20Anti-spam%2C%0A%09and%20Set%20Reconciliation&In-Reply-To=%3CD-klr3OVEuMSgnN3pQcNIE2eLwQBlVwvLOqVEdFZWuzzSUbZqLaMdL-gTmUK4W9u_l0FsrKTo21Lai-oThQk7ZqC1TUPZuVNkoGm2B-2lBU%3D%40endothermic.dev%3E"
+       TITLE="[Lightning-dev] Gossip Propagation, Anti-spam,	and Set Reconciliation">alex at endothermic.dev
+       </A><BR>
+    <I>Fri Apr 22 16:15:13 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003559.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+        <LI>Next message: <A HREF="003563.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3562">[ date ]</a>
+              <a href="thread.html#3562">[ thread ]</a>
+              <a href="subject.html#3562">[ subject ]</a>
+              <a href="author.html#3562">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi Matt,
+
+Appreciate your responses. Hope you'll bear with me as I'm a bit new to this.
+
+&gt;<i> Instead of trying to make sure everyone&#8217;s gossip acceptance matches exactly, which as you point it seems like a quagmire, why not (a) do a sync on startup and (b) do syncs of the *new* things.
+</I>
+I'm not opposed to this technique, and maybe it ends up as a better solution. The rationale for not going full Erlay approach was that it's far less overhead to maintain a single sketch than to maintain a per-peer sketch and associated state for every gossip peer. In this way there's very little cost to adding additional gossip peers, which further encourages propagation and convergence of the gossip network.
+
+IIUC Erlay's design was concerned for privacy of originating nodes. Lightning gossip is public by nature, so I'm not sure we should constrain ourselves to the same design route without trying the alternative first.
+
+&gt;<i> if we're gonna add a minisketch-based sync anyway, please lets also use it for initial sync after restart
+</I>
+This was out of the scope of what I had in mind, but I will give this some thought. I could see how a block_height reference coupled with set reconciliation could provide some better options here. This may not be all that difficult to shoe-horn in.
+
+Regardless of single sketch or per-peer set reconciliation, it should be easier to implement with tighter rules on rate-limiting. (Keep in mind, the node's graph can presumably be updated independently of the gossip it rebroadcasts if desired.) As a thought experiment, if we consider a CLN-LDK set reconciliation, and that each node is gossiping with 5 other peers in an evenly spaced frequency, we would currently see 42.8 commonly accepted channel_updates over an average 60s window along with 11 more updates which LDK accepts and CLN rejects (spam.)[1] Assuming the other 5 peers have shared 5/6ths of this gossip before the CLN/LDK set reconciliation, we're left with CLN seeing 7 updates to reconcile, while LDK sees 18. Already we've lost 60% efficiency due to lack of a common rate-limit heuristic.
+
+I understand gossip traffic is manageable now, but I'm not sure it will be that long before it becomes an issue. Furthermore, any particular set reconciliation technique would benefit from a simple common rate-limit heuristic, not to mention originating nodes, who may not currently realize their channel updates are being rejected by a portion of the network due to differing criteria across implementations.
+
+Thanks,
+Alex
+
+[1] <A HREF="https://github.com/endothermicdev/lnspammityspam/blob/main/sampleoutput.txt">https://github.com/endothermicdev/lnspammityspam/blob/main/sampleoutput.txt</A>
+
+------- Original Message -------
+On Thursday, April 21st, 2022 at 3:47 PM, Matt Corallo <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lf-lists at mattcorallo.com</A> wrote:
+
+&gt;<i> On 4/21/22 1:31 PM, Alex Myers wrote:
+</I>&gt;<i>
+</I>&gt;&gt;<i> Hello Bastien,
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Thank you for your feedback. I hope you don't mind I let it percolate for a while.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Eclair doesn't do any rate-limiting. We wanted to &quot;feel the pain&quot; before adding
+</I>&gt;&gt;<i> anything, and to be honest we haven't really felt it yet.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I understand the &#8220;feel the pain first&#8221; approach, but attempting set reconciliation has forced me to
+</I>&gt;&gt;<i> confront the issue a bit early.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> My thoughts on sync were that set-reconciliation would only be used once a node had fully synced
+</I>&gt;&gt;<i> gossip through traditional means (initial_routing_sync / gossip_queries.) There should be many
+</I>&gt;&gt;<i> levers to pull in order to help maintain sync after this. I'm going to have to experiment with them
+</I>&gt;&gt;<i> a bit before I can claim they are sufficient, but I'm optimistic.
+</I>&gt;<i>
+</I>&gt;<i> Please, no. initial_routing_sync was removed from most implementations (it sucks) and gossip queries
+</I>&gt;<i> is broken in at least five ways. May we can recover it by adding yet more extensions but if we're
+</I>&gt;<i> gonna add a minisketch-based sync anyway, please lets also use it for initial sync after restart
+</I>&gt;<i> (unless you have no channels at all, in which case lets maybe revive initial_routing_sync...)
+</I>&gt;<i>
+</I>&gt;<i> Matt
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220422/59ffd174/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220422/59ffd174/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003559.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+	<LI>Next message: <A HREF="003563.html">[Lightning-dev] Gossip Propagation, Anti-spam, and Set Reconciliation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3562">[ date ]</a>
+              <a href="thread.html#3562">[ thread ]</a>
+              <a href="subject.html#3562">[ subject ]</a>
+              <a href="author.html#3562">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

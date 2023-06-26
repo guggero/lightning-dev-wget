@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Direct Message draft
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Direct%20Message%20draft&In-Reply-To=%3C878skvzlcu.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002559.html">
+   <LINK REL="Next"  HREF="002562.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Direct Message draft</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Direct%20Message%20draft&In-Reply-To=%3C878skvzlcu.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Direct Message draft">decker.christian at gmail.com
+       </A><BR>
+    <I>Fri Feb 21 21:22:41 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002559.html">[Lightning-dev] Direct Message draft
+</A></li>
+        <LI>Next message: <A HREF="002562.html">[Lightning-dev] Direct Message draft
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2560">[ date ]</a>
+              <a href="thread.html#2560">[ thread ]</a>
+              <a href="subject.html#2560">[ subject ]</a>
+              <a href="author.html#2560">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+
+&gt;&gt;<i> Would it not be better to create a circular path?  By this I mean,
+</I>&gt;&gt;<i> Alice constructs an onion that overall creates a path from herself to
+</I>&gt;&gt;<i> Bob and back, ensuring different nodes on the forward and return
+</I>&gt;&gt;<i> directions.  The onion hop at Bob reveals that Bob is the chosen
+</I>&gt;&gt;<i> conversation partner, and Bob forwards its reply via the onion return
+</I>&gt;&gt;<i> path (that Alice prepared herself to get back to her via another
+</I>&gt;&gt;<i> path).
+</I>&gt;<i>
+</I>&gt;<i> I like it!  The lack of &quot;reply&quot; function eliminates all storage
+</I>&gt;<i> requirements for the intermediaries.  Unfortunately it's not currently
+</I>&gt;<i> possible to fit the reply onion inside the existing onion, but I know
+</I>&gt;<i> Christian has a rabbit in his hat for this?
+</I>
+I think circular payment really means an onion that is
+
+&gt;<i> A -&gt; ... -&gt; B -&gt; ... -&gt; A
+</I>
+and not a reply onion inside of a forward onion.
+
+The problem with the circular path is that the &quot;recipient&quot; cannot add
+any reply without invalidating the HMACs on the return leg of the
+onion. The onion is fully predetermined by the sender, any malleability
+introduced in order to allow the recipient to reply poses a threat to
+the integrity of the onion routing, e.g., it opens us up to probing by
+fiddling with parts of the onion until the attacker identifies the
+location the recipient is supposed to put his reply into.
+
+As Rusty mentioned I have a construction of the onion routing packet
+that allows us to compress it in such a way that it fits inside of the
+payload itself. I'll write up a complete proposal over the coming days,
+but the basic idea is to initialize the unused part of the onion in such
+a way that it cancels out the layers of encryption and the fully wrapped
+onion consists of all `0x00` bytes. These can then be removed resulting
+in a compressed onion, and the sender can simply add the padding 0x00
+bytes back to get the original, fully HMACd onion, and then send it like
+normal (there is an obfuscation step to hide the `0x00` bytes from the
+next hop, but more on this in the full rendez-vous proposal later).
+
+This rendez-vous construction is a bit more involved since we want to
+fit an onion into another onion of the same size. If we design a
+completely new messaging system, requiring end-to-end communication, it
+might be worth re-introducing the end-to-end payload which we removed in
+the routing onion. It's a simply, variable or fixed length, payload,
+that is onion-decrypted at each hop and its contents are revealed to the
+destination (this is how onion routing usually works). Since that
+payload doesn't have to adhere to the constraints of the routing onions
+(multiple payloads, one for each hop, and no special larger payload
+destined for the final recipient) this is both simpler, and would allow
+us to store a full, unmodified, return-onion in the end-to-end payload.
+
+Another advantage is that the end-to-end payload is not covered by the
+HMACs in the header, meaning that the recipient can construct a reply
+without having to modify (and invalidate) the routing onion. I guess
+this is going back to the roots of the Sphinx paper :-)
+
+
+Might be worth a consideration, as it seems to me like it'd be simpler
+:<i>-) The downside of course is that we'd end up with two different onion
+</I>constructions for different use-cases.
+
+
+&gt;&gt;<i> After Alice receives the first message from Bob the circular
+</I>&gt;&gt;<i> &quot;circuit&quot; is established and they can continue to communicate using
+</I>&gt;&gt;<i> the same circuit: timing attacks are now &quot;impossible&quot; since Alice and
+</I>&gt;&gt;<i> Bob can be anywhere along the circle, even if two of the nodes in the
+</I>&gt;&gt;<i> circuit are surveillors cooperating with each other, the timing
+</I>&gt;&gt;<i> information they get is the distance between the surveillor nodes.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Of course, if a node in the circular path drops the circuit is
+</I>&gt;&gt;<i> disrupted, so any higher-level protocols on top of that should
+</I>&gt;&gt;<i> probably be willing to resume the conversation on another circular
+</I>&gt;&gt;<i> circuit.
+</I>&gt;<i>
+</I>&gt;<i> My immediate purpose for this is for &quot;offers&quot; which cause a invoice
+</I>&gt;<i> request, followed by an invoice reply.  This will probably be reused
+</I>&gt;<i> once for the payment itself.  2 uses is not sufficient to justify
+</I>&gt;<i> setting up a circuit, AFAICT.
+</I>
+I know someone who is itching to implement hornet for these use-cases
+;-)
+
+Cheers,
+Christian
+</PRE>
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002559.html">[Lightning-dev] Direct Message draft
+</A></li>
+	<LI>Next message: <A HREF="002562.html">[Lightning-dev] Direct Message draft
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2560">[ date ]</a>
+              <a href="thread.html#2560">[ thread ]</a>
+              <a href="subject.html#2560">[ subject ]</a>
+              <a href="author.html#2560">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

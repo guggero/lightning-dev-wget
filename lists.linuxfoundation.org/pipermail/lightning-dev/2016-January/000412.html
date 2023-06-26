@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Laundry list of inter-peer wire protocol changes
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C1453929582.11915.56.camel%40ultimatestunts.nl%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000413.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Laundry list of inter-peer wire protocol changes</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Laundry%20list%20of%20inter-peer%20wire%20protocol%20changes&In-Reply-To=%3C1453929582.11915.56.camel%40ultimatestunts.nl%3E"
+       TITLE="[Lightning-dev] Laundry list of inter-peer wire protocol changes">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Wed Jan 27 21:19:42 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000413.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#412">[ date ]</a>
+              <a href="thread.html#412">[ thread ]</a>
+              <a href="subject.html#412">[ subject ]</a>
+              <a href="author.html#412">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>There are a couple of subjects where new concepts are being worked out,
+or where alternative concepts exist; these things are likely to continue
+to evolve after you finish the first version of the protocol.
+
+It would be great if concept changes in one subject can be made more or
+less independently from concept changes in another subject. In order to
+make this possible, I suggest to de-couple certain things, and let each
+subject have its own sub-protocol, with version number / protocol
+identifier.
+
+The way I see it, the following subjects have ongoing design /
+alternative concepts, more or less independently from each other:
+
+* Micro-transaction channel design: e.g. several variations on the
+Lightning channel design, and Amiko Pay's escrow-based HTLC emulation
+and IOU semi-channel.
+* Commit conditions: traditional definition consists of a hash value and
+a time-out. For practical purposes, Amiko Pay also adds a &quot;start time&quot;,
+and there is an alternative concept of using keypairs instead of hash
+values to de-correlate a transaction in different links.
+* Routing: how to exchange routing info. For source routing: informing
+each other about Lightning nodes that exist. For source and non-source
+routing: informing each other about availability of routes, expected
+capacity and fees. The type of routing info depends on the routing
+algorithm in use by a node.
+
+In Amiko Pay, the micro-transaction channel design is already separated
+from the rest of the protocol; commit conditions are not (yet), and
+exchange of routing info doesn't really exist yet, since it's still
+doing &quot;dumb&quot; non-source routing (trying every possible route).
+
+CJP
+
+Rusty Russell schreef op wo 27-01-2016 om 13:37 [+1030]:
+&gt;<i> Hi all!
+</I>&gt;<i> 
+</I>&gt;<i>         As more code emerges, I'd like to try to nail down a &quot;1.0&quot;
+</I>&gt;<i> version of the inter-node protocol as much as possible.  Since I'm most
+</I>&gt;<i> familiar with my own code (c-lightning[1]), I'll use that as a basis and
+</I>&gt;<i> discuss differences (esp. vs lnd[2]).
+</I>&gt;<i> 
+</I>&gt;<i> For this email I'll simply list the changes or proposals I'm aware of,
+</I>&gt;<i> then we can dissect and comment on each one: defer, accept or close.
+</I>&gt;<i> 
+</I>&gt;<i> Direct wire format stuff
+</I>&gt;<i> ------------------------
+</I>&gt;<i> 
+</I>&gt;<i> - Protobufs vs open-coded structures
+</I>&gt;<i>   - lnd open-coded their own protocol; I haven't finished reading their
+</I>&gt;<i>     code though.
+</I>&gt;<i>   - protobufs are easy to extend with new fields; with an open-coded
+</I>&gt;<i>     proto we simply need a rule that too-long packets are valid.
+</I>&gt;<i>   - protobufs are annoying for fixed-length blobs which we use a lot
+</I>&gt;<i>     (keys, signatures, hashes).
+</I>&gt;<i>   - The protocol is currently simple with very few variable-length fields.
+</I>&gt;<i> 
+</I>&gt;<i> - Length prefix for initial key exchange
+</I>&gt;<i>   - Both lnd and c-lightning begin by exchanging a 33-byte EC key for DH.
+</I>&gt;<i>   - We should prefix with a length word, so we can extend this later
+</I>&gt;<i>     (eg. for new crypto)
+</I>&gt;<i> 
+</I>&gt;<i> - Length prefix for other packets
+</I>&gt;<i>   - lightning-c sends an 8 byte prefix indicating the offset of the end of
+</I>&gt;<i>     the current packet: this effectively encodes both length and ordering.
+</I>&gt;<i>   - lnd uses a 4 byte network ID, 4 byte type, 4 byte length.
+</I>&gt;<i> 
+</I>&gt;<i> - HTLC pipelining
+</I>&gt;<i>   - lnd's protocol supports multiple in-flight HTLC negotiations; this
+</I>&gt;<i>     would allow much greater throughput, with some complexity.
+</I>&gt;<i>   - lightning-c uses a simple one-at-a-time scheme, with alternating
+</I>&gt;<i>     priority in case of simultaneous sends.
+</I>&gt;<i> 
+</I>&gt;<i> - HTLC abort stage
+</I>&gt;<i>   - Setting up a new HTLC involves both sides accepting, then revocation
+</I>&gt;<i>     message exchange.  Currently there's no way to abort this process.
+</I>&gt;<i>   - Allow the initator to abort any time before the revocation exchange,
+</I>&gt;<i>     for weird corner cases such as timeouts.
+</I>&gt;<i> 
+</I>&gt;<i> - Version bits
+</I>&gt;<i>   - If we use an open-coded protocol, initial handshake after key setup
+</I>&gt;<i>     should exchange two sets of version bits: one for compulsory
+</I>&gt;<i>     features, one for optional features.  You hang up if there's a
+</I>&gt;<i>     compulsory feature you don't grok.
+</I>&gt;<i> 
+</I>&gt;<i> Wire protocol crypto
+</I>&gt;<i> --------------------
+</I>&gt;<i> - Crypto AES/HMAC-SHA256 or Chacha20/Poly1305
+</I>&gt;<i>   - AES has the word Standard in the name, but chacha20 is faster w/o
+</I>&gt;<i>     accel (ie. ARM) and almost as widely supported.
+</I>&gt;<i>    
+</I>&gt;<i> - Use separate encoding stream for packet lengths
+</I>&gt;<i>   - Laolu's suggestion; encode the packet lengths as well which makes
+</I>&gt;<i>     traffic analysis a bit harder.
+</I>&gt;<i>   - Makes it a bit harder to detect re-transmissions (required on node
+</I>&gt;<i>     restart), but probably not enough to kill the idea?
+</I>&gt;<i> 
+</I>&gt;<i> Misc
+</I>&gt;<i> ----
+</I>&gt;<i> - shachain vs elkrem
+</I>&gt;<i>   - We use this to generate the revocation secrets, to minimize storage
+</I>&gt;<i>     and computation for a huge number of old commitment txs.
+</I>&gt;<i>   - They're actually very similar, but elkrem is much easier to grok.[6]
+</I>&gt;<i> 
+</I>&gt;<i> - Anchor tx renegotiation
+</I>&gt;<i>   - We should allow re-anchoring of channels, to add or remove funds.
+</I>&gt;<i>       - This would allow easy payment from lightning channel to normal
+</I>&gt;<i>         bitcoin addresses, for example.
+</I>&gt;<i>   - During transition, signatures for both commit txs must be exchanged.
+</I>&gt;<i> 
+</I>&gt;<i> - R value vs keypair
+</I>&gt;<i>   - Using a simple secret &quot;redeemhash&quot; allows easy tracing of
+</I>&gt;<i>     transactions through the network.
+</I>&gt;<i>   - Mats Jeratsch proposed a keypair scheme which decorrelates them[3],
+</I>&gt;<i>     Greg Maxwell optimized it slightly, and Anthony Towns[4] and Andrew
+</I>&gt;<i>     Poelstra independently came up with a way to do it without any
+</I>&gt;<i>     bitcoin mods.
+</I>&gt;<i> 
+</I>&gt;<i> - Multi-sig txs
+</I>&gt;<i>   - Joseph pointed out that by simply allowing more than one signature on
+</I>&gt;<i>     commit txs[5], we can enable escrow-style services (including things
+</I>&gt;<i>     like GreenAddress.it which does this for normal wallets).
+</I>&gt;<i> 
+</I>&gt;<i> I'm sure I've missed things; what are they?
+</I>&gt;<i> 
+</I>&gt;<i> Thanks!
+</I>&gt;<i> Rusty.
+</I>&gt;<i> 
+</I>&gt;<i> [1] <A HREF="https://github.com/ElementsProject/lightning">https://github.com/ElementsProject/lightning</A>
+</I>&gt;<i> [2] <A HREF="https://github.com/LightningNetwork/lnd">https://github.com/LightningNetwork/lnd</A>
+</I>&gt;<i> [3] <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000314.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000314.html</A>
+</I>&gt;<i> [4] <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000344.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2015-November/000344.html</A>
+</I>&gt;<i> [5] <A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/000403.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/2016-January/000403.html</A>
+</I>&gt;<i> [6] <A HREF="https://github.com/LightningNetwork/lnd/blob/master/elkrem/elkrem.go">https://github.com/LightningNetwork/lnd/blob/master/elkrem/elkrem.go</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000413.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#412">[ date ]</a>
+              <a href="thread.html#412">[ thread ]</a>
+              <a href="subject.html#412">[ subject ]</a>
+              <a href="author.html#412">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

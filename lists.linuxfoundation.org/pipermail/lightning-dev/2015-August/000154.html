@@ -1,0 +1,390 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A state machine.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3CCAMXsxZPRL%3DXkMdsRTchLWLDWaZtSzejmU_HJjknhsO03DbXyjQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000145.html">
+   <LINK REL="Next"  HREF="000164.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A state machine.</H1>
+    <B>Pierre</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20state%20machine.&In-Reply-To=%3CCAMXsxZPRL%3DXkMdsRTchLWLDWaZtSzejmU_HJjknhsO03DbXyjQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A state machine.">pm+lists at acinq.fr
+       </A><BR>
+    <I>Fri Aug 28 16:55:31 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000145.html">[Lightning-dev] A state machine.
+</A></li>
+        <LI>Next message: <A HREF="000164.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#154">[ date ]</a>
+              <a href="thread.html#154">[ thread ]</a>
+              <a href="subject.html#154">[ subject ]</a>
+              <a href="author.html#154">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Thanks, this helps a lot !
+
+I have more questions after reviewing your new branch 'state', if you have
+time for that ;-)
+
+1) In PKT_UPDATE_ADD_HTLC, why is the field amount an int32 and not an
+uint32 ? the value shouldn't be negative right ?
+
+2) For a given payee, is the (simplified) htlc flow always :
+
+A-&gt;B PKT_UPDATE_ADD_HTLC
+B-&gt;A PKT_UPDATE_COMPLETE_HTLC
+A-&gt;B PKT_UPDATE_ADD_HTLC
+B-&gt;A PKT_UPDATE_COMPLETE_HTLC ?
+
+can we have two successive PKT_UPDATE_ADD_HTLC with the same H, the latter
+updating the former ? and then a single completion ?
+
+3) Since an htlc is completed with a PKT_UPDATE_COMPLETE_HTLC, what is the
+use case of PKT_UPDATE ?
+
+4) Why is there no PKT_UPDATE_DECLINE ?
+
+5) I understand the High/Low priorities are a way of resolving conflicts,
+but I don't get how it works. Could you please explain the principle of it ?
+
+6) In a closing by mutual consent, who is supposed to publish the final
+transaction ?
+
+7) How do we manage the fees ?
+
+Thanks,
+
+Pierre
+
+
+2015-08-21 7:32 GMT+02:00 Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt;:
+
+&gt;<i> Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; Yeah.  Let me generate a decent text flowchart for the normal cases...
+</I>&gt;<i>
+</I>&gt;<i> I've taken out some transitions for simplicity (eg. ERR_ANCHOR_LOST and
+</I>&gt;<i> ERR_INFORMATION_LEAK, which shouldn't happen):
+</I>&gt;<i>
+</I>&gt;<i> Normal opening states:
+</I>&gt;<i>
+</I>&gt;<i> INIT_NOANCHOR:
+</I>&gt;<i>         INPUT_NONE -&gt; OPEN_WAIT_FOR_OPEN_NOANCHOR (=&gt;PKT_OPEN)
+</I>&gt;<i> INIT_WITHANCHOR:
+</I>&gt;<i>         INPUT_NONE -&gt; OPEN_WAIT_FOR_OPEN_WITHANCHOR (=&gt;PKT_OPEN)
+</I>&gt;<i> OPEN_WAIT_FOR_OPEN_NOANCHOR:
+</I>&gt;<i>         PKT_OPEN -&gt; OPEN_WAIT_FOR_ANCHOR
+</I>&gt;<i>         CMD_CLOSE -&gt; CLOSED
+</I>&gt;<i> OPEN_WAIT_FOR_OPEN_WITHANCHOR:
+</I>&gt;<i>         PKT_OPEN -&gt; OPEN_WAIT_FOR_COMMIT_SIG (=&gt;PKT_OPEN_ANCHOR)
+</I>&gt;<i>         CMD_CLOSE -&gt; CLOSED
+</I>&gt;<i> OPEN_WAIT_FOR_ANCHOR:
+</I>&gt;<i>         PKT_OPEN_ANCHOR -&gt; OPEN_WAITING_THEIRANCHOR (=&gt;PKT_OPEN_COMMIT_SIG)
+</I>&gt;<i>         CMD_CLOSE -&gt; CLOSED
+</I>&gt;<i> OPEN_WAIT_FOR_COMMIT_SIG:
+</I>&gt;<i>         PKT_OPEN_COMMIT_SIG -&gt; OPEN_WAITING_OURANCHOR
+</I>&gt;<i>         CMD_CLOSE -&gt; CLOSED
+</I>&gt;<i> OPEN_WAITING_OURANCHOR:
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         BITCOIN_ANCHOR_DEPTHOK -&gt; OPEN_WAIT_FOR_COMPLETE_OURANCHOR
+</I>&gt;<i> (=&gt;PKT_OPEN_COMPLETE)
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         CMD_CLOSE -&gt; WAIT_FOR_CLOSE_COMPLETE (=&gt;PKT_CLOSE)
+</I>&gt;<i> OPEN_WAITING_THEIRANCHOR:
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_DEPTHOK -&gt; OPEN_WAIT_FOR_COMPLETE_THEIRANCHOR
+</I>&gt;<i> (=&gt;PKT_OPEN_COMPLETE)
+</I>&gt;<i>         BITCOIN_ANCHOR_TIMEOUT -&gt; ERR_ANCHOR_TIMEOUT (=&gt;PKT_ERROR)
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         CMD_CLOSE -&gt; WAIT_FOR_CLOSE_COMPLETE (=&gt;PKT_CLOSE)
+</I>&gt;<i>
+</I>&gt;<i> OPEN_WAIT_FOR_COMPLETE_OURANCHOR:
+</I>&gt;<i>         PKT_OPEN_COMPLETE -&gt; NORMAL_HIGHPRIO
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         CMD_CLOSE -&gt; WAIT_FOR_CLOSE_COMPLETE (=&gt;PKT_CLOSE)
+</I>&gt;<i>
+</I>&gt;<i> OPEN_WAIT_FOR_COMPLETE_THEIRANCHOR:
+</I>&gt;<i>         PKT_OPEN_COMPLETE -&gt; NORMAL_LOWPRIO
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         CMD_CLOSE -&gt; WAIT_FOR_CLOSE_COMPLETE (=&gt;PKT_CLOSE)
+</I>&gt;<i>
+</I>&gt;<i> Operational state loop:
+</I>&gt;<i> ======================
+</I>&gt;<i> I've folded high and low here, but we alternate.
+</I>&gt;<i>
+</I>&gt;<i> NORMAL_LOWPRIO:
+</I>&gt;<i> NORMAL_HIGHPRIO:
+</I>&gt;<i>         PKT_UPDATE -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ADD_HTLC -&gt; NORMAL_HIGHPRIO (=&gt;PKT_UPDATE_DECLINE_HTLC)
+</I>&gt;<i>         PKT_UPDATE_ADD_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_COMPLETE_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_TIMEDOUT_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ROUTEFAIL_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL (=&gt;PKT_ERROR)
+</I>&gt;<i>         CMD_SEND_UPDATE -&gt; WAIT_FOR_UPDATE_ACCEPT_LOWPRIO (=&gt;PKT_UPDATE)
+</I>&gt;<i>         CMD_SEND_HTLC_UPDATE -&gt; WAIT_FOR_HTLC_ACCEPT_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ADD_HTLC)
+</I>&gt;<i>         CMD_SEND_HTLC_COMPLETE -&gt; WAIT_FOR_HTLC_ACCEPT_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_COMPLETE_HTLC)
+</I>&gt;<i>         CMD_SEND_HTLC_TIMEDOUT -&gt; WAIT_FOR_HTLC_ACCEPT_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_TIMEDOUT_HTLC)
+</I>&gt;<i>         CMD_SEND_HTLC_ROUTEFAIL -&gt; WAIT_FOR_HTLC_ACCEPT_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ROUTEFAIL_HTLC)
+</I>&gt;<i>         CMD_CLOSE -&gt; WAIT_FOR_CLOSE_COMPLETE (=&gt;PKT_CLOSE)
+</I>&gt;<i>
+</I>&gt;<i> WAIT_FOR_HTLC_ACCEPT_LOWPRIO:
+</I>&gt;<i> WAIT_FOR_HTLC_ACCEPT_HIGHPRIO:
+</I>&gt;<i>         PKT_UPDATE -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ADD_HTLC -&gt; NORMAL_HIGHPRIO (=&gt;PKT_UPDATE_DECLINE_HTLC)
+</I>&gt;<i>         PKT_UPDATE_ADD_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ACCEPT -&gt; WAIT_FOR_UPDATE_COMPLETE_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_SIGNATURE)
+</I>&gt;<i>         PKT_UPDATE_DECLINE_HTLC -&gt; NORMAL_HIGHPRIO
+</I>&gt;<i>         PKT_UPDATE_COMPLETE_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_TIMEDOUT_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ROUTEFAIL_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL (=&gt;PKT_ERROR)
+</I>&gt;<i> WAIT_FOR_HTLC_ACCEPT_HIGHPRIO:
+</I>&gt;<i>         PKT_UPDATE_ACCEPT -&gt; WAIT_FOR_UPDATE_COMPLETE_HIGHPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_SIGNATURE)
+</I>&gt;<i>         PKT_UPDATE_DECLINE_HTLC -&gt; NORMAL_LOWPRIO
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL (=&gt;PKT_ERROR)
+</I>&gt;<i>
+</I>&gt;<i> WAIT_FOR_UPDATE_ACCEPT_LOWPRIO:
+</I>&gt;<i> WAIT_FOR_UPDATE_ACCEPT_HIGHPRIO:
+</I>&gt;<i>         PKT_UPDATE -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ADD_HTLC -&gt; NORMAL_HIGHPRIO (=&gt;PKT_UPDATE_DECLINE_HTLC)
+</I>&gt;<i>         PKT_UPDATE_ADD_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ACCEPT -&gt; WAIT_FOR_UPDATE_COMPLETE_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_SIGNATURE)
+</I>&gt;<i>         PKT_UPDATE_COMPLETE_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_TIMEDOUT_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_UPDATE_ROUTEFAIL_HTLC -&gt; WAIT_FOR_UPDATE_SIG_LOWPRIO
+</I>&gt;<i> (=&gt;PKT_UPDATE_ACCEPT)
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL (=&gt;PKT_ERROR)
+</I>&gt;<i>
+</I>&gt;<i> WAIT_FOR_UPDATE_COMPLETE_LOWPRIO:
+</I>&gt;<i> WAIT_FOR_UPDATE_COMPLETE_HIGHPRIO:
+</I>&gt;<i>         PKT_UPDATE_COMPLETE -&gt; NORMAL_HIGHPRIO
+</I>&gt;<i>         PKT_CLOSE -&gt; WAIT_FOR_CLOSE_ACK (=&gt;PKT_CLOSE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL (=&gt;PKT_ERROR)
+</I>&gt;<i>
+</I>&gt;<i> WAIT_FOR_UPDATE_SIG_LOWPRIO:
+</I>&gt;<i>         PKT_UPDATE_SIGNATURE -&gt; NORMAL_HIGHPRIO (=&gt;PKT_UPDATE_COMPLETE)
+</I>&gt;<i>         ...
+</I>&gt;<i> WAIT_FOR_UPDATE_SIG_HIGHPRIO:
+</I>&gt;<i>         PKT_UPDATE_SIGNATURE -&gt; NORMAL_LOWPRIO (=&gt;PKT_UPDATE_COMPLETE)
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM (=&gt;PKT_ERROR)
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL (=&gt;PKT_ERROR)
+</I>&gt;<i>         CMD_CLOSE -&gt; WAIT_FOR_CLOSE_COMPLETE (=&gt;PKT_CLOSE)
+</I>&gt;<i>
+</I>&gt;<i> Normal closing:
+</I>&gt;<i> ==============
+</I>&gt;<i>
+</I>&gt;<i> WAIT_FOR_CLOSE_COMPLETE:
+</I>&gt;<i>         PKT_CLOSE -&gt; CLOSE_WAIT_CLOSE (=&gt;PKT_CLOSE_ACK)
+</I>&gt;<i>         PKT_CLOSE_COMPLETE -&gt; CLOSE_WAIT_CLOSE (=&gt;PKT_CLOSE_ACK)
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM_CLOSE
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_CLOSE
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i>         INPUT_CLOSE_COMPLETE_TIMEOUT -&gt; CLOSE_WAIT_CLOSE_OURCOMMIT
+</I>&gt;<i> (=&gt;PKT_ERROR)
+</I>&gt;<i> WAIT_FOR_CLOSE_ACK:
+</I>&gt;<i>         PKT_CLOSE_ACK -&gt; CLOSE_WAIT_CLOSE
+</I>&gt;<i>         PKT_ERROR -&gt; CLOSE_WAIT_CLOSE
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM_CLOSE
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_CLOSE
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_CLOSE:
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM_CLOSE
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_CLOSE
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i>
+</I>&gt;<i> Weird close states
+</I>&gt;<i> ==================
+</I>&gt;<i> Eg. steal transction, unilateral close, combinations thereof:
+</I>&gt;<i>
+</I>&gt;<i> CLOSE_WAIT_STEAL:
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM:
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM:
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_CLOSE:
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM_CLOSE:
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE:
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt; CLOSE_WAIT_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_OURCOMMIT
+</I>&gt;<i> CLOSE_WAIT_STEAL_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt; CLOSE_WAIT_STEAL_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM_OURCOMMIT
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt;
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM_OURCOMMIT
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt;
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_CLOSE_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt; CLOSE_WAIT_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM_CLOSE_OURCOMMIT
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_CLOSE_OURCOMMIT
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_CLOSE_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt;
+</I>&gt;<i> CLOSE_WAIT_STEAL_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt;
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE_OURCOMMIT
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM_CLOSE_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt;
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt;
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE_OURCOMMIT
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE_OURCOMMIT:
+</I>&gt;<i>         BITCOIN_ANCHOR_OURCOMMIT_DELAYPASSED -&gt;
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_SPENDOURS:
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDOURS:
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM_SPENDOURS:
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_SPENDTHEM_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_SPENDOURS:
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_CLOSE_SPENDOURS:
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt; CLOSE_WAIT_SPENDTHEM_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt; CLOSE_WAIT_STEAL_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_CLOSE_SPENDOURS:
+</I>&gt;<i>         BITCOIN_ANCHOR_THEIRSPEND -&gt;
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_SPENDTHEM_CLOSE_SPENDOURS:
+</I>&gt;<i>         BITCOIN_ANCHOR_OTHERSPEND -&gt;
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE_SPENDOURS
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i> CLOSE_WAIT_STEAL_SPENDTHEM_CLOSE_SPENDOURS:
+</I>&gt;<i>         BITCOIN_SPEND_THEIRS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_SPEND_OURS_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_STEAL_DONE -&gt; CLOSED
+</I>&gt;<i>         BITCOIN_CLOSE_DONE -&gt; CLOSED
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150828/6e9bd480/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20150828/6e9bd480/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000145.html">[Lightning-dev] A state machine.
+</A></li>
+	<LI>Next message: <A HREF="000164.html">[Lightning-dev] A state machine.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#154">[ date ]</a>
+              <a href="thread.html#154">[ thread ]</a>
+              <a href="subject.html#154">[ subject ]</a>
+              <a href="author.html#154">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

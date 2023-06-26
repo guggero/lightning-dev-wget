@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Proposal: Unspecified BOLT Protocol Extensions
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-December/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Unspecified%20BOLT%20Protocol%20Extensions&In-Reply-To=%3CvKzGSeeoKmNoZbFKRlijQOudgSDJSo6K69h4b4rcM1ZSvMFsAf8B6EA373lqs87bKLRby5CqtndZYASykUtR1VGwLJKdKZmAGADXinK9H6M%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001743.html">
+   <LINK REL="Next"  HREF="001745.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Proposal: Unspecified BOLT Protocol Extensions</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Proposal%3A%20Unspecified%20BOLT%20Protocol%20Extensions&In-Reply-To=%3CvKzGSeeoKmNoZbFKRlijQOudgSDJSo6K69h4b4rcM1ZSvMFsAf8B6EA373lqs87bKLRby5CqtndZYASykUtR1VGwLJKdKZmAGADXinK9H6M%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Proposal: Unspecified BOLT Protocol Extensions">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Dec 16 11:20:11 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001743.html">[Lightning-dev] Data piggybacking within the payment_preimage for offline payments in wallets
+</A></li>
+        <LI>Next message: <A HREF="001745.html">[Lightning-dev] Data piggybacking within the payment_preimage	for offline payments in wallets
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1744">[ date ]</a>
+              <a href="thread.html#1744">[ thread ]</a>
+              <a href="subject.html#1744">[ subject ]</a>
+              <a href="author.html#1744">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+I followed with some interest the discussion some days ago where MIT DCI Lit wanted to autodetect fellow Lit nodes using the BOLT protocol.
+
+Now, my thoughts:
+
+1.&#160; The desired feature, is essentially a question &quot;is this node an X implementation?&quot;
+2.&#160; However, the feature bits we use currently, is essentially a question &quot;has this node an X feature?&quot;
+3.&#160; Our feature bits are centrally allocated on the BOLT spec. This makes difficult, permissionless innovation.
+
+I think, &quot;has-a&quot; query is better than &quot;is-a&quot; query.
+But I admit that requiring that features allocate some feature bit are difficult, for the view of permissionless innovation, as it requires coordination across multiple implementations.
+Yet experimental extensions might be experimental.
+
+So rather than code, I decide to waste precious bandwidth and spam the mailing list again.
+
+I propose the concept of Unspecified Protocol Extensions.
+They are &quot;unspecified&quot; as they are not part of the BOLT specifications.
+
+Each such protocol extension must select its own random 20-byte identifier.
+It is strongly suggested that the name of the protocol extension be hashed with RIPEMD160 or some other hash.
+Alternately, the protocol extension developer can grab 20 random byte from random.org or from their local /dev/random.
+
+Further:
+
+1.  In BOLT messages, the `type` &gt;= 49152 (0xC000 or more) is reserved for unspecified protocol extensions.
+2.  In onion hops, the `tlv` `type` &gt;= 192 (0xC0 or more) is reserved for unspecified protocol extensions.
+3.  In `node_announcement`s with `tlv`, a specific `tlv` `type` is reserved for unspecified protocol extensions.
+
+At link level, we add the concept of &quot;current extension&quot;.
+By default, at the start of a connection, there is no current extension and messages &gt;= 49154 are unrecognized.
+
+The following new messages are defined.
+
+1.  `type`: `can_i_has_extension` (49152)
+2.  `data`
+    * [`20`: `unspecified_protocol_extension_id`]
+
+This message queries if the receiver has a particular extension.
+The extension id composed of only 0s is the nonexistence of an extension.
+
+The sender may set the ID to 0.
+This indicates that the sender does not intend to send any particular extension in the foreseeable future.
+
+The receiver:
+* SHOULD reply with `i_has_a_extension`.
+    * MAY reply with a `i_has_a_extension` with null ID to indicate it does not have the extension.
+
+The sender:
+* MUST NOT send any extension-specific messages until the other side indicates agreement to process extension-specific messages via `i_has_a_extension`.
+
+1.  `type`: `i_has_a_extension` (49153)
+2.  `data`
+    * [`20`: `unspecified_protocol_extension_id`]
+
+This message indicates that the sender is capable of understanding the indicated unspecified protocol extension ID.
+The receiver can then send future messages within the range 49154-&gt;65535 and those will be interpreted as part of the protocol extension.
+
+The sender of this message may set the ID to all 0s.
+This indicates that the sender will not recognize succeeding messages as belonging to any particular extension, and implicitly denies a previous `can_i_has_extension` request.
+
+Note that message IDs 49154 to 65535 are effectively multiplexed across different protocol extensions.
+
+The message `can_i_has_extension` indicates that the sender would like to send messages with the specified protocol extension in the close future.
+The message `i_has_a_extension` indicates whether the sender would accept such protocol extensions.
+This sets the protocol extension for one direction of the channel only.
+If the protocol extension requires requests and responses from both sides of the connection, then both sides need to request the extension (via `can_i_has_extension`) independently of the other side.
+
+For each direction, only one protocol extension is the current protocol extension.
+
+
+For onion hops, the following additional `tlv` `type` is defined:
+
+1. `type`: `im_in_yr_hop_extending_yr_protocol` (192)
+2. `len`: 20
+3. `data`:
+    * [`20` : `unspecified_protocol_extension_id`]
+
+This indicates that future `tlv` `type`s in the range 193 to 255 are to be interpreted as belonging to the specific protocol extension.
+
+Similar to message codes, onion hop `tlv` `type`s 193 to 255 are effectively multiplexed across different protocol extensions.
+
+Note that this implies that only a single unspecified protocol extension can be used on a hop.
+
+
+An additional `node_announcement` `tlv` `type` is defined:
+
+1. `type`: `hai_im_extended` (TBD)
+2. `len`: multiple of 20
+3. `data`:
+    * [`len` : `unspecifed_protocol_extension_ids`]
+
+This `tlv` type advertises support for the indicated unspecified protocol extensions.
+
+Regards,
+ZmnSCPxj
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001743.html">[Lightning-dev] Data piggybacking within the payment_preimage for offline payments in wallets
+</A></li>
+	<LI>Next message: <A HREF="001745.html">[Lightning-dev] Data piggybacking within the payment_preimage	for offline payments in wallets
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1744">[ date ]</a>
+              <a href="thread.html#1744">[ thread ]</a>
+              <a href="subject.html#1744">[ subject ]</a>
+              <a href="author.html#1744">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

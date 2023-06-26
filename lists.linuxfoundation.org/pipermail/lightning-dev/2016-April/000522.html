@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Concurrent sigs in BOLT #2
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Concurrent%20sigs%20in%20BOLT%20%232&In-Reply-To=%3C878u015cvn.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000520.html">
+   <LINK REL="Next"  HREF="000523.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Concurrent sigs in BOLT #2</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Concurrent%20sigs%20in%20BOLT%20%232&In-Reply-To=%3C878u015cvn.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Concurrent sigs in BOLT #2">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Tue Apr 26 02:21:00 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000520.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+        <LI>Next message: <A HREF="000523.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#522">[ date ]</a>
+              <a href="thread.html#522">[ thread ]</a>
+              <a href="subject.html#522">[ subject ]</a>
+              <a href="author.html#522">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Pierre &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">pm+lists at acinq.fr</A>&gt; writes:
+&gt;<i> Hello,
+</I>
+Hi Pierre!
+
+        I'm glad I'm not the only one who had trouble with this.  I just
+thought I was being dumb!  Concurrent updates are conceptually harder
+than the previous synchronous model, unfortunately.
+
+&gt;<i> I am trying to understand how we should handle concurrent signatures,
+</I>&gt;<i> and I am wondering if we couldn't use an ordering of some sort to
+</I>&gt;<i> resolve conflicts when they occur, for example by simply comparing
+</I>&gt;<i> signatures. If two nodes send each other a signature at the same time,
+</I>&gt;<i> they could agree that the one that sent the &quot;greatest&quot; signature has
+</I>&gt;<i> to immediately resend a new signature including all pending changes.
+</I>&gt;<i> This new signature would encompass all the changes both parties wanted
+</I>&gt;<i> in the first place so everybody would be happy.
+</I>
+I originally had an alternating priority scheme which worked, but I don't
+think it's necessary any more.
+
+This diagram is a simplification.  Each node tracks two commitment
+states: its own and the state of the other side.  This is because they
+can run independently.
+
+The rules are simple (though the results might not be!):
+
+1) Nodes must process packets in order.
+2) When you send something, update their state.
+3) When you ack something, update their state.
+4) When you receive something, update your own state.
+5) When you receive an ack for something, update your own state.
+
+When you sign a commit tx, you sign their state at the time (this makes
+sense: you're signing their commit tx, not yours).
+
+So, when a node sends an ADD HTLC, it modifies the other side's state.
+It only modifies its own state when it receives an ack covering that ADD
+HTLC.
+
+The ADD HTLC receiver modifies its own state, and modifies the other
+side's state when it sends the next ack (in practice, we do that
+immediately because it doesn't matter, but diagram below does it
+strictly).
+
+Thus, in your case:
+
+           NODE A                            NODE B
+
+    Committed: []                                 Committed: []
+    States:    [] [X]                             States:    [] [Y]
+                ADD HTLC X ----        ---- ADD HTLC Y
+                               \      /
+                                \    /
+    Committed: []                \  /             Committed: []
+    States:    [] [X]             \/              States:    [] [Y]
+                    SIG A0 ---    /\    --- SIG B0
+                              \  /  \  /
+                               \/    \/
+                               /\    /\
+                           &lt;---  \  /  ---&gt;
+    Committed: []                 \/              Committed: []
+    States:    [Y] [X]            /\              States: [X] [Y]
+                                 /  \
+                                /    \
+                           &lt;----      -----&gt; 
+    Committed: [Y]                                Committed: [X]
+    States:    [Y] [X]                            States: [X] [Y]
+
+Now, at this point both nodes have outstanding changes, so they can send
+another SIG (which acks the received changes, thus modifying the other
+state):
+
+    Committed: [Y]                                Committed: [X]
+    States:    [Y] [X Y]                          States: [X] [X Y]
+                    SIG A1 ---          --- SIG B1
+                              \        /
+                               \      /
+                                \    / 
+                                 \  /      
+                                  \/              
+                                  /\              
+                                 /  \
+                                /    \
+                           &lt;----      -----&gt; 
+PROCESS ACK:
+    Committed: [Y]                                Committed: [X]
+    States:    [X Y] [X Y]                        States: [X Y] [X Y]
+PROCESS SIG:
+    Committed: [X Y]                              Committed: [X Y]
+    States:    [X Y] [X Y]                        States: [X Y] [X Y]
+
+
+FWIW, note that the minimum single-update case is still 1.5 round-trips:
+
+           NODE A                            NODE B
+
+    Committed: []                                 Committed: []
+    States:    [] [X]                             States:    [] []
+                ADD HTLC X --------------------&gt;
+                
+    Committed: []                                 Committed: []
+    States:    [] [X]                             States:    [X] []
+                SIG A1 --------------------&gt;
+                
+    Committed: []                                 Committed: [X]
+    States:    [] [X]                             States:    [X] [X]
+                &lt;---------------------- REVOKE B0
+                &lt;------------------------- SIG B1
+                
+    Committed: [X]                                Committed: [X]
+    States:    [X] [X]                            States:    [X] [X]
+                ----------------------&gt; REVOKE A0
+
+Cheers,
+Rusty.
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000520.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+	<LI>Next message: <A HREF="000523.html">[Lightning-dev] Concurrent sigs in BOLT #2
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#522">[ date ]</a>
+              <a href="thread.html#522">[ thread ]</a>
+              <a href="subject.html#522">[ subject ]</a>
+              <a href="author.html#522">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

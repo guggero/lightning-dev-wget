@@ -1,0 +1,186 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] AMP via HD, BN+SS, and TR
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20AMP%20via%20HD%2C%20BN%2BSS%2C%20and%20TR&In-Reply-To=%3C20180319145757.GZ9082%40boulet.lan%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001100.html">
+   <LINK REL="Next"  HREF="001107.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] AMP via HD, BN+SS, and TR</H1>
+    <B>Andrew Poelstra</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20AMP%20via%20HD%2C%20BN%2BSS%2C%20and%20TR&In-Reply-To=%3C20180319145757.GZ9082%40boulet.lan%3E"
+       TITLE="[Lightning-dev] AMP via HD, BN+SS, and TR">apoelstra at wpsoftware.net
+       </A><BR>
+    <I>Mon Mar 19 14:57:57 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001100.html">[Lightning-dev] AMP via HD, BN+SS, and TR
+</A></li>
+        <LI>Next message: <A HREF="001107.html">[Lightning-dev] AMP via HD, BN+SS, and TR
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1106">[ date ]</a>
+              <a href="thread.html#1106">[ thread ]</a>
+              <a href="subject.html#1106">[ subject ]</a>
+              <a href="author.html#1106">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+Hi ZmnSCPxj,
+
+
+Yep, I'm pretty sure this works the way you describe -- essentially replace
+the hash challenges with adaptor signatures which are reblinded at each layer.
+Because adaptor signatures can make arbitrary sets of signatures atomic (and
+don't require any precommitments in the blockchain) it's easy to do multipath
+stuff this way. And using discrete logs as challenges makes reblinding and
+transferrable proof-of-payment easy.
+
+It's also true that you can use BIP32 hardened keys for the challenges. You
+might as well use HMAC rather than a hash for the sake of standardness, but
+I don't think there's any particular reason to do this for key derivation.
+
+Then Taproot can hide the non-cooperative cases as you mention.
+
+
+I've been working on understanding Lightning and figuring out best way to
+use the full power of scriptless scripts. I think we can do better than just
+dropping TR+SS into the existing architecture. (Some of AJ's recent emails
+to the list have been one-sided commentary on ideas I floated to him in
+person recently, but I haven't had time to get everything straight enough
+in my mind to reply.)
+
+For example, with adaptor signatures + Graftroot [1], one party can make their
+commit-tx signature atomic with a delegation to a timelock script; the other
+party does the same but for a different timelock script. Then maybe both parties
+can share the same commit tx rather than doing the symmetric thing, which would
+save space and simplify the protocol a bit. And more generally, this &quot;output
+has different spend conditions depending on who publishes to the chain&quot; primitive
+seems like a really powerful thing, and AFAIK nobody has noticed this feature of
+Graftroot until very recently.
+
+
+Cheers
+
+Andrew
+
+[1] <A HREF="https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2018-February/015700.html">https://lists.linuxfoundation.org/pipermail/bitcoin-dev/2018-February/015700.html</A>
+
+
+On Sun, Mar 18, 2018 at 08:25:13PM -0400, ZmnSCPxj via Lightning-dev wrote:
+&gt;<i> Good morning list,
+</I>&gt;<i> 
+</I>&gt;<i> I sketch here the idea, of making atomic multipath payment (AMP), with the properties:
+</I>&gt;<i> 
+</I>&gt;<i> 1.  Has a proof-of-payment.
+</I>&gt;<i> 2.  Multipath decorrelation.
+</I>&gt;<i> 
+</I>&gt;<i> Note: I am not a mathematician.  Thus, it is likely, that there is a mistake here, and we cannot make this work.
+</I>&gt;<i> 
+</I>&gt;<i> First, we look at BIP32 hierarchically derived (HD) keys by Wuille.  Roughly, given a parent private key k_par, we can do derive k_i child keys for integer i by:
+</I>&gt;<i> 
+</I>&gt;<i> k_i = H(i || k_par * G) + k_par
+</I>&gt;<i> 
+</I>&gt;<i> where H(x) is a hash function and G is the generator point. (this it not quite how BIP32 does it, it uses HMAC, maybe that is safer for some reason that my non-mathematician self is unaware of...)
+</I>&gt;<i> 
+</I>&gt;<i> The parent public key K_par = k_par * G.  We can derive K_i public child keys for integer i by:
+</I>&gt;<i> 
+</I>&gt;<i> K_i = H(i || K_par) * G + K_par
+</I>&gt;<i> 
+</I>&gt;<i> (I think)
+</I>&gt;<i> 
+</I>&gt;<i> Note that K_i = k_i * G still, as is usual for elliptic curve asymmetric cryptography:
+</I>&gt;<i> 
+</I>&gt;<i> K_i = k_i * G = (H(i || k_par * G) + k_par) * G = H(i || k_par * G) * G + k_par * G = H(i || K_par) * G + K_par
+</I>&gt;<i> 
+</I>&gt;<i> Of note is that if we know an i, a private child key k_i corresponding to that i, and the public parent key K_par, we can derive the private parent key k_par:
+</I>&gt;<i> 
+</I>&gt;<i> k_i = H(i || K_par) + k_par
+</I>&gt;<i> 
+</I>&gt;<i> k_par = k_i - H(i || K_par)
+</I>&gt;<i> 
+</I>&gt;<i> Now all we need is to have a conditional payment, which can only be performed if the payee provides a private key which matches a public key, i.e. given x * G, the payee must provide x.
+</I>&gt;<i> 
+</I>&gt;<i> Fortunately Poelstra has done this work beforehand in the Scriptless Script (SS) concept, where the payee provides a T = t * G, and the Scriptless Script construction requires that the payee reveal the t in order to claim the payment.  I will not go into the math since there is a good chance I shall make a mistake; look up discussions by better mathematicians by me.  Scriptless Script requires Bellare-Neven (BN) signatures to work.
+</I>&gt;<i> 
+</I>&gt;<i> Note that Scriptless Script handles only the equivalent of hashlocking.  We still need a timelock in case the payee refuses to reveal the proof-of-payment t.
+</I>&gt;<i> 
+</I>&gt;<i> Fortunately, Maxwell has provided a construction, taproot (TR).  This construction has two top-level branches: a Bellare-Neven n-of-n, or a Bitcoin Script.  We know that Scriptless Script can make an equivalent to a hashlock from a Bellare-Neven n-of-n.  The other branch of a taproot construction can now be a simple OP_CLTV+OP_CHECKSIG script, forming the timelock half of an HTLC.
+</I>&gt;<i> 
+</I>&gt;<i> How would a multipath payment work?  The invoice would contain the parent public key K_par.  From this, the payer derives as many K_i, as it needs to split the payment to.  It sets up conditional payments that require revelation of the private child key k_i for each K_i it derives.
+</I>&gt;<i> 
+</I>&gt;<i> When the payee receives a partial payment, it is not incentivized to claim it immediately yet.  This is because revelation of even one child key k_i will, in combination with the parent public key K_par, reveal the parent private key k_par, which serves as proof-of-payment.  The payee will wait for the entire payment to reach it, and then claim all of them.  This reveals all the private child keys k_i, any one of which will let the payer extract the parent private key k_par that serves as proof-of-payment.
+</I>&gt;<i> 
+</I>&gt;<i> Each path has a different k_i, thus providing multipath decorrelation.
+</I>&gt;<i> 
+</I>&gt;<i> (Please check my math --- I am not a mathematician and it is possible I have made a mistake somewhere)
+</I>&gt;<i> 
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPXj
+</I>
+&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>
+
+-- 
+Andrew Poelstra
+Mathematics Department, Blockstream
+Email: apoelstra at wpsoftware.net
+Web:   <A HREF="https://www.wpsoftware.net/andrew">https://www.wpsoftware.net/andrew</A>
+
+&quot;A goose alone, I suppose, can know the loneliness of geese
+ who can never find their peace,
+ whether north or south or west or east&quot;
+       --Joanna Newsom
+
+-------------- next part --------------
+A non-text attachment was scrubbed...
+Name: signature.asc
+Type: application/pgp-signature
+Size: 455 bytes
+Desc: not available
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180319/b2f89db2/attachment-0001.sig">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20180319/b2f89db2/attachment-0001.sig</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001100.html">[Lightning-dev] AMP via HD, BN+SS, and TR
+</A></li>
+	<LI>Next message: <A HREF="001107.html">[Lightning-dev] AMP via HD, BN+SS, and TR
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1106">[ date ]</a>
+              <a href="thread.html#1106">[ thread ]</a>
+              <a href="subject.html#1106">[ subject ]</a>
+              <a href="author.html#1106">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

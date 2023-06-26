@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Funding Transactions within transaction malleability
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2017-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Funding%20Transactions%20within%20transaction%20malleability&In-Reply-To=%3C3mw16aBPJpZJoObmVZ9BY_t4W_RjazmV9-HqGWt6vELSz3odnFeLmikn5vRZRHVz6mu7VBYdosQrJCwdiaUQkKhuejvKRFFSIPJh0f6w7q4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000684.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Funding Transactions within transaction malleability</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Funding%20Transactions%20within%20transaction%20malleability&In-Reply-To=%3C3mw16aBPJpZJoObmVZ9BY_t4W_RjazmV9-HqGWt6vELSz3odnFeLmikn5vRZRHVz6mu7VBYdosQrJCwdiaUQkKhuejvKRFFSIPJh0f6w7q4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Funding Transactions within transaction malleability">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sat Apr 29 15:17:30 UTC 2017</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000684.html">[Lightning-dev] [PATCH] Add spellcheck tool (requires `aspell`),	also spellcheck.
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#685">[ date ]</a>
+              <a href="thread.html#685">[ thread ]</a>
+              <a href="subject.html#685">[ subject ]</a>
+              <a href="author.html#685">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning all,
+
+Below is a collection of how to make funding transactions for micropayment
+channels even if SegWit is never activated.
+
+Even with transaction malleability, revocation is possible by the use of
+revocation keys, and thus, bidirectional micropayment channels are possible.
+
+However, the creation of micropayment channels is significantly more
+difficult without a malleability fix and segregated signatures.
+
+In the below, Alice wants to provide 1.0 BTC to the channel while Bob
+only wants to provide 0.25 BTC. Both agree to give 0.01 BTC, each, as
+transaction fees. The total input is thus 1.27 BTC.
+
+== Timelocked ==
+
+The funding transaction has two outputs:
+
+1. 1.0 BTC to (Alice &amp;&amp; CSV + 1 week) || (Alice &amp;&amp; Bob)
+2. 0.25 BTC to (Bob &amp;&amp; CSV + 1 week) || (Alice &amp;&amp; Bob)
+
+Commitment transactions have two inputs, which are both of the outputs
+of the funding transaction.
+
+Channel construction begins with the funding transaction being broadcast
+over the Bitcoin network. Both sides wait for the transaction, or a
+malleated version thereof, to be confirmed on a block. Once both sides
+have confirmed, they may generate commitment transactions referring to
+the confirmed funding transaction and sign each other's commitment
+transactions.
+
+Because of the timeout, the side which has received more money than it
+originally put into the channel must close the channel before the
+timeout. This puts a strict upper limit to the duration of the channel.
+
+Drawback: The timeout serves two masters. On the one hand, if channel
+opening must be aborted due to noncooperation between both sides, the
+money is locked up for the timeout duration; if one side needs the
+money transmitted quickly and does not have enough money to fund a
+different channel, the other side may force an abort and hostage the
+funds until the timeout. On the other hand, the timeout limits the
+lifetime of the channel, and it's best if the channel has a long
+lifetime if the channel can be succesfully opened.
+
+Channel Lifetime: Limited.
+
+Abort: Funds are tied up for the channel lifetime if opening is
+aborted.
+
+Cost: Low; only one transaction is needed to open.
+
+Hostage: Possible if one side needs to transfer the money quickly
+and cannot afford to have its funds tied up in case of an abort.
+
+== Child Pays For Parent ==
+
+The funding transaction has two outputs:
+
+1. 1.25 BTC to (Alice &amp;&amp; Bob)
+2. 0.02 BTC to (Alice &amp;&amp; Bob)
+
+Since the funding transaction spends all 1.27 BTC of input, there is
+no transaction fee, so miners are not incentivized to mine the funding
+transaction, or any malleated version thereof. Thus, if both sides
+are cooperating, they may safely broadcast this transaction on the
+Bitcoin network without worry of counterparty hostaging of funds.
+
+After the funding transaction has been created and signed by both
+sides, they can create commitment transactions referring to the
+unmalleated funding transaction. Once both commitment transactions
+are signed by the counterparty, the two sides create a new, Child
+Pays For Parent transaction which inputs the funding transaction's
+output containing the decided miner's fee and having a 0 output
+to an arbitrary address. The CPFP transaction is then broadcast to
+the Bitcoin network, and the two sides wait until the funding
+transaction is confirmed (which requires that the CPFP transaction
+also be confirmed in the same block). After confirmation, the
+channel may be used.
+
+In case of an abort, both sides may spend an input of the funding
+transaction immediately (and should do so for safety).
+
+Malleated versions of the funding transaction would not be mined,
+as they have 0 transaction fees.
+
+Drawback: Hostaging is possible with the cooperation of a miner;
+it might not even require a malicious miner. Some miners have a
+service that lets users pay the miner to include a transaction
+with low transaction fees onto the miner's block. A fraudulent
+counterparty may create a malleated version of the funding
+transaction, then provide it to a miner transaction-speedup
+service with a fee. Once in a block, the other counterparty's
+money is held hostage indefinitely.
+
+Drawback: Miners might not support CPFP correctly for various
+reasons. This may slow down the funding transaction getting
+confirmed until a miner supporting CPFP gets around to the
+funding transaction and its CPFP.
+
+Channel Lifetime: Unlimited.
+
+Abort: Funds in the channel are unencumbered (and in fact
+should be moved to another address for safety) if opening is
+aborted.
+
+Cost: Medium; two transactions, but both with relatively
+simple scripts.
+
+Hostage: Possible with miner cooperation.
+
+== Hashlocked Escrow ==
+
+The funding transaction needs to be very complicated. In
+addition, each side needs to place in escrow the value of
+the counterparty's fund; thus, it forces symmetry. For
+example, even if Bob wants to commit only 0.25 BTC while
+Alice commits 1.0 BTC, Bob must still temporarily commit
+1.25 BTC, then withdraw 1.0 BTC afterwards.
+
+Prior to building the funding transaction, both Alice and
+Bob individually create escrow release keys. These are
+simply short pieces of data. The output script contains
+the hash of those data.
+
+The funding transaction takes 1.26 BTC from Alice and
+1.26 BTC from Bob. It has four outputs:
+
+1. 1.0 BTC to (Alice &amp;&amp; Bob) || (Bob &amp;&amp; AliceEscrowKey)
+2. 0.25 BTC to (Alice &amp;&amp; Bob) || (Alice &amp;&amp; BobEscrowKey)
+3. 1.0 BTC to (Bob &amp;&amp; CSV + 2 hours) || (Alice &amp;&amp; AliceEscrowKey)
+4. 0.25 BTC to (Alice &amp;&amp; CSV + 2 hours) || (Bob &amp;&amp; BobEscrowKey)
+
+Commitment transactions take the first two outputs. Channel
+opening completes by creating an Escrow Recovery Transaction
+that inputs the #3 and #4 outputs above, and distributes them
+to the correct counterparty in the correct amounts (1.0 to
+Bob, 0.25 to Alice).
+
+First, each side generates Escrow Release Keys as mentioned,
+then provides the hash of those keys to each other and
+constructing, signing, and broadcasting the funding
+transaction.
+
+When the funding transaction is confirmed, each side creates
+commitment transactions and signs its counterparty's. Finally,
+before 1 hour (half the timeout) both of them must create the
+Escrow Recovery Transaction and have both sides acquire a fully
+signed copy.
+
+To abort, either of output 3 or 4 must be spent, which also
+implicitly releases the corresponding output 1 or 2 to the
+other party.
+
+Drawback: If the Bitcoin network is backlogged, race
+conditions may occur that allow either counterparty to steal
+coins outright from the other counterparty in an abort.
+If Alice wants to abort, she makes a transaction recovering
+output 3 of the funding transaction. This publicizes
+AliceEscrowKey. If that transaction is stuck unconfirmed
+until the 2-hour timeout passes, Bob can make transactions
+spending outputs 1, 3, and 4, and may boost up the miner fees
+or use a miner's speedup service to speed up the transaction
+spending output 3. Both of Alice and Bob now enter a heated
+transaction battle, with both of them attempting to claim
+outputs 3 and 4 in addition to their &quot;safe&quot; money in output 2
+(for Alice) and output 1 (for Bob).
+
+Drawback: You need to escrow money equal to your counterparty's
+funding commitment. If the reason you would prefer to have a
+low funding commitment on your end is due to lack of funds,
+your counterparty is forced to lower his or her funding
+commitment to equal yours. But if your counterparty is likely
+to send you money than you will send him or her, this is
+inefficient, as both of you are forced to close the channel
+when it saturates.
+
+Channel Lifetime: Unlimited.
+
+Abort: Part of the fund put into the channel is unencumbered,
+while the other part is tied up for 2 hours if opening is aborted.
+
+Cost: High; funding transaction is complicated, and another
+transaction is needed to complete the opening.
+
+Hostage: Not possible to my knowledge.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170429/48472c8d/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20170429/48472c8d/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000684.html">[Lightning-dev] [PATCH] Add spellcheck tool (requires `aspell`),	also spellcheck.
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#685">[ date ]</a>
+              <a href="thread.html#685">[ thread ]</a>
+              <a href="subject.html#685">[ subject ]</a>
+              <a href="author.html#685">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

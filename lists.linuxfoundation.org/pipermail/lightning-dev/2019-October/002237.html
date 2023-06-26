@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Rendez-vous on a Trampoline
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rendez-vous%20on%20a%20Trampoline&In-Reply-To=%3CCACdvm3O3-wfTVUs9x8mmxR6%3DnGgj0VzQgz%3DW6Ep4fSUj%3DpV46A%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002236.html">
+   <LINK REL="Next"  HREF="002244.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Rendez-vous on a Trampoline</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Rendez-vous%20on%20a%20Trampoline&In-Reply-To=%3CCACdvm3O3-wfTVUs9x8mmxR6%3DnGgj0VzQgz%3DW6Ep4fSUj%3DpV46A%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Rendez-vous on a Trampoline">bastien at acinq.fr
+       </A><BR>
+    <I>Tue Oct 22 12:01:56 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002236.html">[Lightning-dev] Nodelets, a layer 3 proposal
+</A></li>
+        <LI>Next message: <A HREF="002244.html">[Lightning-dev] Rendez-vous on a Trampoline
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2237">[ date ]</a>
+              <a href="thread.html#2237">[ thread ]</a>
+              <a href="subject.html#2237">[ subject ]</a>
+              <a href="author.html#2237">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE> Good morning everyone,
+
+Since I'm a one-trick pony, I'd like to talk to you about...guess what?
+Trampoline!
+If you watched my talk at LNConf2019, I mentioned at the end that
+Trampoline enables high AMP very easily.
+Every Trampoline node in the route may aggregate an incoming multi-part
+payment and then decide on how
+to split the outgoing aggregated payment. It looks like this:
+
+     .-------- 1mBTC --------.    .------- 2mBTC -------.
+    /                                    \ /
+  \
+Alice ----- 3mBTC ------&gt; Ted ------ 4mBTC ----&gt; Terry ----- 6mBTC ----&gt; Bob
+   \                                     /
+    `------- 2mBTC ----------'
+
+In this example, Alice only has small-ish channels to Ted so she has to
+split in 3 parts. Ted has good outgoing
+capacity to Terry so he's able to split in only two parts. And Terry has a
+big channel to Bob so he doesn't need
+to split at all.
+This is interesting because each intermediate Trampoline node has knowledge
+of his local channels balances,
+thus can make more informed decisions than Alice on how to efficiently
+split to reach the next node.
+
+But it doesn't stop there. Trampoline also enables a better rendez-vous
+routing than normal payments.
+Christian has done most of the hard work to figure out how we could do
+rendez-vous on top of Sphinx [1]
+(thanks Christian!), so I won't detail that here (but I do plan on
+submitting a detailed spec proposal with all
+the crypto equations and nice diagrams someday, unless Christian does it
+first).
+
+One of the issues with rendez-vous routing is that once Alice (the
+recipient) has created her part of the onion,
+she needs to communicate that to Bob (the sender). If we use a Bolt 11
+invoice for that, it means we need to
+put 1366 additional bytes to the invoice (plus some additional information
+for the ephemeral key switch).
+If the amount Alice wants to receive is big and may require multi-part,
+Alice has to decide upfront on how to split
+and provide multiple pre-encrypted onions (so we need 1366 bytes *per
+partial payment*, which kinda sucks).
+
+But guess what? Bitcoin Trampoline fixes that*&#8482;*. Instead of doing the
+pre-encryption on a normal onion, Alice
+would do the pre-encryption on a Trampoline onion (which is much smaller,
+in my prototype it's 466 bytes).
+And that allows rendez-vous routing to benefit from Trampoline's ability to
+do multi-part at each hop.
+Obviously since the onion is smaller, that limits the number of trampoline
+hops that can be used, but don't
+forget that there are additional &quot;normal&quot; hops between each Trampoline node
+(and the final Trampoline spec
+can choose the size of the Trampoline onion to enable a good enough
+rendez-vous).
+
+Here is what it would look like. Alice chooses to rendez-vous at Terry.
+Alice wants the payment to go through Terry
+and Teddy so she pre-encrypts a Trampoline onion with that route:
+
+Alice &lt;--- Teddy &lt;--- Terry
+
+She creates a Bolt 11 invoice containing that pre-encrypted onion. Bob
+picks up that invoice and can either reach
+Terry directly (via a normal payment route) or via another Trampoline node
+(Toad?). Bob finalizes the encryption of
+the Trampoline onion and sends it onward. Bob can use multi-part and split
+the payment however he wishes,
+because every Trampoline node in the route will be free to aggregate and
+re-split differently.
+Terry is the only intermediate node to know that rendez-vous routing was
+used. Terry doesn't learn anything about
+Alice because the payment still needs to go through Teddy. Teddy only
+learns that this is a Trampoline payment, so
+he doesn't know his position in the Trampoline route (especially since he
+doesn't know that rendez-vous was used).
+
+I believe this makes rendez-vous routing reasonable to implement: the
+trade-offs aren't as strong as in the normal
+payment case. If I missed something (maybe other issues related to the
+current rendez-vous proposal) please let me know.
+
+Of course Trampoline itself also has trade-offs that in some cases may
+impact privacy (e.g. when paying to legacy nodes
+that don't understand the Trampoline onion). This is why Eclair is
+currently implementing it to identify all the places where
+it falls short, so that we can then leverage the community's amazing brain
+power to converge on a spec that everyone is
+happy with and that minimizes the trade-offs we need to make. Stay tuned
+for more information and updates to the spec PR
+once we make progress on our Trampoline experiments.
+
+Thank you for reading this, don't hesitate to throw ideas and/or criticize
+this proposal.
+Note that all the cryptographic details are left as an exercise to the
+reader.
+
+Bastien
+
+[1]
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/wiki/Rendez-vous-mechanism-on-top-of-Sphinx">https://github.com/lightningnetwork/lightning-rfc/wiki/Rendez-vous-mechanism-on-top-of-Sphinx</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191022/9d0f01f4/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191022/9d0f01f4/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002236.html">[Lightning-dev] Nodelets, a layer 3 proposal
+</A></li>
+	<LI>Next message: <A HREF="002244.html">[Lightning-dev] Rendez-vous on a Trampoline
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2237">[ date ]</a>
+              <a href="thread.html#2237">[ thread ]</a>
+              <a href="subject.html#2237">[ subject ]</a>
+              <a href="author.html#2237">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

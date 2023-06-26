@@ -1,0 +1,221 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-March/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Code%20for%20sub%20second%20runtime%20of%20piecewise%0A%20linarization%20to%20quickly%20approximate%20the%20minimum%20convex%20cost%20flow%20problem%0A%20%28makes%20fast%20multi%20part%20payments%20with%20large%20amounts%20possible%29&In-Reply-To=%3CCAJ5H3Z7TLQjEstvZfMjVVXS9Zgpa6fe5BPE%3DK3eJJ8qnf_niCQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003518.html">
+   <LINK REL="Next"  HREF="003512.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)</H1>
+    <B>Ren&#233; Pickhardt</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Code%20for%20sub%20second%20runtime%20of%20piecewise%0A%20linarization%20to%20quickly%20approximate%20the%20minimum%20convex%20cost%20flow%20problem%0A%20%28makes%20fast%20multi%20part%20payments%20with%20large%20amounts%20possible%29&In-Reply-To=%3CCAJ5H3Z7TLQjEstvZfMjVVXS9Zgpa6fe5BPE%3DK3eJJ8qnf_niCQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)">r.pickhardt at googlemail.com
+       </A><BR>
+    <I>Fri Mar 11 14:33:38 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003518.html">[Lightning-dev] Interesting thing about Offered HTLCs
+</A></li>
+        <LI>Next message: <A HREF="003512.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3510">[ date ]</a>
+              <a href="thread.html#3510">[ thread ]</a>
+              <a href="subject.html#3510">[ subject ]</a>
+              <a href="author.html#3510">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Dear fellow Lightning Developers,
+
+I am pleased (and a bit proud) to be able to inform you that I finally
+found a quick way to approximate the slow minimum convex cost flow
+computation. This is necessary for optimally reliable and cheap payment
+flows [0] to deliver large multi part payments over the Lightning Network.
+The proposed solution happens via piecewise linearization [1] of the min
+cost flow problem on the uncertainty network which we face in order to
+compute the optimal split and planning of large amount multi part payments.
+The notion of &quot;optimal&quot; is obviously subjective with respect to the chosen
+cost function. As known we suggest to include the negative logarithm of
+success probabilities based on the likelihood that enough liquidity is
+available on a channel as a dominant feature of the used cost function. We
+give the background for this in [2] which since then has already been
+picked up by c-lightning and LDK. The c-lightning team even published
+benchmarks showing significant improvement in payment speed over their
+previously used cost function [2b].
+
+Let me recall that one of the largest criticisms and concerns of our
+approach to use minimum cost flows for payment delivery back in July /
+August last year (especially by the folks from lightning labs) was that the
+min cost flow approach would be impractical due to run time constrains.
+Thus I am delighted that with the now published code [3] (which has exactly
+100 lines including data import and parsing and ignoring comments) we are
+able to compute a reasonable looking approximation to the optimal solution
+in a sub second run time on the complete public channel graph of the
+Lightning Network. This is achieved via piecewise linearization of the
+convex cost function and invoking of a standard linear min cost flow solver
+[4] for the linearized problem. This works quickly despite the fact that
+the piecewise linearization adds a significant higher amount of arcs to the
+network and blows up the size of the network on which we solve the min cost
+flow problem. This makes me fairly certain that with proper pruning of the
+graph we might even reach the 100 millisecond runtime frontier, which would
+be far faster than what I dreamed &amp; hoped to be possible.
+
+The currently widely deployed Dijkstra search to generate a single
+candidate path takes roughly 100ms of runtime. It seems that with the
+runtime of the piecewise linearized problem the min cost flow approach is
+now competitive from a runtime perspective. The flow computation is still a
+bit slower than Dijkstra in both theory and practice. However the piecewise
+linearized min cost flow has the huge advantage that it generates several
+candidate paths for a solid approximation of the optimal MPP split.
+Remember the exact min cost flow corresponds to the optimal MPP split. The
+later was not used so far as the min cost flow was considered to be too
+slow. Yet the question how to split seems to be addressed as issues in
+implementations [5][6][7] and acknowledged to be complicated (especially
+with respect to fees) in [8]. This result is btw of particular interest for
+LSPs. If an LSP has to schedule x payments per second it can just do one
+flow computation with several sink nodes and plan all of those payments
+with a single min cost flow computation. This globally optimizes the
+potentially heavy load that LSPs might have even if all payments were so
+small that no splitting was necessary.
+
+The iPython notebook which I shared contains about 1 page to explain how to
+conduct a piecewise linear approximation. The quality of the approximation
+is not the major goal here as I am just focused to demonstrate the run time
+of the approach and the principle how to achieve this runtime. Thus I do
+the piecewise linear approximation very roughly in the published code.
+Selecting the optimal piecewise approximation [9] will not change the the
+runtime of flow computation but only blows up the code to prepare the
+solver. This is why I decided to keep the code as simple and short as
+possible even if that means that the approximation will be not as close to
+the optimum as it could be in practice. For the same reason I did not
+include any code to update the uncertainty network from previously failed
+or successful attempts by using conditional success probabilities P(X&gt;a |
+min_liquidity &lt; X &lt; max_liquidity ). People who are interested might look
+at my hands on instructions and explanations for coders in this
+rust-lightning issue [10]. The folks from LDK have picked this up and
+implemented this already for single path payments in [11] which might be
+relevant for people who prefer code over math papers. An obvious
+optimization of the piece wise linearization would be to chose the first
+segment of the piecewise linear approximation with a capacity of the
+certain liquidity and a unit cost of 0 for that piece.
+
+Our original papers describe everything only from a theoretical point of
+view and with simulations. However our mainnet experiments from July last
+year [12] indicated that we easily have been able to deliver for example
+0.3679 BTC via a couple rounds of min cost flow computations through the
+Lightning Network (given we accept the computational waiting time). This
+experiment was too slow to be used in practice but confirmed our model and
+approach to deliver such large amounts. Given that the min cost flow
+computation is now significantly below the median onion round trip times it
+is my understanding that with these newly introduced techniques we should
+be able to deliver substantial monetary amounts over the Lightning Network
+within a couple of seconds despite the uncertainty about the Liquidity in
+remote channels. While I am very excited about the result I think some
+principle roadblocks of the protocol are becoming more and more visible:
+
+1. The well known issue of hanging HTLCs. As of now I believe onion
+messages would be great to acknowledge incoming HTLCs of multipart payments
+but I certainly believe this will not be sufficient if we don't go for a
+cancelable &amp; stuckless payment protocol as suggested in [13].
+2. I believe the Lightning Network Protocol should be able to handle
+redundant overpayments as suggested in [14] and [15] (The later paper
+derives independently of us the same success probabilities and tries to
+maximize them!). This would allow to transform the problem of finding a
+flow that maximizes the success probability to a flow that expects to
+deliver the amount of the invoice (when redundancy is applied) with a
+single round of min cost flow computation on average.
+
+Last but not least, please allow me to make a short remark on the (still to
+me very surprisingly controversial) base fee discussion: For simplicity I
+did not include any fee considerations to the published code (besides a fee
+report on how expensive the computed flow is). However in practice we wish
+to optimize at least for high reliability (via neg log success
+probabilities) and cheap fees which in particular with the ppm is very
+easily possible to be included to the piece wise linearized cost function.
+While for small base fees it seems possible to encode the base fee into the
+first segment of the piecewise linearized approximation I think the base
+fee will still be tricky to be handled in practice (even with this
+approximation). For example if the base fee is too high the &quot;base fee
+adjusted&quot; unit cost of the first segment of the piecewise linearized
+problem might be higher than the unit cost of the second segment which
+effectively would break the convexity. Thus I reiterate my earlier point
+that from the perspective of the year long pursued goal of optimizing for
+fees (which all Dijkstra based single path implementations do) it seems to
+be best if the non linearity that is introduced by the base fee would be
+removed at all. According to discussions with people who crate Lightning
+Network explorer (and according to my last check of gossip) about 90% of
+channels have a base fee of 1 sat or lower and ~38% of all channels already
+set their base fee away from the default value to 0 [16].
+
+I hope this mail was useful for you. Feel free to ask me anything if there
+should be questions or if you need help to integrate those results into
+your software!
+
+With kind regards Rene Pickhardt
+
+[0]: <A HREF="https://arxiv.org/abs/2107.05322">https://arxiv.org/abs/2107.05322</A>
+[1]: <A HREF="https://en.wikipedia.org/wiki/Piecewise_linear_function">https://en.wikipedia.org/wiki/Piecewise_linear_function</A>
+[2]: <A HREF="https://arxiv.org/abs/2103.08576">https://arxiv.org/abs/2103.08576</A>
+[2b]:
+<A HREF="https://medium.com/blockstream/c-lightning-v0-10-2-bitcoin-dust-consensus-rule-33e777d58657">https://medium.com/blockstream/c-lightning-v0-10-2-bitcoin-dust-consensus-rule-33e777d58657</A>
+
+[3]:
+<A HREF="https://github.com/renepickhardt/mpp-splitter/blob/master/Minimal%20Linearized%20min%20cost%20flow%20example%20for%20MPP.ipynb">https://github.com/renepickhardt/mpp-splitter/blob/master/Minimal%20Linearized%20min%20cost%20flow%20example%20for%20MPP.ipynb</A>
+[4]: <A HREF="https://developers.google.com/optimization/flow/mincostflow">https://developers.google.com/optimization/flow/mincostflow</A>
+[5]: <A HREF="https://github.com/lightningnetwork/lnd/issues/4203">https://github.com/lightningnetwork/lnd/issues/4203</A>
+[6]: <A HREF="https://github.com/lightningdevkit/rust-lightning/issues/1276">https://github.com/lightningdevkit/rust-lightning/issues/1276</A>
+[7]: <A HREF="https://github.com/ElementsProject/lightning/issues/4753">https://github.com/ElementsProject/lightning/issues/4753</A>
+[8]: <A HREF="https://github.com/ACINQ/eclair/pull/1427">https://github.com/ACINQ/eclair/pull/1427</A>
+[9]: <A HREF="http://www.iaeng.org/publication/WCECS2008/WCECS2008_pp1191-1194.pdf">http://www.iaeng.org/publication/WCECS2008/WCECS2008_pp1191-1194.pdf</A>
+[10]:
+<A HREF="https://github.com/lightningdevkit/rust-lightning/issues/1170#issuecomment-972396747">https://github.com/lightningdevkit/rust-lightning/issues/1170#issuecomment-972396747</A>
+[11]: <A HREF="https://github.com/lightningdevkit/rust-lightning/pull/1227">https://github.com/lightningdevkit/rust-lightning/pull/1227</A>
+[12]: <A HREF="https://twitter.com/renepickhardt/status/1418849788531990530">https://twitter.com/renepickhardt/status/1418849788531990530</A>
+[13]:
+<A HREF="../2019-June/002029.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/002029.html</A>
+[14]: <A HREF="https://berkeley-defi.github.io/assets/material/1910.01834.pdf">https://berkeley-defi.github.io/assets/material/1910.01834.pdf</A>
+[15]: <A HREF="https://dl.acm.org/doi/10.1145/3479722.3480997">https://dl.acm.org/doi/10.1145/3479722.3480997</A>
+[16]: <A HREF="https://lnrouter.app/graph/zero-base-fee">https://lnrouter.app/graph/zero-base-fee</A>
+
+-- 
+<A HREF="https://ln.rene-pickhardt.de">https://ln.rene-pickhardt.de</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220311/0ba5d2d0/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220311/0ba5d2d0/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003518.html">[Lightning-dev] Interesting thing about Offered HTLCs
+</A></li>
+	<LI>Next message: <A HREF="003512.html">[Lightning-dev] Code for sub second runtime of piecewise linarization to quickly approximate the minimum convex cost flow problem (makes fast multi part payments with large amounts possible)
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3510">[ date ]</a>
+              <a href="thread.html#3510">[ thread ]</a>
+              <a href="subject.html#3510">[ subject ]</a>
+              <a href="author.html#3510">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

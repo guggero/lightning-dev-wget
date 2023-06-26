@@ -1,0 +1,193 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Forwarding hints in channel update messages
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Forwarding%20hints%20in%20channel%20update%20messages&In-Reply-To=%3CCAJBJmV-E-XaHnC8ET%2BsxrsM0Fs8EwzmCZNszYszTCh%2BB4rQU4w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001688.html">
+   <LINK REL="Next"  HREF="001601.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Forwarding hints in channel update messages</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Forwarding%20hints%20in%20channel%20update%20messages&In-Reply-To=%3CCAJBJmV-E-XaHnC8ET%2BsxrsM0Fs8EwzmCZNszYszTCh%2BB4rQU4w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Forwarding hints in channel update messages">joost.jager at gmail.com
+       </A><BR>
+    <I>Wed Nov 14 08:17:14 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001688.html">[Lightning-dev] Offline Lightning-enabled Vending Machines
+</A></li>
+        <LI>Next message: <A HREF="001601.html">[Lightning-dev] Forwarding hints in channel update messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1593">[ date ]</a>
+              <a href="thread.html#1593">[ thread ]</a>
+              <a href="subject.html#1593">[ subject ]</a>
+              <a href="author.html#1593">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hello all,
+
+I'd like to bring up an idea that builds on top of &quot;non-strict&quot; forwarding.
+I commented about this on conner's non-strict forwarding lightning-rfc pr,
+but it is probably better to discuss it on its own in this list.
+
+A node that forwards non-strictly, is using any of its channels to carry
+the payment to the next hop. It is ignoring the actually requested channel
+in `update_add_htlc`, except for determining the next hop pubkey.
+
+When forwarding fails, a `channel_update` msg can be returned to the
+sender. This brings up the question for which channel to return a
+`channel_update` in case of failed non-strict forwarding.
+
+If the htlc didn't satisfy the policy of the requested channel, the
+sender's view on the graph is not up to date and it makes sense to return a
+`channel_update` for the requested channel.
+
+However, if the htlc did satisfy the policy, sending back a
+`channel_update` does not provide the sender with any new information. In
+case of TemporaryChannelFailure, the update is optional. But leaving it out
+does not save any bytes because of padding (as pointed out by pierre in the
+pr).
+
+The idea is to repurpose the `channel_update` message in this case as a
+'forwarding hint'.
+
+When non-strict forwarding fails, the intermediate node iterates over all
+its channels to the next hop and determines what would be the 'best'
+channel to use from the sender point of view. Best could be defined as a
+trade off between minimum fee and time lock delta, similar to the weight
+function used during path finding. Only channels that have enough balance
+for the amount requested in the htlc are considered in this process.
+
+If there is no best channel (for example when none of the channels have
+enough capacity), the node just returns a `channel_update` for the
+requested channel as usual.
+
+If there is a best channel, a `channel_update` is returned for that channel
+instead of the requested channel. Senders that are aware of this behavior
+will recognize this when reading the failure message and interpret the
+`channel_update` as a forwarding hint.
+
+Senders not aware of the forwarding hint will either just apply the channel
+update to the graph or reject it. Both are fine, because their copy of the
+policy for the requested channel was already up-to-date. This makes this
+idea backwards compatible.
+
+What this forwarding hint signals is that an htlc with a fee and time lock
+delta that satisfies the policy of the hinted channel will likely be
+forwarded successfully. Of course if something changes at the intermediate
+node (channel balance) in the mean time, the hint may not be valid anymore.
+
+With the hint in hand, the sender can adjust the route to satisfy the
+hinted policy and try again. Alternatively, it could first try a route
+through other nodes because the hinted policy increases the total fee
+and/or time lock too much. How to exactly integrate this in path finding is
+something to work out further. The sender should be aware that an
+intermediate node may try to maximize its earning by handing out
+'expensive' forwarding hints and therefore should not blindly apply the new
+policy to a route.
+
+The advantage of having the hint is that the sender likely needs fewer
+payment attempts to complete the payment. For the intermediate node, it is
+a way to increase its earnings. It gives the sender more certainty about
+the parameters that lead to successful forwarding and the sender may choose
+to just go with those instead of trying out many other routes, even if one
+of those routes could be better. In case the sender wants the absolute best
+route, the forwarding hint may still be beneficial to the intermediate
+node. When there are multiple routes with identical total fees and time
+locks, a sender will likely choose the route for which it has received
+forwarding hints.
+
+In case the intermediate node can only forward the payment over a private
+channel, it could hint the policy of a public channel with a policy that
+also satisfies the private channel's policy. It doesn't matter if this
+public channel doesn't have enough balance, because non-strict forwarding
+will also be applied on the next attempt. Or maybe just returning a
+`channel_update` for channel id 0 with the private channel's policy.
+Senders aware of forwarding hints may just as well interpret this properly.
+
+To implement this, no onion packet changes are required. An intermediate
+node could advertise that it provides forwarding hints through a global
+feature bit, but that is optional. The forwarding hints can also be
+recognized in the `channel_update` message itself.
+
+Regards,
+Joost
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181114/7ffeb2df/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181114/7ffeb2df/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001688.html">[Lightning-dev] Offline Lightning-enabled Vending Machines
+</A></li>
+	<LI>Next message: <A HREF="001601.html">[Lightning-dev] Forwarding hints in channel update messages
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1593">[ date ]</a>
+              <a href="thread.html#1593">[ thread ]</a>
+              <a href="subject.html#1593">[ subject ]</a>
+              <a href="author.html#1593">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

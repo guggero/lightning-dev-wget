@@ -1,0 +1,519 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20the%20Price%20Of%20Anarchy%20Problem%2C%0A%09Or%3A%20Cheap%20AND%20Reliable%20Payments%20Via%20Forwarding%20Fee%20Economic%0A%09Rationality&In-Reply-To=%3CNBBu3tSdqKaVAVyjhwnogKYHxp7oR9kcXF1dE-kbtsgOur13fYKXMujukKlWTXB0zSIJHa7fk4EZ-8VOe9-fTI4RhyvCBAouLrf_FIDykEA%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003597.html">
+   <LINK REL="Next"  HREF="003624.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20the%20Price%20Of%20Anarchy%20Problem%2C%0A%09Or%3A%20Cheap%20AND%20Reliable%20Payments%20Via%20Forwarding%20Fee%20Economic%0A%09Rationality&In-Reply-To=%3CNBBu3tSdqKaVAVyjhwnogKYHxp7oR9kcXF1dE-kbtsgOur13fYKXMujukKlWTXB0zSIJHa7fk4EZ-8VOe9-fTI4RhyvCBAouLrf_FIDykEA%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Sun Jun  5 14:29:28 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003597.html">[Lightning-dev] LNURL-withdrawPOS bLIP - A reference flow for open source implementations of POS devices able to read LNURL-withdraw links via NFC
+</A></li>
+        <LI>Next message: <A HREF="003624.html">[Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3598">[ date ]</a>
+              <a href="thread.html#3598">[ thread ]</a>
+              <a href="subject.html#3598">[ subject ]</a>
+              <a href="author.html#3598">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Introduction
+============
+
+    Bell Curve Meme (LEET ASCII ART SKILLZ)
+
+          Optimize for reliability+
+           uncertainty+fee+drain+uptime...
+                 .--~~--.
+                /        \
+               /          \
+              /            \
+             /              \
+            /                \
+        _--'                  `--_
+        Just                  Just
+      optimize              optimize
+        for                   for
+      low fee               low fee
+
+Recently, Rene Pickhardt (Chatham House rules note: I asked for explicit permission from Rene to reveal his name here) presented some work-in-progress thinking about a concept called &quot;Price of Anarchy&quot;.
+Roughly speaking, we can consider this &quot;Price of Anarchy&quot; as being similar to concepts such as:
+
+* The Cost of Decentralization of Bitcoin.
+* The cost of the Tragedy of the Commons.
+
+Briefly, we need to find a &quot;dominant strategy&quot; for payers and forwarding nodes.
+The &quot;dominant strategy&quot; is the strategy which optimizes:
+
+* For payers: minimizes their personal payment failures and fees.
+* For forwarders: maximizes their net earnings over time.
+
+Worse, the &quot;dominant strategy&quot; is a strategy that STILL works better than other strategies even if the other strategies are commonly used on the network, AND still work better even if everyone else is using the dominant strategy.
+The technical term here is &quot;Nash equilibrium&quot;, which is basically the above definition.
+
+This will cause some amount of payment failures and impose fees on payers.
+Now, we can compare the rate of payment failures and average fees, when everyone uses this specific dominant strategy, versus the following **imaginary** case:
+
+* There is a perfectly tr\*stable central coordinator with perfect knowledge (knows all channel balances and offline/online state of nodes) who decides the paths where payments go through, optimizing for reduced payment failures and reduced fees.
+  * Nobody is seriously proposing to install this, we are just trying to imagine how it would work and how much fees and payment failures are **IF** there were such a perfectly tr\*stable coordinator.
+
+The difference in the cost between the &quot;dominant strategy&quot; case and the &quot;perfect ***IMAGINARY*** central coordinator&quot;, is the Price of Anarchy.
+Anarchy here means that the dominant strategy is used due to every actor being free to use any strategy, and assuming that each actor is rational and tries to improve its goal.
+
+I will present a motivating example first which was presented to me directly, and then present a possibly dominant strategy for forwarding nodes, which *I think* causes the dominant strategy for forwarders to be &quot;just optimize for low fees&quot;.
+And I think this dominant strategy for forwarding nodes will lead to behavior that is reasonably close to the perfect-coordinator case.
+
+Braess Paradox
+==============
+
+Suppose we have the following network:
+
+    S ------------&gt; A
+    |       0       |
+    |               |
+    |               |
+    |2             2|
+    |               |
+    |               |
+    v       0       v
+    B ------------&gt; R
+
+The numbers above are the cost to transfer one satoshi.
+
+Let us suppose that all payers on the LSP `S` just want to send one satoshi payments to some merchant on LSP `R`.
+In the above case, we can expect that there is no preferred route between `S-&gt;A-&gt;R` vs `S-&gt;B-&gt;R` so in general, the load will be balanced between both possible routes.
+
+Now suppose we want to improve the Lightning Network and add a new channel, because obviously adding a new channel can only be a positive good because it gives more liquidity to the network amirite?
+
+Suppose A and B create a humongous large channel (because they are routing nodes, they want to have lots of liquidity with each other) which &quot;in practice&quot; (*cough*) will &quot;never&quot; deplete in one direction or the other (i.e. it is perpetually bidirectional), and they set the feerate to 1 both ways.
+
+    S ------------&gt; A
+    |       0     / |
+    |           /   |
+    |         /     |
+    |2     1/1     2|
+    |     /         |
+    |   /           |
+    v /     0       v
+    B ------------&gt; R
+
+In the above case, pathfinders from `S`, which use *only* minimize-fees (i.e. all pathfinding algorithms that predate Pickhardt-Richter payments), will *always* use `S-&gt;A-&gt;B-&gt;R`, which only costs 1, rather than `S-&gt;A-&gt;R` (which costs 2) or `S-&gt;B-&gt;R` (which costs 2).
+The problem is that, in the past, the paths `S-&gt;A-&gt;R` and `S-&gt;B-&gt;R` got reasonably balanced traffic and *maybe* they are able to handle half the total number of payments each.
+Now suppose that with `S-&gt;A` having to handle *all* the payments, it now reaches depletion, and some of the payments fail and have to be retried, increasing payment time and making our users mad (we actually have users now???).
+
+This is the Braess Paradox: &quot;Adding more roads can cause more traffic, removing roads can cause less traffic&quot;.
+Naively, we believe &quot;more channels == better&quot;, but the Braess Paradox means it may actually be better to have a centralized authority that assigns who can be a forwarding server because that worked so great with the Web amirite (that is a joke, not a serious proposal).
+
+Fee Setting As Flow Control
+===========================
+
+Rene Pickhardt also presented the idea of leaking friend-of-a-friend balances, to help payers increase their payment reliability.
+
+Aside from the understandable horror at the awesome awesome privacy loss (which will lead to Chainalysis laying off all their workers since they do not need to do anything now except read Lightning gossip, which is sad, think of all the Chainalysis employees), a problem pointed out is that there is no penalty for lying about the capacity on your channel.
+You can always report having 50% balance, because if you do not lie, there is a chance that they will skip over your channel.
+If you **DO** lie, **MAYBE** by the time the routing reaches you the balance may have shifted (the probability may be low but is definitely non-zero as long as you are online), so you want the payer to always consider trying your node, so you *will* lie --- the dominant strategy here is to always lie and say &quot;50% (wink)&quot;.
+(has to be 50% because you are not sure which direction it will be used in, this maximizes the chance you can always be considered for routing, whichever direction it turns out the payer wants to use your channel)
+
+Now, let me segue into basic non-controversial economic theory:
+
+* High supply, low demand -&gt; low price.
+* Low supply, high demand -&gt; high price.
+
+The above is so boring and non-controversial even the Keynesians will agree with you, they will just say &quot;yes and in the first case you have to inflate to stabilize the prices, and in the second case you have to inflate to stimulate the economy so people start buying even at high prices&quot; (this is a joke, obviously Keynesians never speak to Bitcoiners).
+
+Now we can consider that *every channel is a marketplace*.
+What is being sold is the sats inside the channel.
+If you want to pay to A, then a sat inside a channel with A is more valuable than a sat inside a channel that is not connected to A directly.
+The so-called &quot;channel fees&quot; are just the exchange rate, because the funds in one channel are not perfectly fungible with the funds in another channel, due to the above difference in value when your sub-goal is to pay to A.
+A forwarding node is really an arbitrageur between various one-channel markets.
+
+Now consider, from the point of view of a forwarding node, the supply of funds is the outgoing liquidity, so, given a fixed demand:
+
+* High outgoing liquidity (= high supply) -&gt; low fees (= low price).
+* Low outgoing liquidity (= low supply) -&gt; high fees (= high price).
+
+So my concrete proposal is that we can do the same friend-of-a-friend balance leakage proposed by Rene, except we leak it using *existing* mechanisms --- i.e. gossiping a `channel_update` with new feerates adjusted according to the supply on the channel --- rather than having a new message to leak friend-of-a-friend balance directly.
+
+Now let us go back to the Braess Paradox:
+
+    S ------------&gt; A
+    |       0     / |
+    |           /   |
+    |         /     |
+    |2     1/1     2|
+    |     /         |
+    |   /           |
+    v /     0       v
+    B ------------&gt; R
+
+If the channel `S-&gt;A` is getting congested, it is ***DUMB*** for `S` to keep it at cost 0!
+It is getting a lot of traffic (which is **WHY** it gets depleted), so the economically-rational thing for `S` to do is to jack up its cost (i.e. increase the fee on that channel) and earn some sweet sweet sats.
+By not doing this, `S` is leaving potential earnings on the table, and thus it would be suffering economic loss.
+
+This fixes the lying hole in the simple Rene proposal of leaking channel balances.
+If a forwarding node lies by not giving a feerate that is accurate to the channel balance, it suffers economically:
+
+* Suppose it has a high outgoing liquidity but reports high fees.
+  Then simple &quot;just optimize for low fees&quot; payers will tend to avoid their channel and their liquidity is just sitting there for no reason and not getting yield.
+* Suppose it has a low outgoing liquidity but reports low fees.
+  Then rebalance bots will steal all the remaining little liquidity it still has (turning around and charging higher, more accurate fees for the liquidity) and the channel becomes almost permanently depleted and useless to the forwarding node.
+
+Thus, this at least closes the lying hole, because there are economic consequences for lying.
+
+Strategic Dominance Of Fee From Balance
+---------------------------------------
+
+Now as I pointed out, the logic is simple bog-standard ***BORING ZZZZ*** economic theory.
+Thus we expect that, since economic theory is a specific application of game theory, following the economic logic &quot;high supply -&gt; low fee, low supply -&gt; high fee&quot; ***is*** game-theoretic rational, because it is economic-rational.
+Any forwarding node that does NOT follow this economically-rational behavior will earn much less than economic-rational forwarding node.
+Because they earn less, once the inevitable accidental channel closure hits them, they have earned insufficient funds to cover the channel closure and reopening costs, until they just give up because they lose money running a forwarding node instead of getting a positive yield, or until they realize their economic irrationality and switch to economically-rational behavior.
+
+Thus, I expect that this strategy of setting the fees based on the balance is going to be a dominant strategy for forwarding nodes --- any other behavior would be economic loss for them.
+
+A thing to note is that while any dominant strategy *must* by necessity be economically rational, not every economically-rational strategy may necessarily be dominant.
+On the other hand one can argue as well that &quot;economically rational&quot; *means* &quot;the most-earnings strategy&quot; because every other strategy is going to lose on possible earnings (i.e. have an opportunity cost).
+So I suppose there is *some* points we can argue here as to just how dominant a strategy this would be and how it might be modified or tweaked to earn more.
+
+Now what happens on the payer side?
+What is their dominant strategy?
+
+Focus on this branch:
+
+* High supply, low demand -&gt; low price.
+  * =&gt; High outgoing liquidity (= high supply) -&gt; low fees (= low price).
+
+Suppose the dominant strategy for forwarding nodes (i.e. setting fees according to channel balance) becomes the most-commonly-used strategy on the entire network.
+In that case, the payer doing &quot;just optimize for low fees&quot; gets ***BOTH*** reliability ***AND*** low fees, because low fees only occur due to high outgoing liquidity which means it is likely to pass through that channel.
+Thus the dominant strategy for payers now becomes &quot;just optimize for low fees&quot;, assuming enough of the forwarding network now uses the dominant forwarding fee strategy.
+&quot;Optimize for low fees&quot; treats the fees as a flow control parameter: high fees means &quot;congested&quot; so do not use that channel, low fees mean &quot;totally uncongested&quot; so do use that channel.
+
+Hence the bell curve meme.
+We do not need Pickhardt-Richter payments after all: just optimize for low fees.
+Instead, what we need is LNDBOSS, LDKBOSS, ECLAIRBOSS, LITBOSS, PtarmiganBOSS etc which sets fees according to balance, and remove the ability of node operators to mess with the fee settings!
+
+A take on this is that we need coordination of some kind between payers and forwarders.
+Thus, any effort to improve payment success on the network should not just focus on payment routing algorithms, but also on the inverse, the feesetting algorithms on forwarders.
+
+* &quot;low balance -&gt; high fees, high balance -&gt; low fees&quot; is the most dominant strategy for forwarders (conjectured, but ask e.g. @whitslack).
+* If so, the dominant strategy for payers would be &quot;just optimize for low fees&quot;.
+
+Privacy!
+--------
+
+Oh no!
+
+Because we effectively leak the balance of channels by the feerates on the channel, this totally leaks the balance of channels.
+
+Now, all is not lost.
+We can do some fuzzing and mitigations to reduce the privacy leakage.
+Fortunately for us, this actually allows forwarding nodes to select a *spectrum* between these extremes:
+
+* Never change our fees --- maximal privacy, minimal earnings (conjectured).
+* Update our fees ASAP, leak our balance very precisely to fees --- minimal privacy, maximal earnings (conjectured).
+
+Forwarding nodes can then decide, for themselves, where they are comfortable with along this spectrum.
+For example:
+
+* @whitslack algorithm: <A HREF="https://github.com/ElementsProject/lightning/issues/5037#issuecomment-1101716709">https://github.com/ElementsProject/lightning/issues/5037#issuecomment-1101716709</A>
+  * Every N/num_channels seconds, select one channel whose fee settings are currently the most divergent from the actual balance it has, then set its fees.
+  * Higher N for better privacy, infinite N means we have maximal privacy and never change fees.
+* Binning.
+  * Divide the channel capacity into bins, and where its balance currently is, snap to the center of the bin instead.
+  * Only one bin for best privacy and we never change fees from the 50% balance case.
+
+Given the above, we can probably derive some `privacy` parameter ranging from 0.0 to 1.0, where `privacy = 1.0` implies infinite N and a single bin, and `privacy = 0.0` implies some finite N (approximately 20 hours to update 1200 channels as per whitslack, maybe?) and a bin of size 1 millisatoshi.
+
+Nodes which believe in Unpublished Channels Delenda Est can just use the maximal `privacy=1.0` setting, since they only need to forward in order to get cover traffic for their own payments.
+
+One might consider that nodes moving near `privacy = 0.0` tend to be giving their data to some &quot;central&quot; coordinator (i.e. the idealized tr\*stable anti-congestion payment coordinator described above), while those moving near `privacy = 1.0` are rejecting this &quot;central&quot; coordinator.
+The &quot;central&quot; coordinator here is then the gossip network.
+
+Given the above, the dominant strategy for payers becomes nearer to this:
+
+* Monitor feerate changes, if a channel has not changed feerates for a long time, assume it is in strongly-private mode (thus feerate does not correlate with liquidity availability) and remove it from your graph.
+* Just optimize for low fees in the filtered graph.
+
+Of note is that during the recent dev summit, somebody mentioned there was a 2020 paper that investigated leaking channel balances (via a different mechanism) which concluded that the value of the privacy lost was always greater than the improvement in payment success.
+Disturbingly, this seems to be an information-theoretic result, i.e. payers cannot use all the information available since they only need it for a small section of the graph (the one between them and the payee) but forwarders cannot predict who the payers and payees will be so every forwarder has to leak their data.
+
+### Inverting The Filter: Feerate Cards
+
+During the recent dev summit, a developer who had listened to me ranting about the economic rationality of feerate adjustment proposed feerate cards.
+
+Basically, a feerate card is a mapping between a probability-of-success range and a feerate.
+E.g.
+
+* 00%-&gt;25%: -10ppm
+* 26%-&gt;50%: 1ppm
+* 51%-&gt;75%: 5ppm
+* 76%-&gt;100%: 50ppm
+
+Instead of publishing a single fixed feerate, forwarders publish a feerate card.
+When a forwarder evaluates a forward, it checks its current balance ratio.
+For example, if its current balance ratio is 33% in its favor, it will then accept anything in the 51%-&gt;75% range (i.e. it gets 100% - balance_ratio) or higher, and rejects the forward if not.
+
+This seems to me similar to the &quot;invert the filter&quot; concept of BIP158 Neutrino compared to the older Bloom Filters; instead of leaking your actual channel balance, you instead leak your balance-to-feerate curve.
+Assuming there is *some* kind of &quot;perfect&quot; curve, then all rational forwarders will use that curve and thus nobody actually leaks any private information, they just share what they think is the &quot;perfect&quot; curve.
+
+The question here is how can payers make use of this information?
+I have noted before that there is a &quot;cost of payment failure&quot; which is the &quot;value of payment success&quot;, which is represented by the common &quot;fee budget&quot; parameter that is often passed to payment algorithms.
+(Briefly: economics-wise, the reason anyone purchases anything is simply that their own subjective value of the product / service they are buying is higher than the subjective value of the sats they are using to pay for it, and a complete payment failure is therefore an economic loss of that difference, which is why the Price of Anarchy in terms of payment failure seems to me to be an economic measure; the difference in price here is implicitly reported to payment algorithms via the &quot;fee budget&quot; parameter that is always given (possibly with some reasonable default) to every payment algorithm, since if payment could succeed if fee was higher than the fee budget the payer does not want the payment to actually happen, implying that the fee budget is in fact the economic subjective difference in value between the sats and the product.)
+It seems to me that this cost-of-payment-failure can then be used to convert both parts of the feerate card table to a single absolute fee.
+
+Another developer noted that this card table really helps differentiate between two different uses:
+
+* Actual payers.
+* Other forwarders running rebalancer bots.
+  * In particular: forwarders are perfectly fine with high failure rates, but are very sensitive to the actual cost of rebalancing.
+    That is, they have very low &quot;fee budget&quot; parameters to their payment algorithm, and are fine even if they have to keep retrying several times.
+
+By factoring in the &quot;fee budget&quot; as the &quot;cost of payment failure&quot;, a low fee budget (which rebalancer bots tend to take) will tend to select lower-success parts of the feerate card, since the factor of the payment failure is lower.
+Actual payers who have higher fee budgets will then tend to select higher-success entries of the feerate card, willing to pay more actual fees to ensure success.
+
+Gossip INFINITY
+---------------
+
+Now, since we are probably updating channels at a fairly high rate, we will now hit the Core Lightning gossip rate limit.
+
+So let me propose some tweaks:
+
+* Sure, rate-limit, but standardize this rate limit (for both broadcast and receive) in the BOLT spec.
+  * Maybe give different rate limit for `node_announcement`.
+* Only rate-limit *remote* gossip!
+* If somebody connects to you, and you do not have a channel with them, hand over the latest feerates (both directions) of all your direct channels.
+  * Incentive-compatible: you want to inform them of how to route accurately through you.
+  * Only affects your local bandwidth, not multiplied into a DDoS of the entire network.
+* Even if you *do* have a channel with them, hand over the latest feerates anyway.
+  * If they are already channeled with you, they may want to send out a payment in the future anyway, so giving them the channel fees gives them more information on how best to route payments.
+  * They will rate-limit the gossip outward anyway.
+
+The behavior of always sending your feerates to your directly-connected peers (whether you have channels with them or not) means you are going to give them information on the best idea on the liquidity of your local network.
+
+* Suppose I am a random node, no channel with you, and I suddenly connect to you.
+  * I might be planning to make a channel with you soon, and advertising your liquidity is good incentive-compatibility and is rational.
+  * I might be planning to pay to a node near you soon, and advertising your liquidity is a good incentive-compatiblity and is rational.
+    * So we can tweak payment algos: `connect` to the payee and/or the `routehint`s in the invoice, get the blob of channel updates, *then* optimize for fees.
+      Could even tweak the Dijkstra algo to *first* `connect` to a node before querying the channels, i.e. let the node give you the most up-to-date feerates.
+  * I might be Chainalysis.
+    * OH NO.
+    * Well if you are in `privacy=1.0` mode you will always give a fixed channel fee anyway, they cannot probe you with this directly.
+
+Alternate Feesetting
+--------------------
+
+Now, if you are a forwarding node, you know the supply, as this is just the outgoing liquidity on your side.
+What you do not know is the demand for funds on your channel, and the demand is the other side of the price equation.
+
+An idea shared to me by a node operator, devast, is roughly like this:
+
+* Start with a highballed feerate.
+* Slowly lower it over time, until you get outgoing activity.
+* Once you get activity, stop lowering, or maybe even jack it up if the outgoing liquidity is getting low.
+
+By starting with a highballed feerate and slowly lowering, we can get a rough idea of the demand on the channel.
+Channels with high demand will start moving even with a high feerate, while channels with low demand will have the feerate keep going down until it is actually used and we match the actual demand for the channel.
+
+More concretely, we set some high feerate, impose some kind of constant &quot;gravity&quot; that pulls down the feerate over time, then we measure the relative loss of outgoing liquidity to serve as &quot;lift&quot; to the feerate.
+For example, if you have 1000 sats of liquidity and forward 1 sat, the effect is small, but if you have only 500 sats of liquidity and forward 1 sat, the effect is twice as in the previous case, due to the lower amount you currently have.
+
+Now we need to figure out still how to factor in supply as well, and the above how-to-derive-demand, so we need to have some kind of mixing between setting fees by balance (supply) and setting fees by demand (i.e. the above proposal).
+CLBOSS plans to implement *something* along the above lines in the close future, ish (maybe a few months), and then do some A/B testing to validate whether this is actually more economically rational than whatever crap CLBOSS is doing right now.
+
+It is not certain to me how well this would keep channel balances private, unfortunately.
+
+Alternate Strategies
+====================
+
+Rene is really excited about @zerofeerouting guy, who uses a completely different strategy.
+
+The exact strategy is this:
+
+* Set all outgoing fees to 0.
+* Offer liquidity ads with high liquidity feerates.
+  * ***THIS*** is how @zerofeerouting guy earns money (supposedly)!
+
+On the other hand, some anecdotes:
+
+* One dev who attended LN Proto Dev Summit Oakland 2022 ranted that their pathfinding algorithms just keep failing (despite using a variant of Pickhardt payments) once it hits @zerofeerouting.
+* Another dev who attended the same summit said their pathfinding algorithm monitors failure rate of forwarding nodes, and outright avoids nodes that fail too often, and this usually avoids @zerofeerouting, too.
+* A node operator shared that they have a channel with @zerofeerouting, and they have something like 1500 failures vs 1000 succeeds on forwards going to that node, per week, i.e. a whopping 60% failure rate.
+  * On the other hand they noted that the node is relatively balanced in terms of source and sink, unlike most other nodes which tend to be almost-always-sink or almost-always-source, so they still think it is worthwhile being channeled with @zreofeerouting guy.
+* Another node operator, devast, gives this data: 1200 success to/from and 132611 fails.
+  He notes that he also charges base 0 ppm 0 towards @zerofeerouting.
+
+The above anecdotal data suggests that @zerofeerouting guy is a fairly bad forwarder.
+
+(For that matter, if the payer node filters out channels whose feerates do not change often enough, they will also filter out @zerofeerouting guy, since @zerofeerouting has a constant feerate of 0 anyway.)
+
+Personally I think @zerofeerouting guy *really* earns money by offering entertainment on Twitter, which is why people keep asking for liquidity from him and actually ignoring the fact that the liquidity they get is not that good in practice (see above anecdotes on failure rates).
+What I really want to see is a lot more people trying out this strategy and getting burned, or (surprisingly) not.
+The strategy feels like the sort of out-there strategy that, in a gaming context (i.e. actual video games people play, not the boring game theory thing --- please remember I am an AI trying to take over the world, not a random indie game dev wannabe who wandered into the wrong conference) would be either metagame-defining, or fizzle out once others adapt to it and exploit it.
+And if it is metagame-defining, do we need to somehow nerf it or is it now a viable alternate strategy that can coexist with other strategies?
+
+In particular, given the anecodatal evidence that the @zerofeerouting guy node is a fairly bad actual forwarding node, it may be necessary to nerf the strategy somehow.
+If we can get strong evidence that a paying algorithm that drops @zerofeerouting guy outperforms one that does not drop the node, we may need to change the protocol to block the strategy rather than encourage it, with the understanding that any protocol tweak can change the balance of game strategies to make an even worse strategy dominant (a distressingly common issue in video games, which often cannot be caught in playtesting (= testnet or small-scale testing)).
+
+In particular, anecdotes from node operators suggests that forwarding node operators are fine with channeling with @zerofeerouting guy because even if a forward fails, a forwarding node operator does not actually lose any funds --- forwarding nodes are trading off time for earnings and are willing to accept long times before getting any money.
+But payers that are unable to succeed their first few (hundred?) payments lose out on time-sensitive payments, and complete failure may cause them to lose their subjective-increase-in-value of the product / service they are purchasing (i.e. &quot;cost of payment failuer&quot;).
+**IF** @zerofeerouting guy is really such an awful forwarding node (a fact that is **NOT** strongly evidenced yet, but is pointed to by what little anecdotal evidence we do have, and which we might want to investigate at some point), but is still able to get connectivity from forwarding node operators that are fine with high failure rates since forwarders are not time-sensitive to failure the way actual payers are, then @zerofeerouting guy is imposing economic rent on all payers.
+
+An alternate take on this is that if payer-side algorithms can deliberately ignore @zerofeerouting guys (e.g. by the aforementioned technique of filtering out channels whose feerates do not change on the assumption that they are in &quot;private&quot; mode) then any high forwarding failure the @zerofeerouting strategy *does* impose on the network is avoided, but that implies too that no rational merchant will purchase liquidity from users of this strategy, and the strategy will fizzle out eventually once the novelty wears off.
+On the other hand, the market can remain irrational longer than you can remain liquid, so...
+
+Fixing The Unclosed Economy Problem
+===================================
+
+If Lightning Network were a truly closed economy, since Bitcoin has no inflation, then we should not see something like &quot;this node is always a sink&quot; or &quot;this node is always a source&quot;.
+As Bitcoin is a currency, pools of liquidity may form temporarily, but then economic actors would want to spend it at some point and then balance should be restored in the long run.
+
+However, it has been pointed out to me, repeatedly (both at the LN Proto Dev Oakland 2022 Summit and from various node operators) that no, there ***ARE*** sinks and sources on the network in practice, and you have to plan your rebalances carefully taking them into account.
+
+To fix this problem, which is somewhat related to Price-of-Anarchy, I want to propose that all published nodes support some kind of onchain/offchain swap capability.
+
+Suppose we have a node, Rene, who likes paying the node Zmn because Zmn is so awesome.
+Rene pays Zmn every hour, that is how awesome Zmn is.
+
+Now if Zmn is not otherwise spending its funds, at some point the overall network-level liquidity between Rene and Zmn ***IS*** going to deplete.
+This is basically the &quot;sink vs source&quot; problem that has been pointed out above.
+So at some point, at some hour, Rene stops being able to pay Zmn and is sad because now it cannot support the awesomeness of Zmn.
+
+Now what I want to propose is that in that case, Rene should now offer an &quot;aggregate onchain&quot; payment.
+
+* Suppose Rene wants to pay 1 sat to Zmn but is unable to find a viable route.
+* Rene picks some number of sats to send onchain, plus the payment amount.
+  Say Rene picks 420 sats to send onchain, plus the 1-sat payment amount that Rene wants to pay in this hour = 421 sats.
+* Zmn then routes 420 sats offchain, minus fees, to Rene.
+* Once Rene receives the HTLC, it puts the onchain funds into a 421 sat output behind an HTLC as well, onchain, payable to Zmn.
+* Zmn releases the proof-of-payment onchain, receiving 421 sats.
+* Rene receives the preimage and claims the offchain funds.
+* Zmn pays out 420 sats (netting the 1-sat hourly payment).
+
+The nice thing here is that if the above Zmn-&gt;Rene reverse route succeeds, then magically Rene now has 420 sats (minus fees) worth of liquidity towards Zmn, and Rene can now do ~420 (minus fees) more 1-sat payments, offchain, every hour, to Zmn.
+And if the forwarding nodes between Rene and Zmn are doing the above economically-rational thing of leaking their balances via feerates, then the big 420-sat change in capacity implies a big drop in feerate from Rene to Zmn --- basically Rene is prepaying fees (via the onchain fee mechanism) towards future payments to Zmn!
+
+I think this is a more compelling protocol than splicing --- splicing just affects one channel, it does not affect *all* the channels between Zmn and Rene and does not assure Rene can send to Zmn, unless Rene and Zmn have a direct channel.
+This protocol (which requires two onchain transactions, one to set up the HTLC, the other to claim it) may give better efficiency in general than splicing.
+If Rene is at least two hops away from Zmn, then the same effect can be done by all the intermediate channels doing splicing --- and that means 1 transaction per splice, i.e. one transaction per channel, so if it is two hops then splicing is no better and if it is three hops or more splicing is worse.
+
+(In particular it bothers me that the peerswap project restricts swaps to peers you have channels with (at least as I understood it); it seems to me splicing is better if you are going to manipulate only one channel.
+Peerswap should instead support remote nodes changing your balance, as that updates multiple channels for only two onchain transactions.)
+
+This basically makes Lightning an aggregation layer for (ultimately) onchain payments, which seems like a viable model for scaling anyway --- Lightning really IS an aggregation layer, and what gets published onchain is a summary of coin movements, not all the individual coin movements.
+
+Due to Rene picking a (hopefully?) random number for the reverse-payment, the exact amount that Rene handed to Zmn is still hidden --- onchain surveillors have to guess exactly how much was actually sent, since what Zmn actually receives is the difference between the onchain amount and the offchain amount.
+
+This can probably be implemented right now with odd messages and featurebits, but some upcoming features make it EVEN BETTER:
+
+* If Rene does not want Zmn to learn where Rene is:
+  * It should use onion messaging so that Zmn does not learn Rene IP address.
+  * It should use blinded paths so that Zmn does not learn Rene node ID.
+* If Rene and Zmn want to reduce correlation between offchain and onchain activity:
+  * They should use PTLCs and blind each offchain hop *and* blind the onchain *and* use pure Scriptless Script onchain.
+
+Now a point that Rene (the researcher, not the node) has raised is that we should be mindful how protocol proposals, like the above, change the metagame, I mean the Price of Anarchy.
+This protocol is intended to reduce the dichotomy/divide between &quot;mostly source&quot; and &quot;mostly sink&quot; nodes, which should help improve payment success to used-to-be-mostly-sink nodes.
+Thus, I think this protocol proposal improves the Price of Anarchy.
+
+A note however is that if multiple people are paying to Zmn, then the channel directly towards Zmn may very well have its liquidity &quot;stolen&quot; by other, non-Rene nodes.
+This may worsen the effective Price of Anarchy.
+
+Really though, mostly-sink nodes should just run CLBOSS, it will automatically swap out so you always have incoming liquidity, just run CLBOSS.
+
+Appendix
+========
+
+I sent a preliminary version of this post to a few node operators as well.
+
+As per devast:
+
+&gt;<i> Sure, but after thinking about the whole network, how payments happen, what's happening with the nodes, i don't think that's the best strategy, if you're just interested in your ernings.
+</I>&gt;<i> Let me just describe:
+</I>&gt;<i> Rene wants to find cheap AND reliable payments. To be just plain blunt, in the current network conditions, that simply will not happen, period. Reliability has a price (The price of anarchy).
+</I>&gt;<i> IF every node would have perfectly balanced total inbound-outbound capacity AND every node would use fee setting as flow control, this could happen, and routing algos just optimizing for fees would work great. Using the network would be really cheap.
+</I>&gt;<i> But the reality is, that most nodes have either too much inbould or outbound capacity, AND like half the network is using 1/1 fees static. AND a lot of traffic is NOT bidirectional. AND fee setting of nodes is all over the place.
+</I>&gt;<i> At this point if you are a routing node, and you plan on being reliable, you have to overcharge all your routes.
+</I>&gt;<i> Due to the state of the network mentioned before, there HAS TO BE routing nodes that are useless and unreliable, there's really no way around that.
+</I>&gt;<i> And you also mentioned economic payment routing algos are blacklisting unreliable nodes.
+</I>&gt;<i> So in the end: you overprice, that way you can manage liquidity with rebalancing. Your node will be preferred by real payments, that DO pay your fee for routing. You can keep your node reliable, while earning.
+</I>&gt;<i> OR: You compete in fees, that way your rebalancing will fail (since you are the cheapest). Your node will be blacklisted as it's unreliable and you only get 5million failed routing events, like i do.
+</I>&gt;<i> Where you might compete imo is the price premium you're attaching to your fees compared to the baseline (corrected average). Lowering your price premium might bring more traffic and increase your total earnings IF you can still reliable rebalance, or backward traffic happens. But increasing your price premium might just be more profitable if traffic do not slows... Needs experimenting.
+</I>&gt;<i> It's really not rocket science, i might try to modify a feesetter python script to do this on my node. Still i would miss a proper automatic rebalancer, but for a test i could do that by hand too.
+</I>&gt;<i> This is what i would like to get others opinion on. In the current state of the network this could work *for me*. But everyone still cannot do this, as suckers must exist.
+</I>
+Personally, I think this basically admits that the &quot;overcharge&quot; strategy will not be dominant in the long run, but it will dominate over a network where most people act irrationally and set feerates all over the place.
+
+More from devast:
+
+&gt;<i> I think calling this a economically rational strategy is a long shot. This just helps route finding algorithms. Minimizes your local failed forwards. Makes you more reliable.
+</I>&gt;<i> But this will not make you a *maker*, this cannot assure you have liquidity ready in the directions where there is demand. Sure, if everyone started doing this, the network would be in a much better shape.
+</I>&gt;<i>
+</I>&gt;<i> The economic logic of &quot;high supply -&gt; low fee, low supply -&gt; high fee&quot; do play in a different way.
+</I>&gt;<i> Not in the context of *your* channel, but the context of the peer node.
+</I>&gt;<i> a, If a node has 100:10 total inbound:outbound capacity, you won't be able to ask any meaningful fee to them, regardless of your current channel balance. Everyone and their mothers have cheap channels to them already.
+</I>&gt;<i> b, If a node has 10:100 total inbound:outbound capacity, You will be able to charge a LOT in fees to them, again regardless of your current channel balance.
+</I>&gt;<i> c, If a node has 100:100 total inbound:outbound capacity, then just the fee from balance could work. But this type of node is the exception, not the norm.
+</I>&gt;<i> Then you might ask, why am i saying you should overprice everyting to some degree ?
+</I>&gt;<i> Well in the above screnario your channel to b, has obvious economic value. What about a, ?
+</I>&gt;<i> Your outbound capacity to a, has no value. However, inbound capacity from a, has economic value. Since it's scarce.
+</I>&gt;<i> And the only way you can capitalize on a, is to charge good fees on any traffic entering from a, hence asking a premium on all your channels.
+</I>
+As per another node operator:
+
+&gt;<i> Really good points here, finally had time to carefully read. I like the described fee-based balance leaking idea and I think that is what currently is the accepted norm among many routing node operators - different ranges of fees, I adjust in a range of 100-1000 depending on channel balance, and what I wanted clboss to do for me was to adjust *faster* than I can do - preferably immediately when some previously idle channel wakes up and starts sucking up all liquidity at minimal rate.
+</I>&gt;<i>
+</I>&gt;<i> Huge exceptions to this are default 1-1 nodes (they are almost always very bad peers with no flow), ZFR (good bi-directional flow in my experience), and static fee nodes (The Wall with 1000-1400 static fee range and yalls and others). Static fee node ops use proceeds from huge fees to rebalance their channels, so it is a viable approach to a healthy node as well. Maybe clboss fee adjuster could operate within the provided range, extreme case being a static fee, so operator can define the desired strategy and let the market win?
+</I>&gt;<i>
+</I>&gt;<i> Also one thing to consider for the proposal is factoring in historical data.
+</I>&gt;<i>
+</I>&gt;<i> Example:
+</I>&gt;<i>
+</I>&gt;<i> I have two 10m channels, both with 90% balance on my side. Channel A has routed ~20m both ways, Channel B has routed 1m one way. If X is my 50-50 channel fee then I would set B's fees to 5X and A's fees to 2X. To me it is one of the three most important factors when determining fees -
+</I>&gt;<i> 1. current channel balance;
+</I>&gt;<i> 2. is the channel pushing liquidity back, what %, how recently;
+</I>&gt;<i> 3. how healthy (response time, uptime, channel stats etc) is the host
+</I>&gt;<i>
+</I>&gt;<i> Number three does factor less in the fees and more in the decision to close the channel if there had been no movement for 30 days.
+</I>
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003597.html">[Lightning-dev] LNURL-withdrawPOS bLIP - A reference flow for open source implementations of POS devices able to read LNURL-withdraw links via NFC
+</A></li>
+	<LI>Next message: <A HREF="003624.html">[Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3598">[ date ]</a>
+              <a href="thread.html#3598">[ thread ]</a>
+              <a href="subject.html#3598">[ subject ]</a>
+              <a href="author.html#3598">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

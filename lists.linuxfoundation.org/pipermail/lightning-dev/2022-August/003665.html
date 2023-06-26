@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Splice Pinning Prevention w/o Anchors
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Pinning%20Prevention%20w/o%20Anchors&In-Reply-To=%3CCAN%2BF7j%3D-v-rTp8eH8osESOjgdhRQgdtv58CwyFD4ACOrx7UHSA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003667.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Splice Pinning Prevention w/o Anchors</H1>
+    <B>Dustin Dettmer</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Splice%20Pinning%20Prevention%20w/o%20Anchors&In-Reply-To=%3CCAN%2BF7j%3D-v-rTp8eH8osESOjgdhRQgdtv58CwyFD4ACOrx7UHSA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Splice Pinning Prevention w/o Anchors">dustin at koinkeep.com
+       </A><BR>
+    <I>Tue Aug  9 20:14:59 UTC 2022</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003667.html">[Lightning-dev] Splice Pinning Prevention w/o Anchors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3665">[ date ]</a>
+              <a href="thread.html#3665">[ thread ]</a>
+              <a href="subject.html#3665">[ subject ]</a>
+              <a href="author.html#3665">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>As raised by @crypto-iq and @roasbeef, splices which permit arbitrary
+script and input inclusion are at risk of being mempool pinned. Here we
+present a solution to this splice pinning problem.
+
+
+## Background
+
+Pinning can be done by building a very large &#8220;junk&#8221; transaction that spends
+from an important pending one. There are two known pinning vectors:
+ancestor bulking thru addition of new inputs and junk pinning via the
+spending of outputs.
+
+
+Pinning pushes transactions to the bottom of the priority list without a
+practical way of bumping it up. It is in effect a griefing attack, but in
+the case of lightning can risk funds loss for HTLCs that have timed out for
+a pinned commitment transaction.
+
+
+Anchor outputs were introduced to lightning to mitigate the junk pinning
+vector; they work by adding a minimum of  `1 CSV` lock to all outputs on
+the commitment transaction except for two &#8220;anchor&#8221; outputs, one for each
+channel peer. (These take advantage of a 1-tx carve-out exception to enable
+propagation of anchors despite any junk attached to the peer&#8217;s anchor).
+
+
+## Mitigation
+
+Splice transactions are susceptible to both junk and bulk pinning attacks.
+Here&#8217;s how we propose mitigating these for splice.
+
+
+[<A HREF="https://i.imgur.com/ayiO1Qt.png">https://i.imgur.com/ayiO1Qt.png</A>]
+
+
+For &#8220;ancestor bulking&#8221;, every `tx_add_input` proposed by a peer must be
+included in the UTXO set. A node MUST verify the presence of a proposed
+input before adding it to the splicing transaction.
+
+
+For &#8220;output junk&#8221;, every output included directly in a splice transaction
+MUST be a v0 P2SH witness script which begins with a minimum of `1 CSV`
+relative timelock. No output on the splice transaction will be spendable
+until it is included in a block. This prevents junk pinning by removing the
+ability to propose spends of splice outputs before the transaction is
+included in a block.
+
+
+There are two side effects here.
+
+
+1) You cannot CPFP a splice transaction. All splices must be RBF&#8217;d to be
+fee-bumped. The interactive tx protocol already provides a protocol for
+initiating an RBF, which we re-use for splicing.
+
+2) Arbitrary 3rd party scriptPubKeys are not permissible directly into the
+splice tx.
+
+
+In order for this to work we need to validate that every output has a 1
+block CSV. There are two output types to consider:
+
+   1. New channel outpoints
+   2. Arbitrary splice out funds
+
+
+For arbitrary splice out, funds can be included in a &#8220;fan-out&#8221; transaction.
+Here standard pay to address etc outputs can live. The output leading to
+the fan-out transaction will be a P2WSH that also begins with [OP_1,
+OP_CHECKSEQUENCEVERIFY] (referred to from here on as &#8216;1 CSV&#8217;). Each splice
+party SHOULD build a fan-out transaction for all arbitrary spliced outputs.
+
+
+[<A HREF="https://i.imgur.com/40Dy3oq.png">https://i.imgur.com/40Dy3oq.png</A>]
+
+
+Splice-in transactions will not require any fan-out children as long as all
+change goes into the channel outpoint.
+
+
+For new channel outpoints, the v0 witness script should be modified to
+start with [OP_1, OP_CHECKSEQUENCEVERIFY]. It needs to be the first item in
+the script to allow easy validation that it is used and not hidden in a
+false conditional. This would need to be applied to post-splice channel
+outpoints and probably dual funding channels should add it as well so they
+can be successfully included in splices.
+
+
+### interactive tx protocol changes
+
+For splices, `tx_add_output` MUST include the `witness_script` in the tlv.
+Upon receiving outputs, nodes must validate the script matches the script
+hash in the output and that it begins with a minimum of 1 CSV.
+
+
+## HTLC Timeouts and Splices
+
+Typically when this technique is used, one or two anchor outputs are added
+to purposely allow for CPFP fee bumping. But, turns out, we already have a
+usable anchor in the original commitment transaction! Very exciting.
+
+
+The interactive tx protocol mandates that splice txs are RBF-enabled.
+Broadcast splice proposals can be replaced out for the original commitment
+transaction at any time. Since the original commitment transaction has
+existing anchors, these may be used to increase fees on a force close. This
+combined with every other output in the tree being locked behind a 1 CSV
+means the force close will always have top mempool priority, mitigating the
+&#8220;output junk&#8221; style pin.
+
+
+- Nifty &amp; Dusty
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220809/d79c4ee0/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220809/d79c4ee0/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003667.html">[Lightning-dev] Splice Pinning Prevention w/o Anchors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3665">[ date ]</a>
+              <a href="thread.html#3665">[ thread ]</a>
+              <a href="subject.html#3665">[ subject ]</a>
+              <a href="author.html#3665">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Impact of eltoo loss of state
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Impact%20of%20eltoo%20loss%20of%20state&In-Reply-To=%3C87czrl6jlj.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003131.html">
+   <LINK REL="Next"  HREF="003134.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Impact of eltoo loss of state</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Impact%20of%20eltoo%20loss%20of%20state&In-Reply-To=%3C87czrl6jlj.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] Impact of eltoo loss of state">decker.christian at gmail.com
+       </A><BR>
+    <I>Wed Jul 14 14:44:24 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003131.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+        <LI>Next message: <A HREF="003134.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3133">[ date ]</a>
+              <a href="thread.html#3133">[ thread ]</a>
+              <a href="subject.html#3133">[ subject ]</a>
+              <a href="author.html#3133">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Not quite sure if this issue is unique to eltoo tbh. While in LN-penalty
+loss-of-state equates to loss-of-funds, in eltoo this is reduced to
+impact only funds that are in a PTLC at the time of the loss-of-state.
+
+We have a couple of options here, that don't touch the blockchain, and
+are therefore rather lightweight:
+
+ 1) Do nothing and keep the incentive to keep up to date backups. It
+ still is a reduction in risk w.r.t. LN-penalty, since this is just an
+ append only log of secrets, and old secrets don't harm you like
+ attempting to close with an old commitment would.
+ 2) Use the peer-storage idea, where we deposit an encrypted bundle with
+ our peers, and which we expect the peers to return. by hiding the fact
+ that we forgot some state, until the data has been exchanged we can
+ ensure that peers always return the latest snapshot of whatever we gave
+ them.
+
+The latter is the encrypted-blob idea that Rusty has been proposing for
+a while now.
+
+Cheers,
+Christian
+
+Anthony Towns &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">aj at erisian.com.au</A>&gt; writes:
+&gt;<i> Hello world,
+</I>&gt;<i>
+</I>&gt;<i> Suppose you have some payments going from Alice to Bob to Carol with
+</I>&gt;<i> eltoo channels. Bob's lightning node crashes, and he recovers from an
+</I>&gt;<i> old backup, and Alice and Carol end up dropping newer channel states
+</I>&gt;<i> onto the blockchain.
+</I>&gt;<i>
+</I>&gt;<i> Suppose the timeout for the payments is a few hours away, while the
+</I>&gt;<i> channels have specified a week long CSV delay to rectify any problems
+</I>&gt;<i> on-chain.
+</I>&gt;<i>
+</I>&gt;<i> Then I think that that means that:
+</I>&gt;<i>
+</I>&gt;<i>  1) Carol will reveal the point preimages on-chain via adaptor
+</I>&gt;<i>     signatures, but Bob won't be able to decode those adaptor signatures
+</I>&gt;<i>     because those signatures will need to change for each state
+</I>&gt;<i>
+</I>&gt;<i>  2) Even if Bob knows the point preimages, he won't be able to
+</I>&gt;<i>     claim the PTLC payments on-chain, for the same reason: he needs
+</I>&gt;<i>     newer adaptor signatures that he'll have lost with the state update
+</I>&gt;<i>
+</I>&gt;<i>  3) For any payments that timeout, Carol doesn't have any particular
+</I>&gt;<i>     incentive to make it easy for Bob to claim the refund, and Bob won't
+</I>&gt;<i>     have the adaptor signatures for the latest state to do so
+</I>&gt;<i>
+</I>&gt;<i>  4) But Alice will be able to claim refunds easily. This is working how
+</I>&gt;<i>     it's meant to, at least!
+</I>&gt;<i>
+</I>&gt;<i> I think you could fix (3) by giving Carol (who does have all the adaptor
+</I>&gt;<i> signatures for the latest state) the ability to steal funds that are
+</I>&gt;<i> meant to have been refunded, provided she gives Bob the option of claiming
+</I>&gt;<i> them first.
+</I>&gt;<i>
+</I>&gt;<i> However fixing (1) and (2) aren't really going against Alice or Carol's
+</I>&gt;<i> interests, so maybe you can just ask: Carol loses nothing by allowing
+</I>&gt;<i> Bob to claim funds from Alice; and Alice has already indicated that
+</I>&gt;<i> knowing P is worth more to her than the PTLC's funds -- otherwise she
+</I>&gt;<i> wouldn't have forwarded the PTLC to Bob in the first place.
+</I>&gt;<i>
+</I>&gt;<i> Likewise, everyone's probably incentivised to negotiate cooperative
+</I>&gt;<i> closes instead of going on-chain -- better privacy, less fees, and less
+</I>&gt;<i> delay before the funds can be used elsewhere.
+</I>&gt;<i>
+</I>&gt;<i> FWIW, I think a similar flaw exists even in the original eltoo spec --
+</I>&gt;<i> Alice could simply decline to publish the settlement transaction until
+</I>&gt;<i> the timeout has been reached, preventing Bob from revealing the HTLC
+</I>&gt;<i> preimage before Alice can claim the refund.
+</I>&gt;<i>
+</I>&gt;<i> So I think that adds up to:
+</I>&gt;<i>
+</I>&gt;<i>  a) Nodes should share state on reconnection; if you find a node that
+</I>&gt;<i>     doesn't do this, close the channel and put the node on your enemies
+</I>&gt;<i>     list. If you disagree on what the current state is, share your most
+</I>&gt;<i>     recent state, and if the other guy's state is more recent, and all
+</I>&gt;<i>     the signatures verify, update your state to match theirs.
+</I>&gt;<i>
+</I>&gt;<i>  b) Always negotiate a mutual/cooperative close if possible, to avoid
+</I>&gt;<i>     actually using the eltoo protocol on-chain.
+</I>&gt;<i>
+</I>&gt;<i>  c) If you want to allow continuing the channel after restoring an old
+</I>&gt;<i>     state from backup, set the channel state index based on the real time,
+</I>&gt;<i>     eg (real_time-start_time)*(max_updates_per_second). That way your
+</I>&gt;<i>     first update after a restore from backup will ensure that any old
+</I>&gt;<i>     states that your channel partner may not have told you about are
+</I>&gt;<i>     invalidated.
+</I>&gt;<i>
+</I>&gt;<i>  d) Accept that if you lose connectivity to a channel partner, you will
+</I>&gt;<i>     have to pay any PTLCs that were going to them, and won't be able
+</I>&gt;<i>     to claim the PTLCs that were funding them. Perhaps limit the total
+</I>&gt;<i>     value of inbound PTLCs for forwarding that you're willing to accept
+</I>&gt;<i>     at any one itme?
+</I>&gt;<i>
+</I>&gt;<i> Also, layered commitments seem like they make channel factories
+</I>&gt;<i> complicated too. Nobody came up with a way to avoid layered commitments
+</I>&gt;<i> while I wasn't watching did they?
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> aj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003131.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+	<LI>Next message: <A HREF="003134.html">[Lightning-dev] Impact of eltoo loss of state
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3133">[ date ]</a>
+              <a href="thread.html#3133">[ thread ]</a>
+              <a href="subject.html#3133">[ subject ]</a>
+              <a href="author.html#3133">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

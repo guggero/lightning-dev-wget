@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20the%20Price%20Of%20Anarchy%20Problem%2C%0A%20Or%3A%20Cheap%20AND%20Reliable%20Payments%20Via%20Forwarding%20Fee%20Economic%0A%20Rationality&In-Reply-To=%3C20220629101725.GA10439%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003598.html">
+   <LINK REL="Next"  HREF="003626.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Solving%20the%20Price%20Of%20Anarchy%20Problem%2C%0A%20Or%3A%20Cheap%20AND%20Reliable%20Payments%20Via%20Forwarding%20Fee%20Economic%0A%20Rationality&In-Reply-To=%3C20220629101725.GA10439%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Solving the Price Of Anarchy Problem, Or: Cheap AND Reliable Payments Via Forwarding Fee Economic Rationality">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Jun 29 10:17:25 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003598.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+        <LI>Next message: <A HREF="003626.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3624">[ date ]</a>
+              <a href="thread.html#3624">[ thread ]</a>
+              <a href="subject.html#3624">[ subject ]</a>
+              <a href="author.html#3624">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Sun, Jun 05, 2022 at 02:29:28PM +0000, ZmnSCPxj via Lightning-dev wrote:
+
+Just sharing my thoughts on this.
+
+&gt;<i> Introduction
+</I>&gt;<i> ============
+</I>&gt;<i>           Optimize for reliability+
+</I>&gt;<i>            uncertainty+fee+drain+uptime...
+</I>&gt;<i>                  .--~~--.
+</I>&gt;<i>                 /        \
+</I>&gt;<i>                /          \
+</I>&gt;<i>               /            \
+</I>&gt;<i>              /              \
+</I>&gt;<i>             /                \
+</I>&gt;<i>         _--'                  `--_
+</I>&gt;<i>         Just                  Just
+</I>&gt;<i>       optimize              optimize
+</I>&gt;<i>         for                   for
+</I>&gt;<i>       low fee               low fee
+</I>
+I think ideally you want to optimise for some combination of fee, speed
+and reliability (both liklihood of a clean failure that you can retry
+and of generating stuck payments). As Matt/Peter suggest in another
+thread, maybe for some uses you can accept low speed for low fees,
+while in others you'd rather pay more and get near-instant results. I
+think drain should just go to fee, and uncertainty/uptime are just ways
+of estimating reliability.
+
+It might be reasonable to generate local estimates for speed/reliability
+by regularly sending onion messages or designed-to-fail htlcs.
+
+Sorry if that makes me a midwit :)
+
+&gt;<i> Rene Pickhardt also presented the idea of leaking friend-of-a-friend balances, to help payers increase their payment reliability.
+</I>
+I think foaf (as opposed to global) gossip of *fee rates* is a very
+interesting approach to trying to give nodes more *current* information,
+without flooding the entire network with more traffic than it can
+cope with.
+
+&gt;<i> Now we can consider that *every channel is a marketplace*.
+</I>&gt;<i> What is being sold is the sats inside the channel.
+</I>
+(Really, the marketplace is a channel pair (the incoming channel and
+the outgoing channel), and what's being sold is their relative balance)
+
+&gt;<i> So my concrete proposal is that we can do the same friend-of-a-friend balance leakage proposed by Rene, except we leak it using *existing* mechanisms --- i.e. gossiping a `channel_update` with new feerates adjusted according to the supply on the channel --- rather than having a new message to leak friend-of-a-friend balance directly.
+</I>
++42
+
+&gt;<i> Because we effectively leak the balance of channels by the feerates on the channel, this totally leaks the balance of channels.
+</I>
+I don't think this is true -- you ideally want to adjust fees not to
+maintain a balanced channel (50% on each side), but a balanced *flow*
+(1:1 incoming/outgoing payment volume) -- it doesn't really matter if
+you get the balanced flow that results in an average of a 50:50, 80:20
+or 20:80 ratio of channel balances (at least, it doesn't as long as your
+channel capacity is 10 or 100 times the payment size, and your variance
+is correspondingly low).
+
+Further, you have two degrees of freedom when setting fee rates: one
+is how balanced the flows are, which controls how long your channel can
+remain useful, but the other is how *much* flow there is -- if halving
+your fee rate doubles the flow rate in sats/hour, then that will still
+increase your profit. That also doesn't leak balance information.
+
+&gt;<i> ### Inverting The Filter: Feerate Cards
+</I>&gt;<i> Basically, a feerate card is a mapping between a probability-of-success range and a feerate.
+</I>&gt;<i> * 00%-&gt;25%: -10ppm
+</I>&gt;<i> * 26%-&gt;50%: 1ppm
+</I>&gt;<i> * 51%-&gt;75%: 5ppm
+</I>&gt;<i> * 76%-&gt;100%: 50ppm
+</I>
+Feerate cards don't really make sense to me; &quot;probability of success&quot;
+isn't a real measure the payer can use -- naively, if it were, they could
+just retry at 1ppm 10 times and get to 95% chances of success. But if
+they can afford to retry (background rebalancing?), they might as well
+just try at -10ppm, 1ppm, 5ppm, 10ppm (or perhaps with a binary search?),
+and see if they're lucky; but if they want a 1s response time, and can't
+afford retries, what good is even a 75% chance of success if that's the
+individual success rate on each hop of their five hop path?
+
+And if you're not just going by odds of having to retry, then you need to
+get some current information about the channel to plug into the formula;
+but if you're getting *current* information, why not let that information
+be the feerate directly?
+
+&gt;<i> More concretely, we set some high feerate, impose some kind of constant &quot;gravity&quot; that pulls down the feerate over time, then we measure the relative loss of outgoing liquidity to serve as &quot;lift&quot; to the feerate.
+</I>
+If your current fee rate is F (ppm), and your current volume (flow) is V
+(sats forwarded per hour), then your profit is FV. If dropping your fee
+rate by dF (&lt;0) results in an increase of V by dV (&gt;0), then you want:
+
+   (F+dF)(V+dV) &gt; FV
+   FV + VdF + FdV + dFdV &gt; FV
+   FdV &gt; -VdF
+   dV/dF &lt; -V/F (flip the inequality because dF is negative)
+
+   (dV/V)/(dF/F) &lt; -1  (fee-elasticity of volume is in the elastic
+                        region)
+
+(&lt;-1 == elastic == flow changes more than the fee does == drop the fee
+rate; &gt;-1 == ineleastic == flow changes less than the fee does == raise
+the fee rate; =-1 == unit elastic == you've found a locally optimal
+fee rate)
+
+You could optimise base fee in the same way, if you set F to be sats/tx
+and V to be txs/hour, but then you're trying to optimise two variables
+on a 2 dimensional plane, which is harder. So probably better to do
+zero base fees and just set it to 0 and ignore it, or use your actual
+computation costs -- perhaps about 20msat if you're paying $100USD/month
+for your lightning node, a channel update takes 10ms, each forwarded HTLC
+accounts for 4 updates, 2 on the incoming channel, 2 on the outgoing,
+with no batching, and only 40% of payments are successful, at $20k/BTC.
+
+It's likely more important to have balanced flows than maximally
+profitable ones though, as that's what allows you to keep your channel
+open. That's probably pretty hard to optimise, since a changed fee on
+one channel will affect the volume on ther channels as well.
+
+Relatedly:
+
+&gt;<i> I want to propose that all published nodes support some kind of
+</I>&gt;<i> onchain/offchain swap capability.
+</I>
+If you're running a forwarding node, and collecting fees for forwarding,
+considered in net your channels won't be balanced: the fees you collect
+are all coming in, and there's nothing to compensate for that. Having some
+way to send those fees &quot;out&quot; is necessary to keep your channels balanced
+and avoid the need to have to close them. Having a swap capability like
+this is perhaps a relatively easy way to be able to (automatically)
+fix imbalances caused by collecting fees, and thus preserve your older
+channels.
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003598.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+	<LI>Next message: <A HREF="003626.html">[Lightning-dev] Solving the Price Of Anarchy Problem,	Or: Cheap AND Reliable Payments Via Forwarding Fee Economic	Rationality
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3624">[ date ]</a>
+              <a href="thread.html#3624">[ thread ]</a>
+              <a href="subject.html#3624">[ subject ]</a>
+              <a href="author.html#3624">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

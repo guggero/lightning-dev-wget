@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Including a Protocol for splicing to BOLT
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Including%20a%20Protocol%20for%20splicing%20to%20BOLT&In-Reply-To=%3C87efgmh5ob.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001358.html">
+   <LINK REL="Next"  HREF="001335.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Including a Protocol for splicing to BOLT</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Including%20a%20Protocol%20for%20splicing%20to%20BOLT&In-Reply-To=%3C87efgmh5ob.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Including a Protocol for splicing to BOLT">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Sun Jul  1 23:55:48 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001358.html">[Lightning-dev] Rebalancing argument
+</A></li>
+        <LI>Next message: <A HREF="001335.html">[Lightning-dev] Including a Protocol for splicing to BOLT
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1332">[ date ]</a>
+              <a href="thread.html#1332">[ thread ]</a>
+              <a href="subject.html#1332">[ subject ]</a>
+              <a href="author.html#1332">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>I'm delighted someone is fleshing this out!
+
+Splice-out is easy, splice-in is harder.
+
+Note that there are two ways:
+
+1. Broadcast a spend which joins with one or more random outputs and
+   then maintain both the old and new channels (ie. both sets of
+   signatures) until it confirms deeply enough.  This is the original
+   plan, as detailed in [0].
+2. Pre-commit. You either set up what is basically another funding tx,
+   then join the channels together once it's deep enough.
+
+The second is simpler, but requires two onchain txs, thus I prefer
+the original model despite the complexity.
+
+I think for 1.1 it's OK to limit this to one concurrent change at a
+time (ie. for the 6 blocks or whatever, you can't organize *another*
+splice in/out).
+
+The gossip extension is difficult:
+
+1. If we extend channel_announce that won't propagate through old nodes
+   until the new channel is 6 deep, and it's wasted space (sigs + old-chanid)
+   once the splice is old news.
+2. If we extend channel_update it won't propagate once the new spend is seen
+   on the bitcoin network.
+3. A new message type won't propagate at all through old nodes: maybe it
+   could be made so that the &quot;splice information&quot; sigs + old-chanid is
+   discardable though.
+
+Hmm...
+Rusty.
+
+ZmnSCPxj via Lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; writes:
+
+&gt;<i> Good morning Laolu,
+</I>&gt;<i>
+</I>&gt;&gt;&gt;<i> but even though it seems technically straight forward t
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Well the full async implementation may be a bit involved, depending on the
+</I>&gt;&gt;<i> architecture of the implementation (see the second point below).
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> In the abstract, I'd say a splicing proposal should include the following:
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i>   * a generic message for both splice in/out
+</I>&gt;&gt;<i>     * this allows both sides to schedule/queue up possible changes,
+</I>&gt;&gt;<i>       opportunistically piggy-backing then on top of the other sides
+</I>&gt;&gt;<i>       initiation
+</I>&gt;&gt;<i>     * most of the channel params can also be re-negotiated as this point,
+</I>&gt;&gt;<i>       another upside is this effectively allows garbage collecting old
+</I>&gt;&gt;<i>       revocation state
+</I>&gt;&gt;<i>   * fully async splice in/out
+</I>&gt;&gt;<i>      * async is ideal as we don't need to block channel operation for
+</I>&gt;&gt;<i>        confirmations, this greatly improves the UX of the process
+</I>&gt;&gt;<i>      * async splice in should use a technique similar to what Conner has
+</I>&gt;&gt;<i>        suggested in the past [0], otherwise it would need to block :(
+</I>&gt;<i>
+</I>&gt;<i> It increases complexity. I suppose it would be OK to limit splice-in so that if a splice-in has not been buried deeply in the chain yet, you cannot splice-in even more, to limit the number of parallel updates you need to keep track of to only 2.
+</I>&gt;<i>
+</I>&gt;&gt;<i>   * a sort of pre-announcement gossip messages
+</I>&gt;&gt;<i>      * purpose of this is to signal to other nodes &quot;hey this channel is
+</I>&gt;&gt;<i>        about to change outpoints, but you can keep routing through it&quot;
+</I>&gt;&gt;<i>      * otherwise, if this doesn't exist, then nodes would interpret the
+</I>&gt;&gt;<i>        action as a close then open of a channel, rather than a re-allocation
+</I>&gt;<i>
+</I>&gt;<i> At first it seems benign to me -- after all, the channel is simply &quot;reopened&quot; and what does it matter whether other nodes know if the new channel is the same as the old channel? -- but then there will be a time of a few blocks where other nodes consider the channel closed but the replacement channel is not yet deep enough onchain to be reannounced.  So I suppose it enables routing across the channel during those few blocks.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I></PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001358.html">[Lightning-dev] Rebalancing argument
+</A></li>
+	<LI>Next message: <A HREF="001335.html">[Lightning-dev] Including a Protocol for splicing to BOLT
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1332">[ date ]</a>
+              <a href="thread.html#1332">[ thread ]</a>
+              <a href="subject.html#1332">[ subject ]</a>
+              <a href="author.html#1332">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

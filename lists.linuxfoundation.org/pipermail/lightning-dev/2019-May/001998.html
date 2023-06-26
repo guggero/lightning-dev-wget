@@ -1,0 +1,287 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] An Argument For Single-Asset Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CCAH5Bsr2OAgo37BM3HGW2Uxo7MpqVp3WbCnd85w30Jrsr3447jw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001991.html">
+   <LINK REL="Next"  HREF="001999.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] An Argument For Single-Asset Lightning Network</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CCAH5Bsr2OAgo37BM3HGW2Uxo7MpqVp3WbCnd85w30Jrsr3447jw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] An Argument For Single-Asset Lightning Network">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Sun May 19 10:28:13 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001991.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="001999.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1998">[ date ]</a>
+              <a href="thread.html#1998">[ thread ]</a>
+              <a href="subject.html#1998">[ subject ]</a>
+              <a href="author.html#1998">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+Sorry for the late reply I only recently had time to review your comments.
+I didn't really get your motivation for multiple secrets. In my mind,
+having the last hop put collateral into the HTLC to make a *Collateralized
+HTLC* solves the problem without any extra complexity (your original
+example captures this perfectly). You wrote:
+
+The exchange can insist on getting a short timelock for receiving the
+&gt;<i> collateral (i.e. limit the time horizon that the exchange hash is valid),
+</I>&gt;<i> to reduce the time horizon in which the payee can pay or not pay the
+</I>&gt;<i> collateral for the exchange (as before the payee releases the collateral,
+</I>&gt;<i> it still has the option of doing or not doing the swap, i.e. American
+</I>&gt;<i> Option).
+</I>
+
+I think this unnecessary. The &quot;free option&quot; time isn't limited by a
+timelock (if it was, we wouldn't have solved the problem). The option is
+limited by the exchange's willingness to wait for the other party to sign
+the state update (assuming the exchange signs first). The minor point I was
+trying to make was that normally when routing payments etc you can be
+willing to wait for minutes or hours for the other party to come back
+online if they went offline during a state update. But if you are doing a
+swap and your partner is meant to be signing a collateralized HTLC you
+shouldn't wait; you should force settlement to the blockchain within a few
+seconds. As soon as the state gets onto the blockchain the other party has
+lost any chance of getting an option.
+
+At a glance, the simplest way to enable this functionality is to add a new
+field to the &quot;update_add_htlc&quot; BOLT message [1] like
+&quot;collateral_amount_sat&quot;. The receiver of &quot;collateral_amount_sat&quot; would have
+to contribute that amount to the HTLC (if they are willing to go through
+with the update). Obviously you should only ever agree to do this if you
+are last hop or are willing to risk your collateral on the honest behaviour
+of nodes further down.
+
+I was actually wondering if this could be a useful feature outside of
+swaps. e.g. if there is a new node without much reputation who you are
+routing a payment to, you could demand that they put up collateral into the
+HLTC to receive the payment. This might help prevent attacks where people
+try and tie up funds by receiving large payments they never release the
+secrets for.
+
+WRT to your final comments, it sounds a bit like [2] which also mentions
+that their protocol can make atomic swaps fungible.
+
+1.
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#adding-an-htlc-update_add_htlc">https://github.com/lightningnetwork/lightning-rfc/blob/master/02-peer-protocol.md#adding-an-htlc-update_add_htlc</A>
+2. Anonymous Multi-Hop Locks for Blockchain Scalability and
+Interoperability: <A HREF="https://eprint.iacr.org/2018/472.pdf">https://eprint.iacr.org/2018/472.pdf</A>
+
+Cheers,
+
+Lloyd
+
+On Mon, May 6, 2019 at 2:51 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning Lloyd,
+</I>&gt;<i>
+</I>&gt;<i> I think the most generic solution is to require multiple hashlocks.
+</I>&gt;<i> One hashlock for the payee, the other for the exchange.
+</I>&gt;<i>
+</I>&gt;<i> Payer acquires an exchange hash from the exchange, plus specs of the
+</I>&gt;<i> collateral.
+</I>&gt;<i> Then payer routes to the payee via the exchange using two hashlocks
+</I>&gt;<i> (hashlock for the payment hash, hashlock for the exchange hash) and from
+</I>&gt;<i> the payee to the exchange.
+</I>&gt;<i> The exchange onion hop includes the information that the cross-currency
+</I>&gt;<i> swap is allowed by pointing at the hashlock that the exchange hash is on.
+</I>&gt;<i> The exchange verifies that it is one of the exchange hashes it has issued
+</I>&gt;<i> and it releases the agreed amount to the next hop, plus the collateral
+</I>&gt;<i> agreed upon.
+</I>&gt;<i>
+</I>&gt;<i> The payee onion hop includes the information that it should proceed to
+</I>&gt;<i> give a single hashlock to succeeding hops, as well as the agreed-upon
+</I>&gt;<i> collateral to the exchange.
+</I>&gt;<i> The exchange receives the payment with a single hashlock containing the
+</I>&gt;<i> value of the collateral.
+</I>&gt;<i> It verifies that the collateral value is equal to the agreed collateral
+</I>&gt;<i> for that payment, then releases the exchange preimage.
+</I>&gt;<i> The payee can then release its preimage once it has acquired the exchange
+</I>&gt;<i> preimage.
+</I>&gt;<i>
+</I>&gt;<i> The above is similar to your solution, as it effectively means the payee
+</I>&gt;<i> offers collateral to the exchange, which it can only reclaim by properly
+</I>&gt;<i> completing the payment protocol.
+</I>&gt;<i> The exchange can insist on getting a short timelock for receiving the
+</I>&gt;<i> collateral (i.e. limit the time horizon that the exchange hash is valid),
+</I>&gt;<i> to reduce the time horizon in which the payee can pay or not pay the
+</I>&gt;<i> collateral for the exchange (as before the payee releases the collateral,
+</I>&gt;<i> it still has the option of doing or not doing the swap, i.e. American
+</I>&gt;<i> Option).
+</I>&gt;<i> The advantage is that it can go over multiple hops, and the exchange and
+</I>&gt;<i> payee do not know each other (but the payer does).
+</I>&gt;<i> Disadvantage is that it requires two hashlocks, which is rather obvious on
+</I>&gt;<i> the protocol and signals &quot;this payment is a cross-currency exchange
+</I>&gt;<i> payment!&quot; to all intermediate nodes; also, it still allows a short time
+</I>&gt;<i> duration for American Option shenanigans.
+</I>&gt;<i>
+</I>&gt;<i> The Route Maker solution by CJP is plausible, to me, only if the exchange
+</I>&gt;<i> and the Route Maker are the same, which is effectively what is done here,
+</I>&gt;<i> but now requires multiple secrets to be revealed.
+</I>&gt;<i>
+</I>&gt;<i> I was thinking it might be possible, to use point/scalar and require the
+</I>&gt;<i> sum of the payment scalar and the exchange scalar, and thereby hide from
+</I>&gt;<i> intermediate nodes that multiple secrets are needed, but now the payer
+</I>&gt;<i> receives the sum of scalars instead of two separate preimages; this can
+</I>&gt;<i> make it difficult for protocols requiring proof-of-payment secrets (such as
+</I>&gt;<i> the offline vending machine discussed before) from working correctly.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Sent with ProtonMail Secure Email.
+</I>&gt;<i>
+</I>&gt;<i> &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+</I>&gt;<i> On Saturday, May 4, 2019 4:28 AM, Lloyd Fournier &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lloyd.fourn at gmail.com</A>&gt;
+</I>&gt;<i> wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Hi ZmnSCPxj,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I'm glad you pointed this out. I think this protocol is practical. That
+</I>&gt;<i> talk was actually given by my colleague :).
+</I>&gt;<i> &gt; My post in the December thread was trying to explain the same idea but
+</I>&gt;<i> as a [A -&gt; Exchange -&gt; A] on-chain trade (rather than a [A -&gt; Exchange -&gt;
+</I>&gt;<i> B] cross chain L2 payment). For reference:
+</I>&gt;<i> <A HREF="https://gist.github.com/LLFourn/d0afa6b37207aed7cd73f6b9203c0def.">https://gist.github.com/LLFourn/d0afa6b37207aed7cd73f6b9203c0def.</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; I mentioned it was possible to do it in a channel. Although looking back
+</I>&gt;<i> at it now it seems I was somewhat confused at the time. I said:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; As ZmnSCPxj demonstrated, the idea of sending a payment in asset A and
+</I>&gt;<i> the other party receiving it as asset B with some exchange node in the
+</I>&gt;<i> middle doing a conversion is unsound given what we are able to construct in
+</I>&gt;<i> Lightning.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; As you just showed, this is wrong. [A -&gt; Exchange -&gt; B] with the
+</I>&gt;<i> collateral on the last hop works fine. After all, [A -&gt; Exchange -&gt; A] is
+</I>&gt;<i> just a special case of [A -&gt; Exchange -&gt; B]. I agree that extending this
+</I>&gt;<i> idea across multiple hops after the exchange securely looks impossible.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Note, the Exchange should watch carefully for their counter-party
+</I>&gt;<i> delaying in signing the channel update on the final hop (to gain value from
+</I>&gt;<i> the option this gives them).  If they notice this they should close the
+</I>&gt;<i> channel and avoid doing business with this party.
+</I>&gt;<i> &gt; Despite this, it's still a far better protocol than the vanilla atomic
+</I>&gt;<i> swap because the delaying party has a far less time to realise any gains
+</I>&gt;<i> from the option. The exchange can put an end to it by closing the channel
+</I>&gt;<i> within 1 on chain tx.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; On naming. I think it's better to call it *collateral* rather than an
+</I>&gt;<i> *option premium* because it is only paid on a failure to execute the trade.
+</I>&gt;<i> &gt; I was thinking we can call them collateralized HTLCs.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; It's possible to modify the protocol slightly so that the party
+</I>&gt;<i> receiving the option pays the *premium* regardless of whether they release
+</I>&gt;<i> x or not. This makes it a proper cross chain option with guaranteed premium.
+</I>&gt;<i> &gt; We made a poster describing this idea here:
+</I>&gt;<i> <A HREF="https://coblox.tech/docs/financial_crypto19.pdf.">https://coblox.tech/docs/financial_crypto19.pdf.</A>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Lloyd
+</I>&gt;<i> &gt; On Tue, Apr 23, 2019 at 1:52 PM ZmnSCPxj via Lightning-dev &lt;
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; wrote:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; Good morning list,
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Reviving an old thread, but I saw this just recently:
+</I>&gt;<i> <A HREF="http://diyhpl.us/wiki/transcripts/scalingbitcoin/tokyo-2018/atomic-swaps/">http://diyhpl.us/wiki/transcripts/scalingbitcoin/tokyo-2018/atomic-swaps/</A>
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Suppose you are a BTC to WJT exchange.
+</I>&gt;<i> &gt; &gt; I want to pay 1 BTC to send 1000000000 WJT to YAIjbOJA.
+</I>&gt;<i> &gt; &gt; I have a BTC channel to you.
+</I>&gt;<i> &gt; &gt; You have a WJT channel to YAIjbOJA.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; In order to create a properly-incentivized American Call Option with a
+</I>&gt;<i> premium, you insist that 10% of the WJT value be the premium that is paid
+</I>&gt;<i> if the exchange does not pull through.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; We perform this ritual:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; 1.  YAIjbOJA generates a secret x and gives h(x) to me.
+</I>&gt;<i> &gt; &gt; 2.  On my channel to you, I get 1 BTC from my side and create an HTLC.
+</I>&gt;<i> &gt; &gt;     Hash is h(x) payable to you, timelock is 2 days payable to me.
+</I>&gt;<i> &gt; &gt; 3.  On your channel to YAIjbOJA, you get 1000000000 WJT from you, and
+</I>&gt;<i> 100000000 WJT (10%, the premium) from YAIjbOJA and create an HTLC.
+</I>&gt;<i> &gt; &gt;     Hash is h(x) payable to YAIjbOJA, timelock is 1 days payable to
+</I>&gt;<i> you.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; The above also forms an American Call Option, but with a premium if
+</I>&gt;<i> the payment does not push through.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; However, extending this to beyond one hop after the exchange node is
+</I>&gt;<i> difficult.
+</I>&gt;<i> &gt; &gt; Problems in communicating with the next hop may cause the current hop
+</I>&gt;<i> after the exchange node to become liable for the premium without being able
+</I>&gt;<i> to forward the liability to the final payee, which is an avenue for attack.
+</I>&gt;<i> &gt; &gt; And if the payee must be the hop after the exchange node, the exchange
+</I>&gt;<i> node now knows exactly how much and when that node receives payment, and
+</I>&gt;<i> can sell this information and/or selectively disrupt/censor some payments.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Putting the premium before the exchange node is possible with an
+</I>&gt;<i> additional transaction spending the HTLC (the timelock branch is payable to
+</I>&gt;<i> a 2-of-2 with a pre-signed transaction that sends the premium to the
+</I>&gt;<i> exchange and returns the rest of the value to the payer).
+</I>&gt;<i> &gt; &gt; But this is unsafe, since the exchange (and any node between the payer
+</I>&gt;<i> and the exchange) can stall the protocol deliberately and refuse to
+</I>&gt;<i> forward, extracting the premium via the timelock branch.
+</I>&gt;<i> &gt; &gt; This is effectively forcing fees even in a route failure, which does
+</I>&gt;<i> not incentivize intermediate nodes to actually forward when they can do
+</I>&gt;<i> nothing and receive fees anyway for not routing.
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; Regards,
+</I>&gt;<i> &gt; &gt; ZmnSCPxj
+</I>&gt;<i> &gt; &gt; _______________________________________________
+</I>&gt;<i> &gt; &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190519/b8ffbfb6/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190519/b8ffbfb6/attachment-0001.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001991.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="001999.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1998">[ date ]</a>
+              <a href="thread.html#1998">[ thread ]</a>
+              <a href="subject.html#1998">[ subject ]</a>
+              <a href="author.html#1998">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

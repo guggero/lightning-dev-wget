@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3C87k18dygme.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002322.html">
+   <LINK REL="Next"  HREF="002297.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3C87k18dygme.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Nov  6 00:48:25 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002322.html">[Lightning-dev] Rendez-vous on a Trampoline
+</A></li>
+        <LI>Next message: <A HREF="002297.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2287">[ date ]</a>
+              <a href="thread.html#2287">[ thread ]</a>
+              <a href="subject.html#2287">[ subject ]</a>
+              <a href="author.html#2287">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Joost Jager &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">joost.jager at gmail.com</A>&gt; writes:
+&gt;&gt;<i>
+</I>&gt;&gt;<i> &gt; * Add `to_remote_delay OP_CHECKSEQUENCEVERIFY OP_DROP` to the `to_remote`
+</I>&gt;&gt;<i> &gt; output. `to_remote_delay` is the csv delay that the remote party accepted
+</I>&gt;&gt;<i> &gt; in the funding flow for their outputs. This not only ensures that the
+</I>&gt;&gt;<i> &gt; carve-out works as intended, but also removes the incentive to game the
+</I>&gt;&gt;<i> &gt; other party into force-closing. If desired, both parties can still agree
+</I>&gt;&gt;<i> =
+</I>&gt;&gt;<i> to
+</I>&gt;&gt;<i> &gt; have different `to_self_delay` values.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> I think we should unify to_self_delay if we're doing this.  Otherwise
+</I>&gt;&gt;<i> the game returns.
+</I>&gt;<i>
+</I>&gt;<i> The game returns, but both parties will be aware of the game they are
+</I>&gt;<i> playing. They agreed to their peer's to_self_delay up front. (This is
+</I>&gt;<i> different from the current situation where both peers are forced to accept
+</I>&gt;<i> a remote_to_self_delay of 0.) With validation on the open/accept_channel
+</I>&gt;<i> message, a node can still enforce both to_self_delays to be equal. We could
+</I>&gt;<i> simplify this to a single to_self_delay that is proposed by the initiator,
+</I>&gt;<i> but what was the original reason to allow distinct values?
+</I>
+Because I didn't fight hard enough for simplicity :(
+
+There is no &quot;negotiation&quot; on opening; it's accept or error.  That leads
+to a situation where every implementation MUST accept what every
+implementation offers.
+
+The unification proposal was to use the max of the two settings.  That's
+fair; if you want me to suffer a 2 week delay, you should too.
+
+&gt;&gt;<i> Agreed, this doesn't really work.  We actually needed a bitcoin rule
+</I>&gt;&gt;<i> that allowed a single anyone-can-spend output.  Seems like we didn't get
+</I>&gt;&gt;<i> that.
+</I>&gt;<i>
+</I>&gt;<i> With the mempool acceptance carve-out in bitcoind 0.19, we indeed won't be
+</I>&gt;<i> able to safely produce a single OP_TRUE output for anyone to spend. An
+</I>&gt;<i> attacker could attach low fee child transactions, reach the limits and
+</I>&gt;<i> block further fee bumping.
+</I>
+Indeed :(
+
+&gt;&gt;<i> This is horribly spammy.  At the moment we see ~ one unilateral close
+</I>&gt;&gt;<i> every 3 blocks.  Hopefully that will reduce, but there'll always be
+</I>&gt;&gt;<i> some.
+</I>&gt;<i>
+</I>&gt;<i> It seems there isn't another way to do the anchor outputs given the mempool
+</I>&gt;<i> limitations that exist? Each party needs to have their own anchor,
+</I>&gt;<i> protected by a key. Otherwise it would open up these attack scenarios where
+</I>&gt;<i> an attacker blocks the commitment tx confirmation until htlcs time out.
+</I>&gt;<i> Even with the script OP_DEPTH OP_IF &lt;pubkey&gt; OP_CHECKSIG OP_ELSE 10 OP_CSV
+</I>&gt;<i> OP_ENDIF, the &quot;anyones&quot; don't know the pubkey and still can't sweep after
+</I>&gt;<i> 10 blocks.
+</I>
+I think you're right, but I don't *like* it...
+
+&gt;&gt;<i> * Within each version of the commitment transaction, both anchors always
+</I>&gt;&gt;<i> &gt; have equal values and are paid for by the initiator.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Who pays if they can't afford it?  What if they push_msat everything to
+</I>&gt;&gt;<i> the other side?
+</I>&gt;<i>
+</I>&gt;<i> Similar to how it currently works. There should never be a commitment
+</I>&gt;<i> transaction in which the initiator cannot pay the fee.
+</I>
+Unfortunately, this is not correct (in theory).
+
+We can always get into a case where fees are insufficient (simultanous
+HTLC adds), but it's unusual.  We used to specify that the non-funder
+would pay the remaining fee, but we dropped this in favor of allow
+unilateral close if this ever happened.
+
+&gt;<i> With anchor outputs
+</I>&gt;<i> there should never be a commitment tx in which the initiator cannot pay the
+</I>&gt;<i> fee and the anchors.
+</I>
+There can be, but I think we can simply modify this so you have to pay
+the anchors *first* before fees.
+
+&gt;<i> Also currently you cannot push everything to the other
+</I>&gt;<i> side with push_msat. The initiator still needs to have enough balance to
+</I>&gt;<i> pay for the on-chain costs (miner fee and anchors).
+</I>
+This is true; I forgot we fixed that, sorry.  push_msat is a red herring.
+
+&gt;&gt;<i> The value of the
+</I>&gt;&gt;<i> &gt; anchors is the dust limit that was negotiated in the `open_channel` or
+</I>&gt;&gt;<i> &gt; `accept_channel` message of the party that publishes the transaction.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Now initiator has to care about the other side's dust limit, which is
+</I>&gt;&gt;<i> bad.  And as accepter I now want this much higher, since I get those
+</I>&gt;&gt;<i> funds instantly.  I don't think we gain anything by making this
+</I>&gt;&gt;<i> configurable at all; just pick a number and be done.
+</I>&gt;&gt;<i>
+</I>&gt;&gt;<i> Somewhere between 1000 and 10,000 sat is a good idea.
+</I>&gt;&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Yes, it is free money. Therefore we need to validate the dust limit in the
+</I>&gt;<i> funding flow. Check whether it is reasonable. That should also be done in
+</I>&gt;<i> the current implementation. Otherwise your peer can set a really high dust
+</I>&gt;<i> limit that lets your htlc disappear on-chain (although that is only free
+</I>&gt;<i> money for the miner).
+</I>
+True, and spec should note this BTW!  I've added an issue.
+
+<A HREF="https://github.com/lightningnetwork/lightning-rfc/issues/696">https://github.com/lightningnetwork/lightning-rfc/issues/696</A>
+
+&gt;<i> If we hard-code a constant, we won't be able to adapt to changes of
+</I>&gt;<i> `dustRelayFee` in the bitcoin network. And we'd also need to deal with a
+</I>&gt;<i> peer picking a value higher than that constant for its regular funding flow
+</I>&gt;<i> dust limit parameter.
+</I>
+Note that we can't adapt to dustRelayFee *today*, since we can't change
+it after funding (another thing we probably need to fix).
+
+If we really want to make it adjustable, could we make each side pay for
+its own; if you can't afford it, you don't get one?  There's no point
+the funder paying for a fundee-anchor if the fundee has no skin in the
+game.
+
+That reduces the pressure somewhat, I think?
+
+&gt;<i> Interesting. I wasn't aware of the brute-force method that watchtowers
+</I>&gt;<i> could potentially use. I wanted to bring up the removal of key rotation
+</I>&gt;<i> just in case everyone would agree we don't need it anymore. It isn't
+</I>&gt;<i> required for the anchor outputs, but it would have been one (future)
+</I>&gt;<i> commitment format less. But it seems we do need it.
+</I>
+I hate it, too.  The original design was *so* much simpler :(
+
+&gt;<i> In the light of this forgotten insight, is there a reason why the anchor
+</I>&gt;<i> output would need key rotation? Having no rotation makes it easier to let
+</I>&gt;<i> those anchors go straight into the wallet, which may mitigate the dust utxo
+</I>&gt;<i> problem a bit. At least then they can be easily coin-selected for any
+</I>&gt;<i> on-chain spent, if the market fees are low enough.
+</I>
+Or what about we rotate the anchors and nothing else, which (assuming we
+make it anyone-can-spend-after-N-blocks) reduces the amount of onchain
+spam if someone completely loses their keys?
+
+That's a bigger change, but maybe it's worth it?
+
+Cheers!
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002322.html">[Lightning-dev] Rendez-vous on a Trampoline
+</A></li>
+	<LI>Next message: <A HREF="002297.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2287">[ date ]</a>
+              <a href="thread.html#2287">[ thread ]</a>
+              <a href="subject.html#2287">[ subject ]</a>
+              <a href="author.html#2287">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

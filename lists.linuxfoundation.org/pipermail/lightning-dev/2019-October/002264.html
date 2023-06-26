@@ -1,0 +1,222 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3CCAJBJmV8ymPvkDBHbVbo-e2bJQiGmhq9m4yEQO2kKvyPW88Tb_Q%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002262.html">
+   <LINK REL="Next"  HREF="002266.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPATCH%5D%20First%20draft%20of%0A%09option_simplfied_commitment&In-Reply-To=%3CCAJBJmV8ymPvkDBHbVbo-e2bJQiGmhq9m4yEQO2kKvyPW88Tb_Q%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment">joost.jager at gmail.com
+       </A><BR>
+    <I>Wed Oct 30 13:03:55 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002262.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+        <LI>Next message: <A HREF="002266.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2264">[ date ]</a>
+              <a href="thread.html#2264">[ thread ]</a>
+              <a href="subject.html#2264">[ subject ]</a>
+              <a href="author.html#2264">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i>
+</I>&gt;<i> &gt; * Add `to_remote_delay OP_CHECKSEQUENCEVERIFY OP_DROP` to the `to_remote`
+</I>&gt;<i> &gt; output. `to_remote_delay` is the csv delay that the remote party accepted
+</I>&gt;<i> &gt; in the funding flow for their outputs. This not only ensures that the
+</I>&gt;<i> &gt; carve-out works as intended, but also removes the incentive to game the
+</I>&gt;<i> &gt; other party into force-closing. If desired, both parties can still agree
+</I>&gt;<i> =
+</I>&gt;<i> to
+</I>&gt;<i> &gt; have different `to_self_delay` values.
+</I>&gt;<i>
+</I>&gt;<i> I think we should unify to_self_delay if we're doing this.  Otherwise
+</I>&gt;<i> the game returns.
+</I>&gt;<i>
+</I>
+The game returns, but both parties will be aware of the game they are
+playing. They agreed to their peer's to_self_delay up front. (This is
+different from the current situation where both peers are forced to accept
+a remote_to_self_delay of 0.) With validation on the open/accept_channel
+message, a node can still enforce both to_self_delays to be equal. We could
+simplify this to a single to_self_delay that is proposed by the initiator,
+but what was the original reason to allow distinct values?
+
+
+&gt;<i> &gt; For the anchor outputs we consider:
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; * Output type: normal P2WKH. At one point, an additional spending path
+</I>&gt;<i> was
+</I>&gt;<i> &gt; proposed that was unconditional except for a 10 block csv lock. The
+</I>&gt;<i> &gt; intention of this was to prevent utxo set pollution by allowing anyone to
+</I>&gt;<i> &gt; clean up. This however also opens up the possibility for an attacker to
+</I>&gt;<i> &gt; 'use up' the cpfp carve-out after those 10 blocks. If the user A is
+</I>&gt;<i> offli=
+</I>&gt;<i> ne
+</I>&gt;<i> &gt; for that period of time, a malicious peer B may already have broadcasted
+</I>&gt;<i> &gt; the commitment tx and pinned down user A's anchor output with a low fee
+</I>&gt;<i> &gt; child. That way, the commitment tx could still remain unconfirmed while
+</I>&gt;<i> an
+</I>&gt;<i> &gt; important htlc expires.
+</I>&gt;<i>
+</I>&gt;<i> Agreed, this doesn't really work.  We actually needed a bitcoin rule
+</I>&gt;<i> that allowed a single anyone-can-spend output.  Seems like we didn't get
+</I>&gt;<i> that.
+</I>&gt;<i>
+</I>
+With the mempool acceptance carve-out in bitcoind 0.19, we indeed won't be
+able to safely produce a single OP_TRUE output for anyone to spend. An
+attacker could attach low fee child transactions, reach the limits and
+block further fee bumping.
+
+&gt;<i> * For the keys to use for `to_remote_anchor` and `to_local_anchor`, we=E2=
+</I>&gt;<i> =80=99d
+</I>&gt;<i> &gt; like to introduce new addresses that both parties communicate in the
+</I>&gt;<i> &gt; `open_channel` and `accept_channel` messages. We don=E2=80=99t want to
+</I>&gt;<i> re=
+</I>&gt;<i> use the
+</I>&gt;<i> &gt; main commitment output addresses, because those may (at some point) be
+</I>&gt;<i> co=
+</I>&gt;<i> ld
+</I>&gt;<i> &gt; storage addresses and the cpfp is likely to happen from a hot wallet.
+</I>&gt;<i>
+</I>&gt;<i> This is horribly spammy.  At the moment we see ~ one unilateral close
+</I>&gt;<i> every 3 blocks.  Hopefully that will reduce, but there'll always be
+</I>&gt;<i> some.
+</I>&gt;<i>
+</I>
+It seems there isn't another way to do the anchor outputs given the mempool
+limitations that exist? Each party needs to have their own anchor,
+protected by a key. Otherwise it would open up these attack scenarios where
+an attacker blocks the commitment tx confirmation until htlcs time out.
+Even with the script OP_DEPTH OP_IF &lt;pubkey&gt; OP_CHECKSIG OP_ELSE 10 OP_CSV
+OP_ENDIF, the &quot;anyones&quot; don't know the pubkey and still can't sweep after
+10 blocks.
+
+&gt;<i> * Within each version of the commitment transaction, both anchors always
+</I>&gt;<i> &gt; have equal values and are paid for by the initiator.
+</I>&gt;<i>
+</I>&gt;<i> Who pays if they can't afford it?  What if they push_msat everything to
+</I>&gt;<i> the other side?
+</I>&gt;<i>
+</I>
+Similar to how it currently works. There should never be a commitment
+transaction in which the initiator cannot pay the fee. With anchor outputs
+there should never be a commitment tx in which the initiator cannot pay the
+fee and the anchors. Also currently you cannot push everything to the other
+side with push_msat. The initiator still needs to have enough balance to
+pay for the on-chain costs (miner fee and anchors).
+
+&gt;<i> The value of the
+</I>&gt;<i> &gt; anchors is the dust limit that was negotiated in the `open_channel` or
+</I>&gt;<i> &gt; `accept_channel` message of the party that publishes the transaction.
+</I>&gt;<i>
+</I>&gt;<i> Now initiator has to care about the other side's dust limit, which is
+</I>&gt;<i> bad.  And as accepter I now want this much higher, since I get those
+</I>&gt;<i> funds instantly.  I don't think we gain anything by making this
+</I>&gt;<i> configurable at all; just pick a number and be done.
+</I>&gt;<i>
+</I>&gt;<i> Somewhere between 1000 and 10,000 sat is a good idea.
+</I>&gt;<i>
+</I>
+Yes, it is free money. Therefore we need to validate the dust limit in the
+funding flow. Check whether it is reasonable. That should also be done in
+the current implementation. Otherwise your peer can set a really high dust
+limit that lets your htlc disappear on-chain (although that is only free
+money for the miner).
+
+If we hard-code a constant, we won't be able to adapt to changes of
+`dustRelayFee` in the bitcoin network. And we'd also need to deal with a
+peer picking a value higher than that constant for its regular funding flow
+dust limit parameter.
+
+
+&gt;<i> There are several design constraints in the original watchtowers:
+</I>&gt;<i>
+</I>&gt;<i> 1. A watchtower shouldn't be able to guess the channel history.
+</I>&gt;<i> 2. ... even if it sees a unilateral tx.
+</I>&gt;<i> 3. ... even if it sees a revoked unilateral tx it has a penalty for.
+</I>&gt;<i> 4. A watchtower shouldn't be able to tell if it's being used for both
+</I>&gt;<i>    parties in the same channel.
+</I>&gt;<i>
+</I>&gt;<i> If you don't rotate keys, a watchtower can brute-force the HTLCs for all
+</I>&gt;<i> previous transactions it was told about, and previous channel balances.
+</I>&gt;<i>
+</I>&gt;<i> We removed key rotation on the to-remote output because you can simply
+</I>&gt;<i> not tell the watchtower about txs which don't have anything but an
+</I>&gt;<i> output to you.
+</I>&gt;<i>
+</I>&gt;<i> Here are the options I see:
+</I>&gt;<i>
+</I>&gt;<i> 1. Abandon privacy from watchtowers and don't rotate keys.  Watchtowers
+</I>&gt;<i>    will be able to brute-force your history if they see a unilateral
+</I>&gt;<i>    close.
+</I>&gt;<i>
+</I>&gt;<i> 2. Remove HTLC output key rotation, and assume watchtowers don't handle
+</I>&gt;<i>    HTLCs (so you don't tell them about early txs where the peer has no
+</I>&gt;<i>    output but there are HTLCs pending).  This seems less useful, since
+</I>&gt;<i>    HTLC txs require metadata anyway.
+</I>&gt;<i>
+</I>&gt;<i> 3. Change to-local key rotation to use BIP32 (unhardened).  We could
+</I>&gt;<i>    also take some of the 48 bits (maybe 24?) we currently use to encode
+</I>&gt;<i>    the commitment number, to encode a BIP32 sub-path for this channel.
+</I>&gt;<i>    This would make it easier for hardware wallets to reconstruct.
+</I>&gt;<i>
+</I>
+Interesting. I wasn't aware of the brute-force method that watchtowers
+could potentially use. I wanted to bring up the removal of key rotation
+just in case everyone would agree we don't need it anymore. It isn't
+required for the anchor outputs, but it would have been one (future)
+commitment format less. But it seems we do need it.
+
+In the light of this forgotten insight, is there a reason why the anchor
+output would need key rotation? Having no rotation makes it easier to let
+those anchors go straight into the wallet, which may mitigate the dust utxo
+problem a bit. At least then they can be easily coin-selected for any
+on-chain spent, if the market fees are low enough.
+
+Joost
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191030/170f6756/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20191030/170f6756/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002262.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+	<LI>Next message: <A HREF="002266.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2264">[ date ]</a>
+              <a href="thread.html#2264">[ thread ]</a>
+              <a href="subject.html#2264">[ subject ]</a>
+              <a href="author.html#2264">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

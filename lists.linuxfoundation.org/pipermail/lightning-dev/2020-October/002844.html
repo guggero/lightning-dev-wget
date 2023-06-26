@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Simplified%20%28but%20less%20optimal%29%20HTLC%0A%09Negotiation&In-Reply-To=%3CCACdvm3OoHAmbE6a_-9Q_oNJ1PSBf%2B6K1nrg5CTW0vZmnoYKkkA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002837.html">
+   <LINK REL="Next"  HREF="002846.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation</H1>
+    <B>Bastien TEINTURIER</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Simplified%20%28but%20less%20optimal%29%20HTLC%0A%09Negotiation&In-Reply-To=%3CCACdvm3OoHAmbE6a_-9Q_oNJ1PSBf%2B6K1nrg5CTW0vZmnoYKkkA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation">bastien at acinq.fr
+       </A><BR>
+    <I>Wed Oct 14 09:22:51 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002837.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+        <LI>Next message: <A HREF="002846.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2844">[ date ]</a>
+              <a href="thread.html#2844">[ thread ]</a>
+              <a href="subject.html#2844">[ subject ]</a>
+              <a href="author.html#2844">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>To be honest the current protocol can be hard to grasp at first (mostly
+because it's hard to reason
+about two commit txs being constantly out of sync), but from an
+implementation's point of view I'm
+not sure your proposals are simpler.
+
+One of the benefits of the current HTLC state machine is that once you
+describe your state as a set
+of local changes (proposed by you) plus a set of remote changes (proposed
+by them), where each of
+these is split between proposed, signed and acked updates, the flow is
+straightforward to implement
+and deterministic.
+
+The only tricky part (where we've seen recurring compatibility issues) is
+what happens on
+reconnections. But it seems to me that the only missing requirement in the
+spec is on the order of
+messages sent, and more specifically that if you are supposed to send a
+`revoke_and_ack`, you must
+send that first (or at least before sending any `commit_sig`). Adding test
+scenarios in the spec
+could help implementers get this right.
+
+It's a bit tricky to get it right at first, but once you get it right you
+don't need to touch that
+code again and everything runs smoothly. We're pretty close to that state,
+so why would we want to
+start from scratch? Or am I missing something?
+
+Cheers,
+Bastien
+
+Le mar. 13 oct. 2020 &#224; 13:58, Christian Decker &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">decker.christian at gmail.com</A>&gt;
+a &#233;crit :
+
+&gt;<i> I wonder if we should just go the tried-and-tested leader-based
+</I>&gt;<i> mechanism:
+</I>&gt;<i>
+</I>&gt;<i>  1. The node with the lexicographically lower node_id is determined to
+</I>&gt;<i>     be the leader.
+</I>&gt;<i>  2. The leader receives proposals for changes from itself and the peer
+</I>&gt;<i>     and orders them into a logical sequence of changes
+</I>&gt;<i>  3. The leader applies the changes locally and streams them to the peer.
+</I>&gt;<i>  4. Either node can initiate a commitment by proposing a `flush` change.
+</I>&gt;<i>  5. Upon receiving a `flush` the nodes compute the commitment
+</I>&gt;<i>     transaction and exchange signatures.
+</I>&gt;<i>
+</I>&gt;<i> This is similar to your proposal, but does away with turn changes (it's
+</I>&gt;<i> always the leader's turn), and therefore reduces the state we need to
+</I>&gt;<i> keep track of (and re-negotiate on reconnect).
+</I>&gt;<i>
+</I>&gt;<i> The downside is that we add a constant overhead to one side's
+</I>&gt;<i> operations, but since we pipeline changes, and are mostly synchronous
+</I>&gt;<i> during the signing of the commitment tx today anyway, this comes out to
+</I>&gt;<i> 1 RTT for each commitment.
+</I>&gt;<i>
+</I>&gt;<i> On the other hand a token-passing approach (which I think is what you
+</I>&gt;<i> propose) require a synchronous token handover whenever a the direction
+</I>&gt;<i> of the updates changes. This is assuming I didn't misunderstand the turn
+</I>&gt;<i> mechanics of your proposal :-)
+</I>&gt;<i>
+</I>&gt;<i> Cheers,
+</I>&gt;<i> Christian
+</I>&gt;<i>
+</I>&gt;<i> Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; writes:
+</I>&gt;<i> &gt; Hi all,
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;         Our HTLC state machine is optimal, but complex[1]; the Lightning
+</I>&gt;<i> &gt; Labs team recently did some excellent work finding another place the spec
+</I>&gt;<i> &gt; is insufficient[2].  Also, the suggestion for more dynamic changes makes
+</I>&gt;<i> it
+</I>&gt;<i> &gt; more difficult, usually requiring forced quiescence.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The following protocol returns to my earlier thoughts, with cost of
+</I>&gt;<i> &gt; latency in some cases.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; 1. The protocol is half-duplex, with each side taking turns; opener
+</I>&gt;<i> first.
+</I>&gt;<i> &gt; 2. It's still the same form, but it's always one-direction so both sides
+</I>&gt;<i> &gt;    stay in sync.
+</I>&gt;<i> &gt;         update+-&gt; commitsig-&gt; &lt;-revocation &lt;-commitsig revocation-&gt;
+</I>&gt;<i> &gt; 3. A new message pair &quot;turn_request&quot; and &quot;turn_reply&quot; let you request
+</I>&gt;<i> &gt;    when it's not your turn.
+</I>&gt;<i> &gt; 4. If you get an update in reply to your turn_request, you lost the race
+</I>&gt;<i> &gt;    and have to defer your own updates until after peer is finished.
+</I>&gt;<i> &gt; 5. On reconnect, you send two flags: send-in-progress (if you have
+</I>&gt;<i> &gt;    sent the initial commitsig but not the final revocation) and
+</I>&gt;<i> &gt;    receive-in-progress (if you have received the initial commitsig
+</I>&gt;<i> &gt;    not not received the final revocation).  If either is set,
+</I>&gt;<i> &gt;    the sender (as indicated by the flags) retransmits the entire
+</I>&gt;<i> &gt;    sequence.
+</I>&gt;<i> &gt;    Otherwise, (arbitrarily) opener goes first again.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Pros:
+</I>&gt;<i> &gt; 1. Way simpler.  There is only ever one pair of commitment txs for any
+</I>&gt;<i> &gt;    given commitment index.
+</I>&gt;<i> &gt; 2. Fee changes are now deterministic.  No worrying about the case where
+</I>&gt;<i> &gt;    the peer's changes are also in flight.
+</I>&gt;<i> &gt; 3. Dynamic changes can probably happen more simply, since we always
+</I>&gt;<i> &gt;    negotiate both sides at once.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cons:
+</I>&gt;<i> &gt; 1. If it's not your turn, it adds 1 RTT latency.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Unchanged:
+</I>&gt;<i> &gt; 1. Database accesses are unchanged; you need to commit when you send or
+</I>&gt;<i> &gt;    receive a commitsig.
+</I>&gt;<i> &gt; 2. You can use the same state machine as before, but one day (when
+</I>&gt;<i> &gt;    this would be compulsory) you'll be able signficantly simplify;
+</I>&gt;<i> &gt;    you'll need to record the index at which HTLCs were changed
+</I>&gt;<i> &gt;    (added/removed) in case peer wants you to rexmit though.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Cheers,
+</I>&gt;<i> &gt; Rusty.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; [1] This is my fault; I was persuaded early on that optimality was more
+</I>&gt;<i> &gt;     important than simplicity in a classic nerd-snipe.
+</I>&gt;<i> &gt; [2] <A HREF="https://github.com/lightningnetwork/lightning-rfc/issues/794">https://github.com/lightningnetwork/lightning-rfc/issues/794</A>
+</I>&gt;<i> &gt; _______________________________________________
+</I>&gt;<i> &gt; Lightning-dev mailing list
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> &gt; <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201014/dcec5288/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201014/dcec5288/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002837.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+	<LI>Next message: <A HREF="002846.html">[Lightning-dev] [RFC] Simplified (but less optimal) HTLC	Negotiation
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2844">[ date ]</a>
+              <a href="thread.html#2844">[ thread ]</a>
+              <a href="subject.html#2844">[ subject ]</a>
+              <a href="author.html#2844">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

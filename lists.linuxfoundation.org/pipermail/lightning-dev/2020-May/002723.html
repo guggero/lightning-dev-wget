@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-May/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Array-based%20Routemap%20Representation%2C%0A%09and%20the%20Advantages%20of%20Cheney%202-Finger%20Garbage%20Collection&In-Reply-To=%3C25hfxW16QMA1r-G14wDEn9KdFeL76UNzDORuhro9G3lI0NBflSU9HVbhX_EfjzxW9VtihMp1nG1nPDCYlQ7xFZUNZ4HLrdDOrPsPYER_tiU%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002722.html">
+   <LINK REL="Next"  HREF="002724.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Array-based%20Routemap%20Representation%2C%0A%09and%20the%20Advantages%20of%20Cheney%202-Finger%20Garbage%20Collection&In-Reply-To=%3C25hfxW16QMA1r-G14wDEn9KdFeL76UNzDORuhro9G3lI0NBflSU9HVbhX_EfjzxW9VtihMp1nG1nPDCYlQ7xFZUNZ4HLrdDOrPsPYER_tiU%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Thu May 21 15:36:02 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002722.html">[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection
+</A></li>
+        <LI>Next message: <A HREF="002724.html">[Lightning-dev] Speciication Meeting 2020/05/25
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2723">[ date ]</a>
+              <a href="thread.html#2723">[ thread ]</a>
+              <a href="subject.html#2723">[ subject ]</a>
+              <a href="author.html#2723">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+
+&gt;<i> Now the big issue is that Cheney is a semispace collector, which basically means that during collection we need twice the memory, which absolutely sucks.
+</I>&gt;<i> Obviously ZmnSCPxj has gone insane and just wants us to spend twice as much memory on the routemap right after shaving only a few bytes off the representations of nodes and channels.
+</I>&gt;<i>
+</I>&gt;<i> However, nothing in the algorithm actually requires that tospace be in core memory.
+</I>&gt;<i> We could instead write the tospace objects into a disk file.
+</I>&gt;<i> Cheney &quot;just&quot; requires two pointers, which we can implement simply as opening the tospace file twice, once for append (allocation pointer) and one for read/write (scan pointer).
+</I>&gt;<i>
+</I>&gt;<i> We need two tospace files, one for node objects and one for channel objects, but in any case, once the Cheney run has completed, we can close the disk files, wait for any pending pathfinding queries to complete (and temporarily block new pathfinding queries), then reload the in-memory arrays from the tospace file(s).
+</I>&gt;<i>
+</I>&gt;<i> This may make this technique slightly more palatable for lower-power devices, which often still have some slightly larger amount of free disk space compared to memory space.
+</I>
+In fact, this is a cop-out and should be rejected.
+Semispace collection is just bad for memory utilization, and lower-resource devices do not have memory. or sufficient permanent storage, and it is apparent that ZmnSCPxj is just trolling you at this point.
+
+Instead, we should review why qsort, in its in-place array-sorting form, is considered faster than mergesort, even though the average number of compares and so on are approximately the same.
+
+The reason for that is that qsort, as originally developed, was an in-place array-sort, unlike mergesort which is almost impossible to implement as an in-place sort without tearing your cognitive substrate out and sacrificing your firstorn sentience to the outer gods, and the sheer reduction in cache pressure of in-place sorting due to touching smaller amounts of memory is generally why qsort tends to beat mergesort in sort contests.
+
+And the reason why qsort *can* be an in-place sort with only constant amount of extra space needed to run it, is because (1) the elements of an array are equal size and (2) you can always swap two entries of an array in constant space.
+
+Now the original reason why Cheney two-finger semispace is even a *semispace* collector, and thus requires twice as much memory while it is running, is that objects could be different sizes.
+But remember, we came into this with the realization that by using linked lists we can make all the objects a constant fixed size, making it far amenable to organize them into large arrays of objects.
+
+And just as we observe in qsort, that by swapping the pivot to a known location and then swapping it between the two partitions after we have partitioned the current array before recursing into the two sub-arrays, we can realize that we can make Cheney an in-space algorithm rather than a semispace one, by using similar swap operations.
+
+So let us return to the motivating example:
+
+     A --- B --- C --- D
+     |   /       |
+     |  /        |
+     | /         |
+     E --- F --- G
+
+Now let us pretend that objects have been allocated willy-nilly in the array of nodes, and the nodes are located at random in the array of nodes.
+The node A, being &quot;our&quot; own node, is still the first, because frankly any new node is going to at least know itself and will thus allocate itself as the first node in the node memory space.
+
+    A G B F C E D
+
+We start the Cheney collection in much the same manner, except that the scan pointer and the alloc pointer point to the same space/array that the nodes are already in.
+That is, there is no longer a tospace and fromspace, just a single space where the Cheney algorithm works inside.
+So we start the scan and alloc pointers like so:
+
+    A G B F C E D
+    ^ ^
+
+Now we start by scanning A, which has links to B and E.
+We swap B to the node that the alloc pointer is pointed at, then advance the alloc pointer:
+
+    A B G F C E D
+    ^   ^
+
+Then we swap E to the node that the alloc pointer is pointed at, then advance the alloc pointer:
+
+    A B E F C G D
+    ^     ^
+
+With this, we have completed scanning A and can advance the scan pointer by one unit:
+
+    A B E F C G D
+      ^   ^
+
+Now we can pause collection --- the graph is still valid and we can still perform routing queries on it --- but let us continue.
+
+We scan B.
+We know that A and E have already been collected, because their indices/addresses are less than the alloc pointer.
+However, C is greater than or equal to the alloc pointer, so we swap it with the node in the alloc pointer and advance the alloc pointer:
+
+    A B E C F G D
+      ^     ^
+
+There are no other nodes that B is linked to, so we advance the scan pointer:
+
+    A B E C F G D
+        ^   ^
+
+E is connected A, B, and F, A and B are below the alloc pointer, but F is at the alloc pointer and thus has to be collected as well.
+Fortunately for us, F is also *at* the alloc pointer, so we do not need to actually perform any swap, just advance the alloc pointer:
+
+    A B E C F G D
+        ^     ^
+
+E has no other links, so we advance the scan pointer:
+
+    A B E C F G D
+          ^   ^
+
+Continuing the algorithm, we then end up with the result:
+
+    A B E C F D G
+
+Which is the same result we would have gotten if we were using a semispace Cheney as well.
+
+-------
+
+Now we might wonder if we can just swap nodes around arbitrarily.
+Obviously, if some other thread is accessing the graph, then this is dangerous.
+However, if only a single thread or process has access to the graph at any one time, we are fine.
+
+As noted, routing queries are read-only and thus cannot possibly violate the tri-color invariant, thus we can simply pause the Cheney algorithm after advancing the scan pointer in order for the thread to service routing queries, gossip updates, or channel closes.
+The graph remains functional and correct, though its heuristic might be inaccurate (remember, this is a heuristic, you should still use a Dijkstra-family algorithm to recover from cases where the heuristic is wrong in practice).
+
+Then the only references to the nodes, when transitioning between GC tasks to query/mutator tasks, are the table of node IDs to nodes, which we can update as well when we swap two nodes.
+
+The gossip handler only needs to handle one case, which is to promote a White object to a Gray object if a new channel is created between a Black and a White object.
+Objects to the left of the scan pointer are Black, Gray is equal or greater to the scan pointer but less than the alloc pointer, and White is greater or equal to the alloc pointer.
+Promoting a White object to Gray is simply done by swapping with the object at the alloc pointer, then advancing the alloc pointer, as normal.
+
+
+With this, we can manage channel objects using a freelist instead of a GC, only use GC for the nodes themselves, which is helpful so that channels do not get churned around so much.
+
+Further, even once the Cheney algorithm ends (scan == alloc), the nodes beyond the scan/alloc pointer are definitely unreachable from this node.
+We can mark this point, and routefinding queries for nodes beyond this border can just fail immediately with no route.
+Any nodes beyond this point might be true garbage, or they may eventually reconnect to our island.
+This can be differentiated by checking for nodes that have no channels: we move nodes with channels to the space where nodes without channels are, and then finally discover the point at which we can reset the global allocation pointer for new nodes.
+
+
+
+Regards,
+ZmnSCPxj
+
+
+</PRE>
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002722.html">[Lightning-dev] Array-based Routemap Representation,	and the Advantages of Cheney 2-Finger Garbage Collection
+</A></li>
+	<LI>Next message: <A HREF="002724.html">[Lightning-dev] Speciication Meeting 2020/05/25
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2723">[ date ]</a>
+              <a href="thread.html#2723">[ thread ]</a>
+              <a href="subject.html#2723">[ subject ]</a>
+              <a href="author.html#2723">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

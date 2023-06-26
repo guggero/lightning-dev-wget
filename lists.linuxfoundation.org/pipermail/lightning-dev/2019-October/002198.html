@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] Continuing the discussion about	noinput / anyprevout
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Continuing%20the%20discussion%20about%0A%09noinput%20/%20anyprevout&In-Reply-To=%3C87lfu26tji.fsf%40gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002199.html">
+   <LINK REL="Next"  HREF="002181.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] Continuing the discussion about	noinput / anyprevout</H1>
+    <B>Christian Decker</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20Continuing%20the%20discussion%20about%0A%09noinput%20/%20anyprevout&In-Reply-To=%3C87lfu26tji.fsf%40gmail.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] Continuing the discussion about	noinput / anyprevout">decker.christian at gmail.com
+       </A><BR>
+    <I>Thu Oct  3 09:57:05 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002199.html">[Lightning-dev] [bitcoin-dev] Continuing the discussion about	noinput / anyprevout
+</A></li>
+        <LI>Next message: <A HREF="002181.html">[Lightning-dev] Continuing the discussion about noinput /	anyprevout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2198">[ date ]</a>
+              <a href="thread.html#2198">[ thread ]</a>
+              <a href="subject.html#2198">[ subject ]</a>
+              <a href="author.html#2198">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Chris Stewart &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">chris at suredbits.com</A>&gt; writes:
+
+&gt;<i> I do have some concerns about SIGHASH_NOINPUT, mainly that it does
+</I>&gt;<i> introduce another footgun into the bitcoin protocol with address reuse.
+</I>&gt;<i> It's common practice for bitcoin businesses to re-use addresses. Many
+</I>&gt;<i> exchanges [1] reuse addresses for cold storage with very large sums of
+</I>&gt;<i> money that is stored in these addreses.
+</I>&gt;<i>
+</I>&gt;<i> It is my understanding with this part of BIP118
+</I>&gt;<i>
+</I>&gt;&gt;<i>Using NOINPUT the input containing the signature no longer references a
+</I>&gt;<i> specific output. Any participant can take a transaction and rewrite it by
+</I>&gt;<i> changing the hash reference to the previous output, without invalidating
+</I>&gt;<i> the signatures. This allows transactions to be bound to any output that
+</I>&gt;<i> matches the value committed to in the witness and whose witnessProgram,
+</I>&gt;<i> combined with the spending transaction's witness returns true.
+</I>&gt;<i>
+</I>&gt;<i> if an exchange were to once produce a digital signature from that cold
+</I>&gt;<i> storage address with a SIGHASH_NOINPUT signature, that signature can be
+</I>&gt;<i> replayed again and again on the blockchain until their wallet is drained.
+</I>&gt;<i> This might be able to mitigated since the signatures commit to outputs,
+</I>&gt;<i> which may be small in value for the transaction that SIGHASH_NOINPUT was
+</I>&gt;<i> used. This means that an exchange could move coins from the address with a
+</I>&gt;<i> larger transaction that spends money to a new output (and presumably pays a
+</I>&gt;<i> higher fee than the smaller transactions).
+</I>
+Thanks for sharing your concerns Chris, I do agree that noinput and
+friends are a very sharp knife that needs to be treated carefully, but
+ultimately it's exactly its sharpness that makes it useful :-)
+
+&gt;<i> ### Why does this matter?
+</I>&gt;<i>
+</I>&gt;<i> It seems that SIGHASH_NOINPUT will be an extremely useful tool for offchain
+</I>&gt;<i> protocols like Lightning. This gives us the building blocks for enforcing
+</I>&gt;<i> specific offchain states to end up onchain [2].
+</I>&gt;<i>
+</I>&gt;<i> Since this tool is useful, we can presume that it will be integrated into
+</I>&gt;<i> the signing path of large economic entities in bitcoin -- namely exchanges.
+</I>&gt;<i> Many exchanges have specific signing procedures for transactions that are
+</I>&gt;<i> leaving an exchange that is custom software. Now -- presuming wide adoption
+</I>&gt;<i> of off chain protocols -- they will need to have a _second unique signing
+</I>&gt;<i> path that uses SIGHASH_NOINPUT_.
+</I>&gt;<i>
+</I>&gt;<i> It is imperative that this second signing path -- which uses
+</I>&gt;<i> SIGHASH_NOINPUT -- does NOT get mixed up with the first signing path that
+</I>&gt;<i> controls an exchanges onchain funds. If this were to happen, fund lost
+</I>&gt;<i> could occur if the exchange is reusing address, which seems to be common
+</I>&gt;<i> practice.
+</I>
+Totally agreed, and as you point out, BIP118 is careful to mandate
+separate private keys be used for off-chain contracts and that the
+off-chain contract never be mixed with the remainder of your funds. The
+way eltoo uses noinput we selectively open us up to replay attacks
+(because that's what the update mechanism is after all) by controlling
+the way the transactions can be replayed very carefully, and any other
+use of noinput would need to make sure to have the same guarantees.
+However, once we have separated the two domains, we can simply use a
+separate (hardened) derivation path from a seed key, and never mix them
+afterwards. We never exchange any private keys, so even leaking info
+across derived keys is not an issue here.
+
+&gt;<i> This is stated here in BIP118:
+</I>&gt;<i>
+</I>&gt;&gt;<i>This also means that particular care has to be taken in order to avoid
+</I>&gt;<i> unintentionally enabling this rebinding mechanism. NOINPUT MUST NOT be
+</I>&gt;<i> used, unless it is explicitly needed for the application, e.g., it MUST NOT
+</I>&gt;<i> be a default signing flag in a wallet implementation. Rebinding is only
+</I>&gt;<i> possible when the outputs the transaction may bind to all use the same
+</I>&gt;<i> public keys. Any public key that is used in a NOINPUT signature MUST only
+</I>&gt;<i> be used for outputs that the input may bind to, and they MUST NOT be used
+</I>&gt;<i> for transactions that the input may not bind to. For example an application
+</I>&gt;<i> SHOULD generate a new key-pair for the application instance using NOINPUT
+</I>&gt;<i> signatures and MUST NOT reuse them afterwards.
+</I>&gt;<i>
+</I>&gt;<i> This means we need to encourage onchain hot wallet signing procedures to be
+</I>&gt;<i> kept separate from offchain hot wallet signing procedures, which introduces
+</I>&gt;<i> more complexity for key management (two keychains).
+</I>
+This is already the case: off-chain systems always require access to the
+signing key in real-time in order to be useful. If any state change is
+performed in a channel, even just adjusting fees or receiving a payment,
+requires the signature from the key associated with the channel. With
+high security on-chain systems on the other hand you should never have a
+hot key that automatically signs off on transfers without human
+intervention. So I find it unlikely that mandating the on-chain keys to
+be kept separate from off-chain keys is any harder than what should be
+done with the current systems.
+
+&gt;<i> One (of the few) upsides of the current Lightning penalty mechanism is that
+</I>&gt;<i> fund loss can be contained to balance of the channel. You cannot do
+</I>&gt;<i> something in the current protocol that will effect your funds outside of
+</I>&gt;<i> that channel. With SIGHASH_NOINPUT, that property changes.
+</I>
+Good point, but if the key hygiene is maintained as detailed in BIP118,
+i.e., off-chain keys must be kept separate from on-chain keys, and that
+each off-chain contract instance uses a separate set of keys, that
+property is maintained.
+
+Regards,
+Christian
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002199.html">[Lightning-dev] [bitcoin-dev] Continuing the discussion about	noinput / anyprevout
+</A></li>
+	<LI>Next message: <A HREF="002181.html">[Lightning-dev] Continuing the discussion about noinput /	anyprevout
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2198">[ date ]</a>
+              <a href="thread.html#2198">[ thread ]</a>
+              <a href="subject.html#2198">[ subject ]</a>
+              <a href="author.html#2198">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

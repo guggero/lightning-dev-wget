@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Onion messages for probing scheme
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20for%20probing%20scheme&In-Reply-To=%3Cv_9tyykVcKelYXHCwKtbfeJHGNl2Hdrpo63_nRuj0lJC1yKVOrvuD9MOSflL8oQ3mCaA9tDu9Xxm8L18xCuEsoe7xZr-2mnQo7r_4-V9-A4%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003868.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Onion messages for probing scheme</H1>
+    <B>vwallace</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Onion%20messages%20for%20probing%20scheme&In-Reply-To=%3Cv_9tyykVcKelYXHCwKtbfeJHGNl2Hdrpo63_nRuj0lJC1yKVOrvuD9MOSflL8oQ3mCaA9tDu9Xxm8L18xCuEsoe7xZr-2mnQo7r_4-V9-A4%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Onion messages for probing scheme">vwallace at protonmail.com
+       </A><BR>
+    <I>Mon Feb 27 21:31:15 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003868.html">[Lightning-dev] [Proposal] Payment Route Reservation
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3869">[ date ]</a>
+              <a href="thread.html#3869">[ thread ]</a>
+              <a href="subject.html#3869">[ subject ]</a>
+              <a href="author.html#3869">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi list!
+
+I wanted to bring up the idea of using onion messages for payment probing, which was briefly touched
+on at the 2022 LN summit. Tadge Dryja has also brought up a similar idea.
+
+I recommend reading the gist instead since it has the relevant diagrams in-line:
+<A HREF="https://gist.github.com/valentinewallace/ebe1741f0438c2360eda0f80f0e075c9">https://gist.github.com/valentinewallace/ebe1741f0438c2360eda0f80f0e075c9</A> but the scheme is also
+posted below for convenience.
+
+## Introduction
+
+For context, in today&#8217;s lightning, payment reliability tends to heavily depend on having sufficient
+payment volume to determine current liquidity balances of channels, which is how most big nodes can
+tell whether a given channel has enough liquidity to forward a given amount. If a node is using HTLC
+probing to achieve this payment volume, they use a regular `update_add_htlc` message with a bogus
+payment hash, where the error returned informs the sender of whether the payment reached the final
+recipient. Note that there is a tradeoff between always routing through nodes that are known to
+rebalance their channels vs leaning on probing smaller nodes and &#8220;risking&#8221; payments through them
+based on what&#8217;s learned.
+
+Today&#8217;s HTLC payment probing can work well, but risks channel liquidity being locked up if a peer
+along the route goes offline. On the upside, for just-in-time probes, it works to loosely &#8220;reserve&#8221;
+the channel liquidity along the route for the actual payment.
+
+Onion messages (OMs) present a convenient way to probe without risking locked liquidity along the
+route.
+
+## Design Rationale
+
+A naive approach could be to send onion message probes directly to individual nodes along the
+desired route, including those to which you don&#8217;t have a direct channel. However, this scheme is
+problematic because it would enable monitoring the payment flows of arbitrary nodes across the
+network without having to have a channel path to them. This would be a significant degradation of
+privacy because, for comparison, in HTLC probing it is quite difficult to probe the balances of
+far-off nodes. And if you can&#8217;t probe a node using HTLCs, you can&#8217;t send over it anyway, so there&#8217;s
+not a lot of benefit (and significant privacy downside).
+
+Therefore, it is probably best to design a scheme that probes along channel paths, like HTLC
+probing. This adds more complexity to the case where an intermediate node cannot forward the desired
+amount due to the stateless nature of OMs, discussed further down.
+
+## Scheme
+
+Let&#8217;s go through the happy path, where Alice is probing Alice &gt; Bob &gt; Carol &gt; Dave for a 100k msat
+payment.
+
+She&#8217;ll construct an onion message for Bob, the first hop, as such: <A HREF="https://imgur.com/BZg8yt8">https://imgur.com/BZg8yt8</A>
+
+Bob receives this OM, sees that he&#8217;s able to forward 110k msats to his next-hop Carol, and forwards
+Carol&#8217;s onion packet to her. Carol sees she can forward 105k msats to Dave, and forwards his onion
+packet. Finally, Dave receives his onion packet, sees he can receive 100k msats from Carol, and uses
+the provided reply path to send a simple probe success onion message back to Alice:
+
+```
+onion_message_probe_result {
+data_tlv {
+type: 4242,
+probe_id: [u8; 32],
+can_forward_desired_amt: true,
+}
+.. regular OM TLVs
+}
+```
+
+Note that Dave will use this same onion message if he can&#8217;t receive; he&#8217;ll just set
+`can_forward_desired_amt` to false.
+
+As an example of the sad path for an intermediate node, if Carol can&#8217;t forward 105k msats to Dave,
+she&#8217;ll fail the probe back to Bob by sending this onion message: <A HREF="https://imgur.com/a/hqlzw4I">https://imgur.com/a/hqlzw4I</A>
+
+This step justifies why we need to encode a failure onion for each intermediate hop of a probe. If
+we hadn&#8217;t done that, and Carol responded to Bob with an empty &#8220;failed&#8221; message, Bob would have no
+idea which peer to fail the probe back to, because OMs are stateless. Instead, Bob unwraps his error
+onion and sees that he needs to fail back to Alice with her provided error onion. Alice receives the
+failure onion and can see that Carol was not able to forward the desired amount corresponding to the
+probe id, thus completing the probe.
+
+## Outro
+
+While there is nothing stopping nodes from lying about their ability to forward, they may be
+negatively scored if they do so. Further, adopting a protocol like this could help routing nodes
+attract more forwarding traffic, which is a nice incentive.
+
+I view this feature as a low priority enhancement, given there are a lot more pressing issues in LN,
+but open to feedback. Mostly, I thought it could be useful to spark ideas and highlight the
+flexibility of OMs.
+
+Cheers,
+Val
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230227/fe72ef42/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20230227/fe72ef42/attachment.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003868.html">[Lightning-dev] [Proposal] Payment Route Reservation
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3869">[ date ]</a>
+              <a href="thread.html#3869">[ thread ]</a>
+              <a href="subject.html#3869">[ subject ]</a>
+              <a href="author.html#3869">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

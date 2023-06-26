@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Explicit Fee Management Proposal
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Explicit%20Fee%20Management%20Proposal&In-Reply-To=%3C7ntqK4eLSW6AWfhFZKQedCUoci5ouOTXRflpcheRgCQ6uEfpk2VegTRNgOx1sgULK6Q8kZKFMIaGo_CMtXaIhgFxHhRJx2kJHr-92pSp1hg%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001561.html">
+   <LINK REL="Next"  HREF="001547.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Explicit Fee Management Proposal</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Explicit%20Fee%20Management%20Proposal&In-Reply-To=%3C7ntqK4eLSW6AWfhFZKQedCUoci5ouOTXRflpcheRgCQ6uEfpk2VegTRNgOx1sgULK6Q8kZKFMIaGo_CMtXaIhgFxHhRJx2kJHr-92pSp1hg%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] Explicit Fee Management Proposal">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Fri Nov  9 00:06:53 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001561.html">[Lightning-dev] Walletless channel opens
+</A></li>
+        <LI>Next message: <A HREF="001547.html">[Lightning-dev] Link-level payment splitting via intermediary	rendezvous nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1546">[ date ]</a>
+              <a href="thread.html#1546">[ thread ]</a>
+              <a href="subject.html#1546">[ subject ]</a>
+              <a href="author.html#1546">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning list,
+
+For extra bikeshedding opportunities, I present below, a proposal for explicit management of commitment transaction and mutual close transaction fees.
+
+By this thought, &quot;explicit management&quot;, I want to convey, that the parties have more control over fees.
+
+### Additional Variables
+
+Nodes will now additionally track for each channel:
+
+* `from_local_fee_msat` - 64-bit unsigned integer. The amount of fees contributed by this node.
+* `from_remote_fee_msat` - 64-bit unsigned integer. The amount of fees contributed by this node
+
+If the node is the initiator of the channel, its `from_local_fee_msat` contains the fee decided during channel opening, and its `from_remote_fee_msat` is 0.  If it is not the initiator, then the reverse is true.
+
+#### Rationale
+
+Although onchain fees are measured in satoshi, the above variables are in millisatoshi in order to allow finer proportional deductions when reducing fees.
+
+### Additional channel state updates
+
+These update messages behave similarly to `offer_htlc`.  Multiple of these messages may be sent, and then `commitment_signed` puts them into effect for the commitment transaction.
+
+#### The `add_fees` message
+
+1. type - TBD
+2. data:
+    * [`8`: `short_channel_id`]
+    * [`8` : `additional_donated_fee_sat`]
+
+`additional_donated_fee_sat` is the amount of fees that the sending node proposes to donate as fees, in order for the commitment transaction to be confirmed in a timely manner.
+The donated fee is deducted from the sender funds of the channel.
+
+Multiple `add_fees` message add up their effects.
+
+The sender:
+
+* MUST NOT offer a fee donation that would put their balance below the channel reserve.
+* MAY donate their entire balance, minus the channel reserve.
+
+Both nodes:
+
+* MUST convert the satoshi units in this message to millisatoshis before updating the `from_local_fee_msat` and `from_remote_fee_msat` when a commitment is signed.
+
+#### The `propose_deduct_fees` message
+
+1. type - TBD
+2. data:
+    * [`8`: `short_channel_id`]
+    * [`8` : `proposed_deducted_fee_sat`]
+
+`proposed_deducted_fee_sat` is the amount by which the total fees will be deducted.
+
+This message starts a sub-protocol, where other channel state update messages for the channel are disallowed and will trigger an `error` message with code `TBD`.
+
+The sub-protocol involves `propose_deduct_fees` messages, and is ended once both sides send `accept_deduct_fees`.
+
+The lowest `proposed_deducted_fee_sat` before the `accept_deduct_fees` is selected.
+Thus each node has the ability to veto a deduction by simply sending a 0 `proposed_deducted_fee_sat`.
+
+#### The `accept_deduct_fees` message
+
+1. type - TBD
+2. data:
+    * [`8`: `short_channel_id`]
+    * [`8` : `min_proposed_deducted_fee_sat`]
+
+Once both nodes have sent this `accept_deduct_fees` for a channel with the same `min_proposed_deducted_fee_sat`, then both nodes have come to an agreement on how much to deduct as fees.
+
+The deduction is split between the two nodes in proportion to how much each one donated to the fees.
+Thus, to compute how much will be deducted from `from_local_fee_msat`, the division below is rounded down:
+
+    deduct_from_local_fee_msat = 1000 * min_proposed_deducted_fee_sat * from_local_fee_msat / (from_local_fee_msat + from_remote_fee_msat)
+
+The receiver:
+* SHOULD send `propose_deduct_fees` with the lowest deducted fee, if the `min_proposed_deducted_fee_sat` does not match what it believes to have seen as the lowest.
+    * this may occur if messages get sent at about the same time.
+    * MAY fail the channel if this occurs too often.
+* MAY fail the channel if it considers the fee deduction to be too low to be reasonable.
+
+Regards,
+ZmnSCPxj
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181109/24d578d5/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20181109/24d578d5/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001561.html">[Lightning-dev] Walletless channel opens
+</A></li>
+	<LI>Next message: <A HREF="001547.html">[Lightning-dev] Link-level payment splitting via intermediary	rendezvous nodes
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1546">[ date ]</a>
+              <a href="thread.html#1546">[ thread ]</a>
+              <a href="subject.html#1546">[ subject ]</a>
+              <a href="author.html#1546">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

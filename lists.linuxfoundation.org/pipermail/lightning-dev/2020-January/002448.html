@@ -1,0 +1,268 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Layered commitments with eltoo
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Layered%20commitments%20with%20eltoo&In-Reply-To=%3C20200121082018.cl4px245hb6dse2e%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002435.html">
+   <LINK REL="Next"  HREF="002449.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Layered commitments with eltoo</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Layered%20commitments%20with%20eltoo&In-Reply-To=%3C20200121082018.cl4px245hb6dse2e%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Layered commitments with eltoo">aj at erisian.com.au
+       </A><BR>
+    <I>Tue Jan 21 08:20:18 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002435.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+        <LI>Next message: <A HREF="002449.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2448">[ date ]</a>
+              <a href="thread.html#2448">[ thread ]</a>
+              <a href="subject.html#2448">[ subject ]</a>
+              <a href="author.html#2448">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+At present, BOLT-3 commitment transactions provide a two-layer
+pay-to-self path, so that you can reduce the three options:
+
+  1) pay-to-them due to revoked commitment
+  2) pay-to-me due to timeout (or: preimage known)
+  3) pay-to-them due to preimage known (or: timeout)
+
+to just the two options:
+
+  1) pay-to-them due to revoked commitment
+  2) pay-to-me due to timeout (or: preimage known)
+
+This allows the `to_self_delay` and the HTLC timeout (and hence the
+`cltv_expiry_delta`) to be chosen independently.
+
+As it stands, both the original eltoo proposal [0] and the
+ANYPREVOUT-based sketch [1] don't have this property, which means that
+either the `cltv_expiry_delta` needs to take the `to_self_delay` into
+account, or you risk not being able to claim funds to cover payments
+you forward.
+
+[0] <A HREF="https://blockstream.com/eltoo.pdf">https://blockstream.com/eltoo.pdf</A>
+[1] <A HREF="../2019-May/001996.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-May/001996.html</A>
+
+I think if we drop the commitment to the input value from
+ANYPREVOUTANYSCRIPT signatures, it's possible to come up with a scheme
+that preserves the other benefits of eltoo while also having the same
+benefits BOLT-3 currently achieves. I think for eltoo it needs to be a
+channel-wide &quot;shared_delay&quot; rather than a &quot;to_self&quot; delay, so I'll use
+that.
+
+Here's the setup. We have four types of transaction:
+
+ * funding transaction, posted on-chain as part of channel setup
+ * update transaction, posted on-chain to close the channel at a
+   given state
+ * revocable claim transaction, posted on-chain to reveal a preimage
+   or establish a timeout has passed
+ * settlement transaction, to actually claim funds
+
+As with eltoo, if a stale update transaction is posted, it can be spent
+via any subsequent update transaction with no penalty. The revocable
+claim transactions have roughly the same goal as the second layer BOLT-3
+transactions, that is going from:
+
+  1) spent by a later update transaction
+  2) pay-to-me due to timeout (or: preimage known)
+  3) pay-to-them due to preimage known (or: timeout)
+
+to
+
+  1) spent by a later update transaction
+  2) pay-to-me due to timeout (or: preimage known)
+
+In detail:
+
+ * Get a pubkey from each peer (A, B), and calculate P=MuSig(A,B).
+
+ * Each state update involves constructing and calculating signatures
+   for new update transactions, revocable claim transactions and
+   settlement transactions.
+
+ * The update transaction has k+2 outputs, where k is the number of open
+   PTLCs. Each PTLC output pays to P as the internal key, and:
+
+     IF CODESEP [i] ELSE [500e6+n+1] CLTV ENDIF DROP OP_1 CHECKSIG
+
+   as the script. i varies from 1..k; n is the state counter, starting
+   at 1 and counting up.
+
+   Each balance output pays to P as the internal key and:
+
+     IF CODESEP IF [balance_pubkey_n] [shared_delay] CSV ELSE OP_1 OP_0 ENDIF
+     ELSE OP_1 [500e6+n+1] CLTV ENDIF 
+     DROP CHECKSIG
+
+   as the script.
+
+   The signature that allows an update tx to spend a previous update tx
+   is calculated using ALL|ANYPREVOUTANYSCRIPT, a locktime of 500e6+n,
+   with the key P, and codesep_pos=0xffff_ffff.
+
+ * For each output of the update tx and each party that can spend it,
+   we also construct a revocable claim transaction. These are designed
+   to update a single output of each PTLC, and their output pays to P
+   as the internal key, and the script:
+
+     IF [i*P+p] CODESEP ELSE [500e6+n+1] CLTV ENDIF DROP OP_1 CHECKSIG
+
+   (swapping the position of the CODESEP opcode, and encoding both i and
+   p in the script -- P is the number of peers in the channel, so 2
+   here, and p is an identifier for each peer so either 0 or 1; i=1..k
+   for HTLCs, i=0 for the balances)
+
+   The signature that allows this tx to be applied to the update tx
+   is calculated as SINGLE|ANYPREVOUT, with the script committed and
+   codesep_pos=1. This signature should be made conditional for each
+   PTLC, either by being an adaptor signature requiring the point preimage
+   to be added, or by having a locktime given.
+
+ * For each revocable claim transaction, we also construct a settlement
+   transaction. The outputs of the settlement transactions are just
+   an address for whichever peer receives the funds.
+
+   These are also done by SINGLE|ANYPREVOUT signatures, with nSequence
+   set to the shared_delay. There's no locktime or adaptor signatures
+   needed here, since they were taken care of for the revocable claim
+   transaction.  The signatures commit to the respective scripts, and
+   set codesep_pos to either 1 or 2 depending on whether a revocable
+   claim is being spent or not.
+
+ * The funding transaction pays to internal key P, with tapscript:
+
+     &quot;OP_1 CHECKSIGVERIFY 500e6 CLTV&quot;
+
+Then: to spend from the funding transaction cooperatively, you make a
+new SIGHASH_ALL signature based the output key Q for the funding tx.
+
+If you can't do that, you post two transactions: the latest update tx,
+and another tx that includes any revocable claim tx's you can already
+claim and an input to cover fees, and any change from the fees. You then
+wait for the shared_delay to pass, and can then use the settlement txs
+to finish claiming the funds, and do whatever you like afterwards.
+
+If someone else posts an update tx, and you have a later one, then
+you construct a new update tx, with an input for each unspent output
+(whether directly from the update tx, or from a revocable claim tx),
+with the witness for each being the update tx's ANYPREVOUTANYSCRIPT
+signature (and a &quot;0&quot; to choose the right path of the IF). You then post
+that, and another tx that includes your revocable claims txs and pays
+the fees, and continue as before.
+
+If someone else posts the latest update tx, you can post any revocable
+claims you have to lock those funds in, then need to just wait for the
+shared_delay to pass, so that you can claim your balance and post and
+settlement txs you have. If you'd had a bad crash and lost the current
+channel state, you can work out which output is your balance, and claim
+it using just your private key, however you'll lose any PTLCs you may
+have otherwise been able to claim.
+
+There's &quot;only&quot; 1+2*(P+2*k) signatures that need to be calculated for
+each state -- 1 for the update transaction, and 2 (revocable commit and
+settlement) for each of the P balances and both of the ways (preimage
+reveal and timeout) each of the k PTLCs can be claimed.
+
+
+I think you can distinguish each signature so it's only used for the
+appropriate transaction,
+
+ -&gt; update sig has codesep_pos=0xffff_ffff which forces the CLTV path
+    to be taken, and nLockTime set so it's only valid for earlier
+    updates' scripts
+
+ -&gt; revocable claim sig has codesep_pos=1 and commits to the script
+    which encodes by the state n and either the HTLC index i, or the
+    balance's owner's pubkey
+
+ -&gt; settlement sig has codesep_pos=2 and commits to the script, which
+    encodes the state n, the HTLC index i, and the peer who claimed the
+    funds
+
+This doesn't work well with HTLCs because you'd need to encode the HTLC
+in script, which means you need to keep a record of every HTLC hash in
+case it appears in an old published update tx that you want to update
+to a new update transaction. I think more generally it's only compatible
+with contracts that can be encoded in a scriptless script, as otherwise
+you'd need to remember the contract details in perpetuity in case an old
+state was published that you needed to update. I think deferring the
+contract details to settlement would solve the revocable part of the
+problem, but would bring back the delay/locktime conflict so doesn't
+seem helpful.
+
+This should work fine with the &quot;A CHECKSIGVERIFY B CHECKSIG&quot; alternate
+scripts mentioned in [2] for shortcutting roundtrips, though having more
+than one script path would make every uncooperative close more expensive
+than only having one script path.
+
+[2] <A HREF="../2019-December/002385.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-December/002385.html</A>
+
+I think this construction generalises fine to multiparty channels,
+though maybe there are cheaper ones for two-party channels which might
+be worth optimising for. I think the obvious optimisations to two-party
+channels fail if you bring in untrusted watchtowers -- though that might
+be fixable if you make it so watchtowers get signatures that apply
+against earlier update tx's but not the funding tx -- I think that'd
+just require calculating an extra signature per state.
+
+It's a pretty artificial structure all round, so definitely gives away
+that eltoo is in use as soon as an uncooperative close starts, and
+also gives away the number of participants in the channel (because the
+balance outputs are distinguishable in order to allow balance recovery
+after loss of state info).
+
+
+This all only works if ANYPREVOUTANYSCRIPT doesn't commit to the value of
+the input -- otherwise reusing the single &quot;update&quot; signature won't allow
+you to collect every revocable claim tx output back to redistribute all
+their funds correctly. That's a significant change to NOINPUT/BIP 118 as
+it stands.
+
+Cheers,
+aj
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002435.html">[Lightning-dev] Decoy node_ids and short_channel_ids
+</A></li>
+	<LI>Next message: <A HREF="002449.html">[Lightning-dev] [PATCH] First draft of	option_simplfied_commitment
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2448">[ date ]</a>
+              <a href="thread.html#2448">[ thread ]</a>
+              <a href="subject.html#2448">[ subject ]</a>
+              <a href="author.html#2448">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

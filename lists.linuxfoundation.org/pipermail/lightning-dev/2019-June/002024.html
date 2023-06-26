@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Improve Lightning payment reliability through better error attribution
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-June/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improve%20Lightning%20payment%20reliability%20through%0A%20better%20error%20attribution&In-Reply-To=%3CCAJBJmV9t2ygmn2o6bFCwdXpebVKHAQebZUUdt9QfTugcdsCzhA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002023.html">
+   <LINK REL="Next"  HREF="002026.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Improve Lightning payment reliability through better error attribution</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Improve%20Lightning%20payment%20reliability%20through%0A%20better%20error%20attribution&In-Reply-To=%3CCAJBJmV9t2ygmn2o6bFCwdXpebVKHAQebZUUdt9QfTugcdsCzhA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Improve Lightning payment reliability through better error attribution">joost.jager at gmail.com
+       </A><BR>
+    <I>Fri Jun 14 10:59:26 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002023.html">[Lightning-dev] Improve Lightning payment reliability through	better error attribution
+</A></li>
+        <LI>Next message: <A HREF="002026.html">[Lightning-dev] Improve Lightning payment reliability through	better error attribution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2024">[ date ]</a>
+              <a href="thread.html#2024">[ thread ]</a>
+              <a href="subject.html#2024">[ subject ]</a>
+              <a href="author.html#2024">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi ZmnSCPxj,
+
+
+&gt;<i> &gt; That is definitely a concern. It is up to senders how to interpret the
+</I>&gt;<i> received timestamps. They can decide to tolerate slight variations. Or they
+</I>&gt;<i> could just look at the difference between the in and out timestamp,
+</I>&gt;<i> abandoning the synchronization requirement altogether (a node could also
+</I>&gt;<i> just report that difference instead of two timestamps). The held duration
+</I>&gt;<i> is enough to identify a pair of nodes from which one of the nodes is
+</I>&gt;<i> responsible for the delay.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Example (held durations between parenthesis):
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; A (15 secs) -&gt; B (14 secs) -&gt; C (3 secs) -&gt; D (2 secs)
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; In this case either B or C is delaying the payment. We'd penalize the
+</I>&gt;<i> channel between B and C.
+</I>&gt;<i>
+</I>&gt;<i> This seems better.
+</I>&gt;<i> If B is at fault, it could lie and reduce its reported delta time, but
+</I>&gt;<i> that simply means it will be punished with A.
+</I>&gt;<i> If C is at fault, it could lie and increase its reported delta time, but
+</I>&gt;<i> that simply means it will be punished with D.
+</I>&gt;<i>
+</I>&gt;<i> I presume that the delta time is the time difference from when it sends
+</I>&gt;<i> `update_add_htlc` and when it receives `update_fulfill_htlc`, or when it
+</I>&gt;<i> gets an irrevocably committed `update_fail_htlc` + `revoke_and_ack`.
+</I>&gt;<i> Is that accurate?
+</I>&gt;<i>
+</I>
+Yes that is accurate, although using the time difference between receiving
+the `update_add_htlc` and sending back the `update_fail_htlc` would work
+too. It would then include the node's processing time.
+
+
+&gt;<i> Unit should probably be milliseconds
+</I>&gt;<i>
+</I>
+Yes, we probably want sub-second resolution for this.
+
+An alternative that comes to mind is to use active probing and tracking
+&gt;<i> persistent data per node.
+</I>&gt;<i>
+</I>&gt;<i> For each node we record two pieces of information:
+</I>&gt;<i>
+</I>&gt;<i> 1.  Total imposed delay.
+</I>&gt;<i> 2.  Number of attempts.
+</I>&gt;<i>
+</I>&gt;<i> Suppose a probe or payment takes N milliseconds on a route with M nodes to
+</I>&gt;<i> fulfill or irrevocably fail at the payer.
+</I>&gt;<i> For each node on the route, we increase Total imposed delay by N / M
+</I>&gt;<i> rounded up, and increment Number of attempts.
+</I>&gt;<i> For error reports we can shorten the route if we get an error response
+</I>&gt;<i> that points to a specific failing node, or penalize the entire route in
+</I>&gt;<i> case of a completely undecodable error response.
+</I>&gt;<i>
+</I>&gt;<i> When finding a route for a &quot;real&quot; payment, we adjust the cost of
+</I>&gt;<i> traversing a node by the ratio Total imposed delay / Number of attempts (we
+</I>&gt;<i> can avoid undefined math by starting both fields at 1).
+</I>&gt;<i> For probes we can probably ignore this factor in order to give nodes that
+</I>&gt;<i> happened to be borked by a different slow node on the trial route another
+</I>&gt;<i> chance to exonerate their apparent slowness.
+</I>&gt;<i>
+</I>&gt;<i> This does not need changes in the current spec.
+</I>&gt;<i>
+</I>
+I think we could indeed do more with the information that we currently have
+and gather some more by probing. But in the end we would still be sampling
+a noisy signal. More scenarios to take into account, less accurate results
+and probably more non-ideal payment attempts. Failed, slow or stuck
+payments degrade the user experience of lightning, while &quot;fat errors&quot;
+arguably don't impact the user in a noticeable way.
+
+Joost
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190614/9c95c6f1/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190614/9c95c6f1/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002023.html">[Lightning-dev] Improve Lightning payment reliability through	better error attribution
+</A></li>
+	<LI>Next message: <A HREF="002026.html">[Lightning-dev] Improve Lightning payment reliability through	better error attribution
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2024">[ date ]</a>
+              <a href="thread.html#2024">[ thread ]</a>
+              <a href="subject.html#2024">[ subject ]</a>
+              <a href="author.html#2024">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

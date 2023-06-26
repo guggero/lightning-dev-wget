@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Eltoo Burst Mode &amp; Continuations
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2021-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%20Burst%20Mode%20%26%20Continuations&In-Reply-To=%3CCAD5xwhh_bZ6B7atk2M8%3DigfbQqKk4T_ZF10T8%3DLqvfVX4AcK%3DA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003122.html">
+   <LINK REL="Next"  HREF="003124.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Eltoo Burst Mode &amp; Continuations</H1>
+    <B>Jeremy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Eltoo%20Burst%20Mode%20%26%20Continuations&In-Reply-To=%3CCAD5xwhh_bZ6B7atk2M8%3DigfbQqKk4T_ZF10T8%3DLqvfVX4AcK%3DA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Eltoo Burst Mode &amp; Continuations">jlrubin at mit.edu
+       </A><BR>
+    <I>Sat Jul 10 23:25:06 UTC 2021</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003122.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+        <LI>Next message: <A HREF="003124.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3123">[ date ]</a>
+              <a href="thread.html#3123">[ thread ]</a>
+              <a href="subject.html#3123">[ subject ]</a>
+              <a href="author.html#3123">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>on further reflection, i think you can get around the restriction of CSV by
+signing a eltoo &quot;trampoline&quot;.
+
+essentially, begin a burst session at pk1:N under pk2, but always include a
+third branch to go to any pk1:N+1.
+
+The scripts look like:
+
+Eltoo Layer 1 Regular at state i = N&lt;&lt;32:
+Or(And(After(N+1), Key(PK_u1)), And(Older(2016), Key(PK_s_i))
+
+Eltoo Layer 1 During Burst at state i = (N&lt;&lt;32) + M:
+Or(And(After(N+1), Key(PK_u1)), Key(PK_s_burst_N == PK_s_i))
+
+Eltoo Layer 2 During Burst at state i = (N&lt;&lt;32) + M:
+Or(And(After(N+1), Key(PK_u1)), And(After(M+1), Key(PK_u_burst_N)),
+And(Older(2016), Key(PK_s_i))
+
+i represents the 64 bit concatenation of two 32 bit locktimes, where N is
+MSBs and M is LSBs.
+
+During burst mode resolving on chain, either:
+1) the published Layer 1 tx is at the tip state N
+    a) The tip N is at inner tip state M, wait 2016 to close with
+And(Older(2016), Key(PK_s_i))
+    b) The tip N is at inner tip state M - c, use path And(After(M+1),
+Key(PK_u_burst_N)) to jump to case 1.a
+2) published Layer 1 tx is at non tip state N - c
+    a) Layer 2 does not get published: use path And(After(N+1), Key(PK_u1))
+to jump back to newest state known on parent, repeat from top
+    b) Layer 2 gets published: use path And(After(N+1), Key(PK_u1)) to jump
+back to newest state known on parent, repeat from top
+
+
+This trampoline pattern should essentially be repeatable as many times as
+needed, although I think 2 layers is likely enough in practice.
+
+In terms of &quot;state management&quot;, it grows at O(layers) but is otherwise
+constant. A node must only store:
+
+Key/Sigs for
+PK_s_i: to allow closing at the highest reachable state
+PK_u1
+During burst:
+    PK_u_burst_N: to allow getting to current burst
+    PK_s_burst_N: the same as PK_s_i just makes sense to think of it's
+distinct purpose from PK_s_i not requiring a sequence lock
+
+Note that the above scripts can be optimized to remove the Older clause as
+it can be a rule that all PK_s_i must sign with a sequence unless entering
+a burst.
+--
+@JeremyRubin &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+&lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+
+
+On Sat, Jul 10, 2021 at 2:07 PM Jeremy &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">jlrubin at mit.edu</A>&gt; wrote:
+
+&gt;<i> Let's say you're about to hit your sequence limits on a Eltoo channel...
+</I>&gt;<i> Do you have to go on chain?
+</I>&gt;<i>
+</I>&gt;<i> No, you could do a continuation where for your *final* update, you sign a
+</I>&gt;<i> move to a new update key. E.g.,
+</I>&gt;<i>
+</I>&gt;<i> start at: IF &quot;N+1&quot; CLTV DROP &lt;pk_u&gt; CHECKSIG  ELSE 2016 CSV DROP &lt;pk_s_i&gt;
+</I>&gt;<i> CHECKSIG ENDIF
+</I>&gt;<i>
+</I>&gt;<i> before N+1 = last, sign a txn with pk_s_last that moves coins to
+</I>&gt;<i>
+</I>&gt;<i> IF &quot;1&quot; CLTV DROP &lt;*pk_u**2*&gt; CHECKSIG  ELSE 2016 CSV DROP &lt;pk_s_i&gt;
+</I>&gt;<i> CHECKSIG ENDIF
+</I>&gt;<i>
+</I>&gt;<i> This essentially lets you do 32 bits worth of updates and then fwd to a
+</I>&gt;<i> new contract by paying 1x extra transaction.
+</I>&gt;<i>
+</I>&gt;<i> This is potentially better than just directly closing because we keep it
+</I>&gt;<i> off chain for longer.  However... this also adds an additional CSV.
+</I>&gt;<i>
+</I>&gt;<i> (We can get around this by modifying the script branch which ends a CLTV
+</I>&gt;<i> domain with:
+</I>&gt;<i> &lt;pk_s_last&gt; CHECKSIG
+</I>&gt;<i> since any updates past that point are done through the continuation
+</I>&gt;<i> state... but let's ignore that for the next part)
+</I>&gt;<i>
+</I>&gt;<i> What if we *always* used this every update? Then we'd essentially have 64
+</I>&gt;<i> bits of sequence space. Each layer of this trick adds 32 bytes.
+</I>&gt;<i>
+</I>&gt;<i> Doing layers like this inherently adds a bunch of CSV layers, so it
+</I>&gt;<i> increases resolution time linearly.
+</I>&gt;<i>
+</I>&gt;<i> One possibility to mitigate this is to do a &quot;semitrusted burst mode&quot; with
+</I>&gt;<i> a counterparty. Suppose you're at sequence M and it's a normal txn.
+</I>&gt;<i>
+</I>&gt;<i> Party A requests to Party B to initiate burst mode. A and B move to
+</I>&gt;<i> sequence M+1 where state M+1 passes through to a 2 step Eltoo update.
+</I>&gt;<i>
+</I>&gt;<i> This burst now has 32 bits of sequences to blow through.
+</I>&gt;<i>
+</I>&gt;<i> B or A then indicates to the other party to terminate the burst at
+</I>&gt;<i> &quot;internal state number&quot; Q. Then B and A sign M+2 where M+2 reflects the
+</I>&gt;<i> last state at internal state number Q. This gets rid of the temporary extra
+</I>&gt;<i> locking time for when parties are offline.
+</I>&gt;<i>
+</I>&gt;<i> This has a benefit for privacy as well because if this protocol is used,
+</I>&gt;<i> then top level state numbers do not reflect the # of payments strongly as
+</I>&gt;<i> they're more akin to how many burst mode payments were done.
+</I>&gt;<i>
+</I>&gt;<i> The semi trusted nature of this is that if a malicious peer induces you
+</I>&gt;<i> into starting this, you double your funds lockup time. There are some
+</I>&gt;<i> mitigations:
+</I>&gt;<i>
+</I>&gt;<i> 1) Only enter burst mode with long lived peers
+</I>&gt;<i> 2) Only enter burst mode when initiator has more funds in the channel than
+</I>&gt;<i> you (or has some ratio) which imposes an opportunity cost for attacking.
+</I>&gt;<i> 3) Only allow a certain % of liquidity to be moved during a burst -- e.g.,
+</I>&gt;<i> any time the delta in balance goes above a threshold, force a higher order
+</I>&gt;<i> channel state update.
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> Best,
+</I>&gt;<i>
+</I>&gt;<i> Jeremy
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> --
+</I>&gt;<i> @JeremyRubin &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+</I>&gt;<i> &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210710/5b8c73ed/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20210710/5b8c73ed/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003122.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+	<LI>Next message: <A HREF="003124.html">[Lightning-dev] Eltoo Burst Mode &amp; Continuations
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3123">[ date ]</a>
+              <a href="thread.html#3123">[ thread ]</a>
+              <a href="subject.html#3123">[ subject ]</a>
+              <a href="author.html#3123">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

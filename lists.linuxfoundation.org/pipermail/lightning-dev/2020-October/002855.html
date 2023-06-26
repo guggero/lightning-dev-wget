@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Full Disclosure: CVE-2020-26896 LND &quot;The (un)covert	channel&quot;
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-October/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2020-26896%20LND%20%22The%20%28un%29covert%0A%09channel%22&In-Reply-To=%3CCALZpt%2BGhP5vgP2YuaLjVx0-7KRAgauwi52%2BnYZ7vyZSsnQJ5PA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002857.html">
+   <LINK REL="Next"  HREF="002856.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Full Disclosure: CVE-2020-26896 LND &quot;The (un)covert	channel&quot;</H1>
+    <B>Antoine Riard</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Full%20Disclosure%3A%20CVE-2020-26896%20LND%20%22The%20%28un%29covert%0A%09channel%22&In-Reply-To=%3CCALZpt%2BGhP5vgP2YuaLjVx0-7KRAgauwi52%2BnYZ7vyZSsnQJ5PA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Full Disclosure: CVE-2020-26896 LND &quot;The (un)covert	channel&quot;">antoine.riard at gmail.com
+       </A><BR>
+    <I>Tue Oct 20 22:05:18 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002857.html">[Lightning-dev] CVE-2020-26896: LND Invoice Preimage Extraction
+</A></li>
+        <LI>Next message: <A HREF="002856.html">[Lightning-dev] Full Disclosure: CVE-2020-26895 LND &quot;Hodl my	Shitsig&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2855">[ date ]</a>
+              <a href="thread.html#2855">[ thread ]</a>
+              <a href="subject.html#2855">[ subject ]</a>
+              <a href="author.html#2855">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE># Problem
+
+In case of a relayed HTLC hash-and-amount collision with an expected
+payment HTLC on the same channel, LND was releasing the preimage for the
+later while claiming onchain the former. A malicious peer could have
+deliberately intercepted a HTLC intended for the victim node, probe the
+victim to learn the preimage and steal the intercepted HTLC.
+
+Prior to v0.11, LND had a vulnerability in its invoice database while
+claiming onchain a received HTLC output, it didn't verify that the
+corresponding outgoing off-chain HTLC was already settled before releasing
+the preimage. In case of hash-and-amount collision with an invoice, the
+preimage for an expected payment was instead released. A malicious peer
+could have deliberately intercept a HTLC intended for the victim node,
+probe the preimage through a colluding relayed HTLC and steal the
+intercepted HTLC.
+
+Note that MPP payments (invoices with `s` field`) aren't subject to this
+vulnerability as an attacker wouldn't have the payment secret to
+authenticate the probe HTLC. As of today, this class of invoices isn&#8217;t
+well-deployed as it outlaws non-upgraded payers.
+
+This vulnerability was exposing routing nodes also receiving payments (e.g
+merchant nodes). A peer servicing as an intermediary hop of a payment path
+could have guessed that the next hop is the final receiver by comparing the
+HTLC's `amount_msat` with any goods/services advertised by the victim node
+merchant website. This is not affecting non-routing nodes.
+
+Note, this is a case of _indirect_ fund loss of which the exploitation
+scope depends on application logic. As the invoice state would have been
+marked as settled, an application directly subscribing to it might have
+automatically released the offered good/service. Otherwise, the loss may
+have been characterized if the preimage had a direct liquid value (e.g
+atomic data exchange where the preimage is a decryption key).
+
+# Solution
+
+The current spec requirement is the following :
+
+&quot;A local node if it receives (or already possesses) a payment preimage for
+an unresolved HTLC output that it has been offered AND for which it has
+committed to an outgoing HTLC MUST resolve the output by spending it, using
+the HTLC-Success transaction&quot;.
+
+This point could be clearer and precise the risk of HTLC hash-and-amount
+collision : &quot;MUST NOT reveal a preimage for an incoming HTLC if it has not
+learnt the preimage for the claiming of the outgoing HTLC&quot; [0]
+
+I engage the LN ecosystem to consider the mandatory deployment of
+`payment_secret`, reducing the surface for this class of bugs, among other
+benefits.
+
+
+# Background
+
+Alice, a merchant, is sending an invoice for amount A and hash H to Bob.
+
+Bob is routing the HTLC A/H to Alice through Mallory.
+
+Channel topology [0]
+
+
+                HTLC (A,H')         HTLC (A,H')          HTLC (A,H)
+             _____________       _____________          _____________
+            /             \     /              \       /             \
+           V               \   V                \     V               \
+      Mallet &lt;-----------&gt; Alice &lt;------------&gt; Mallory &lt;-----------&gt; Bob
+                             \                                        ^
+                              \______________________________________/
+
+                                          invoice (A,H)
+
+Mallory intercepts HTLC (A,H) from Bob and doesn't relay it forward.
+Mallory, knowing that Alice node pubkey is tied to a merchant node, is
+browsing through her goods/services index to decide if Bob's HTLC is
+intended for Alice by comparing the relayed amount with the price of an
+item.
+
+If there is a match, more-or-less some noise of sats, Mallory draws a new
+payment path to Mallet, a colluding node. Mallory sends a HTLC (A,H') to
+Alice, which relays it forward to Mallet.
+
+Mallet holds the HTLC and doesn't do it immediately. Instead, Mallet routes
+back a new HTLC Y to Mallory through Alice. This HTLC Y won't be failed by
+Mallory, thus forcing Alice to force-close the channel when HTLC Y
+off-chain settlement deadline is crossed.
+
+Alice goes onchain with her commitment for chan Alice-Mallory. She claims
+back offered output for HTLC Y and received output for HTLC H'. She reveals
+preimage P, with H'=sha256(P) equivalent to H=sha256(P).
+
+Mallory learns preimage P onchain and sends it out-of-band to Mallet which
+claims the incoming HTLC H' from Alice. Mallory claims the previously
+intercepted HTLC H from Bob.
+
+Bob learns the preimage P.
+
+The coalition Mallet and Mallory gain the value of HTLC H minus Alice's
+routing fee for HTLC H'. Also, they may have to pay the channels
+opening/closing fees depending on who initiates.
+
+Alice reveals a preimage P which corresponds to a provided good/service
+without receiving the payment for it, thus being at loss.
+
+Alice might not have learnt about her loss until reconciling her merchant
+inventory with her HTLC accounting, thus this exploitation might have been
+stealth for a while.
+
+# Discovery
+
+While working on Rust-Lightning, I observed that the specification was
+silent on the risk of hash collision during the onchain operations. I
+surveyed deployed Lightning implementations on this behavior. A quick
+manual test against LND (65f5119) confirmed this vulnerability, which has
+been immediately disclosed to the LND team.
+
+We agreed for a 6-month embargo period, as at that time a LND release
+(0.10) was undergoing and it was too late to implement a covert fix in this
+release.
+
+If this vulnerability has been exploited, the original sender would have
+discovered the preimage, according to the pre-agreed invoice but without
+the issuer effectively being paid. In case of legal disagreement if the
+corresponding good/service should be settled, and assuming parties were
+subject to the same jurisdiction, it could have been an interesting case to
+decide if the invoice/preimage pair is legally binding.
+
+# Timeline
+
+2020-04-19: Vulnerability discovered, LND team notified
+2020-04-29: lnd v0.10.0-beta released (without fix)
+2020-07-31: lnd v0.11-0-beta released (with fix)
+2020-10-08: Partial Disclosure, encouraging lnd users to upgrade to lnd
+v0.11.x ASAP
+2020-10-09: CVE assigned (
+<A HREF="https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-26896">https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2020-26896</A>)
+200-10-15: Preventive Disclosure to c-lightning, Electrum and Eclair teams
+2020-10-20: Full Disclosure
+
+[0] See gist if it doesn&#8217;t survive ML formatting:
+<A HREF="https://gist.github.com/ariard/42935dd26ccf88cea7b91505c3d59d63">https://gist.github.com/ariard/42935dd26ccf88cea7b91505c3d59d63</A>
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201020/483c3051/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20201020/483c3051/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002857.html">[Lightning-dev] CVE-2020-26896: LND Invoice Preimage Extraction
+</A></li>
+	<LI>Next message: <A HREF="002856.html">[Lightning-dev] Full Disclosure: CVE-2020-26895 LND &quot;Hodl my	Shitsig&quot;
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2855">[ date ]</a>
+              <a href="thread.html#2855">[ thread ]</a>
+              <a href="subject.html#2855">[ subject ]</a>
+              <a href="author.html#2855">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

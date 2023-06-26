@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Loop attack with onion routing..
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Loop%20attack%20with%20onion%20routing..&In-Reply-To=%3C1440957679.5747.48.camel%40hppg6.kloosterkade%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000162.html">
+   <LINK REL="Next"  HREF="000169.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Loop attack with onion routing..</H1>
+    <B>CJP</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Loop%20attack%20with%20onion%20routing..&In-Reply-To=%3C1440957679.5747.48.camel%40hppg6.kloosterkade%3E"
+       TITLE="[Lightning-dev] Loop attack with onion routing..">cjp at ultimatestunts.nl
+       </A><BR>
+    <I>Sun Aug 30 18:01:19 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000162.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+        <LI>Next message: <A HREF="000169.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#163">[ date ]</a>
+              <a href="thread.html#163">[ thread ]</a>
+              <a href="subject.html#163">[ subject ]</a>
+              <a href="author.html#163">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>
+
+&gt;<i>         A - b - c - D - e - F - g - H
+</I>&gt;<i>         H pays 0.003 mBTC to F (explicit source routing fee; H
+</I>&gt;<i>         selected F for
+</I>&gt;<i>         onion-routing towards D, without A's knowledge)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> You mean &quot;D selected F for onion-routing towards H&quot; here, surely?
+</I>
+No :-)
+
+Both sides of a payment may value their privacy, so both sides may want
+to perform onion routing independently. It's a bit similar to TOR hidden
+services: you route from both sides towards a &quot;meeting point&quot; somewhere
+on the route, which is not necessarily one of the end points.
+
+Note that, because locking of transaction funds is always done in payer
+-&gt; payee direction, this requires a separate routing phase before the
+locking. So, first you find a route (where all parties say they agree to
+fees, tx amount, timeouts and other conditions), and then you start
+performing transaction-channel actions.
+
+&gt;<i> 
+</I>&gt;<i>         A pays 0.002 mBTC to b (non-source routing fee)
+</I>&gt;<i>         b pays 0.001 mBTC to c (non-source routing fee)
+</I>&gt;<i>         D pays 0.001 mBTC to c (non-source routing fee)
+</I>&gt;<i>         D pays 0.001 mBTC to e (non-source routing fee)
+</I>&gt;<i>         F pays 0.001 mBTC to e (non-source routing fee)
+</I>&gt;<i>         F pays 0.001 mBTC to g (non-source routing fee)
+</I>&gt;<i>         H pays 0.001 mBTC to g (non-source routing fee)
+</I>&gt;<i> 
+</I>&gt;<i> 
+</I>&gt;<i> These fees still don't vary with time&#8203;, so a 30s result versus a 4 day
+</I>&gt;<i> result still has a factor of 10k difference in cost vs revenue. I
+</I>&gt;<i> think over 4 days, a 0.20% fee is about reasonable matching the 0.002
+</I>&gt;<i> fees that c, e and g end up with above (0.20%/4 days works out to a
+</I>&gt;<i> 20% ROI per annum if all your channels are constantly at 100% use), so
+</I>&gt;<i> linearising to an hour that's a 0.002% fee, which works out to 2
+</I>&gt;<i> satoshi per mBTC per hour.
+</I>
+Yeah, after writing that e-mail, I realized I was contradicting myself a
+bit. That system is OK for normal tx fees, but it doesn't seem to work
+for &quot;delayed tx fines&quot;. It's a bit of an open question for me how to
+distribute these fines on a mixed source/non-source routing network.
+
+On the non-source routed parts, you can't check whether intermediate
+nodes are honest when calculating the to-be-paid fines. Is that a
+problem, or is it good enough to let the free market do its job, so that
+nodes who demand too high fines will lose connections, just like with tx
+fees? Anyway, I think that for the non-source routing parts, the height
+of the fine (as a function of tx amount and delay) should be agreed
+prior to performing a transaction. An intermediate node can demand a
+payee-side fine that includes a weighed average of the fines it has to
+pay payer-side on its other links, to stay profitable. This is the same
+as with regular tx fees.
+
+On the source-routed parts, the fines seem to end up with the end
+points. Problems:
+1. There is no persistent business / trust relationship and no payment
+channel between endpoint and intermediate source-routed node. So there
+is no way to enforce fine payment?
+2. The payee endpoint is not always the bad guy in a delayed payment
+scenario. It could be that fund locking from payer to payee stopped
+somewhere in the middle of the route: in that case, the payee endpoint
+rightfully never discloses R.
+
+You could of course ignore source routing for the fines, and distribute
+the fines as if it is only a non-source routing path. The problem is
+that an attacker can create an arbitrarily long path with source
+routing, thereby creating arbitrarily large total damage to the network,
+corresponding to arbitrarily large total fines. If you use
+pre-calculated fine amounts, an attacker can always make a route that
+will result in a (large) loss for some intermediate nodes.
+
+CJP
+
+
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000162.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+	<LI>Next message: <A HREF="000169.html">[Lightning-dev] Loop attack with onion routing..
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#163">[ date ]</a>
+              <a href="thread.html#163">[ thread ]</a>
+              <a href="subject.html#163">[ subject ]</a>
+              <a href="author.html#163">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

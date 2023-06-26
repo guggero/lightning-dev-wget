@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Async payments proof-of-payment: a wishlist for researchers]
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2023-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Async%20payments%20proof-of-payment%3A%20a%20wishlist%20for%0A%20researchers%5D&In-Reply-To=%3CY9dHK8PIpC6mlZCy%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003837.html">
+   <LINK REL="Next"  HREF="003834.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Async payments proof-of-payment: a wishlist for researchers]</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Async%20payments%20proof-of-payment%3A%20a%20wishlist%20for%0A%20researchers%5D&In-Reply-To=%3CY9dHK8PIpC6mlZCy%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] Async payments proof-of-payment: a wishlist for researchers]">aj at erisian.com.au
+       </A><BR>
+    <I>Mon Jan 30 04:27:23 UTC 2023</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003837.html">[Lightning-dev] A Universal Coin Swap system based on bitcoin and a Bitcoin NFT system
+</A></li>
+        <LI>Next message: <A HREF="003834.html">[Lightning-dev] Jamming Mitigation Call Summary - 01/23
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3833">[ date ]</a>
+              <a href="thread.html#3833">[ thread ]</a>
+              <a href="subject.html#3833">[ subject ]</a>
+              <a href="author.html#3833">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>After listening to the optech space on the topic, thought it might be
+worth having a second go at explaining the idea...
+
+
+Alice is trying to pay Bob. Alice has an LSP, Louise. Bob has an LSP
+Larry. Louise and Larry are online 24/7 but don't have access to Alice
+and Bob's private keys. We want the payment flow to be something like:
+
+ 1) Larry gets some setup info from Bob, Bob goes offline.
+
+ * Alice hears about Bob's address, and decides to pay Bob $50.
+ 2) Alice coordinates a unique invoice id with Larry, which we'll call S.
+ 3) Alice tells Louise that she's trying to pay Bob $50 for invoice S.
+ * Louise registers with Larry to be told when Bob is online.
+ * Alice goes offline.
+
+ * Bob goes online.
+ * Larry tells Louise that Bob is online.
+ 4) Louise sends the payment to Bob conditional on S.
+ 5) Bob accepts the payment.
+ * Louise claims the $50 from Alice and closes out the transaction.
+ 6) Alice receives a receipt from Bob.
+
+The goal of a receipt is that if two people want to pay Bob $50, they'll
+be able to guarantee that (a) Bob was paid, rather than someone else; (b)
+that the receipts are different (so Bob received $100 total, rather than
+$50 going somewhere else and one of them just got a photocopied receipt);
+and (c) after the fact they can prove that the receipt was theirs,
+not someone else's. (a) and (b) prevent the funds getting misdirected;
+(c) potentially allows you to use the receipt as evidence to a third
+party if you paid for something in advance, then didn't receive it.
+
+To get all those things, what we want is really more like a signature,
+than just a hash/preimage. But PTLC preimages and schnorr signatures
+aren't much different: with a PTLC preimage, you pay to point S and then
+receive back the preimage s, where s*G = S. Meanwhile schnorr signatures
+are made up of a number (s) and a point (R), which satisfy the equation:
+
+  s*G = R + H(R,P,m)*P
+
+But, if you're willing to squint a bit, you can just wrap the whole
+right side of the equation up as &quot;S&quot;, and treat it as a PTLC.
+
+(notation: I use capital letters to represent points, and lower case
+letters to represent numbers; so if A is a point, a is it's discrete log,
+and a*G = A)
+
+To calculate S, you need to know three things: R, P and m -- P is just
+the signer's public key, m is the message being signed, but &quot;R&quot; is the
+public &quot;nonce&quot; part of the signature, that has to be chosen by the signer
+(otherwise whoever does choose it can probably arrange to discover the
+signer's private key after a signature or two).
+
+So in that case, the protocol looks like:
+
+  Alice proposes that Bob signs a message, eg
+    m = &quot;Alice paid me $50 -- Bob&quot;
+    (perhaps this can be some standard nostr message, eg)
+  Bob chooses an R for this signature, and tells Alice what R is
+  Alice calculates &quot;S&quot;
+  Alice pays Bob $50 via a PTLC conditional on S
+  If Bob accepts the $50, Alice receives the preimage of S, ie s
+  Alice combines (R,s) and that is a Bob's signature on her message
+
+Having Bob be offline with Alice only able to talk to his
+not-fully-trusted representative Larry complicates things. Bob now can't
+just choose a brand new R after already knowing Alice's message m, and
+that introduces cryptographic attacks [0], where if Alice can request
+nonces for many messages she may be able to find a lucky combination
+of messages/nonces where she can combine the signatures Bob ends up
+generating to steal Bob's private key.
+
+[0] <A HREF="https://medium.com/blockstream/insecure-shortcuts-in-musig-2ad0d38a97da">https://medium.com/blockstream/insecure-shortcuts-in-musig-2ad0d38a97da</A>
+
+I *think* those attacks can be avoided by using the same musig2 approach
+to generating nonces:
+
+  Bob prepares a nonce *pair* R1, R2
+  Alice chooses the message m
+  The nonce for the message m is calculated as H(R1,R2,m)*R1 + R2
+
+Note that this doesn't allow you to safely reuse nonces -- if you have
+three messages signed with the same R1/R2 pair, the schnorr signing
+equation (s = r + H(R,P,m)*p) over each of the three messages gives you
+three equations with just three unknowns (r1, r2, and the secret key
+p), which you can use regular maths to solve, no fancy attacks needed.
+(Presumably if you just reuse a pair twice you open yourself back up to
+a Wagner attack)
+
+So that adds up to:
+
+ 1) Bob shares with Larry a bunch of (R1,R2) points that will form the
+    basis of his signature nonces. They can be constructed via a
+    (hardened) HD scheme so that Bob can easily regenerate them just
+    from an index, eg.
+
+ 2) Alice obtains a unique (R1,R2) pair from Larry
+    Alice determines the message she wants Bob to sign (presumably Bob
+    provides a standard template, and Alice fills in her name and perhaps
+    what she's paying for) -- this is &quot;m&quot;.
+    Alice calculates R from R1,R2,m; and S from R,P,m 
+
+ 3) Alice passes &quot;m&quot; and &quot;S&quot; onto Louise and starts the payment, locking
+    up her funds
+
+ 4) Louise passes &quot;m&quot;, &quot;R1&quot;, &quot;R2&quot; onto Bob once he's online and sends
+    the payment to Bob.
+ 
+ 5) Bob checks that R1/R2 were what he generated and haven't already
+    been used; Bob checks that &quot;m&quot; is something he's willing to sign;
+    Bob calculates s and S, and accepts the payment for S, provided it's
+    the correct amount as specified in &quot;m&quot;, by revealing s.
+
+ 6) Alice already calculated R and now receives s from Louise when
+    Louise claims her funds, and (R,s) is a BIP340 signature of m by
+    Bob, satisfying s*G = R + H(R,P,m)*P, and that signature serves as
+    her payment receipt from Bob.
+
+Cheers,
+aj
+
+On Thu, Jan 26, 2023 at 11:04:12AM +1000, Anthony Towns wrote:
+&gt;<i> On Tue, Jan 10, 2023 at 07:41:09PM +0000, vwallace via Lightning-dev wrote:
+</I>&gt;<i> &gt; The open research question relates to how the sender will get an invoice from the receiver, given that they are offline at sending-time.
+</I>&gt;<i> 
+</I>&gt;<i> Assuming the overall process is:
+</I>&gt;<i> 
+</I>&gt;<i>  * Alice sends a payment to Bob, who has provided a reusable address
+</I>&gt;<i>    AddrBob
+</I>&gt;<i>  * Bob is offline at the time the payment is sent, but his semi-trusted
+</I>&gt;<i>    LSP Larry is online
+</I>&gt;<i>  * Alice is willing/able to do bidirectional communication with Larry
+</I>&gt;<i>  * The payment does not complete until Bob is online (at which point
+</I>&gt;<i>    Alice may be offline)
+</I>&gt;<i> 
+</I>&gt;<i> I think in this case you want to aim for the receipt to be a BIP340
+</I>&gt;<i> signature of the message &quot;Alice has paid me $50 -- signed Bob&quot;.
+</I>&gt;<i> 
+</I>&gt;<i> Given Bob's public signature nonce, R, Alice (and Larry) can calculate
+</I>&gt;<i> S = R + H(R,P,m)*P (m is the receipt message, P is Bob's public key),
+</I>&gt;<i> and then Alice can send a PTLC conditional on revealing the log of S, ie
+</I>&gt;<i> s where s*G=S; and at that point (s, R) is a valid signature by Bob of a
+</I>&gt;<i> message confirming payment to Bob, which then serves as the final receipt.
+</I>&gt;<i> 
+</I>&gt;<i> However for this to work, Alice needs to discover &quot;R&quot; while Bob is
+</I>&gt;<i> offline. I think this is only doable if Bob pre-generates a set of
+</I>&gt;<i> nonces and shares the public part with Larry, who can then share them
+</I>&gt;<i> with potential payers.  I think to avoid attacks via Wagner's algorithm,
+</I>&gt;<i> you probably need to do a similar setup as musig2 does, ie share (R1,R2)
+</I>&gt;<i> pairs, and calculate R = H(P,R1,R2,m)*R1+R2.
+</I>&gt;<i> 
+</I>&gt;<i> So a setup like:
+</I>&gt;<i> 
+</I>&gt;<i>   Alice gets AddrBob. Decodes Bob's pubkey, Larry's pubkey, and the
+</I>&gt;<i>   route to Larry.
+</I>&gt;<i> 
+</I>&gt;<i>   Alice -&gt; Larry: &quot;Hi, I want to send Bob $50, and get a receipt&quot;
+</I>&gt;<i>   Larry -&gt; Alice: &quot;The nonce for that will be R&quot;
+</I>&gt;<i>   Alice: calculates m = &quot;Hash(&quot;Alice paid Bob $50&quot;), S = R+H(R,P,m)*P
+</I>&gt;<i>   Alice -&gt; Larry(for Bob): PTLC[$50, S]
+</I>&gt;<i> 
+</I>&gt;<i>   Larry -&gt; Bob: PTLC[$50, S]
+</I>&gt;<i>                 Alice wants to pay you $50, using nonce pair #12345
+</I>&gt;<i>   Bob: verifies nonce #12345 has not been previously used, calculates R,
+</I>&gt;<i>        calculates m, calculates s, and checks that s*G = S, checks
+</I>&gt;<i>        there's a $50 PTLC conditional on S waiting for confirmation.
+</I>&gt;<i>   Bob -&gt; Alice: claims $50 from PTLC by revealing s
+</I>&gt;<i> 
+</I>&gt;<i>   Alice: receives s; (R,s) serves as Bob's signature confirming payment
+</I>&gt;<i> 
+</I>&gt;<i> seems plausible?
+</I>&gt;<i> 
+</I>&gt;<i> Every &quot;S&quot; here commits to a value chosen by the sender (ie, their
+</I>&gt;<i> &quot;identity&quot;), so there's no way for Larry to get two different payers
+</I>&gt;<i> to use the same S. Using the same nonce twice will just mean Bob has to
+</I>&gt;<i> reject the payment (and find a new LSP).
+</I>&gt;<i> 
+</I>&gt;<i> It may make sense to require Alice to make a micropayment to Larry in
+</I>&gt;<i> order to claim a nonce. You'd want a standard template for &quot;m&quot; so that
+</I>&gt;<i> it's easy to generate and parse consistently, of course.
+</I>&gt;<i> 
+</I>&gt;<i> I think you could even have separate LSPs if you wanted: one to issue
+</I>&gt;<i> nonces while you're offline, and the other to actually hold onto incoming
+</I>&gt;<i> PTLCs while you're offline.
+</I>&gt;<i> 
+</I>&gt;<i> FWIW, some previous discussion, which didn't focus on offline recipients:
+</I>&gt;<i> 
+</I>&gt;<i> <A HREF="../2018-February/001034.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-February/001034.html</A>
+</I>&gt;<i> 
+</I>&gt;<i> <A HREF="../2018-November/001490.html">https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/001490.html</A>
+</I>
+----- End forwarded message -----
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003837.html">[Lightning-dev] A Universal Coin Swap system based on bitcoin and a Bitcoin NFT system
+</A></li>
+	<LI>Next message: <A HREF="003834.html">[Lightning-dev] Jamming Mitigation Call Summary - 01/23
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3833">[ date ]</a>
+              <a href="thread.html#3833">[ thread ]</a>
+              <a href="subject.html#3833">[ subject ]</a>
+              <a href="author.html#3833">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

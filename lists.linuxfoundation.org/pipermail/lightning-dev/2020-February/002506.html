@@ -1,0 +1,240 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] DRAFT: interactive tx construction protocol
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P3%2BiN-LVZPsCHE34dUP6EfcHw_NEdim7HjNr2uoTCa%2B5g%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002503.html">
+   <LINK REL="Next"  HREF="002507.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] DRAFT: interactive tx construction protocol</H1>
+    <B>lisa neigut</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20DRAFT%3A%20interactive%20tx%20construction%20protocol&In-Reply-To=%3CCAM1a7P3%2BiN-LVZPsCHE34dUP6EfcHw_NEdim7HjNr2uoTCa%2B5g%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] DRAFT: interactive tx construction protocol">niftynei at gmail.com
+       </A><BR>
+    <I>Thu Feb  6 22:51:24 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002503.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+        <LI>Next message: <A HREF="002507.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2506">[ date ]</a>
+              <a href="thread.html#2506">[ thread ]</a>
+              <a href="subject.html#2506">[ subject ]</a>
+              <a href="author.html#2506">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>&gt;<i> I am unsure what is the purpose of this minus 6.
+</I>
+The original motivation was to keep the funding transaction from being
+rejected from the mempool in the case of a re-org, but as you pointed out,
+the 'next block' is always at -par or ahead of the current chain tip, so
+I'm not sure this accomplishes this goal.  I'm not sure how bitcoind
+handles the mempool in the case of the 'best block' moving to another tip,
+the goal of setting it to -6 is to avoid the funding transaction being
+evicted.
+
+In practice, setting the locktime back a few blocks makes the funding
+transaction eligible for inclusion in any of the previous six blocks, so in
+case of a reorg there's a higher probability it will have been included in
+the reorganization. In other words, it enables fee-sniping for up to 6
+blocks in the hopes that any 'eligible' re-org includes the funding
+transaction (the short channel id will change, but otherwise the channel
+open will be the same).
+
+On second thought, this doesn't seem like something that we should include
+at the protocol level; if a peer wanted to 'allow fee-sniping for up to X
+blocks', then they'd simply relay the &quot;blocktip&quot; that they're using for the
+nLocktime to be at the depth they'd desire. Though it might be worth
+imposing a limit as to how far back in the past a peer can allow
+fee-sniping for... no more than 6 blocks from our current tip seems
+reasonable. (This would then limit the 'acceptable range' for an offset of
+an initiator to 5, as your peer may be off from your tip by one.)
+
+On that note, I believe bitcoind fuzzes the nLocktime value to obfuscate
+exactly what blockheight the outgoing transaction was composed / broadcast
+at, which is probably something we should encourage in lightning
+implementations as well.
+
+
+
+On Wed, Feb 5, 2020 at 8:25 PM ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+
+&gt;<i> Good morning niftynei,
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; Rusty had some suggestions about how to improve the protocol messages
+</I>&gt;<i> for this, namely adding a serial_id to the inputs and outputs, which can
+</I>&gt;<i> then be reused for deletions.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The serial id can then also be used as the ordering heuristic for
+</I>&gt;<i> transaction inputs during construction (replacing current usage of BIP69).
+</I>&gt;<i> Inputs can be shared amongst peers by flipping the bottom bit of the
+</I>&gt;<i> serial_id before relaying them to another peer (as your own).
+</I>&gt;<i>
+</I>&gt;<i> What happens if the initiator deliberately provides serial IDs 0x1, 0x3,
+</I>&gt;<i> .... while the acceptor naively provides serial IDs from `/dev/urandom`?
+</I>&gt;<i>
+</I>&gt;<i> Then the balance of probability is that the initiator inputs and outputs
+</I>&gt;<i> are sorted before the acceptor.
+</I>&gt;<i> Now, this is probably not an issue, since the initiator and acceptor both
+</I>&gt;<i> know which inputs and outputs are theirs and not theirs, so they could just
+</I>&gt;<i> reveal this information to anyone, so an actor providing such lousy serial
+</I>&gt;<i> IDs is just hurting its own privacy relative to blockchain analysts, so
+</I>&gt;<i> probably will not happen in practice.
+</I>&gt;<i>
+</I>&gt;<i> My initial reaction was to propose adding a secret-sharing round where the
+</I>&gt;<i> resulting key is XORed to each serial ID before sorting by the XORed serial
+</I>&gt;<i> ID, but this might be too overweight, and again the initiator is only
+</I>&gt;<i> hurting its own privacy, and the two participants already know whose money
+</I>&gt;<i> is whose anyway....
+</I>&gt;<i>
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; See below for details.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt; 1. type:   440 `tx_add_input`
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; 2. data:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`32*byte`:`channel_identifier`]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;         * [`32*byte`:``serial_id`]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Add a serial id.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Each input addition must have a unique serial id.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; No addition may have a repeated id number.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; The initiator's serial id's must be odd. The non-initiator's serial id's
+</I>&gt;<i> must be even.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Serial ids are used as sorting heuristic for input ordering in final
+</I>&gt;<i> transaction, replaces BIP69
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; &gt;     * [`u64`:`sats`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`sha256`:`prevtx_txid`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`u32`:`prevtx_vout`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`u16`:`prevtx_scriptpubkey_len`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`prevtx_scriptpubkey_len*byte`:`prevtx_scriptpubkey`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`u16`:`max_witness_len`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`u16`:`scriptlen`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`scriptlen*byte`:`script`]
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; Removes the signal_rbf; everything will be flagged as RBF eligible.
+</I>&gt;<i> (This makes verifying RBF eligibility during a RBF round simpler.)
+</I>&gt;<i>
+</I>&gt;<i> Yes. Ish.
+</I>&gt;<i> RBF and privacy do not work well together unfortunately.
+</I>&gt;<i> This is still initiator-pays, right?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; &gt; 1. subtype: `witness_element`
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; 2. data:
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`u16`:`len`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt;     * [`len*byte`:`witness`]
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; ## General Notes
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; - All output scripts must be standard
+</I>&gt;<i> &gt; &gt;
+</I>&gt;<i> &gt; &gt; - nLocktime is always set to 0x00000000
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; - If a blockheight to be used as nLocktime is communicated in the
+</I>&gt;<i> initiation step, is set to blockheight-6; otherwise set to zero-
+</I>&gt;<i>
+</I>&gt;<i> I am unsure what is the purpose of this minus 6.
+</I>&gt;<i>
+</I>&gt;<i> If you fear blockheight disagreements, this is probably a good time to
+</I>&gt;<i> introduce block headers.
+</I>&gt;<i> So for example if the acceptor thinks the initiator blockheight is too
+</I>&gt;<i> high, it could challenge the initiator to give block headers from its known
+</I>&gt;<i> blockheight to the initiator blockheight.
+</I>&gt;<i> If the acceptor thinks the initiator blockheight is too low, it could
+</I>&gt;<i> provide block headers itself as proof.
+</I>&gt;<i> This could be limited so that gross differences in blockheight are
+</I>&gt;<i> outright rejected by the acceptor (it could `error` the temporary channel
+</I>&gt;<i> ID rather than accept it).
+</I>&gt;<i>
+</I>&gt;<i> This is SPV, but neither side is actually making or accepting a payment
+</I>&gt;<i> *yet*, just synchronizing clocks, so maybe not as bad as normal SPV.
+</I>&gt;<i>
+</I>&gt;<i> Massive chain reorgs cannot reduce blockheight, only increase it (else the
+</I>&gt;<i> reorg attempt fails in the first place) so there must still exist at least
+</I>&gt;<i> one chain(split) with the highest known blockheight already given a
+</I>&gt;<i> proof-of-header-chain, and all you really need is some mining activity on
+</I>&gt;<i> top of *one* split that confirms your funding transaction.
+</I>&gt;<i>
+</I>&gt;<i> If it is not because of blockheight disagreements or massive chain reorgs,
+</I>&gt;<i> what is the purpose of `blockheight - 6`?
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i>
+</I>&gt;<i> &gt; - Serial ids should be chosen at random
+</I>&gt;<i> &gt; - For multiparty constructions, the initiator MUST flip the bottom bit
+</I>&gt;<i> of any received inputs before relaying them to a peer.
+</I>&gt;<i> &gt;
+</I>&gt;<i> &gt; - Collisions of serial ids between peers is a protocol error
+</I>&gt;<i>
+</I>&gt;<i> I suppose we should define collision to mean &quot;equal in all bits except the
+</I>&gt;<i> lowest bit&quot;.
+</I>&gt;<i>
+</I>&gt;<i> Regards,
+</I>&gt;<i> ZmnSCPxj
+</I>&gt;<i>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200206/f7cc9d4e/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200206/f7cc9d4e/attachment-0001.html</A>&gt;
+</PRE>
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002503.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+	<LI>Next message: <A HREF="002507.html">[Lightning-dev] DRAFT: interactive tx construction protocol
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2506">[ date ]</a>
+              <a href="thread.html#2506">[ thread ]</a>
+              <a href="subject.html#2506">[ subject ]</a>
+              <a href="author.html#2506">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

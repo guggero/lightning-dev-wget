@@ -1,0 +1,181 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] An Argument For Single-Asset Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CCAH5Bsr0i%3Dht_OyTVbAYwi%2BKBGpS3P%2B6rjd5n5KGEWq-WrWVSOQ%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001768.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] An Argument For Single-Asset Lightning Network</H1>
+    <B>Lloyd Fournier</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CCAH5Bsr0i%3Dht_OyTVbAYwi%2BKBGpS3P%2B6rjd5n5KGEWq-WrWVSOQ%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] An Argument For Single-Asset Lightning Network">lloyd.fourn at gmail.com
+       </A><BR>
+    <I>Wed Jan  2 06:09:23 UTC 2019</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001768.html">[Lightning-dev] visual identification of payee node id
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1798">[ date ]</a>
+              <a href="thread.html#1798">[ thread ]</a>
+              <a href="subject.html#1798">[ subject ]</a>
+              <a href="author.html#1798">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Happy new year lightning-dev!
+
+This topic is my main area of research at moment so I'm really happy to see
+a thread about it. In general I agree with ZmnSCPxj's analysis and
+conclusions. I'd like to add a couple of ideas to this discussion and would
+greatly appreciate some early peer review on them :)
+
+HTLCs as American call options
+=========================
+
+I think the &quot;option problem&quot; is actually caused by protocols using HTLCs in
+a naive way rather than the use of HTLCs themselves. Consider the atomic
+swap protocol described in the OP:
+
+&gt;<i>1.  You provide me a hash of some secret preimage that only you know.
+</I>&gt;<i>2.  You make an HTLC on the Bitcoin blockchain.
+</I>&gt;<i>The value of this HTLC is `P`, the hash is the hash you gave above, and
+</I>the timelock is `E` + 1 day.
+&gt;<i>3.  I make an HTLC on the WJT blockchain.
+</I>&gt;<i>The value of this HTLC is 1, the hash is the hash you gave, and the
+</I>timelock is `E`.
+
+If we take this protocol and draw out its abstract functionality we get:
+
+1. *Up for sale* Alice puts Asset `A` up for sale to Bob for some time
+period `Eb` + `Ea`
+2. *Make expiring offer* Bob makes an offer of asset `B` which expires at
+time `Eb`
+3. *Take offer* Alice may take the offer up until time `Eb`
+
+As has been pointed out, Alice has an &quot;option&quot; for the duration of `Eb`
+(and she didn't pay a premium). This is because Bob made her an offer he
+cannot cancel (an offer you can't cancel but has an expiration is basically
+the definition of being short an option contract).
+In order to remedy this, the party that makes the offer must be able to
+cancel their offer at any point after they have made it (before the
+counterparty has taken it). This should be intuitive because it's how
+centralised exchanges work.
+
+Therefore, the ideal abstract functionality we want is:
+
+1. *Make Offer* Alice makes an offer to Bob to trade `A` for `B`
+2. *Take Offer* Bob can take the offer (if Alice hasn't already cancelled
+it) and get `A` in exchange for `B`.
+3. *Cancel Offer* If Bob hasn't taken the offer, Alice may get back `A` by
+cancelling the offer
+
+I developed the protocol below which comes pretty close to realising this.
+Let
+- &#945; and &#946; and be two bitcoin-like blockchains
+- Alice own asset `A` on the &#945; blockchain and `C` on the &#946; blockchain
+- Bob own asset `B` on the &#946; blockchain
+
+1. Alice puts the HTLC for `A` on &#945; and waits for it to confirm (as per
+usual)
+2. Alice creates a partial &#946; blockchain transaction by signing one input
+and one output (using SIGHASH_SINGLE for example):
+   - The input is the asset `C`
+   - The output is a HTLC which gives `B` and `C` to herself with the
+secret or gives them both to Bob on timeout
+  She sends this partial transaction to Bob. (This gives us the &quot;Make
+Offer&quot; functionality)
+3. If Bob wants to accept the offer, he adds asset `B` to another input of
+the transaction and posts it to &#946;. (This gives us &quot;Take Offer&quot;
+functionality)
+4. If Alice wishes to cancel the trade before Bob has confirmed this
+transaction she double spends the `C` output and then reclaims `A` on &#945;
+after the timeout. (This gives us the &quot;Cancel Offer&quot; functionality)
+5. If the &quot;Take Offer&quot; transaction is confirmed on &#946;, Alice must unlock the
+HTLC before the timeout or Bob will gain `C` AND get back `B`.
+6. Once she reveals the secret, she both gets back `C` and gains `B` on &#946;.
+7. Bob can now take `A` on &#945; in the usual manner now that he has learned
+the secret.
+
+Bob is not guaranteed to get `A` after he &quot;takes&quot; the offer but he is
+guaranteed to get `A` (in exchange for `B`) or `C` (for free). Obviously,
+`C` is Alice's collateral for the trade. Bob should only take the offer if
+he wants `A` more than `B` and if he is sure that the value of gaining `C`
+will be greater than any loss he could experience from `B` depreciating
+relative to `A` during the execution of the protocol.
+
+I believe this shows that HTLCs do not in cause options but rather
+uncancelable offers + uncollateralized HTLCs cause the option problem.
+
+I think this protocol works in payment channels in the case that Alice and
+Bob have direct channels to each other. The issue is that if Alice decides
+she wants to cancel at the same time Bob decides he wants to take it you
+have to go to the blockchain to resolve the issue (which will be rather
+arbitrary). CJP's idea of having a 3rd party who is trusted simply to
+compute the outcome of a offer (cancelled or taken) in layer 2 networks
+seems like a promising direction because this would avoid on-chain
+resolution in this case.
+
+Cross Asset Payments Don't Make Sense
+====================================
+
+As ZmnSCPxj demonstrated, the idea of sending a payment in asset `A` and
+the other party receiving it as asset `B` with some exchange node in the
+middle doing a conversion is unsound given what we are able to construct in
+Lightning.
+
+But this doesn't necessarily mean that Lightning has to be single asset.
+Theoretically, a single two-party channel could record multiple asset types
+with a state transaction that has distinct outputs for different
+asset-type/party combinations. This would allow you to buy an amount of the
+desired asset in one of your channels by simply doing a state update where
+you lose `A` in exchange for `B` with your direct peer (no HTLCs needed).
+You can then just send `B` normally to the receiver. This is not quite as
+good as a cross asset payment but it could still be useful*.
+
+Quite simply, if you want to send someone asset `A` but they want to
+receive asset `B` then just buy asset `B` with asset `A` and then send `B`
+to them!
+
+*I don't know much about non-native assets on Bitcoin and their suggested
+integration with LN so I'm just guessing here.
+
+All the best for 2019,
+Lloyd
+\n
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190102/5adacabb/attachment-0001.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20190102/5adacabb/attachment-0001.html</A>&gt;
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001768.html">[Lightning-dev] visual identification of payee node id
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1798">[ date ]</a>
+              <a href="thread.html#1798">[ thread ]</a>
+              <a href="subject.html#1798">[ subject ]</a>
+              <a href="author.html#1798">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

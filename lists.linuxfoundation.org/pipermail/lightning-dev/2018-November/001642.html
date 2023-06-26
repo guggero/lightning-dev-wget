@@ -1,0 +1,140 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Base AMP
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2018-November/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Base%20AMP&In-Reply-To=%3C87va4rp91k.fsf%40rustcorp.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001639.html">
+   <LINK REL="Next"  HREF="001645.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Base AMP</H1>
+    <B>Rusty Russell</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Base%20AMP&In-Reply-To=%3C87va4rp91k.fsf%40rustcorp.com.au%3E"
+       TITLE="[Lightning-dev] Base AMP">rusty at rustcorp.com.au
+       </A><BR>
+    <I>Wed Nov 21 00:29:43 UTC 2018</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001639.html">[Lightning-dev] Base AMP
+</A></li>
+        <LI>Next message: <A HREF="001645.html">[Lightning-dev] Base AMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1642">[ date ]</a>
+              <a href="thread.html#1642">[ thread ]</a>
+              <a href="subject.html#1642">[ subject ]</a>
+              <a href="author.html#1642">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Ren&#233; Pickhardt via Lightning-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">lightning-dev at lists.linuxfoundation.org</A>&gt; writes:
+&gt;<i> Hey List,
+</I>&gt;<i>
+</I>&gt;<i> as this base AMP proposal seems pretty small I just started to write this
+</I>&gt;<i> up to make a PR for BOLT04 and BOLT11. While doing my write up I realize
+</I>&gt;<i> that there are smaller things that I would want to verify / double check
+</I>&gt;<i> and propose with you.
+</I>&gt;<i>
+</I>&gt;<i> ## Verifying:
+</I>&gt;<i> 1.) I understand the receiving node signals support for Base AMP by setting
+</I>&gt;<i> a feature bit in the BOLT11 String
+</I>
+Yes, this seemed a logical reason to add features to BOLT11.
+
+&gt;<i> 2.) The sending node signals a multipath payment by setting a feature bit
+</I>&gt;<i> and by using the same `amount to forward` value in the last hop of the
+</I>&gt;<i> onion for all paths which will also be bigger that the incoming htlcs whose
+</I>&gt;<i> sum has to be at least the size of `amount_to_forward`.
+</I>
+Not a feature bit as such, but some signal for the final node (in the
+onion).  And do not play with `amount_to_forward`, as it's an important
+signal to the final node that the previous node did not offer less value
+for the HTLC than it was supposed to.  (You could steal the top bit to
+signal partial payment if you really want to).
+
+&gt;<i> ## Clarifying:
+</I>&gt;<i> 3.) Senders MUST NOT (SHOULD NOT?) create paths which would have to be
+</I>&gt;<i> merged by intermediary nodes (as we don't know - and have no means of
+</I>&gt;<i> querying - if they support the format of the adepted onion packages for
+</I>&gt;<i> partial paths. Also it even seems impossible since the rest of the path for
+</I>&gt;<i> at least one partial path could not be stored in the onion / forwarded
+</I>&gt;<i> onions can't be seen)
+</I>
+In-path merging is overreach, let's not do it or mention it.
+
+There's a slight preference to avoid sharing intermediary nodes to avoid
+correlation.  Intermediary nodes know they need to forward all of them
+or not get paid for any of them, and they're already supposed to do so.
+
+&gt;<i> ## Proposing:
+</I>&gt;<i> Should we specify an algorithm for executing a multipath payment for the
+</I>&gt;<i> sending node or should this be left to the implementation. An obvious Idea
+</I>&gt;<i> for an algorithm would be a divide and conquer scheme which should be
+</I>&gt;<i> obvious with the following python style pseudo code:
+</I>&gt;<i>
+</I>&gt;<i> def pay_base_amp(amount):
+</I>&gt;<i>    success = False
+</I>&gt;<i>    for route in get_available_routes():
+</I>&gt;<i>        success = send_via_route(route, amount)
+</I>&gt;<i>     if not success:
+</I>&gt;<i>        pay_base_amp(amount/2 + 1) # the +1 is to mitigate rounding errors.
+</I>&gt;<i> there could be other ways to do so.
+</I>&gt;<i>        pay_base_amp(amount/2 + 1)
+</I>
+I don't think this is actually useful.  For example, I would suggest a
+more random split, and start by using some estimate of channel capacity.
+
+&gt;<i> Even if we leave the exact AMP execution to the sender we could still
+</I>&gt;<i> suggest this divide and conquer scheme in BOLT 04
+</I>&gt;<i>
+</I>&gt;<i> Another idea I had (which is probably a bad one as it allows for probing of
+</I>&gt;<i> channel balances) would be to allow nodes on a partial path to send back
+</I>&gt;<i> some hints of how much additional capacity they can forward if they see
+</I>&gt;<i> that the partial payment feature bit is set (this would require to set this
+</I>&gt;<i> feature bit in every onion) Also if we want to make use of this information
+</I>&gt;<i> every node would have to support base amp. So I guess this idea is bad for
+</I>&gt;<i> several reasons. Still we could have a MAY rule out of it?
+</I>
+I think we should adapt a convention for a lower limit at which we
+disable the channel if we can't forward (eg 1% of capacity?  100
+satoshis?).  That gives us a better starting point for AMP, too.
+
+Cheers,
+Rusty.
+</PRE>
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001639.html">[Lightning-dev] Base AMP
+</A></li>
+	<LI>Next message: <A HREF="001645.html">[Lightning-dev] Base AMP
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1642">[ date ]</a>
+              <a href="thread.html#1642">[ thread ]</a>
+              <a href="subject.html#1642">[ subject ]</a>
+              <a href="author.html#1642">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

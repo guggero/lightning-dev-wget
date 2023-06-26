@@ -1,0 +1,245 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Pure No-Trust Solution using only OP_CLTV
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-August/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pure%20No-Trust%20Solution%20using%20only%20OP_CLTV&In-Reply-To=%3CCAE8CtVnd178jOGi8Qc7gO7LswfODtxwLPa%3Dg6GwAo2ta_YDnNw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000123.html">
+   <LINK REL="Next"  HREF="000128.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Pure No-Trust Solution using only OP_CLTV</H1>
+    <B>Mats Jerratsch</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Pure%20No-Trust%20Solution%20using%20only%20OP_CLTV&In-Reply-To=%3CCAE8CtVnd178jOGi8Qc7gO7LswfODtxwLPa%3Dg6GwAo2ta_YDnNw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Pure No-Trust Solution using only OP_CLTV">matsjj at gmail.com
+       </A><BR>
+    <I>Thu Aug 13 18:37:18 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000123.html">[Lightning-dev] Attacking the lightning network
+</A></li>
+        <LI>Next message: <A HREF="000128.html">[Lightning-dev] Pure No-Trust Solution using only OP_CLTV
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#127">[ date ]</a>
+              <a href="thread.html#127">[ thread ]</a>
+              <a href="subject.html#127">[ subject ]</a>
+              <a href="author.html#127">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Joseph asked, what changes OP_CLTV would bring to my Thunder proposal,
+and I started working out, how much is actually possible with only
+CLTV implemented.
+
+It is still unclear, how CLTV and CSV are activated, and there are
+discussions about adding them in one single softfork, rendering this
+design useless of course. Nevertheless, maybe someone can find some
+interest in it, I wasn't able to find it on the mailing list or in any
+paper.
+
+Excerpt from thunder.network:
+
+Channel Design:
+<A HREF="http://thunder.network/images/image09.png">http://thunder.network/images/image09.png</A>
+<A HREF="http://imgur.com/nmpRYSe">http://imgur.com/nmpRYSe</A> (Mirror)
+
+With OP_CLTV it is possible to replace the
+payout-to-multisig-and-give-timelocked-partly-signed-transaction with
+a simple OP-code, specifying for how long the output should not be
+spent. With this it is able to completely mitigate all the
+malleability problems we have in our current solution. Let&#8217;s take a
+look into some of the changes made and their implications.
+
+Opening Transaction
+
+There are no longer refund transactions that needs to get
+interchanged. It is possible to directly make the refund to both
+parties part of the opening transaction. This completely removes any
+risk problems and allows for large amount of funds within the channel.
+As soon as the refund time has come, both parties can get their
+respective funds back with just their sole private key. As we cannot
+accomplish the exact distribution with just one output and CLTV, we
+use two outputs that only differ in the refund private key. By doing
+so, any channel transaction has to include both these outputs (and of
+course both has to be signed accordingly), leading to (slightly)
+larger transactions.
+
+Channel Transaction
+
+Settled Funds
+
+We use the same mechanism as in the opening transaction here, and
+added a multi-sig output to ensure that these funds are revocable. If
+both parties agree on a new version of the channel, they release their
+temporary signatures A2 and B2. If a party broadcasts a channel that
+was marked as revoked, the other party can steal those funds.
+Furthermore, malleability is no longer an issue, as refunds are only
+timelocked using CLTV, and in case of a revoke, the other party has
+both private keys. In any case, we are no longer depending on having a
+specific transaction presigned by the other party.
+
+Sending HTLC
+
+Making a payment now consists of 3 outputs. We combine the mechanism
+for refunds and for revocable transactions (see above) with the
+ability of the receiver to claim the payments in case he knows the
+secret R. We lowered the refund time to the general timeframe of a
+payment, such that it is enforceable by the sender. Again, as we don&#8217;t
+depend on presigned transactions, malleability is no longer an issue.
+
+Receiving HTLC
+
+The outputs of a receiving HTLC are very similar to those of a sending
+one, but with the private keys set accordingly. Also the timeframe is
+down to 6 days, such that we have plenty of time to determine if a
+payment will get refunded or not.
+
+Now there are a couple of problems with this design, mainly that HTLCs
+are not strictly revocable. If one party broadcasts a revoked
+transactions with HTLCs inside, the other party can just try to race
+against the propagation of the claiming transactions, which will often
+be fruitless. This goes for receiving payments, where the party can
+claim the funds with the secret R and also for sending payments, where
+he can use the refund option (for revoked channels which are older
+than the refund timeout). This can however completely mitigated using
+a simple reserve strategy (see below for details, it can be applied
+for payments in both directions).
+
+Additionally, this new channel design means that a channel will get
+closed and broadcasted completely, as soon as the refund condition for
+any payment in your channel is met. To counter this as a receiver of a
+payment, you have to reveal the secret or settle a new channel without
+the payment (manual refund) in time with the other party. As a sender,
+you have to check back the payment before the refund, to work out with
+the other party if the payment should refund or settle.
+
+Those timeframes are just for illustration, it might be preferable to
+play along with those numbers a bit. For example, the one day
+difference between the sender and the receiver means that in extreme
+cases the sender only has one day for updating his channel.
+Furthermore, there isn&#8217;t really a reason the receiver has 6 days time
+to reveal his secret, where 6 hours would be plenty of time as well.
+Finally, we can also extend the period for a payment, resulting in a
+longer lock-up time frame at the end of the channel.
+
+With channels being strictly no-trust, we can move towards larger
+amounts of funds inside the channels, mitigating the problem with
+non-revocable HTLCs and the workaround. It just becomes one additional
+rule we have to apply among all the others that are apparent already.
+
+Implementing these changes in the current Thunder implementations is
+trivial. It comes down to deleting a lot of methods currently
+necessary and switching to the new scripts. This goes for most channel
+design changes, as the design of Rusty for example.
+
+
+Appendix: Payments in older Channel Versions
+
+There is a problem, as settlement transactions are not time-encumbered
+(we want that whoever deserves the output of a payment to be able to
+claim it instantly, with no one possibly interfering). This means if
+one party has a channel transaction with a payments towards it, he can
+claim this payment under any circumstances. However, if this party
+does broadcast a revoked channel to claim such an output, the
+counterparty can still steal all settled funds and all funds towards
+his channel.
+
+It is therefore important to keep track of the amounts the other party
+is receiving. We have to know, which is the highest amount the other
+party ever had as receiving payments in his channel, and we must make
+sure that we decline any attempts of him spending money, such that his
+balance would drop below this amount.
+
+This will be more clear using this example:
+
+We start with a channel, with Alice and Bob, and both fund the mutual
+channel with 10 BTC.
+
+So at t=0 we are at
+
+        Alice         -        10 BTC
+
+        Bob         -        10 BTC
+
+Now imagine that for some reason, Alice received payments, such that
+she has 5 BTC as uncleared payments in her channel.
+
+t=t1
+
+        Alice         -          10  BTC ( +5 BTC uncleared )
+
+        Bob         -          5    BTC
+
+She reveals the secrets and Alice and Bob settle those payments, leading to
+
+t=t2
+
+        Alice         -          15  BTC
+
+        Bob         -          5    BTC
+
+Now if Alice were to be free to spend all her money, if we don&#8217;t
+enforce the above rules, she could spend all her money (leading to
+legitimate payment contracts in other channels that we are obliged
+to).
+
+t=t3
+
+        Alice         -        0   BTC
+
+        Bob        -        20 BTC
+
+But, as reasoned above, payments towards Alice can always be claimed
+by Alice, such that she can claim the 5 BTC from the t=t1 channel
+transaction and Bob losing those 5 BTC. The t=t1 transaction does
+spend 5 BTC directly towards Bob, and he can also claim the 10 BTC
+settled balance from Alice, but his net balance compared to the t=t3
+is -5 BTC.
+
+To defend against this kind of attack, it is important to keep track
+of the maximum the other party has as receiving uncleared payments in
+his channel. In this case, the maximum Alice has as uncleared
+receiving payments is at t=t1, 5 BTC. This means, we have to make sure
+her balance does not drop below 5 BTC anymore. As agreeing on a
+channel with a payment is a mutual action, Bob can just refuse to
+accept a new channel transaction, where the balance of Alice would
+drop below 5 BTC.
+
+This rule also serves as an incentive to clear out receiving payments
+as soon as possible. The party who has sent a payment (Carol in this
+example) can only remove settle the payment after the receiving party
+has cleared the payment, and we don&#8217;t want the channel to clog.
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000123.html">[Lightning-dev] Attacking the lightning network
+</A></li>
+	<LI>Next message: <A HREF="000128.html">[Lightning-dev] Pure No-Trust Solution using only OP_CLTV
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#127">[ date ]</a>
+              <a href="thread.html#127">[ thread ]</a>
+              <a href="subject.html#127">[ subject ]</a>
+              <a href="author.html#127">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

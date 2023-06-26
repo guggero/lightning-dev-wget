@@ -1,0 +1,324 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-September/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%60htlc_maximum_msat%60%20as%20a%20valve%20for%20flow%20control%0A%20on%20the%20Lightning%20Network&In-Reply-To=%3CYzSZSM28aojcq9L6%40erisian.com.au%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003703.html">
+   <LINK REL="Next"  HREF="003705.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network</H1>
+    <B>Anthony Towns</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%60htlc_maximum_msat%60%20as%20a%20valve%20for%20flow%20control%0A%20on%20the%20Lightning%20Network&In-Reply-To=%3CYzSZSM28aojcq9L6%40erisian.com.au%3E"
+       TITLE="[Lightning-dev] `htlc_maximum_msat` as a valve for flow control on the Lightning Network">aj at erisian.com.au
+       </A><BR>
+    <I>Wed Sep 28 18:58:16 UTC 2022</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003703.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="003705.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3704">[ date ]</a>
+              <a href="thread.html#3704">[ thread ]</a>
+              <a href="subject.html#3704">[ subject ]</a>
+              <a href="author.html#3704">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Sep 27, 2022 at 12:23:38AM +0000, ZmnSCPxj via Lightning-dev wrote:
+&gt;<i> All monetisation is fee-based; the question is who pays the fees.
+</I>
+This isn't true. For example, if you can successfully track the payments
+you route, you can monetize by selling data about who's buying what
+from whom. (Unless you meant it in some trivial sense, I guess, like
+&quot;all monetisation is money-based; the question is who pays the money&quot;)
+
+&gt;<i> In particular, discussing with actual forwarding node operators reveals
+</I>&gt;<i> that most of them think that CLBOSS undercuts fees too much searching
+</I>&gt;<i> a short-term profit, quickly depleting its usable liquidity in the
+</I>&gt;<i> long term.
+</I>&gt;<i> In short, they want CLBOSS modified to raise fees and preserve the
+</I>&gt;<i> liquidity supply.
+</I>&gt;<i> This suggests to me that channel saturation due to being cheaper by
+</I>&gt;<i> 0.0001% is not something that will occur often,
+</I>
+That seems a bit of a backwards conclusion: &quot;undercutting fees depletes
+liquidity&quot; therefore &quot;channel saturation due to offering cheaper fees
+seems unlikely&quot; -- channel saturation *is* depleted liquidity...
+
+On Wed, Sep 28, 2022 at 02:07:51AM +0000, ZmnSCPxj via Lightning-dev wrote:
+&gt;<i> Forwarding nodes sell liquidity.
+</I>&gt;<i> If a forwarding node runs out of stock of liquidity (i.e. their channel is unbalanced against the direction a payment request fails) they earn 0 profit.
+</I>
+I get what you're saying, but I don't think a &quot;stock of liquidity&quot;
+is a helpful metaphor/mental model here.
+
+&quot;Liquidity&quot; usually means &quot;how easy it is to exchange X for Y&quot; -- assets
+for cash, etc; but for lightning, liquidity is guaranteed by being
+able to drop to chain. Likewise, &quot;running out of stock&quot; isn't usually
+something that gets automatically fixed by someone else coming in and
+buying something different. 
+
+(Also, you don't earn 0 profit on an imbalanced channel; you're just
+forced to stop accepting some txs. Every time you forward $1 in the
+available direction, you become able to forward another $1 back in the
+saturated direction; and you earn fees on both those $1s)
+
+I think it's better to think in terms of &quot;payment flow&quot; -- are you
+forwarding $5/hour in one direction, but $10/hour in the other? Is
+that an ongoing imbalance, or something that evens itself out over time
+($120/day in both directions)?
+
+Once you start in that direction, there's also a few other questions
+you can ask:
+
+ * can I get make more revenue by getting more payment flow at a
+   lower fee, or by charging a higher fee over less payment flow?
+
+ * if I had a higher capacity channel, would that let me tolerate
+   a temporarily imbalanced flow over a longer period, allowing me
+   to forward more payments and make more fee revenue?
+
+If you want to have a long running lightning channel, your payment flows
+will *always* be balanced. That might be through luck, it might be through
+clever management of channel parameters, but if it's not through those,
+it'll be because your channel's saturated, and you're forced to fail
+payments.
+
+Ultimately, over the *entire* lifetime of a lightning channel, the only
+imbalance you can have is to either lose the funds that you've put in,
+or gain the funds your channel partner put in.
+
+That *is* something you could sensibly model as a stock that gets depleted
+over time, if your payment flows are reliably unbalanced in a particular
+direction. For example, consider a channel that starts off with $100k in
+funds and has a $5k imbalance every day: after 20 days, you'll have to
+choose between failing that $5k imbalance (though you could still route
+the remaining balanced flows), or between rebalancing your channels,
+possibly via on-chain transactions. Does the fee income from an additional
+$100k of imbalanced transactions justify the cost of rebalancing?
+
+You can calculate that simply enough: if the on-chain/rebalance cost is
+$300, then if you were getting a fee rate of more than 0.3% ($300/$100k),
+then it's worth paying for the rebalance.
+
+But if &quot;lifetime drain&quot; is the dominant factor, you're reducing
+lightning to the same performance as one-way payment channels: you move
+the aggregate payments up to the channel capacity, and then close the
+channel. If you get balanced payment flows, that allows you to cancel
+out 30,000 $1 transactions against 1,000 $30 transactions, and maintain
+the channel indefinitely, with all the off-chain scaling that implies.
+
+&gt;<i> If a forwarding node finds a liquidity being sold at a lower price than they would be able to sell it, they will buy out the cheaper stock and then resell it at a higher price.
+</I>&gt;<i> This is called rebalancing.
+</I>
+All that does is move the flow imbalance to someone else's channel;
+it doesn't improve the state of the network.
+
+There definitely are times when that makes sense:
+
+ * maybe the channel's run by &quot;dumb money&quot; that will eat the fee for
+   closing on-chain, so you don't have to
+
+ * maybe you have secret information about the other channel, allowing
+   you to route through it for cheaper than the general public
+
+ * maybe you and they have different demand at different times of the
+   day, so time-shifting imbalances is mutually beneficial? I don't
+   see how this works out without secret information though -- the
+   people who want to route payments should be choosing the cheapest
+   link at all times of the day already
+
+But those don't generally seem aligned with the long-term health of the
+lightning network?
+
+&gt;<i> * Thus, channels advertising low fees are likely to have their liquidity bought out by patient forwarding nodes.
+</I>
+I think the &quot;liquidity&quot; metaphor isn't doing you any favours here.
+Here's what (I think) that scenario looks like under &quot;flow&quot;:
+
+ - overall, there's unbalanced flow: for example, people want to pay a
+   higher amount from A to B than from B to A.
+ - X charges low fees to forward from A to B, so their channel is always
+   depleted in that direction.
+ - Y charges high fees to forward from A to B
+ - Y takes advantage of being constantly online to always be the first
+   to route their rebalance through X (Y-&gt;A-&gt;X-&gt;B-&gt;Y) when X's channel
+   clears up
+
+Y's rebalancing then is limited by the legitimate payment volume going
+back through X (ie B-&gt;X-&gt;A). Because there's an unbalanced flow overall,
+that means Y cannot rebalance to compensate for the total amount of
+payments it routes, and eventually both X and Y will become depleted in
+the same direction, and one or both channels will have to decide whether
+to rebalance on-chain. If X rebalances on-chain, allowing Y to repeatedly
+take advantage of their low fees, that's the &quot;dumb money&quot; situation.
+
+&gt;<i> If you introduce an artificial impediment and say &quot;I will only accept
+</I>&gt;<i> payment sizes below N millisats&quot;, and then go &quot;I will #zerofeerouting
+</I>&gt;<i> guy&quot;, then a forwarding node will just split their rebalance into quanta
+</I>&gt;<i> of N millisats and make a spike in the payment size distribution and
+</I>&gt;<i> drain your channel anyway, so that they can turn around and resell the
+</I>&gt;<i> liquidity at a higher price later.
+</I>
+Of course, it's possible that overall flows *are* balanced, and you're
+just able to take advantage of your better understanding of lightning
+routing to charge higher fees than this &quot;X&quot; character.
+
+But the same scenario applies in the max_msat world too, with only
+slight modifications.
+
+ * instead of constantly probing the A-&gt;X-&gt;B channel so that you keep it
+   drained, you create fake traffic over A-&gt;X-&gt;B causing X to detect an
+   imbalance and lower their max_msat in order to get the flows
+   balanced.
+
+ * this causes users to send more traffic through A-&gt;Y-&gt;B, giving you
+   more fee income
+
+ * you can then repeatedly generate more fake traffic over A-&gt;X-&gt;B,
+   causing X to lower max_msat further, perhaps giving you most of the
+   A-&gt;B traffic
+
+ * meanwhile you do regular rebalances (Y-&gt;A-&gt;X-&gt;B-&gt;Y) at values less
+   X's than max_msat
+
+ * your node sees perhaps 90% of A-&gt;B payment flows, and does the same
+   volume in rebalancing
+
+ * X's node sees 10% of legit A-&gt;B payment flows, and your 90% of legit
+   payment flows via your rebalancing; and also 100% of legit B-&gt;A
+   payment flows
+
+ * so both nodes remain balanced, reducing payment failures; and Y can
+   rebalance constantly, allowing them to operate with a smaller
+   capacity channel making it more capital efficient
+
+I think there's a few limitations on that &quot;attack&quot;:
+
+ * it only works if you're willing to forego legitimate fee income
+   from B-&gt;Y-&gt;A -- but if you're competing with someone who charges 
+   zero fees anyway, maybe that's fine
+
+ * it only works if A-&gt;X-&gt;B is charging much lower fees so your
+   rebalancing really is cheap
+
+ * you probably need to reserve capital in order to create the fake
+   payment flows -- afterall, if you try to rebalance the capital you
+   used to create the fake payment flow, that creates a payment flow
+   in the other direction, which risks undoing your work
+
+ * that A-&gt;X-&gt;B is overloaded (max_msat is lowish) that's a public
+   indication that there's high demand at X's fee rate along that path,
+   which may encourage people to create additional channels. creating
+   fake payment flow for all of those channels may become prohibitively
+   capital intensive.
+
+&gt;<i> i.e. #zerofeerouting will never be a reliable forwarding node, because all the other forwarding nodes will be taking their liquidity for cheap long before you think to make a payment through them.
+</I>
+I don't think it's ideal if a world that includes both:
+
+ * altruists, who'll forward your payments for cheap/free
+ * profiteers, who are trying to make a living offering lightning
+   services
+
+results in &quot;oops, optimising for low lightning fees becomes horribly
+unreliable&quot;.
+
+[repeating this one, to followup in a different way]
+&gt;<i> If you introduce an artificial impediment and say &quot;I will only accept
+</I>&gt;<i> payment sizes below N millisats&quot;, and then go &quot;I will #zerofeerouting
+</I>&gt;<i> guy&quot;, then a forwarding node will just split their rebalance into quanta
+</I>&gt;<i> of N millisats
+</I>
+I mean, that's already a fundamental problem with max_msat: why wouldn't
+payment initiators do exactly that in the first place?
+
+Making this incentive compatible with AMP payments does seem like a
+challenge. Why pay higher fees routing through some other channel,
+instead of just AMPing as many max_msat payments as you need through
+the cheapest channel? (Hmm, I guess I didn't express that concern as
+clearly as I thought I did; at least outside of any deleted drafts...)
+
+I wonder whether a (per source/dest channel?) token bucket rate limit
+might suffice, though. Hmm, it maybe would so long as you're optimising
+for small/frequent payments to be reliable, and aren't worried so much
+about large/infrequent ones, which *might* be reasonable... That way
+you start rejecting payment flow *before* your channel's depleted if it
+becomes unusually bursty in one direction, despite you having indicated
+you want senders to throttle. And then the early rejections mean there's
+not so much value AMPing lots of max_msat payments through a single
+cheap channel.
+
+I suppose in a *completely* ideal world, I might imagine something like
+this:
+
+ * $100,000 a day travels from A to B; $90,000 a day travels from B to A
+ * all the A-&gt;B payments are $5 each
+ * onchain fees for rebalancing a channel is $200
+ * X and Y run routing nodes and want to make stuff cheap, so charge
+   0.001% (10-parts-per-million)
+ * Z is happy to rebalance on chain, has $50,000 committed in his
+   channel, so charges fees of $200/$50,000 = 0.4% (or, probably, more)
+
+In order to get balanced flows, X and Y set their max_msat in the A to B
+direction to $2.25, meaning:
+
+ * 20k $5 payments from A to B gets split into $2.25 through X, $2.25
+   through Y, and $0.50 through Z
+ * 90 $1000 payment from B to A get split into $500 through X and $500
+   through Y.
+
+Every day:
+
+ * X and Y see $45000 going each way, collecting $0.90 in routing fees
+   per day, and having their channel not go out of balance
+ * Z sees $10,000 going from A to B, collecting $40 a day
+ * Z's channel runs out after 5 days, at which point he's collected $200
+   total, and has to spend $200 rebalancing on-chain
+ * each person paying $5 to B pays $0.002045 in fees; each person
+   paying $1000 to A pays $0.01 in fees
+
+Z could reduce his fee rate below 0.4% and still break even if he
+increased his channel capacity above $50k. He can't make his channel last
+longer by getting more B-&gt;A channel flow though, because that would just
+lead X and Y's flows to be unbalanced, causing payers to have to route
+more flow through Z.
+
+Cheers,
+aj
+
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003703.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="003705.html">[Lightning-dev] `htlc_maximum_msat` as a valve for flow control	on the Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3704">[ date ]</a>
+              <a href="thread.html#3704">[ thread ]</a>
+              <a href="subject.html#3704">[ subject ]</a>
+              <a href="author.html#3704">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

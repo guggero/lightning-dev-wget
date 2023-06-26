@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] Fwd: [bitcoin-dev] SIGHASH_NOINPUT in Segregated	Witness
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2016-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fwd%3A%20%5Bbitcoin-dev%5D%20SIGHASH_NOINPUT%20in%20Segregated%0A%09Witness&In-Reply-To=%3CCABaSBayLtX%2Bgj36kja-eVagv3P_B_nji9%2Bqqzn83DW%2BvEL3Lqw%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000444.html">
+   <LINK REL="Next"  HREF="000446.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] Fwd: [bitcoin-dev] SIGHASH_NOINPUT in Segregated	Witness</H1>
+    <B>Bryan Bishop</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20Fwd%3A%20%5Bbitcoin-dev%5D%20SIGHASH_NOINPUT%20in%20Segregated%0A%09Witness&In-Reply-To=%3CCABaSBayLtX%2Bgj36kja-eVagv3P_B_nji9%2Bqqzn83DW%2BvEL3Lqw%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] Fwd: [bitcoin-dev] SIGHASH_NOINPUT in Segregated	Witness">kanzure at gmail.com
+       </A><BR>
+    <I>Fri Feb 26 01:21:31 UTC 2016</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000444.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+        <LI>Next message: <A HREF="000446.html">[Lightning-dev] [bitcoin-dev] SIGHASH_NOINPUT in Segregated	Witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#445">[ date ]</a>
+              <a href="thread.html#445">[ thread ]</a>
+              <a href="subject.html#445">[ subject ]</a>
+              <a href="author.html#445">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>From: Joseph Poon via bitcoin-dev &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>&gt;
+Date: Thu, Feb 25, 2016 at 7:07 PM
+Subject: [bitcoin-dev] SIGHASH_NOINPUT in Segregated Witness
+To: <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>
+
+
+As Segregated Witness will be merged soon as a solution for transaction
+malleability, especially with multi-party adversarial signatures, there
+may be an additional use case/functionality which is helpful for
+Lightning Network and possibly other Bitcoin use cases. This requires a
+new SIGHASH flag inside Segregated Witness which does not sign the input
+txid/index.
+
+Segwit is very helpful in resolving malleability in pretty much every
+case which matters. It is especially helpful in having solid and safe
+defaults for standard Bitcoin payments; it's very difficult to mess up
+if you are writing code in conjunction with the Bitcoin RPC API.
+
+However, it is very useful for LN if there is a certain level of
+outsourcibility for transactions without this 3rd party taking on
+onerous costs. In LN, there is a dispute resolution period established
+to prevent the counterparty from attesting an incorrect channel state
+(represented by broadcasting a timelocked transaction). In other words,
+if someone in a channel broadcasts an incorrect state, the output can be
+redeemed by a 3rd party (but this 3rd party is not a custodian, since
+the output goes to the other party in the channel).
+
+Ideally, a 3rd-party can be handed a transaction which can encompass all
+prior states in a compact way. For currently-designed Segregated Witness
+transactions, this requires storing all previous signatures, which can
+become very costly if individuals to thousands of channel state updates
+per day. This is very possible, as fees are near-zero, the value in
+atomizing all payments to many transactions becomes viable (reducing
+transaction/information costs). If individuals are doing tens of
+thousands of transactions per day, and one presumes something like
+70-bytes of data per Commitment state in the channel, it quickly becomes
+infeasible to watch on behalf of many channels without material costs.
+
+This is especially necessary because it is highly desirable to make
+keeping track of these channels be very cheap, as it allows for more
+participants to be watching on one's behalf (reducing the chance of a
+3rd party fail to watch). Further, it may reduce the need to notify the
+3rd party for every single channel Commitment state, instead only
+providing the most recent one should provide sufficient information for
+all prior states (since the signature will apply for any type of
+transaction), making the only updated information the revocation
+secret/preimage. Without this SIGHASH flag, every single state would
+need to be contacted and updated with 3rd parties. With this SIGHASH
+flag, one could instead delegate outsourcing when one's client goes
+offline with a single message several hundred bytes in size,
+encompassing all prior states.
+
+Of course, while running a 24/7 full-node is encouraged, I suspect many
+people will not want to do so at the current time, and it needs to be
+functional for those who elect to be connected intermittently. This
+requires outsourcing or watching on one's behalf.
+
+This would be achieved using a SIGHASH flag, termed SIGHASH_NOINPUT. It
+does not include as part of the signature, the outpoint being spent
+(txid and index), nor the amount. It however, would include the spent
+outpoint's script as part of the signature. Note that this is just a
+SIGHASH flag, and the outpoints are still being included as part of the
+txins (if they are mutated, the new txids can be updated by the wallet
+without resigning). This allows for a signature to apply to anything
+with that pubkey (therefore pubkeys with this flag should not be
+reused). For safety, this only applies in SegWit transactions, as segwit
+provides a sufficient malleability solution, there is no incentive to
+improperly use this sighash flag as a roundabout way to resolve
+malleability.
+
+This helps with 3rd-party outsourcing for watching the blockchain, as
+one can provide a signature (and the most recent hash-chain of
+revocation preimages), which encompasses penalty transactions for all
+prior states. Functionally, this allows for opt-in wildcard inputs, but
+wallets which do not require these transactions do not need to be
+concerned with this flag; since they will never be signing with this
+flag, they do not need to be concerned with address re-use.
+
+I'm interested in input and in the level of receptiveness to this. If
+there is interest, I'll write up a draft BIP in the next couple days.
+
+--
+Joseph Poon
+_______________________________________________
+bitcoin-dev mailing list
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">bitcoin-dev at lists.linuxfoundation.org</A>
+<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev">https://lists.linuxfoundation.org/mailman/listinfo/bitcoin-dev</A>
+
+
+
+-- 
+- Bryan
+<A HREF="http://heybryan.org/">http://heybryan.org/</A>
+1 512 203 0507
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160225/d36eb404/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20160225/d36eb404/attachment.html</A>&gt;
+</PRE>
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000444.html">[Lightning-dev] Laundry list of inter-peer wire protocol changes
+</A></li>
+	<LI>Next message: <A HREF="000446.html">[Lightning-dev] [bitcoin-dev] SIGHASH_NOINPUT in Segregated	Witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#445">[ date ]</a>
+              <a href="thread.html#445">[ thread ]</a>
+              <a href="subject.html#445">[ subject ]</a>
+              <a href="author.html#445">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

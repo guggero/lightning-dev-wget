@@ -1,0 +1,190 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] An Argument For Single-Asset Lightning Network
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2019-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CxDOXO2THyPVlQcB5KNyF3dKeJKiXYwf3E96j00Vj1bEV3dkHrxmkcWd56qyhPYU5MlueDj7dVHfz0XGDBnZY3zl8fKmgD-DOsp5fqFP89dQ%3D%40protonmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001794.html">
+   <LINK REL="Next"  HREF="001800.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] An Argument For Single-Asset Lightning Network</H1>
+    <B>ZmnSCPxj</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20An%20Argument%20For%20Single-Asset%20Lightning%20Network&In-Reply-To=%3CxDOXO2THyPVlQcB5KNyF3dKeJKiXYwf3E96j00Vj1bEV3dkHrxmkcWd56qyhPYU5MlueDj7dVHfz0XGDBnZY3zl8fKmgD-DOsp5fqFP89dQ%3D%40protonmail.com%3E"
+       TITLE="[Lightning-dev] An Argument For Single-Asset Lightning Network">ZmnSCPxj at protonmail.com
+       </A><BR>
+    <I>Mon Jan  7 10:52:23 UTC 2019</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001794.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+        <LI>Next message: <A HREF="001800.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1799">[ date ]</a>
+              <a href="thread.html#1799">[ thread ]</a>
+              <a href="subject.html#1799">[ subject ]</a>
+              <a href="author.html#1799">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Good morning David and CJP,
+
+Although we have determined that the David solution and all classes of that solution are insufficient, it also triggered me to mentally compare the CJP solution to the David solution.
+
+David solution effectively makes the exchange node (OM in CJP terminology) also the RM in the route.
+However, with use of mere preimages and hashes, it is obvious that such a &quot;loop&quot; where the end payee (RM) is also an intermediate node, is foolish, as the end payee will simply claim the payment without letting the loop through.
+And since the payee (S in CJP terminology) is paid via the delta from its incoming to its outgoing HTLC on that loop, then if the RM is the OM then it is possible for the OM To simply steal the payment outright.
+
+(It is helpful to realize that payment routes pay not just the end payee, but all hops in the middle; thus the &quot;real&quot; target of the payment (the one who receives the bulk of the value) need not be at the *end* of the route)
+
+But there is a way to safely loop through the end payee, and that is if the final payee has insufficient knowledge to perform the claim unless it lets the payment through via the loop.
+Suppose we can somehow make a route that requires two secrets: a secret known by the final payee (RM == OM) and a separate secret known by the &quot;actual&quot; payee (S).
+
+One way is to use points and scalars, another is to require two hashes from F to OM to S, then a single hash from OM to RM (RM == OM).
+Points and scalars are probably better since it obscures to intermediate hop nodes whether they are before S in a cross-asset payment or not.
+
+Below I describe the solution using points and scalars, and also including decorrelation.
+It should be trivial to convert it to two-hash form.
+
+1.  First, F contacts the OM (i.e. the exchange, who is also the RM) to acquire an exchange rate quotation.
+    The OM provides
+    1.  An exchange rate between BTC and WJT.
+    2.  An exchange fee.
+    3.  A one-time-use &quot;exchange rate point&quot;.
+    4.  A signature of the exchange rate and fee, signed using the scalar of the exchange rate point.
+        This proves that the OM knows the scalar of the exchange rate point.
+2.  F creates a route from F to S via OM, and a route from S to OM.
+    The route from F to S should pay the desired amount to S, plus the routing fees and exchange fee for the S to OM route.
+3.  As is typical for decorrelation, for every hop (including itself as a hop), F generates a random scalar.
+    F sums up the decorrelation scalars of various parts of the total route:
+    1.  F to OM: `f_to_om_scalar`
+    2.  OM to S: `om_to_s_scalar`
+    3.  S to OM: `s_to_om_scalar`
+4.  F offers a payment to the first hop node (can be OM, can be an independent hop node on BTC side) for the point:
+
+        f_to_om_scalar * G + om_to_s_scalar * G + s_to_om_scalar * G + payment_point + exchange_rate_point
+
+5.  When the payment reaches OM from F, it gets paid if it is able to acquire the scalar corresponding to:
+
+        om_to_s_scalar * G + s_to_om_scalar * G + payment_point + exchange_rate_point
+
+6.  In addition, F adds to the OM onion hop packet the below information:
+    1.  `payment_point`
+    2.  `exchange_rate_point`
+    3.  The point sum of `(om_to_s_scalar + s_to_om_scalar) * G`
+    4.  A signature using the point `(om_to_s_scalar + s_to_om_scalar) * G` of the serialization of the `payment_point` and `exchange_rate_point`.
+7.  The OM verifies:
+    1.  That `exchange_rate_point` is a point corresponding to some exchange rate quotation it issued before.
+    2.  That the exchange rate is still economically viable for it.
+    3.  That the sum of the `payment_point`, `exchange_rate_point`, and `(om_to_s_scalar + s_to_om_scalar) * G` correspond to the point that OM will need to learn the scalar of.
+8.  The OM forwards the route (which is still opaque to it, thus cannot know S or F) subtracting its decorrelation scalar.
+9.  When the payment reaches S from OM, it gets paid if it is able to acquire the scalar corresponding to:
+
+        s_to_om_scalar * G + payment_point + exchange_rate_point
+
+10.  S then subtracts `payment_scalar` (which it should know, with `payment_point = payment_scalar * G`) and its decorrelation scalar, and forwards it to the next hop.
+     Note that S does not learn the identity of OM, and does not learn the exact `exchange_rate_point`.
+     Only F knows who both OM and S are.
+     This is appropriate is it is the one that sets up all the routes.
+11.  When the payment reaches OM from S, it gets paid if it is able to acquire the scalar corresponding to:
+
+        exchange_rate_point
+
+     When a payment terminates at OM, OM checks if it is also one of its exchange rate quotations.
+     If the exchange rate is still economically viable for it, then it claims the payment.
+     If not, it fails the payment, probably with an error for F that the exchange rate has gone out of synch and it should reacquire a new exchange rate.
+
+Note that the OM cannot be fooled.
+Suppose F == S.
+
+1.  Suppose S does not forward, until a time when it is economically viable for F == S to perform the American Call Option.
+    If it is economically viable for F == S to do so, it is economically non-viable for OM to release its exchange rate point and it will simply fail with &quot;exchange rate deviated too far from quotation&quot;.
+2.  Suppose S forwards immediately and learns the exchange rate scalar, then waits for the American Call Option.
+    The payment S forwarded to learn the exchange rate scalar is the premium on the American Call Option it has set up.
+    Thus the American Call Option is no longer premium-free and this attack vector disappears.
+    The OM would willingly take the premium which it can now use immediately.
+
+Now what are the advantages of this approach?
+
+1.  The OM never learns exactly who F or S are, and thus is not able to censor their transaction.
+2.  There is no RM who is a trusted third party.
+    There is only an OM who F hires for exchange, and S who F wants to pay in order to acquire some scalar proof-of-payment.
+    Thus, we can ignore all arguments for trusted third parties.
+3.  Routing failures due to dead channels or insufficient capacity do not cost anything to F, if F != S or are acting as separate entities.
+4.  It's still possible to set up American Call Options, but they now have an unavoidable premium.
+    Indeed, the &quot;exchange rate fee&quot; can be a formula based on the value of one of the assets, and the CLTV the exchange will incur, rather than some fixed value.
+    In short, the exchange offers American Call Options by default, which can be abused in order to make them into a payment from one entity to another, rather than the reverse (the exchange offers a payment route, which can be abused in order to make it into an American Call Option).
+
+Thus, we should really move to points and scalars &quot;soon&quot;, because decorrelation and better proofs-of-payment.
+We must be brave and face the three `OP_CODESEPARATOR`s needed for this.
+
+Regards,
+ZmnSCPxj
+
+
+Sent with ProtonMail Secure Email.
+
+&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208; Original Message &#8208;&#8208;&#8208;&#8208;&#8208;&#8208;&#8208;
+On Sunday, January 6, 2019 12:31 AM, David A. Harding &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">dave at dtrt.org</A>&gt; wrote:
+
+&gt;<i> On Sat, Jan 05, 2019 at 07:01:18AM +0000, ZmnSCPxj wrote:
+</I>&gt;<i>
+</I>&gt;<i> &gt; Good morning David,
+</I>&gt;<i> &gt; What happens if the exchange node only sends its preimage towards the
+</I>&gt;<i> &gt; payer and not towards the payee?
+</I>&gt;<i> &gt; If the payer and payee do not coordinate, then it becomes possible for
+</I>&gt;<i> &gt; the exchange node to take the funds without the payee gaining the
+</I>&gt;<i> &gt; ability to claim the payment.
+</I>&gt;<i>
+</I>&gt;<i> Indeed, you are correct. I had not taken that into account. Thinking
+</I>&gt;<i> about it from that perspective, there's no way to depend on proof that
+</I>&gt;<i> the someone received something (e.g. a payment) without also allowing
+</I>&gt;<i> the receiver to block payment by refusing to provide that proof. That
+</I>&gt;<i> invalidates this class of solutions.
+</I>&gt;<i>
+</I>&gt;<i> Thanks,
+</I>&gt;<i>
+</I>&gt;<i> -Dave
+</I>
+
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001794.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+	<LI>Next message: <A HREF="001800.html">[Lightning-dev] An Argument For Single-Asset Lightning Network
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1799">[ date ]</a>
+              <a href="thread.html#1799">[ thread ]</a>
+              <a href="subject.html#1799">[ subject ]</a>
+              <a href="author.html#1799">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

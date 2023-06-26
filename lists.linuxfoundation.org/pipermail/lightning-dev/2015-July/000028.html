@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [RFC] Anchor (funding) transactions without segregated witness
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2015-July/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Anchor%20%28funding%29%20transactions%20without%0A%20segregated%20witness&In-Reply-To=%3C20150713222659.GA4548%40lightning.network%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000022.html">
+   <LINK REL="Next"  HREF="000029.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [RFC] Anchor (funding) transactions without segregated witness</H1>
+    <B>Joseph Poon</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BRFC%5D%20Anchor%20%28funding%29%20transactions%20without%0A%20segregated%20witness&In-Reply-To=%3C20150713222659.GA4548%40lightning.network%3E"
+       TITLE="[Lightning-dev] [RFC] Anchor (funding) transactions without segregated witness">joseph at lightning.network
+       </A><BR>
+    <I>Mon Jul 13 22:26:59 UTC 2015</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000022.html">[Lightning-dev] [RFC] Anchor (funding) transactions without	segregated witness
+</A></li>
+        <LI>Next message: <A HREF="000029.html">[Lightning-dev] [RFC] Anchor (funding) transactions without	segregated witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28">[ date ]</a>
+              <a href="thread.html#28">[ thread ]</a>
+              <a href="subject.html#28">[ subject ]</a>
+              <a href="author.html#28">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>On Tue, Jul 07, 2015 at 03:39:39PM +0930, Rusty Russell wrote:
+&gt;<i> Feedback, optimizations, horrible holes?
+</I>
+I think this model works! As soon as OP_CHECKLOCKTIMEVERIFY soft-forks
+into bitcoin, a basic lightning implementation may be theoretically
+possible in real bitcoin (with some significant caveats)!
+
+I think Thaddeus Dryja came up with a similar implementation to resolve
+malleability in multisig (involving a clock and 2-input/2-output).
+However, I think a true malleability fix is still ideal.
+
+To complete the thought, I think it's possible to make the Commitment
+Transactions malleability-safe under this construction.
+
+&gt;<i>         The order is as follows:
+</I>&gt;<i> 
+</I>&gt;<i> 1) We both trade anchor txids and amounts.
+</I>&gt;<i> 2) We both trade signatures for the escape transactions, so either one
+</I>&gt;<i>    can broadcast them.
+</I>&gt;<i> 3) Now we are sure to be able to recover our funds, we each broadcast
+</I>&gt;<i>    our anchor txs.
+</I>&gt;<i> 4) If the other side broadcasts their escape transaction, abort and
+</I>&gt;<i>    broadcast our escape transaction.  After the timeout, we can spend
+</I>&gt;<i>    it.
+</I>&gt;<i> 5) If the other side doesn't broadcast their anchor tx, abort and
+</I>&gt;<i>    broadcast our escape transaction.
+</I>&gt;<i> 6) Otherwise, when the anchor txs reach the required depth, we exchange
+</I>&gt;<i>    signatures for the commitment transaction.
+</I>&gt;<i> 7) If the other side broadcasts either escape transaction, broadcast
+</I>&gt;<i>    the other escape transaction and the commitment tx as normal (this is
+</I>&gt;<i>    a unilateral close) before they can reclaim their anchor funds.
+</I>
+To create the Commitment Transaction (in step 6 and all future
+Commitment Transactions), it requires spending from the two inputs
+separately and the output would require having OP_CLTV or OP_CSV in the
+script output to determine whether a Commitment has been revoked. This
+is necessary since one cannot be fully confident about the Transaction
+ID beforehand.
+
+If the inputs are 0.5 Alice and 0.5 Bob, the first Commitment
+Transaction would refund 0.5 to Alice and 0.5 to Bob. As always, there
+are a pair of Commitment Transactions per commitment state. Presume the
+current block height is 350,000 and the channel closes at 355,760.
+
+The Commitment Transaction which only Alice can broadcast, Commitment
+1a, would have the following outputs:
+
+0. 0.5 BTC
+	BobKey
+1. 0.5 BTC
+OP_IF 
+	&lt;AlicePubKey&gt; OP_CHECKSIGVERIFY 
+	&lt;355,760&gt; OP_CLTV OP_DROP
+OP_ELSE
+	OP_HASH160 &lt;RevocationHash&gt; OP_EQUALVERIFY
+	&lt;BobPubKey&gt; OP_CHECKSIGVERIFY
+OP_END
+
+This is the general idea at least (haven't checked the script). Bob gets
+all his money if Alice broadcasts it immediately because Alice is
+attesting Bob should get *at least* 0.5 BTC. For the second output
+(output 1), the first path gives Alice the funds at channel expiration.
+The second path is so if the current Commitment transaction is not
+Commitment 1 and Alice should lose all her money for incorrectly
+broadcasting Commitment 1. Alice does this by attesting to Bob she
+wouldn't broadcast Commitment 1 by giving the RevocationPreimage which
+is hashed into RevocationHash.
+
+Bob also has a Commitment Transaction which is the opposite (Alice's
+funds get paid immediately, Bob's funds is encumbered by time).
+
+The purpose of doing this type of construction instead of using
+nLockTime on the transactions spending from the Commitment Transaction
+is so that each output only requires one signature. By having only one
+signature, malleability concerns can be mitigated, since that single
+party can simply resign and is not dependent upon the cooperation of the
+counterparty if the Commitment Transaction itself gets mutated. Since
+the Commitment Transaction is only build after the Anchor and Escape
+transactions exist, then this construction will allow for Lightning
+Network channels to exist with OP_CLTV, with the caveat that with
+uncooperative counterparties, you will have to wait until channel
+expiration to get your money back. However, it does mean that playing
+with LN is a possibility on the real bitcoin chain in the near future.
+
+Very cool, Rusty!
+
+-- 
+Joseph Poon
+</PRE>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000022.html">[Lightning-dev] [RFC] Anchor (funding) transactions without	segregated witness
+</A></li>
+	<LI>Next message: <A HREF="000029.html">[Lightning-dev] [RFC] Anchor (funding) transactions without	segregated witness
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#28">[ date ]</a>
+              <a href="thread.html#28">[ thread ]</a>
+              <a href="subject.html#28">[ subject ]</a>
+              <a href="author.html#28">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

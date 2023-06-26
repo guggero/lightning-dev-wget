@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] A proposal for up-front payments.
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-February/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3CCAJBJmV9nGkR91pbicn_BfbJVWSE90sX-a-OmVjZRPyHNp5nyFA%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002546.html">
+   <LINK REL="Next"  HREF="002548.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] A proposal for up-front payments.</H1>
+    <B>Joost Jager</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20A%20proposal%20for%20up-front%20payments.&In-Reply-To=%3CCAJBJmV9nGkR91pbicn_BfbJVWSE90sX-a-OmVjZRPyHNp5nyFA%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] A proposal for up-front payments.">joost.jager at gmail.com
+       </A><BR>
+    <I>Tue Feb 18 09:23:29 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002546.html">[Lightning-dev] [RELEASE] c-lightning 0.8.1: &quot;Channel to the Moon&quot;
+</A></li>
+        <LI>Next message: <A HREF="002548.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2547">[ date ]</a>
+              <a href="thread.html#2547">[ thread ]</a>
+              <a href="subject.html#2547">[ subject ]</a>
+              <a href="author.html#2547">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Hi all,
+
+Within our team, we've been discussing the subject of preventing
+liquidity-consuming spam (aka channel jamming) further. One idea came up
+that I think is worth sharing.
+
+Previous prepay ideas were based on the sender paying something up-front in
+case the htlc causes grief on the network. This however leaves the sender
+vulnerable to nodes stealing that up-front payment.
+
+Consider what is probably the worst known channel jamming attack: an
+attacker sends minimum sized htlcs to fill up the limited number of
+commitment slots of channels along the route. Those htlcs will be held as
+long as possible by the receiving node (that is also controlled by the
+attacker). The hold time per htlc doesn't even need to be very long,
+because a fresh htlc can be launched to immediately re-occupy a slot after
+it opens up again.
+
+The cost to the network of this attack is mostly dependent on the capacity
+of the channels used. The bigger the capacity, the more funds are locked up
+if a sufficient number of minimum sized htlcs are pending. The size of the
+up-front payment likely needs to be proportional to this cost.
+
+This means that for small htlcs, the up-front payment requirements may very
+well be exceeding the htlc amount and routing fees paid by far. At that
+point, a routing node may decide to steal the up-front payment rather than
+earn the routing fee in an honest way.
+
+A different way of mitigating this is to reverse the direction in which the
+bond is paid. So instead of paying to offer an htlc, nodes need to pay to
+receive an htlc. This sounds counterintuitive, but for the described
+jamming attack there is also an attacker node at the end of the route. The
+attacker still pays. The advantage is that for legitimate senders, there is
+no up-front payment that can be stolen.
+
+How this would work is that channel peers charge each other for the time
+that the other party holds an htlc. So if node A extends an htlc to node B,
+node B will pay node A amount x per minute of hold time. If node B doesn't
+pay (doesn't hold up the contract), A will close the channel. It can be a
+running balance between A and B that materializes as a single htlc per
+channel on the commitment transaction.
+
+As long as node B forwards the htlc swiftly to node C, the dfiference (the
+actual cost) between what B needs to pay A and what B receives from C will
+be tiny. Only when the htlc reaches the attacker node, or any other node on
+the network that is (unintentionally) mishaving for some reason, the delta
+starts to increase quickly for that node. The cost is borne by the node
+that should bear it.
+
+This would also fix concerns that have been voiced around hodl invoices.
+With the reverse bond payment as described above, hodling nodes will pay
+for the cost of their actions.
+
+Many details skipped over, but interested to hear opinions on the viability
+of this variation of up-front payments.
+
+Joost
+
+On Tue, Nov 5, 2019 at 3:25 AM Rusty Russell &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">rusty at rustcorp.com.au</A>&gt; wrote:
+
+&gt;<i> Hi all,
+</I>&gt;<i>
+</I>&gt;<i>         It's been widely known that we're going to have to have up-front
+</I>&gt;<i> payments for msgs eventually, to avoid Type 2 spam (I think of Type 1
+</I>&gt;<i> link-local, Type 2 though multiple nodes, and Type 3 liquidity-using
+</I>&gt;<i> spam).
+</I>&gt;<i>
+</I>&gt;<i>         Since both Offers and Joost's WhatSat are looking at sending
+</I>&gt;<i> messages, it's time to float actual proposals.  I've been trying to come
+</I>&gt;<i> up with something for several years now, so thought I'd present the best
+</I>&gt;<i> I've got in the hope that others can improve on it.
+</I>&gt;<i>
+</I>&gt;<i> 1. New feature bit, extended messages, etc.
+</I>&gt;<i> 2. Adding an HTLC causes a *push* of a number of msat on
+</I>&gt;<i>    commitment_signed (new field), and a hash.
+</I>&gt;<i> 3. Failing/succeeding an HTLC returns some of those msat, and a count
+</I>&gt;<i>    and preimage (new fields).
+</I>&gt;<i>
+</I>&gt;<i> How many msat can you take for forwarding?  That depends on you
+</I>&gt;<i> presenting a series of preimages (which chain into a final hash given in
+</I>&gt;<i> the HTLC add), which you get by decoding the onion.  You get to keep 50
+</I>&gt;<i> msat[1] per preimage you present[2].
+</I>&gt;<i>
+</I>&gt;<i> So, how many preimages does the user have to give to have you forward
+</I>&gt;<i> the payment?  That depends.  The base rate is 16 preimages, but subtract
+</I>&gt;<i> one for each leading 4 zero bits of the SHA256(blockhash | hmac) of the
+</I>&gt;<i> onion.  The blockhash is the hash of the block specified in the onion:
+</I>&gt;<i> reject if it's not in the last 3 blocks[3].
+</I>&gt;<i>
+</I>&gt;<i> This simply adds some payment noise, while allowing a hashcash style
+</I>&gt;<i> tradeoff of sats for work.
+</I>&gt;<i>
+</I>&gt;<i> The final node gets some variable number of preimages, which adds noise.
+</I>&gt;<i> It should take all and subtract from the minimum required invoice amount
+</I>&gt;<i> on success, or take some random number on failure.
+</I>&gt;<i>
+</I>&gt;<i> This leaks some forward information, and makes an explicit tradeoff for
+</I>&gt;<i> the sender between amount spent and privacy, but it's the best I've been
+</I>&gt;<i> able to come up with.
+</I>&gt;<i>
+</I>&gt;<i> Thoughts?
+</I>&gt;<i> Rusty.
+</I>&gt;<i>
+</I>&gt;<i> [1] If we assume $1 per GB, $10k per BTC and 64k messages, we get about
+</I>&gt;<i>     655msat per message.  Flat pricing for simplicity; we're trying to
+</I>&gt;<i>     prevent spam, not create a spam market.
+</I>&gt;<i> [2] Actually, a number and a single preimage; you can check this is
+</I>&gt;<i>     indeed the n'th preimage.
+</I>&gt;<i> [3] This reduces incentive to grind the damn things in advance, though
+</I>&gt;<i>     maybe that's dumb?  We can also use a shorter hash (siphash?), or
+</I>&gt;<i>     even truncated SHA256 (128 bits).
+</I>&gt;<i> _______________________________________________
+</I>&gt;<i> Lightning-dev mailing list
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">Lightning-dev at lists.linuxfoundation.org</A>
+</I>&gt;<i> <A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev</A>
+</I>&gt;<i>
+</I>-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200218/59b4ba73/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20200218/59b4ba73/attachment.html</A>&gt;
+</PRE>
+
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002546.html">[Lightning-dev] [RELEASE] c-lightning 0.8.1: &quot;Channel to the Moon&quot;
+</A></li>
+	<LI>Next message: <A HREF="002548.html">[Lightning-dev] A proposal for up-front payments.
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2547">[ date ]</a>
+              <a href="thread.html#2547">[ thread ]</a>
+              <a href="subject.html#2547">[ subject ]</a>
+              <a href="author.html#2547">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

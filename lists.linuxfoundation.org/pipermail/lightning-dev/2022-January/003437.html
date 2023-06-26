@@ -1,0 +1,181 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [Pre-BIP] Fee Accounts
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2022-January/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPre-BIP%5D%20Fee%20Accounts&In-Reply-To=%3CCAD5xwhik6jVQpP2_ss7d5o%2BpPLsqDCHuaXG41AMKHVYhZMXF1w%40mail.gmail.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003440.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [Pre-BIP] Fee Accounts</H1>
+    <B>Jeremy</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5BPre-BIP%5D%20Fee%20Accounts&In-Reply-To=%3CCAD5xwhik6jVQpP2_ss7d5o%2BpPLsqDCHuaXG41AMKHVYhZMXF1w%40mail.gmail.com%3E"
+       TITLE="[Lightning-dev] [Pre-BIP] Fee Accounts">jlrubin at mit.edu
+       </A><BR>
+    <I>Sat Jan  1 20:04:00 UTC 2022</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003440.html">[Lightning-dev] [bitcoin-dev] [Pre-BIP] Fee Accounts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3437">[ date ]</a>
+              <a href="thread.html#3437">[ thread ]</a>
+              <a href="subject.html#3437">[ subject ]</a>
+              <a href="author.html#3437">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Happy new years devs,
+
+I figured I would share some thoughts for conceptual review that have been
+bouncing around my head as an opportunity to clean up the fee paying
+semantics in bitcoin &quot;for good&quot;. The design space is very wide on the
+approach I'll share, so below is just a sketch of how it could work which
+I'm sure could be improved greatly.
+
+Transaction fees are an integral part of bitcoin.
+
+However, due to quirks of Bitcoin's transaction design, fees are a part of
+the transactions that they occur in.
+
+While this works in a &quot;Bitcoin 1.0&quot; world, where all transactions are
+simple on-chain transfers, real world use of Bitcoin requires support for
+things like Fee Bumping stuck transactions, DoS resistant Payment Channels,
+and other long lived Smart Contracts that can't predict future fee rates.
+Having the fees paid in band makes writing these contracts much more
+difficult as you can't merely express the logic you want for the
+transaction, but also the fees.
+
+Previously, I proposed a special type of transaction called a &quot;Sponsor&quot;
+which has some special consensus + mempool rules to allow arbitrarily
+appending fees to a transaction to bump it up in the mempool.
+
+As an alternative, we could establish an account system in Bitcoin as an
+&quot;extension block&quot;.
+
+*Here's how it might work:*
+
+1. Define a special anyone can spend output type that is a &quot;fee account&quot;
+(e.g. segwit V2). Such outputs have a redeeming key and an amount
+associated with them, but are overall anyone can spend.
+2. All deposits to these outputs get stored in a separate UTXO database for
+fee accounts
+3. Fee accounts can sign only two kinds of transaction: A: a fee amount and
+a TXID (or Outpoint?); B: a withdraw amount, a fee, and an address
+4. These transactions are committed in an extension block merkle tree.
+While the actual signature must cover the TXID/Outpoint, the committed data
+need only cover the index in the block of the transaction. The public key
+for account lookup can be recovered from the message + signature.
+5. In any block, any of the fee account deposits can be: released into fees
+if there is a corresponding tx; consolidated together to reduce the number
+of utxos (this can be just an OP_TRUE no metadata needed); or released into
+fees *and paid back* into the requested withdrawal key (encumbering a 100
+block timeout). Signatures must be unique in a block.
+6. Mempool logic is updated to allow attaching of account fee spends to
+transactions, the mempool can restrict that an account is not allowed more
+spend more than it's balance.
+
+*But aren't accounts &quot;bad&quot;?*
+
+Yes, accounts are bad. But these accounts are not bad, because any funds
+withdrawn from the fee extension are fundamentally locked for 100 blocks as
+a coinbase output, so there should be no issues with any series of reorgs.
+Further, since there is no &quot;rich state&quot; for these accounts, the state
+updates can always be applied in a conflict-free way in any order.
+
+
+*Improving the privacy of this design:*
+
+This design could likely be modified to implement something like
+Tornado.cash or something else so that the fee account paying can be
+unlinked from the transaction being paid for, improving privacy at the
+expense of being a bit more expensive.
+
+Other operations could be added to allow a trustless mixing to be done by
+miners automatically where groups of accounts with similar values are
+trustlessly  split into a common denominator and change, and keys are
+derived via a verifiable stealth address like protocol (so fee balances can
+be discovered by tracing the updates posted). These updates could also be
+produced by individuals rather than miners, and miners could simply honor
+them with better privacy. While a miner generating an update would be able
+to deanonymize their mixes, if you have your account mixed several times by
+independent miners that could potentially add sufficient privacy.
+
+The LN can also be used with PTLCs to, in theory, have another individual
+paid to sponsor a transaction on your behalf only if they reveal a valid
+sig from their fee paying account, although under this model it's hard to
+ensure that the owner doesn't pay a fee and then 'cancel' by withdrawing
+the rest. However, this could be partly solved by using reputable fee
+accounts (reputation could be measured somewhat decentralized-ly by
+longevity of the account and transactions paid for historically).
+
+*Scalability*
+
+This design is fundamentally 'decent' for scalability because adding fees
+to a transaction does not require adding inputs or outputs and does not
+require tracking substantial amounts of new state.
+
+Paying someone else to pay for you via the LN also helps make this more
+efficient if the withdrawal issues can be fixed.
+
+*Lightning:*
+
+This type of design works really well for channels because the addition of
+fees to e.g. a channel state does not require any sort of pre-planning
+(e.g. anchors) or transaction flexibility (SIGHASH flags). This sort of
+design is naturally immune to pinning issues since you could offer to pay a
+fee for any TXID and the number of fee adding offers does not need to be
+restricted in the same way the descendant transactions would need to be.
+
+*Without a fork?*
+
+This type of design could be done as a federated network that bribes miners
+-- potentially even retroactively after a block is formed. That might be
+sufficient to prove the concept works before a consensus upgrade is
+deployed, but such an approach does mean there is a centralizing layer
+interfering with normal mining.
+
+
+Happy new year!!
+
+Jeremy
+
+--
+@JeremyRubin &lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+&lt;<A HREF="https://twitter.com/JeremyRubin">https://twitter.com/JeremyRubin</A>&gt;
+-------------- next part --------------
+An HTML attachment was scrubbed...
+URL: &lt;<A HREF="http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220101/4cd5c38b/attachment.html">http://lists.linuxfoundation.org/pipermail/lightning-dev/attachments/20220101/4cd5c38b/attachment.html</A>&gt;
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003440.html">[Lightning-dev] [bitcoin-dev] [Pre-BIP] Fee Accounts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3437">[ date ]</a>
+              <a href="thread.html#3437">[ thread ]</a>
+              <a href="subject.html#3437">[ subject ]</a>
+              <a href="author.html#3437">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>

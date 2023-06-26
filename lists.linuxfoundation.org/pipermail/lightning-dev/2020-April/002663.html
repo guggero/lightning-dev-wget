@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+   </TITLE>
+   <LINK REL="Index" HREF="https://lists.linuxfoundation.org/pipermail/lightning-dev/2020-April/index.html" >
+   <LINK REL="made" HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%09and%20Competing%20Interest&In-Reply-To=%3C67334082-5ABA-45C7-9C09-FF19B119C80D%40mattcorallo.com%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002662.html">
+   <LINK REL="Next"  HREF="002666.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest</H1>
+    <B>Matt Corallo</B> 
+    <A HREF="mailto:lightning-dev%40lists.linuxfoundation.org?Subject=Re:%20Re%3A%20%5BLightning-dev%5D%20%5Bbitcoin-dev%5D%20RBF%20Pinning%20with%20Counterparties%0A%09and%20Competing%20Interest&In-Reply-To=%3C67334082-5ABA-45C7-9C09-FF19B119C80D%40mattcorallo.com%3E"
+       TITLE="[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest">lf-lists at mattcorallo.com
+       </A><BR>
+    <I>Thu Apr 23 06:21:50 UTC 2020</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002662.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+        <LI>Next message: <A HREF="002666.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2663">[ date ]</a>
+              <a href="thread.html#2663">[ thread ]</a>
+              <a href="subject.html#2663">[ subject ]</a>
+              <a href="author.html#2663">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Great summary, a few notes inline.
+
+&gt;<i> On Apr 22, 2020, at 21:50, ZmnSCPxj &lt;<A HREF="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">ZmnSCPxj at protonmail.com</A>&gt; wrote:
+</I>&gt;<i> 
+</I>&gt;<i> &#65279;Good morning lists et al,
+</I>&gt;<i> 
+</I>&gt;<i> Let me try to summarize things a little:
+</I>&gt;<i> 
+</I>&gt;<i> * Suppose we have a forwarding payment A-&gt;B-&gt;C.
+</I>&gt;<i> * Suppose B does not want to maintain a mempool and is running in `blocksonly` mode to reduce operational costs.
+</I>
+Quick point of clarification, due to the mempool lacking a consensus system (that&#8217;s the whole point, after all :p), there are several reasons to that just running a full node/having a mempool isn&#8217;t sufficient.
+
+&gt;<i> * C triggers B somehow dropping the B&lt;-&gt;C channel, such as by sending an `error` message, which will usually cause the other side to drop the channel onchain using its commitment transaction.
+</I>&gt;<i> * The dropped B&lt;-&gt;C channel has an HTLC (that was set up during the A-&gt;B-&gt;C forwarding).
+</I>&gt;<i> * The HTLC, being used in a Poon-Dryja channel, actually has the following contract text:
+</I>&gt;<i> * The fund may be claimed by either of these clauses:
+</I>&gt;<i> * C can claim, if C shows the preimage of some hash H (hashlock branch).
+</I>&gt;<i> * B and C must agree, and claim after time L (timelock branch).
+</I>&gt;<i> * B holds a signature from C that can claim the timelock branch of the HTLC, for a transaction that spends to an output with an `OP_CHECKSEQUENCEVERIFY`.
+</I>&gt;<i> * The signature is `SIGHASH_ALL`, so the transaction has a fixed feerate.
+</I>&gt;<i> * C can &quot;pin&quot; the HTLC output by spending using the hashlock branch, and creating a large fee, low fee-rate (tree of) transactions.
+</I>
+Another: this is the simplest example. There are also games around the package size limits if I recall correctly.
+
+&gt;<i> * As it is a low fee-rate, miners have no incentive to put this in a block, especially if unrelated higher-fee-rate transactions exist that would earn them more money.
+</I>&gt;<i> * Even in a full RBF universe, because of the anti-DoS mempool rules, B cannot evict this pinned transaction by just bidding up the feerate.
+</I>&gt;<i> * A replacing transaction cannot evict alternatives unless its absolute fee is greater than the absolute fee of the alternative.
+</I>&gt;<i> * The pinning transaction has a high fee, but is blockspace-wasteful, so it is:
+</I>&gt;<i>   * Undesirable to mine (low feerate).
+</I>&gt;<i>   * Difficult to evict (high fee).
+</I>&gt;<i> * Thus, B is unable to get its timelock-branch transaction in the mempools of miners.
+</I>&gt;<i> * C waits until the A-&gt;B HTLC times out, then:
+</I>&gt;<i> * C directly contacts miners with an out-of-band proposal to replace its transaction with an alternative that is much smaller and has a low fee, but much better feerate.
+</I>
+Or they can just wait. For example in today&#8217;s mempool it would not be strange for a transaction at 1 sat/vbyte to wait a day but eventually confirm.
+
+&gt;<i> * Miners, being economically rational, accept this proposal and include this in a block.
+</I>&gt;<i> 
+</I>&gt;<i> The proposal by Matt is then:
+</I>&gt;<i> 
+</I>&gt;<i> * The hashlock branch should instead be:
+</I>&gt;<i> * B and C must agree, and show the preimage of some hash H (hashlock branch).
+</I>&gt;<i> * Then B and C agree that B provides a signature spending the hashlock branch, to a transaction with the outputs:
+</I>&gt;<i> * Normal payment to C.
+</I>&gt;<i> * Hook output to B, which B can use to CPFP this transaction.
+</I>&gt;<i> * Hook output to C, which C can use to CPFP this transaction.
+</I>&gt;<i> * B can still (somehow) not maintain a mempool, by:
+</I>&gt;<i> * B broadcasts its timelock transaction.
+</I>&gt;<i> * B tries to CPFP the above hashlock transaction.
+</I>&gt;<i> * If CPFP succeeds, it means the above hashlock transaction exists and B queries the peer for this transaction, extracting the preimage and claiming the A-&gt;B HTLC.
+</I>
+Note that no query is required. The problem has been solved and the preimage-containing transaction should now confirm just fine.
+
+&gt;<i> Is that a fair summary?
+</I>
+Yep!
+
+&gt;<i> --
+</I>&gt;<i> 
+</I>&gt;<i> Naively, and remembering I am completely ignorant of the exact details of the mempool rules, it seems to me quite strange that we are allowing an undesirable transaction (tree) into the mempool:
+</I>&gt;<i> 
+</I>&gt;<i> * Undesirable to mine (low fee-rate).
+</I>&gt;<i> * Difficult to evict (high fee).
+</I>
+As noted, such transactions today are profit in 10 hours. Just because they&#8217;re big doesn&#8217;t mean they don&#8217;t pay.
+
+&gt;<i> Miners are not interested in low fee-rate transactions, as long as higher fee-rate transactions exist.
+</I>&gt;<i> And being difficult to evict means miners cannot get alternatives that are more lucrative for them.
+</I>&gt;<i> 
+</I>&gt;<i> The reason (as I understand it) eviction is purposely made difficult here is to prevent certain DoS attacks on Bitcoin nodes, specifically:
+</I>&gt;<i> 
+</I>&gt;<i> 1. Attacker sends a low fee-rate tx as a &quot;root&quot; transaction.
+</I>&gt;<i> 2  Attacker sends thousands of low fee-rate tx that build off the above root.
+</I>
+I believe the limit is 25, though the point stands, mostly from a total-size perspective.
+
+&gt;<i> 3. Attacker sends a slightly higher fee-rate alternative to the root, evicting the above tree of txes.
+</I>&gt;<i> 4. Attacker sends thousands of low fee-rate tx that build off the latest root.
+</I>&gt;<i> 5. GOTO 3.
+</I>&gt;<i> 
+</I>&gt;<i> However, it seems to me, naively, that &quot;an ounce of prevention is worth a pound of cure&quot;.
+</I>
+Sadly, it&#8217;s very very easy for this to be a huge amount of CPU + bandwidth.
+
+&gt;<i> As I understand it, the mempool is organized already into &quot;packages&quot; of transactions, and adding a transaction into the mempool involves extending and merging packages.
+</I>&gt;<i> Perhaps the size of a package with low fee-rate (relative to the other packages in the mempool) can be limited, so that mempools drop incoming txes that extend a low-fee-rate tree of transactions.
+</I>&gt;<i> This means an attacker cannot send thousands of low fee-rate tx that build off some low fee-rate root tx in the first place, so it can still be evicted easily later without much impact.
+</I>
+There have been several proposals before around considering a transactions position in the mempool for various similar criteria. The extreme version being simply heavily rate-limiting transaction relay at low feerates and allowing much more liberal replacement of such packages. It isn&#8217;t quite perfect for this issue, though, as it may be easy for the attacker to just fill that rate-limit bucket.
+
+&gt;<i> Naively, it seems to me to prevent the DoS attack as well, as at step 2 it would be prevented from sending thousands of low fee-rate tx building off the root.
+</I>&gt;<i> 
+</I>&gt;<i> As well, as I understand it, this merely tightens the mempool acceptance rules, preventing low fee-rate packages from growing (analogous to a consensus-layer softfork).
+</I>&gt;<i> The &quot;cannot evict high absolute fee&quot; rule can be retained, as the low-fee-rate package is prevented from reaching a large size.
+</I>&gt;<i> 
+</I>&gt;<i> Would that be workable as a general solution to solve (what I think is) the root cause of this problem?
+</I>
+It&#8217;s not clear to me that tightening the acceptance rules wouldn&#8217;t break other existing uses. Historically the 25 package size limit has proven to be an issue for users doing (somewhat na&#239;ve) centralized wallet withdraws. Sadly many users want that &#8220;payment pending&#8221; notification instantly, even if we know it to be somewhat lacking in security. Wallets which have over-compacted their UTXOs are thus stuck making long chains.
+
+To revive an old discussion, on the original thread proposing the CPFP Carve-Out, I said this:
+
+&gt;<i> As an alternative proposal, at various points there have been discussions around solving the &quot;RBF-pinning&quot; problem by allowing transactors to mark their transactions as &quot;likely-to-be-RBF'ed&quot;, which could enable a relay policy where children of such transactions would be rejected unless the resulting package would be &quot;near the top of the mempool&quot;. This would theoretically imply such attacks are not possible to pull off consistently, as any &quot;transaction-delaying&quot; channel participant will have to place the package containing A at an effective feerate which makes confirmation to occur soon with some likelihood. It is, however, possible to pull off this attack with low probability in case of feerate spikes right after broadcast.
+</I>
+To which Rusty responded (and I may be paraphrasing here): &#8220;Fuck Yea&#8221;. I&#8217;m still not much of a fan of this idea as it introduces too many constants (what is &#8220;the top of the mempool&#8221;, anyway?), and it&#8217;s unclear to me what you do as the mempool prevailing feerate changes, but it seems more along the lines or what you&#8217;re looking for here.
+
+
+</PRE>
+
+
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002662.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+	<LI>Next message: <A HREF="002666.html">[Lightning-dev] [bitcoin-dev] RBF Pinning with Counterparties	and Competing Interest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2663">[ date ]</a>
+              <a href="thread.html#2663">[ thread ]</a>
+              <a href="subject.html#2663">[ subject ]</a>
+              <a href="author.html#2663">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.linuxfoundation.org/mailman/listinfo/lightning-dev">More information about the Lightning-dev
+mailing list</a><br>
+</body></html>
